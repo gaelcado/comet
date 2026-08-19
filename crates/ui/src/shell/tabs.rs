@@ -125,6 +125,7 @@ impl Shell {
         self.command_palette = None;
         self.route = Route::Chat;
         self.focus_composer(cx);
+        self.nav.push(NavEntry::Chat(chat_id.clone()));
         self.state
             .update(cx, |s, cx| s.select_chat(Some(chat_id), cx));
         cx.notify();
@@ -155,6 +156,7 @@ impl Shell {
                 panel.update(cx, |panel, cx| panel.set_open(false, cx));
             }
         }
+        self.nav.push(NavEntry::Chat(String::new()));
         let target = {
             let state = self.state.read(cx);
             self.settings

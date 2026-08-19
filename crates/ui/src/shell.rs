@@ -34,6 +34,7 @@ use crate::icons::{self, icon};
 use crate::loaders;
 use crate::motion::{self, AnimationExt as _, MotionSpec, RESIZE, SPLASH_OUT, TAB_SLIDE};
 use crate::popover::{self, Loadable};
+use crate::pull_requests::PullRequestsPage;
 use crate::rail;
 use crate::settings::accounts::AccountsPage;
 use crate::settings::appearance::{AppearancePage, AppearanceSettingsEvent};
@@ -636,6 +637,7 @@ fn settings_open_route(route: &str, remembered: SettingsSection) -> Option<Setti
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
     Chat,
+    PullRequests,
     Settings(SettingsSection),
 }
 
@@ -741,6 +743,7 @@ impl SessionPanels {
 pub enum NavEntry {
     /// A chat route; the id of the selected chat ("" = the new-chat canvas).
     Chat(String),
+    PullRequests,
     Settings(SettingsSection),
 }
 
@@ -1748,7 +1751,7 @@ pub struct Shell {
     /// Surface-tab strip scroll (the strip overflows horizontally, t3
     /// ScrollArea-style; drag drop-math reads the offset back out).
     right_tab_scroll: gpui::ScrollHandle,
-    /// Chat outlet vs settings pages.
+    /// Chat outlet, pull request dashboard, or settings pages.
     route: Route,
     settings_focus: FocusHandle,
     settings_end_focus: FocusHandle,
@@ -1758,6 +1761,7 @@ pub struct Shell {
     settings_restore_pending: bool,
     /// Route history behind the titlebar back/forward buttons (§ nav history).
     nav: NavHistory,
+    pull_requests_page: Option<Entity<PullRequestsPage>>,
     devices_page: Option<Entity<DevicesPage>>,
     archived_page: Option<Entity<ArchivedPage>>,
     appearance_page: Option<Entity<AppearancePage>>,
@@ -2082,6 +2086,7 @@ impl Shell {
         // remembered like any other link to a section.
         let open_route = std::env::var("ZERON_OPEN_ROUTE").ok();
         let route = match open_route.as_deref() {
+            Some("pull-requests") => Route::PullRequests,
             Some(route) if route == "settings" || route.starts_with("settings/") => {
                 match settings_open_route(route, settings.settings_section) {
                     Some(section) => {
@@ -2123,6 +2128,7 @@ impl Shell {
         };
         let nav = NavHistory::new(match route {
             Route::Chat => NavEntry::Chat(String::new()),
+            Route::PullRequests => NavEntry::PullRequests,
             Route::Settings(section) => NavEntry::Settings(section),
         });
         // Parent notifications carry presentation changes (session status,
@@ -2190,6 +2196,7 @@ impl Shell {
             settings_focus_pending: matches!(route, Route::Settings(_)),
             settings_restore_pending: false,
             nav,
+            pull_requests_page: None,
             devices_page: None,
             archived_page: None,
             appearance_page: None,
@@ -4188,6 +4195,22 @@ impl Shell {
         }
     }
 
+    fn open_pull_requests(&mut self, cx: &mut Context<Self>) {
+        self.route = Route::PullRequests;
+        self.nav.push(NavEntry::PullRequests);
+        self.close_user_menu(cx);
+        self.close_chat_menu(cx);
+        self.add_space = None;
+        self.close_right_plus(cx);
+        if self.spaces_menu.begin_close() {
+            popover::reap_popup(cx, |shell: &mut Self| &mut shell.spaces_menu);
+        }
+        if self.space_menu.begin_close() {
+            popover::reap_popup(cx, |shell: &mut Self| &mut shell.space_menu);
+        }
+        cx.notify();
+    }
+
     fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_focus_pending = false;
         self.route = Route::Chat;
@@ -4230,6 +4253,9 @@ impl Shell {
                 if self.state.read(cx).selected_chat != target {
                     self.state.update(cx, |s, cx| s.select_chat(target, cx));
                 }
+            }
+            NavEntry::PullRequests => {
+                self.route = Route::PullRequests;
             }
             NavEntry::Settings(section) => {
                 self.route = Route::Settings(section.canonical());
@@ -5605,7 +5631,25 @@ impl Shell {
 
     /// The session titlebar remains mounted beneath the settings modal.
     fn render_title_bar(&mut self, viewport_height: Pixels, cx: &mut Context<Self>) -> AnyElement {
-        self.render_session_title_bar(viewport_height, cx)
+        match self.route {
+            Route::Chat => self.render_session_title_bar(viewport_height, cx),
+            Route::PullRequests | Route::Settings(_) => {
+                let inner = div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .pt(px(Theme::TITLEBAR_TOP_PAD))
+                    .pl(px(self.title_bar_content_start()))
+                    .pr(px(self.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET)));
+                let bar = div().h(px(Theme::TITLEBAR_HEIGHT)).flex_none().child(inner);
+                let id = if matches!(self.route, Route::PullRequests) {
+                    "pull-requests-titlebar"
+                } else {
+                    "settings-header-titlebar"
+                };
+                self.titlebar_drag_region(id, bar, cx).into_any_element()
+            }
+        }
     }
 
     /// Make a titlebar strip drag the window — zed's platform-titlebar
@@ -9016,6 +9060,42 @@ impl Shell {
         let theme = &theme_owned;
         let (border, text, faint) = (theme.border, theme.text, theme.text_faint);
 
+        if matches!(self.route, Route::PullRequests) {
+            if self.pull_requests_page.is_none() {
+                self.pull_requests_page =
+                    Some(cx.new(|_| PullRequestsPage::new(self.state.clone())));
+            }
+            let outlet = self
+                .pull_requests_page
+                .as_ref()
+                .cloned()
+                .map(IntoElement::into_any_element)
+                .unwrap_or_else(|| Empty.into_any_element());
+            return div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .pt(px(Theme::TITLEBAR_HEIGHT))
+                .child(outlet)
+                .into_any_element();
+        }
+
+        // Settings route: just the section outlet — the section label lives in
+        // the unified window titlebar now (render_title_bar). Settings never
+        // underlaps: pad below the overlaid titlebar.
+        if let Route::Settings(section) = self.route {
+            let outlet = self.settings_outlet(section, window, cx);
+            return div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .pt(px(Theme::TITLEBAR_HEIGHT))
+                .flex()
+                .flex_col()
+                .child(div().flex_1().min_h_0().child(outlet))
+                .into_any_element();
+        }
+
         let _ = (text, border);
         let has_selection = self.state.read(cx).selected_chat.is_some();
         let has_spaces = !self.state.read(cx).spaces.is_empty();
@@ -10954,7 +11034,33 @@ fn window_control_button(
     theme: &Theme,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let muted = theme.text_muted;
+    window_control_button_with_options(
+        id,
+        icon_path,
+        WindowControlButtonOptions::default(),
+        theme,
+        on_click,
+    )
+}
+
+#[derive(Default, Clone, Copy)]
+struct WindowControlButtonOptions {
+    active: bool,
+    tooltip: Option<&'static str>,
+}
+
+fn window_control_button_with_options(
+    id: &'static str,
+    icon_path: &'static str,
+    options: WindowControlButtonOptions,
+    theme: &Theme,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let icon_color = if options.active {
+        theme.text
+    } else {
+        theme.text_muted
+    };
     let fade_key = format!("window-control-{id}");
     div()
         .id(id)
@@ -10968,9 +11074,16 @@ fn window_control_button(
         // zeron window-controls.tsx: `transition-colors` — the wash fades.
         .bg(motion::hover_blend(
             &fade_key,
-            theme.glass_hover().opacity(0.0),
+            if options.active {
+                theme.glass_hover()
+            } else {
+                theme.glass_hover().opacity(0.0)
+            },
             theme.glass_hover(),
         ))
+        .when(options.active, |button| {
+            button.border_1().border_color(theme.border_strong)
+        })
         .on_hover(motion::hover_listener(fade_key))
         // Buttons in/over a titlebar drag strip must be EXCLUDED from the
         // strip's event surface entirely. `.occlude()` (gpui
@@ -10990,7 +11103,33 @@ fn window_control_button(
             cx.stop_propagation();
             on_click(event, window, cx)
         })
-        .child(icon(icon_path).size(px(16.0)).text_color(muted))
+        .child(icon(icon_path).size(px(16.0)).text_color(icon_color))
+        .when_some(options.tooltip, |button, label| {
+            button
+                .tooltip(move |_, cx| cx.new(|_| WindowControlTooltip { label }).into())
+                .tooltip_show_delay(Duration::from_millis(350))
+        })
+}
+
+struct WindowControlTooltip {
+    label: &'static str,
+}
+
+impl Render for WindowControlTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx);
+        div()
+            .px(px(8.0))
+            .py(px(6.0))
+            .rounded(px(5.0))
+            .border_1()
+            .border_color(theme.border_strong)
+            .bg(theme.surface_raised)
+            .shadow_md()
+            .text_size(px(11.0))
+            .text_color(theme.text_muted)
+            .child(self.label)
+    }
 }
 
 const WINDOWS_CAPTION_BUTTON_WIDTH: f32 = 36.0;
@@ -13123,6 +13262,27 @@ mod tests {
             Some(NavEntry::Settings(SettingsSection::Devices))
         );
         assert_eq!(nav.back(), Some(chat("a")));
+    }
+
+    #[test]
+    fn pull_request_route_participates_in_browser_history() {
+        let mut nav = NavHistory::new(chat("a"));
+        nav.push(NavEntry::PullRequests);
+        assert_eq!(nav.back(), Some(chat("a")));
+        assert_eq!(nav.forward(), Some(NavEntry::PullRequests));
+
+        nav.push(NavEntry::PullRequests);
+        assert_eq!(nav.len(), 2, "reopening the active dashboard deduplicates");
+        nav.push(chat("a"));
+        assert_eq!(nav.back(), Some(NavEntry::PullRequests));
+    }
+
+    #[test]
+    fn pull_request_route_can_open_from_and_return_to_settings() {
+        let settings = NavEntry::Settings(SettingsSection::Devices);
+        let mut nav = NavHistory::new(settings.clone());
+        nav.push(NavEntry::PullRequests);
+        assert_eq!(nav.back(), Some(settings));
     }
 
     #[test]

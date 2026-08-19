@@ -2281,6 +2281,7 @@ impl Shell {
         if self.settings.space_filter.is_some() {
             self.settings.space_filter = Some(space_id.clone());
         }
+        self.nav.push(NavEntry::Chat(String::new()));
         self.settings.last_space_id = Some(space_id.clone());
         self.state.update(cx, |s, cx| {
             s.select_space(Some(space_id), cx);
