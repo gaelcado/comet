@@ -4031,6 +4031,22 @@ impl Shell {
 
     // ---- routes / settings ----
 
+    fn set_route(&mut self, route: Route, cx: &mut Context<Self>) {
+        let was_pull_requests = matches!(self.route, Route::PullRequests);
+        let will_show_pull_requests = matches!(route, Route::PullRequests);
+        if was_pull_requests && !will_show_pull_requests {
+            if let Some(page) = self.pull_requests_page.as_ref().cloned() {
+                page.update(cx, |page, _| page.on_hidden());
+            }
+        }
+        self.route = route;
+        if !was_pull_requests && will_show_pull_requests {
+            if let Some(page) = self.pull_requests_page.as_ref().cloned() {
+                page.update(cx, |page, cx| page.on_visible(cx));
+            }
+        }
+    }
+
     /// Close the user menu through the exit animation (no-op when closed).
     fn close_user_menu(&mut self, cx: &mut Context<Self>) {
         if self.user_menu.begin_close() {
@@ -4134,8 +4150,9 @@ impl Shell {
         if !matches!(self.route, Route::Settings(_)) {
             self.settings_focus_pending = true;
         }
-        self.route = Route::Settings(section);
+        self.set_route(Route::Settings(section), cx);
         self.remember_settings_section(section, cx);
+        self.nav.push(NavEntry::Settings(section));
         self.close_user_menu(cx);
         self.close_chat_menu(cx);
         cx.notify();
@@ -4196,11 +4213,11 @@ impl Shell {
     }
 
     fn open_pull_requests(&mut self, cx: &mut Context<Self>) {
-        self.route = Route::PullRequests;
-        self.nav.push(NavEntry::PullRequests);
-        if let Some(page) = self.pull_requests_page.as_ref().cloned() {
-            page.update(cx, |page, cx| page.on_visible(cx));
+        if matches!(self.route, Route::PullRequests) {
+            return;
         }
+        self.set_route(Route::PullRequests, cx);
+        self.nav.push(NavEntry::PullRequests);
         self.close_user_menu(cx);
         self.close_chat_menu(cx);
         self.add_space = None;
@@ -4216,8 +4233,10 @@ impl Shell {
 
     fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_focus_pending = false;
-        self.route = Route::Chat;
         self.settings_restore_pending = true;
+        self.set_route(Route::Chat, cx);
+        self.focus_composer(cx);
+        self.nav.push(NavEntry::Chat(self.active_chat.clone()));
         cx.notify();
     }
 
@@ -4250,7 +4269,7 @@ impl Shell {
         self.suspend_file_images(cx);
         match entry {
             NavEntry::Chat(chat_id) => {
-                self.route = Route::Chat;
+                self.set_route(Route::Chat, cx);
                 self.focus_composer(cx);
                 let target = (!chat_id.is_empty()).then_some(chat_id);
                 if self.state.read(cx).selected_chat != target {
@@ -4258,13 +4277,10 @@ impl Shell {
                 }
             }
             NavEntry::PullRequests => {
-                self.route = Route::PullRequests;
-                if let Some(page) = self.pull_requests_page.as_ref().cloned() {
-                    page.update(cx, |page, cx| page.on_visible(cx));
-                }
+                self.set_route(Route::PullRequests, cx);
             }
             NavEntry::Settings(section) => {
-                self.route = Route::Settings(section.canonical());
+                self.set_route(Route::Settings(section.canonical()), cx);
                 self.remember_settings_section(section, cx);
             }
         }
@@ -4975,7 +4991,7 @@ impl Shell {
                         // boot-time fallback from a signed-out synced runtime
                         // keeps an open Settings page (and `ZERON_OPEN_ROUTE`).
                         if sign_out {
-                            shell.route = Route::Chat;
+                            shell.set_route(Route::Chat, cx);
                         }
                         shell.space_boot_applied = false;
                         state.update(cx, |state, cx| state.prepare_runtime_replacement(cx));
@@ -5110,7 +5126,7 @@ impl Shell {
                         // the replacement runtime reach Ready and advances the
                         // wizard from there.
                         shell.org = None;
-                        shell.route = Route::Chat;
+                        shell.set_route(Route::Chat, cx);
                         shell.space_boot_applied = false;
                         state.update(cx, |state, cx| state.prepare_runtime_replacement(cx));
                         AppState::bootstrap(state.clone(), boot, cx);

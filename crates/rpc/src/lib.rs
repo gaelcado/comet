@@ -318,6 +318,11 @@ mod tests {
         dropped: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     }
 
+    struct CancelAwareCallService {
+        started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        dropped: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    }
+
     struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
 
     impl Drop for DropSignal {
@@ -345,6 +350,27 @@ mod tests {
                 item
             });
             Ok(RpcReply::Stream(stream.boxed()))
+        }
+    }
+
+    #[async_trait]
+    impl RpcService for CancelAwareCallService {
+        async fn handle(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> Result<RpcReply, RpcError> {
+            match method {
+                "PendingCall" => {
+                    if let Some(started) = self.started.lock().unwrap().take() {
+                        let _ = started.send(());
+                    }
+                    let _guard = DropSignal(self.dropped.lock().unwrap().take());
+                    std::future::pending().await
+                }
+                "Echo" => Ok(RpcReply::Value(params)),
+                other => Err(RpcError::UnknownMethod(other.into())),
+            }
         }
     }
 
@@ -482,6 +508,31 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_unary_call_cancels_pending_server_task() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let client = memory_client(Arc::new(CancelAwareCallService {
+            started: Mutex::new(Some(started_tx)),
+            dropped: Mutex::new(Some(dropped_tx)),
+        }));
+        let mut call = Box::pin(client.call("PendingCall", serde_json::Value::Null));
+
+        tokio::select! {
+            result = &mut call => panic!("pending call completed unexpectedly: {result:?}"),
+            started = started_rx => started.expect("server started pending call"),
+        }
+        drop(call);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx)
+            .await
+            .expect("server call cancelled")
+            .expect("drop signal");
+
+        let echoed = client.call("Echo", serde_json::json!(2)).await.unwrap();
+        assert_eq!(echoed, serde_json::json!(2));
     }
 
     #[tokio::test]
