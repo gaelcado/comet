@@ -930,6 +930,10 @@ fn sidebar_faded_label(id: SharedString, fill: bool, label: impl IntoElement) ->
     .fade_right(true)
     .fade_label_overflow(&overflow)
 }
+/// Square action beside the account trigger in the sidebar footer.
+const SIDEBAR_FOOTER_ACTION_SIZE: f32 = 44.0;
+/// Breathing room between the account trigger and its adjacent action.
+const SIDEBAR_FOOTER_ACTION_GAP: f32 = 4.0;
 
 /// Ramp height of the sidebar's scroll-edge fade (the gpui
 /// [`gpui::EdgeFade`] scope — per-primitive, so text fades per glyph).
@@ -7439,6 +7443,35 @@ impl Shell {
         // t3code's archived accordion, below the active list.
         let archived_section = self.render_archived_section(theme, cx);
 
+        let pull_requests_button = div()
+            .id("open-pull-requests")
+            .size(px(SIDEBAR_FOOTER_ACTION_SIZE))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(8.0))
+            .bg(motion::hover_blend(
+                "sidebar-pull-requests",
+                theme.glass_hover().opacity(0.0),
+                theme.glass_hover(),
+            ))
+            .on_hover(motion::hover_listener("sidebar-pull-requests"))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| this.open_pull_requests(cx)))
+            .tooltip(|_, cx| {
+                cx.new(|_| WindowControlTooltip {
+                    label: "Pull requests",
+                })
+                .into()
+            })
+            .tooltip_show_delay(Duration::from_millis(350))
+            .child(
+                icon(icons::PULL_REQUEST)
+                    .size(px(18.0))
+                    .text_color(theme.text_muted),
+            );
+
 
         // The space filter lives ABOVE the scroll region (fixed) so its
         // dropdown can float without being clipped by the list's overflow.
@@ -7650,7 +7683,11 @@ impl Shell {
                 div()
                     .p(px(Theme::SPACE_SM))
                     .flex_none()
-                    .child(self.render_sidebar_footer(theme, cx)),
+                    .flex()
+                    .items_center()
+                    .gap(px(SIDEBAR_FOOTER_ACTION_GAP))
+                    .child(div().flex_1().min_w_0().child(self.render_sidebar_footer(theme, cx)))
+                    .child(pull_requests_button),
             )
             .into_any_element()
     }
@@ -7856,6 +7893,7 @@ impl Shell {
             .h(px(SIDEBAR_FOOTER_BUTTON_SIZE))
             .min_w_0()
             .flex_shrink_1()
+            .w_full()
             .rounded(px(8.0))
             .px(px(Theme::SPACE_SM))
             .flex()
@@ -7921,8 +7959,12 @@ impl Shell {
             ));
         if self.user_menu.get().is_some() {
             let closing = self.user_menu.closing_since();
+
             let menu = popover::popover_card(theme)
-                .w(px(self.settings.sidebar_width - 2.0 * Theme::SPACE_SM))
+                .w(px(self.settings.sidebar_width
+                    - 2.0 * Theme::SPACE_SM
+                    - SIDEBAR_FOOTER_ACTION_SIZE
+                    - SIDEBAR_FOOTER_ACTION_GAP))
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                     this.close_user_menu(cx);
                 }))
