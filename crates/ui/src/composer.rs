@@ -5772,9 +5772,8 @@ impl Composer {
 
         // Draft swap on chat navigation — the input entity itself survives.
         if key != self.current_key {
-            let new_thread_launch = self.launching_new_chat
-                && self.current_key.is_empty()
-                && !key.is_empty();
+            let new_thread_launch =
+                self.launching_new_chat && self.current_key.is_empty() && !key.is_empty();
             self.launching_new_chat = false;
             let old_text = self.input.read(cx).text().to_string();
             if old_text.is_empty() {
@@ -5807,8 +5806,8 @@ impl Composer {
                 // from the actually-rendered expanded height on the same
                 // 360ms timeline as the shell's positional handoff.
                 self.expanded_mode = false;
-                let now_ms = self.morph_clock.elapsed().as_secs_f32() * 1000.0
-                    / motion::speed_scale();
+                let now_ms =
+                    self.morph_clock.elapsed().as_secs_f32() * 1000.0 / motion::speed_scale();
                 self.flip_morph = Some(FlipMorph::new_thread_launch(
                     self.last_rendered_height,
                     now_ms,
@@ -5817,8 +5816,7 @@ impl Composer {
             } else {
                 self.flip_morph = None;
                 self.last_rendered_height = 0.0;
-                self.route_snap_until =
-                    Some(Instant::now() + Duration::from_millis(ROUTE_SNAP_MS));
+                self.route_snap_until = Some(Instant::now() + Duration::from_millis(ROUTE_SNAP_MS));
             }
             self.input.update(cx, |input, cx| input.set_text(draft, cx));
         }

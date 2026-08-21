@@ -693,7 +693,9 @@ const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 /// selectors and composer are the control layer floating over its faded tail.
 const NEW_THREAD_COMET_WIDTH: f32 = 115.0;
 const NEW_THREAD_COMET_HEIGHT: f32 = 132.0;
-const NEW_THREAD_COMET_CLIP_OVERSHOOT: f32 = 16.0;
+/// Keep the clip inside the SVG's final 1%-opacity row at every glyph size.
+/// A fixed pixel offset cut that row off after the artwork was reduced.
+const NEW_THREAD_COMET_CLIP_OVERSHOOT: f32 = NEW_THREAD_COMET_HEIGHT * 0.10;
 const NEW_THREAD_HERO_HEIGHT: f32 = 144.0;
 const NEW_THREAD_SELECTOR_INSET: f32 = 24.0;
 const NEW_THREAD_SELECTOR_BOTTOM: f32 = 14.0;
@@ -824,11 +826,7 @@ fn new_thread_header_opacity(progress: f32) -> f32 {
     (1.0 - progress / 0.55).clamp(0.0, 1.0)
 }
 
-fn new_thread_composer_offset(
-    source_bottom: f32,
-    destination_bottom: f32,
-    progress: f32,
-) -> f32 {
+fn new_thread_composer_offset(source_bottom: f32, destination_bottom: f32, progress: f32) -> f32 {
     (source_bottom - destination_bottom) * (1.0 - progress.clamp(0.0, 1.0))
 }
 
@@ -6938,16 +6936,15 @@ impl Shell {
                                     .flex_col()
                                     .items_center()
                                     .child(new_thread_hero(selectors, theme))
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .h(px(launch.source_height)),
-                                    ),
+                                    .child(div().w_full().h(px(launch.source_height))),
                             ),
                     )
                     .into_any_element()
             } else {
-                self.transcript.clone().cached(gpui::StyleRefinement::default().size_full()).into_any_element()
+                self.transcript
+                    .clone()
+                    .cached(gpui::StyleRefinement::default().size_full())
+                    .into_any_element()
             }
         } else if !has_spaces && !no_project {
             // Onboarding (first boot / after the destructive wipe): no folders
@@ -9519,7 +9516,9 @@ mod tests {
         // The artwork remains tall enough to survive its explicit bottom
         // overshoot, so the fade visibly reaches the composer boundary even
         // when the glyph is smaller than the selector-bearing hero region.
-        assert!(NEW_THREAD_COMET_CLIP_OVERSHOOT > 0.0);
+        assert!(
+            (NEW_THREAD_COMET_CLIP_OVERSHOOT / NEW_THREAD_COMET_HEIGHT - 0.10).abs() < f32::EPSILON
+        );
         assert!(NEW_THREAD_COMET_HEIGHT > NEW_THREAD_COMET_CLIP_OVERSHOOT);
         // The bottom-anchored destination starts exactly at the centered
         // source's bottom edge, then lands without overshoot.
