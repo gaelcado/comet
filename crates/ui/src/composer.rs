@@ -299,7 +299,7 @@ pub fn comment_strip_height(count: usize) -> f32 {
 /// two pill layouts. The original has no height transition (its shell carries
 /// only `transition-colors`), so this is a native nicety: ONE committed flip
 /// starts exactly one 180ms ease-out morph ([`motion::COLLAPSE`]); the blank-
-/// thread handoff swaps in the coordinated 500ms launch spec. Both use the
+/// thread handoff swaps in the coordinated 360ms launch spec. Both use the
 /// manual-drive pattern from shell.rs `WidthTween` — never `with_animation`,
 /// whose element-id keying replays tweens on remount, round-6 §1–3.
 ///
@@ -5805,7 +5805,7 @@ impl Composer {
                 // The blank canvas is visibly expanded even when the stored
                 // mode is compact. Commit that compact target now and morph
                 // from the actually-rendered expanded height on the same
-                // 500ms timeline as the shell's positional handoff.
+                // 360ms timeline as the shell's positional handoff.
                 self.expanded_mode = false;
                 let now_ms = self.morph_clock.elapsed().as_secs_f32() * 1000.0
                     / motion::speed_scale();
@@ -9054,7 +9054,7 @@ mod tests {
         assert_eq!(m.height(49.0, 0.0), 124.0);
         assert!(m.height(49.0, 250.0) < 124.0);
         assert!(m.height(49.0, 250.0) > 49.0);
-        assert_eq!(m.height(49.0, 500.0), 49.0);
+        assert_eq!(m.height(49.0, 360.0), 49.0);
     }
 
     #[test]
