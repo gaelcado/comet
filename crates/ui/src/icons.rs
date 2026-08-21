@@ -188,6 +188,9 @@ icon_assets![
     (STAR, "star"),
     (STAR_BOLD, "star-bold"),
     (ZERON_LOGO, "zeron-logo"),
+    // Hero-scale logo with row-level opacity baked into the vector so its
+    // lower pixels dissolve over glass without painting a fake background.
+    (ZERON_LOGO_FADED, "zeron-logo-faded"),
     // Harness brand marks (icons.tsx).
     (CLAUDE_MARK, "claude-mark"),
     (OPENAI_MARK, "openai-mark"),

@@ -687,6 +687,12 @@ const SIDEBAR_ARCHIVED_HARNESS_TITLE_GAP: f32 = 10.0;
 /// [`gpui::EdgeFade`] scope — per-primitive, so text fades per glyph).
 const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 
+/// New-thread hero geometry. The comet is the full-bleed visual layer; the
+/// selectors and composer are the control layer floating over its faded tail.
+const NEW_THREAD_COMET_WIDTH: f32 = 209.5;
+const NEW_THREAD_COMET_HEIGHT: f32 = 240.0;
+const NEW_THREAD_CONTROLS_PULL_UP: f32 = 88.0;
+
 /// Drag marker for the sidebar resize handle.
 struct SidebarResize;
 /// Drag marker for the right-pane resize handle.
@@ -6872,12 +6878,16 @@ impl Shell {
                                     .flex_col()
                                     .items_center()
                                     .child(
-                                        icon(icons::ZERON_LOGO)
-                                            .w(px(41.9))
-                                            .h(px(48.0))
-                                            .text_color(theme.text.opacity(0.2)),
+                                        icon(icons::ZERON_LOGO_FADED)
+                                            .w(px(NEW_THREAD_COMET_WIDTH))
+                                            .h(px(NEW_THREAD_COMET_HEIGHT))
+                                            .text_color(theme.text.opacity(0.18)),
                                     )
-                                    .child(div().mt(px(16.0)).child(selectors))
+                                    .child(
+                                        div()
+                                            .mt(px(-NEW_THREAD_CONTROLS_PULL_UP))
+                                            .child(selectors),
+                                    )
                                     .child(
                                         div()
                                             .w_full()
@@ -6958,14 +6968,16 @@ impl Shell {
                         .flex_col()
                         .items_center()
                         .child(
-                            icon(icons::ZERON_LOGO)
-                                .w(px(41.9))
-                                .h(px(48.0))
-                                // 0.09 read as barely-there on the glass
-                                // backdrop (user report).
-                                .text_color(theme.text.opacity(0.2)),
+                            icon(icons::ZERON_LOGO_FADED)
+                                .w(px(NEW_THREAD_COMET_WIDTH))
+                                .h(px(NEW_THREAD_COMET_HEIGHT))
+                                .text_color(theme.text.opacity(0.18)),
                         )
-                        .child(div().mt(px(16.0)).child(selectors))
+                        .child(
+                            div()
+                                .mt(px(-NEW_THREAD_CONTROLS_PULL_UP))
+                                .child(selectors),
+                        )
                         .child({
                             let bottom = self.new_thread_composer_bottom.clone();
                             let height = self.new_thread_composer_height.clone();
