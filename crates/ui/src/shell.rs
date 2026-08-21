@@ -691,10 +691,11 @@ const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 
 /// New-thread hero geometry. The comet is the full-bleed visual layer; the
 /// selectors and composer are the control layer floating over its faded tail.
-const NEW_THREAD_COMET_WIDTH: f32 = 209.5;
-const NEW_THREAD_COMET_HEIGHT: f32 = 240.0;
+const NEW_THREAD_COMET_WIDTH: f32 = 244.3;
+const NEW_THREAD_COMET_HEIGHT: f32 = 280.0;
 const NEW_THREAD_COMET_X_CORRECTION: f32 = -8.0;
-const NEW_THREAD_HERO_HEIGHT: f32 = 240.0;
+const NEW_THREAD_COMET_CLIP_OVERSHOOT: f32 = 8.0;
+const NEW_THREAD_HERO_HEIGHT: f32 = 272.0;
 const NEW_THREAD_SELECTOR_INSET: f32 = 24.0;
 const NEW_THREAD_SELECTOR_BOTTOM: f32 = 14.0;
 
@@ -852,6 +853,11 @@ fn new_thread_hero(selectors: AnyElement, theme: &Theme) -> AnyElement {
                         .h(px(NEW_THREAD_COMET_HEIGHT))
                         // The asymmetric comet reads optically right-heavy.
                         .ml(px(NEW_THREAD_COMET_X_CORRECTION))
+                        // The layer ends at the composer; only the artwork
+                        // overshoots and is clipped, keeping its last visible
+                        // row flush with that boundary instead of floating.
+                        .relative()
+                        .top(px(NEW_THREAD_COMET_CLIP_OVERSHOOT))
                         .text_color(theme.text.opacity(0.18)),
                 ),
         )
@@ -859,12 +865,8 @@ fn new_thread_hero(selectors: AnyElement, theme: &Theme) -> AnyElement {
             div()
                 .absolute()
                 .left(px(NEW_THREAD_SELECTOR_INSET))
+                .right(px(NEW_THREAD_SELECTOR_INSET))
                 .bottom(px(NEW_THREAD_SELECTOR_BOTTOM))
-                .p(px(2.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme.border.opacity(0.6))
-                .bg(theme.surface_raised.opacity(0.55))
                 .child(selectors),
         )
         .into_any_element()
@@ -9500,6 +9502,12 @@ mod tests {
 
     #[test]
     fn new_thread_handoff_is_continuous_and_staged() {
+        // The hero clips at the composer boundary while the larger artwork
+        // extends just beyond it, so the fade visually reaches that edge.
+        assert_eq!(
+            NEW_THREAD_COMET_HEIGHT - NEW_THREAD_HERO_HEIGHT,
+            NEW_THREAD_COMET_CLIP_OVERSHOOT
+        );
         // The bottom-anchored destination starts exactly at the centered
         // source's bottom edge, then lands without overshoot.
         assert_eq!(new_thread_composer_offset(520.0, 840.0, 0.0), -320.0);
