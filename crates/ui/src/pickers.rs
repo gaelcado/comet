@@ -2408,9 +2408,9 @@ impl Pickers {
             .child(div().min_w_0().truncate().child(label))
     }
 
-    /// The new-session canvas's target row — device leads and project trails,
-    /// mirroring the checkout/ref frame below the composer. Their popovers
-    /// anchor BELOW; sessions show their target in the titlebar instead.
+    /// The new-session canvas's target row — device and project form one
+    /// compact cluster at the leading edge. Their popovers open upward, away
+    /// from the composer; sessions show their target in the titlebar instead.
     pub fn render_target_selectors(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let closing = self.open.closing_since();
@@ -2471,8 +2471,8 @@ impl Pickers {
             .flex()
             .flex_row()
             .items_center()
-            .justify_between()
-            .child(attach_overlay_below(
+            .gap(px(4.0))
+            .child(attach_overlay(
                 device_chip,
                 &mut overlay,
                 PickerKind::Device,
@@ -2627,13 +2627,14 @@ impl Pickers {
             cx,
         );
         // Checkout on the left edge, ref on the right — the row's
-        // justify_between splits them (user request).
+        // justify_between splits them. These controls sit below the composer,
+        // so their menus open downward, away from it.
         let left = div()
             .flex()
             .flex_row()
             .items_center()
             .min_w_0()
-            .child(attach_overlay(
+            .child(attach_overlay_below(
                 kind_chip,
                 &mut overlay,
                 PickerKind::Checkout,
@@ -2645,7 +2646,7 @@ impl Pickers {
             .flex_row()
             .items_center()
             .min_w_0()
-            .child(attach_overlay_end(
+            .child(attach_overlay_below_end(
                 ref_chip,
                 &mut overlay,
                 PickerKind::Branch,
@@ -4009,8 +4010,42 @@ fn attach_overlay(
     chip
 }
 
+/// [`attach_overlay`] opening DOWNWARD from controls below the composer.
+fn attach_overlay_below(
+    chip: gpui::Stateful<gpui::Div>,
+    overlay: &mut Option<(PickerKind, AnyElement)>,
+    kind: PickerKind,
+    id: &'static str,
+    closing: Option<std::time::Instant>,
+) -> gpui::Stateful<gpui::Div> {
+    if overlay.as_ref().is_some_and(|(k, _)| *k == kind)
+        && let Some((_, element)) = overlay.take()
+    {
+        return chip.child(popover::anchored_menu_below(id, element, closing));
+    }
+    chip
+}
+
+/// [`attach_overlay_below`] with the menu RIGHT-ALIGNED to the trigger.
+fn attach_overlay_below_end(
+    chip: gpui::Stateful<gpui::Div>,
+    overlay: &mut Option<(PickerKind, AnyElement)>,
+    kind: PickerKind,
+    id: &'static str,
+    closing: Option<std::time::Instant>,
+) -> gpui::Stateful<gpui::Div> {
+    if overlay.as_ref().is_some_and(|(k, _)| *k == kind)
+        && let Some((_, element)) = overlay.take()
+    {
+        return chip
+            .relative()
+            .child(popover::anchored_menu_below_end(id, element, closing));
+    }
+    chip
+}
+
 /// [`attach_overlay`] with the menu RIGHT-ALIGNED to the trigger (t3code
-/// `align="end"` — right-edge triggers like the ref picker open leftward).
+/// `align="end"` — right-edge controls like the model picker open leftward).
 fn attach_overlay_end(
     chip: gpui::Stateful<gpui::Div>,
     overlay: &mut Option<(PickerKind, AnyElement)>,

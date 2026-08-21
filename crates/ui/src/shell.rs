@@ -691,11 +691,11 @@ const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 
 /// New-thread hero geometry. The comet is the full-bleed visual layer; the
 /// selectors and composer are the control layer floating over its faded tail.
-const NEW_THREAD_COMET_WIDTH: f32 = 174.5;
-const NEW_THREAD_COMET_HEIGHT: f32 = 200.0;
-const NEW_THREAD_COMET_X_CORRECTION: f32 = -8.0;
+const NEW_THREAD_COMET_WIDTH: f32 = 139.5;
+const NEW_THREAD_COMET_HEIGHT: f32 = 160.0;
+const NEW_THREAD_COMET_X_CORRECTION: f32 = 72.0;
 const NEW_THREAD_COMET_CLIP_OVERSHOOT: f32 = 16.0;
-const NEW_THREAD_HERO_HEIGHT: f32 = 184.0;
+const NEW_THREAD_HERO_HEIGHT: f32 = 144.0;
 const NEW_THREAD_SELECTOR_INSET: f32 = 24.0;
 const NEW_THREAD_SELECTOR_BOTTOM: f32 = 14.0;
 /// The composer carries more visual mass than the fading mark, so mathematical
