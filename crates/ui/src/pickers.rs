@@ -2467,7 +2467,7 @@ impl Pickers {
         // left. The row sits just above the composer pill, so the menus open
         // UPWARD.
         div()
-            .w_full()
+            .flex_none()
             .flex()
             .flex_row()
             .items_center()

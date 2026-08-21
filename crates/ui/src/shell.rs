@@ -691,9 +691,8 @@ const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 
 /// New-thread hero geometry. The comet is the full-bleed visual layer; the
 /// selectors and composer are the control layer floating over its faded tail.
-const NEW_THREAD_COMET_WIDTH: f32 = 139.5;
-const NEW_THREAD_COMET_HEIGHT: f32 = 160.0;
-const NEW_THREAD_COMET_X_CORRECTION: f32 = 72.0;
+const NEW_THREAD_COMET_WIDTH: f32 = 115.0;
+const NEW_THREAD_COMET_HEIGHT: f32 = 132.0;
 const NEW_THREAD_COMET_CLIP_OVERSHOOT: f32 = 16.0;
 const NEW_THREAD_HERO_HEIGHT: f32 = 144.0;
 const NEW_THREAD_SELECTOR_INSET: f32 = 24.0;
@@ -834,8 +833,10 @@ fn new_thread_composer_offset(
 }
 
 /// The new-thread visual and context controls occupy one bounded hero region.
-/// Only the comet layer clips at the composer's top edge; the selector rail
-/// remains free to open its deferred popovers over the composer.
+/// The selector cluster takes only its intrinsic width; the comet is centered
+/// in the space from the cluster's trailing edge to the composer's trailing
+/// edge. Only the comet's half clips at the composer boundary, leaving the
+/// selector half free to open its deferred popovers.
 fn new_thread_hero(selectors: AnyElement, theme: &Theme) -> AnyElement {
     div()
         .w_full()
@@ -846,31 +847,37 @@ fn new_thread_hero(selectors: AnyElement, theme: &Theme) -> AnyElement {
             div()
                 .absolute()
                 .inset_0()
-                .overflow_hidden()
                 .flex()
+                .flex_row()
                 .items_end()
-                .justify_center()
                 .child(
-                    icon(icons::ZERON_LOGO_FADED)
-                        .w(px(NEW_THREAD_COMET_WIDTH))
-                        .h(px(NEW_THREAD_COMET_HEIGHT))
-                        // The asymmetric comet reads optically right-heavy.
-                        .ml(px(NEW_THREAD_COMET_X_CORRECTION))
-                        // The layer ends at the composer; only the artwork
-                        // overshoots and is clipped, keeping its last visible
-                        // row flush with that boundary instead of floating.
-                        .relative()
-                        .top(px(NEW_THREAD_COMET_CLIP_OVERSHOOT))
-                        .text_color(theme.text.opacity(0.18)),
+                    div()
+                        .ml(px(NEW_THREAD_SELECTOR_INSET))
+                        .mb(px(NEW_THREAD_SELECTOR_BOTTOM))
+                        .flex_none()
+                        .child(selectors),
+                )
+                .child(
+                    div()
+                        .h_full()
+                        .min_w_0()
+                        .flex_1()
+                        .overflow_hidden()
+                        .flex()
+                        .items_end()
+                        .justify_center()
+                        .child(
+                            icon(icons::ZERON_LOGO_FADED)
+                                .w(px(NEW_THREAD_COMET_WIDTH))
+                                .h(px(NEW_THREAD_COMET_HEIGHT))
+                                // The layer ends at the composer; only the
+                                // artwork overshoots and is clipped, keeping
+                                // its last visible row flush with that edge.
+                                .relative()
+                                .top(px(NEW_THREAD_COMET_CLIP_OVERSHOOT))
+                                .text_color(theme.text.opacity(0.18)),
+                        ),
                 ),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px(NEW_THREAD_SELECTOR_INSET))
-                .right(px(NEW_THREAD_SELECTOR_INSET))
-                .bottom(px(NEW_THREAD_SELECTOR_BOTTOM))
-                .child(selectors),
         )
         .into_any_element()
 }
@@ -9509,12 +9516,11 @@ mod tests {
 
     #[test]
     fn new_thread_handoff_is_continuous_and_staged() {
-        // The hero clips at the composer boundary while the larger artwork
-        // extends just beyond it, so the fade visually reaches that edge.
-        assert_eq!(
-            NEW_THREAD_COMET_HEIGHT - NEW_THREAD_HERO_HEIGHT,
-            NEW_THREAD_COMET_CLIP_OVERSHOOT
-        );
+        // The artwork remains tall enough to survive its explicit bottom
+        // overshoot, so the fade visibly reaches the composer boundary even
+        // when the glyph is smaller than the selector-bearing hero region.
+        assert!(NEW_THREAD_COMET_CLIP_OVERSHOOT > 0.0);
+        assert!(NEW_THREAD_COMET_HEIGHT > NEW_THREAD_COMET_CLIP_OVERSHOOT);
         // The bottom-anchored destination starts exactly at the centered
         // source's bottom edge, then lands without overshoot.
         assert_eq!(new_thread_composer_offset(520.0, 840.0, 0.0), -320.0);
