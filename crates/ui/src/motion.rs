@@ -359,6 +359,11 @@ pub const RESIZE: MotionSpec = MotionSpec::new(200, EASE_OUT);
 pub const TAB_SLIDE: MotionSpec = MotionSpec::new(150, EASE_OUT);
 /// Diff-pane per-file collapse: 180ms height (§1.11).
 pub const COLLAPSE: MotionSpec = MotionSpec::new(180, EASE_OUT);
+/// First-send handoff: the centered new-thread composer travels to its
+/// in-session anchor while the transcript takes over. A full 500ms
+/// ease-in-out matches the transcript's own-send scroll glide, so the two
+/// motions read as one transition instead of competing snaps.
+pub const NEW_THREAD_LAUNCH: MotionSpec = MotionSpec::new(500, EASE_IN_OUT);
 /// Diff-pane chevron rotate: 200ms (§1.11; approximated as a crossfade — gpui
 /// divs have no rotation transform at the pinned rev, same caveat as scale).
 pub const CHEVRON: MotionSpec = MotionSpec::new(200, EASE);
@@ -857,6 +862,8 @@ mod tests {
         assert_eq!(RESIZE.duration_ms, 200);
         assert_eq!(TAB_SLIDE.duration_ms, 150);
         assert_eq!(COLLAPSE.duration_ms, 180);
+        assert_eq!(NEW_THREAD_LAUNCH.duration_ms, 500);
+        assert_eq!(NEW_THREAD_LAUNCH.curve, EASE_IN_OUT);
         assert_eq!(CHEVRON.duration_ms, 200);
         assert_eq!(ZERON_PULSE.duration_ms, 2400);
         assert_eq!(GRADIENT_SPIN.duration_ms, 750);

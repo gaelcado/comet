@@ -298,9 +298,10 @@ pub fn comment_strip_height(count: usize) -> f32 {
 /// Compact↔expanded flip morph (round 9): the flip used to snap between the
 /// two pill layouts. The original has no height transition (its shell carries
 /// only `transition-colors`), so this is a native nicety: ONE committed flip
-/// starts exactly one 180ms ease-out morph ([`motion::COLLAPSE`], the same
-/// manual-drive pattern as shell.rs `WidthTween` — never `with_animation`,
-/// whose element-id keying replays tweens on remount, round-6 §1–3).
+/// starts exactly one 180ms ease-out morph ([`motion::COLLAPSE`]); the blank-
+/// thread handoff swaps in the coordinated 500ms launch spec. Both use the
+/// manual-drive pattern from shell.rs `WidthTween` — never `with_animation`,
+/// whose element-id keying replays tweens on remount, round-6 §1–3.
 ///
 /// The morph animates the pill's COMMITTED height: the flip commits its final
 /// layout immediately (the input entity never remounts — the caret survives,
@@ -317,18 +318,37 @@ pub struct FlipMorph {
     pub from: f32,
     /// Commit time in ms on the caller's monotonic clock.
     pub start_ms: f32,
+    /// Ordinary typing flips use the quick collapse spec; the first-send
+    /// handoff uses the shell's longer coordinated launch timeline.
+    pub spec: motion::MotionSpec,
 }
 
 impl FlipMorph {
-    /// Raw timeline position 0..1 over [`motion::COLLAPSE`]'s 180ms.
+    fn collapse(from: f32, start_ms: f32) -> Self {
+        Self {
+            from,
+            start_ms,
+            spec: motion::COLLAPSE,
+        }
+    }
+
+    fn new_thread_launch(from: f32, start_ms: f32) -> Self {
+        Self {
+            from,
+            start_ms,
+            spec: motion::NEW_THREAD_LAUNCH,
+        }
+    }
+
+    /// Raw timeline position 0..1 over this morph's motion spec.
     fn raw(&self, now_ms: f32) -> f32 {
-        let total = motion::COLLAPSE.total().as_secs_f32() * 1000.0;
+        let total = self.spec.total().as_secs_f32() * 1000.0;
         ((now_ms - self.start_ms) / total).clamp(0.0, 1.0)
     }
 
-    /// Eased progress 0..1 (ease-out) — also drives the actions fade.
+    /// Eased progress 0..1 — also drives the inner geometry handoff.
     pub fn progress(&self, now_ms: f32) -> f32 {
-        motion::COLLAPSE.progress(self.raw(now_ms))
+        self.spec.progress(self.raw(now_ms))
     }
 
     pub fn done(&self, now_ms: f32) -> bool {
@@ -444,10 +464,7 @@ pub fn flip_morph_step(
     if reduced_motion || last_height <= 0.0 {
         return None;
     }
-    Some(FlipMorph {
-        from: last_height,
-        start_ms: now_ms,
-    })
+    Some(FlipMorph::collapse(last_height, now_ms))
 }
 
 /// Engines at or above this version understand `pending://` attachment refs
@@ -3812,7 +3829,12 @@ pub enum ComposerEvent {
     /// A prompt was sent optimistically — give the transcript its exact row
     /// identity so it can anchor the prompt at the top with the reply's
     /// reserved space below it.
-    Sent { chat_id: String, message_id: String },
+    Sent {
+        chat_id: String,
+        message_id: String,
+        /// True only for the first prompt sent from the blank-thread canvas.
+        from_new_thread: bool,
+    },
     /// A locally-authored queue row was accepted. It is not a transcript send
     /// yet: the transcript remembers the stable id and promotes it to an
     /// own-turn anchor only when the host materializes the matching bubble.
@@ -3999,6 +4021,10 @@ pub struct Composer {
     popup_bar: crate::popover::MenuScrollbarState,
     pub(crate) current_key: String,
     sending: bool,
+    /// Armed immediately before a blank-canvas send selects its minted chat.
+    /// The state observer consumes it to distinguish that handoff from normal
+    /// session navigation, which must continue to snap.
+    launching_new_chat: bool,
     pub(crate) failure: Option<SharedString>,
     /// The chat key `failure` belongs to (`None` = global, e.g. "Engine not
     /// connected"). Chat-scoped failures survive navigation and render only
@@ -4205,6 +4231,7 @@ impl Composer {
             popup_bar: crate::popover::MenuScrollbarState::default(),
             current_key,
             sending: false,
+            launching_new_chat: false,
             failure: None,
             wizard: None,
             wizard_focus: cx.focus_handle(),
@@ -5745,6 +5772,10 @@ impl Composer {
 
         // Draft swap on chat navigation — the input entity itself survives.
         if key != self.current_key {
+            let new_thread_launch = self.launching_new_chat
+                && self.current_key.is_empty()
+                && !key.is_empty();
+            self.launching_new_chat = false;
             let old_text = self.input.read(cx).text().to_string();
             if old_text.is_empty() {
                 self.drafts.remove(&self.current_key);
@@ -5768,11 +5799,27 @@ impl Composer {
             // the nav-driven flip only commits AFTER the swapped draft has
             // been re-measured, one or two renders later, so the whole
             // window snaps (see ROUTE_SNAP_MS).
-            self.flip_morph = None;
             self.height_morph = None;
             self.last_target_height = 0.0;
-            self.last_rendered_height = 0.0;
-            self.route_snap_until = Some(Instant::now() + Duration::from_millis(ROUTE_SNAP_MS));
+            if new_thread_launch && !motion::reduced_motion(cx) && self.last_rendered_height > 0.0 {
+                // The blank canvas is visibly expanded even when the stored
+                // mode is compact. Commit that compact target now and morph
+                // from the actually-rendered expanded height on the same
+                // 500ms timeline as the shell's positional handoff.
+                self.expanded_mode = false;
+                let now_ms = self.morph_clock.elapsed().as_secs_f32() * 1000.0
+                    / motion::speed_scale();
+                self.flip_morph = Some(FlipMorph::new_thread_launch(
+                    self.last_rendered_height,
+                    now_ms,
+                ));
+                self.route_snap_until = None;
+            } else {
+                self.flip_morph = None;
+                self.last_rendered_height = 0.0;
+                self.route_snap_until =
+                    Some(Instant::now() + Duration::from_millis(ROUTE_SNAP_MS));
+            }
             self.input.update(cx, |input, cx| input.set_text(draft, cx));
         }
 
@@ -6149,6 +6196,7 @@ impl Composer {
             status: None,
             continuation_of: None,
         };
+        self.launching_new_chat = is_new;
         // A queued message is not in the transcript yet — the queue panel is
         // its echo, and it gets a real bubble when the host sends it.
         self.state.update(cx, |s, cx| {
@@ -6176,6 +6224,7 @@ impl Composer {
             cx.emit(ComposerEvent::Sent {
                 chat_id: chat_id.clone(),
                 message_id: message_id.clone(),
+                from_new_thread: is_new,
             });
         }
         cx.notify();
@@ -8859,6 +8908,7 @@ mod tests {
         let m = FlipMorph {
             from: 49.0,
             start_ms: 0.0,
+            spec: motion::COLLAPSE,
         };
         // Starts exactly at the committed height…
         let mut prev = m.height(124.0, 0.0);
@@ -8878,6 +8928,7 @@ mod tests {
         let down = FlipMorph {
             from: 124.0,
             start_ms: 0.0,
+            spec: motion::COLLAPSE,
         };
         assert!(down.height(49.0, 90.0) < 124.0);
         assert!(down.height(49.0, 90.0) > 49.0);
@@ -8888,6 +8939,7 @@ mod tests {
         let m = FlipMorph {
             from: 49.0,
             start_ms: 0.0,
+            spec: motion::COLLAPSE,
         };
         let mid = m.height(124.0, 90.0);
         assert!(mid > 49.0 && mid < 124.0);
@@ -8916,6 +8968,7 @@ mod tests {
         let m = FlipMorph {
             from: 49.0,
             start_ms: 0.0,
+            spec: motion::COLLAPSE,
         };
         assert_eq!(
             flip_morph_step(Some(m), false, 80.0, 50.0, false, true),
@@ -8982,6 +9035,7 @@ mod tests {
         let m = FlipMorph {
             from: 49.0,
             start_ms: 0.0,
+            spec: motion::COLLAPSE,
         };
         // Auto-grow can move the target mid-morph: evaluation tracks the
         // live value instead of finishing on a stale height.
@@ -8991,6 +9045,16 @@ mod tests {
         assert_eq!(m.progress(180.0), 1.0);
         let mid = m.progress(90.0);
         assert!(mid > 0.0 && mid < 1.0);
+    }
+
+    #[test]
+    fn new_thread_launch_uses_the_coordinated_timeline() {
+        let m = FlipMorph::new_thread_launch(124.0, 0.0);
+        assert_eq!(m.spec, motion::NEW_THREAD_LAUNCH);
+        assert_eq!(m.height(49.0, 0.0), 124.0);
+        assert!(m.height(49.0, 250.0) < 124.0);
+        assert!(m.height(49.0, 250.0) > 49.0);
+        assert_eq!(m.height(49.0, 500.0), 49.0);
     }
 
     #[test]

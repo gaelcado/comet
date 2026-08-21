@@ -791,6 +791,33 @@ impl WidthTween {
     }
 }
 
+/// One coordinated blank-thread → session handoff. The source composer bounds
+/// come from the last painted blank canvas; the destination is the ordinary
+/// bottom composer anchor. Position, composer height, outgoing header, and
+/// transcript reveal all share [`motion::NEW_THREAD_LAUNCH`].
+#[derive(Debug, Clone, Copy)]
+struct NewThreadLaunch {
+    source_bottom: f32,
+    source_height: f32,
+    started: std::time::Instant,
+}
+
+fn new_thread_transcript_opacity(progress: f32) -> f32 {
+    ((progress - 0.12) / 0.88).clamp(0.0, 1.0)
+}
+
+fn new_thread_header_opacity(progress: f32) -> f32 {
+    (1.0 - progress / 0.55).clamp(0.0, 1.0)
+}
+
+fn new_thread_composer_offset(
+    source_bottom: f32,
+    destination_bottom: f32,
+    progress: f32,
+) -> f32 {
+    (source_bottom - destination_bottom) * (1.0 - progress.clamp(0.0, 1.0))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SplashPhase {
     Visible,
@@ -1176,6 +1203,11 @@ pub struct Shell {
     /// the transcript's bottom clearance, and the jump pill's anchor (the
     /// same one-frame lag every fade here rides).
     bottom_stack: std::rc::Rc<std::cell::Cell<f32>>,
+    /// Last painted bounds of the centered new-thread composer. The first-send
+    /// transition uses its bottom edge as the FLIP source anchor.
+    new_thread_composer_bottom: std::rc::Rc<std::cell::Cell<f32>>,
+    new_thread_composer_height: std::rc::Rc<std::cell::Cell<f32>>,
+    new_thread_launch: Option<NewThreadLaunch>,
     /// The sidebar's archived accordion (t3code Sidebar): OPEN by default
     /// (user request), session-transient. `archived_shown` pages the
     /// expanded list ("Show more" reveals another page).
@@ -1358,6 +1390,7 @@ pub struct Shell {
     /// width target and the physical ceiling for free-form resizing
     /// ([`Self::right_target`] has no `Window`).
     viewport_width: f32,
+    viewport_height: f32,
     terminal_tween: Option<WidthTween>,
     /// Last observed `window.is_fullscreen()` (`None` before first paint) —
     /// flips key the traffic-light inset tween.
@@ -1436,14 +1469,18 @@ impl Shell {
         // reply's space below it (notes-app parity).
         let composer_events = cx.subscribe(&composer, {
             let transcript = transcript.clone();
-            move |_this: &mut Shell, _, event: &ComposerEvent, cx| match event {
+            move |this: &mut Shell, _, event: &ComposerEvent, cx| match event {
                 ComposerEvent::Sent {
                     chat_id,
                     message_id,
+                    from_new_thread,
                 } => {
                     transcript.update(cx, |t, cx| {
                         t.on_own_send(chat_id.clone(), message_id.clone(), cx)
                     });
+                    if *from_new_thread {
+                        this.begin_new_thread_launch(cx);
+                    }
                 }
                 ComposerEvent::Queued {
                     chat_id,
@@ -1562,6 +1599,9 @@ impl Shell {
             // Seed with the compact composer stack's rough height so the
             // first frame's clearance isn't zero (the measure corrects it).
             bottom_stack: std::rc::Rc::new(std::cell::Cell::new(120.0)),
+            new_thread_composer_bottom: std::rc::Rc::new(std::cell::Cell::new(0.0)),
+            new_thread_composer_height: std::rc::Rc::new(std::cell::Cell::new(0.0)),
+            new_thread_launch: None,
             archived_open: true,
             archived_shown: 0,
             archived_hover: None,
@@ -1656,6 +1696,7 @@ impl Shell {
             main_takeover_tween: None,
             right_pane_expanded: false,
             viewport_width: 1280.0,
+            viewport_height: 880.0,
             terminal_tween: None,
             fullscreen: None,
             titlebar_tween: None,
@@ -4309,6 +4350,41 @@ impl Shell {
 
     // ---- render pieces ----
 
+    fn begin_new_thread_launch(&mut self, cx: &mut Context<Self>) {
+        let source_bottom = self.new_thread_composer_bottom.get();
+        let source_height = self.new_thread_composer_height.get();
+        if motion::reduced_motion(cx) || source_bottom <= 0.0 || source_height <= 0.0 {
+            self.new_thread_launch = None;
+            return;
+        }
+        self.new_thread_launch = Some(NewThreadLaunch {
+            source_bottom,
+            source_height,
+            started: std::time::Instant::now(),
+        });
+        cx.notify();
+    }
+
+    /// Current coordinated first-send frame. Manual evaluation avoids a
+    /// remount replay when the composer moves between its two parents.
+    fn new_thread_launch_frame(&mut self) -> Option<(NewThreadLaunch, f32)> {
+        let launch = self.new_thread_launch?;
+        if self.reduced_motion {
+            self.new_thread_launch = None;
+            return None;
+        }
+        let total = motion::NEW_THREAD_LAUNCH
+            .total()
+            .mul_f32(motion::speed_scale());
+        let raw = launch.started.elapsed().as_secs_f32() / total.as_secs_f32();
+        if raw >= 1.0 {
+            self.new_thread_launch = None;
+            return None;
+        }
+        self.motion_active.set(true);
+        Some((launch, motion::NEW_THREAD_LAUNCH.progress(raw)))
+    }
+
     fn tween_elapsed(&self, started: std::time::Instant) -> Duration {
         self.render_time
             .unwrap_or_else(std::time::Instant::now)
@@ -6752,15 +6828,68 @@ impl Shell {
         let has_spaces = !self.state.read(cx).spaces.is_empty();
         let has_appshots = !self.composer.read(cx).staged_appshots().is_empty();
         let no_project = self.state.read(cx).no_project;
+        let launch_frame = self.new_thread_launch_frame();
+        let term_h = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
+        let launch_composer_offset = launch_frame.map(|(launch, progress)| {
+            let destination_bottom = self.viewport_height - term_h;
+            new_thread_composer_offset(launch.source_bottom, destination_bottom, progress)
+        });
 
         // Content outlet: selected chat → transcript; nothing selected → the
         // centered new-thread composition; no spaces at all → the onboarding
         // card. New-chat mode mints the chat id on first send.
         let outlet: AnyElement = if has_selection {
-            self.transcript
-                .clone()
-                .cached(gpui::StyleRefinement::default().size_full())
-                .into_any_element()
+            if let Some((launch, progress)) = launch_frame {
+                let pickers = self.composer.read(cx).pickers().clone();
+                let selectors = pickers.update(cx, |p, cx| p.render_target_selectors(cx));
+                div()
+                    .relative()
+                    .size_full()
+                    .child(
+                        div()
+                            .size_full()
+                            .opacity(new_thread_transcript_opacity(progress))
+                            .child(self.transcript.clone()),
+                    )
+                    // Let the source header dissolve while the composer leaves
+                    // it behind. The composer itself is rendered only once —
+                    // in the destination stack — and FLIP-offset to its old
+                    // bottom edge below.
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .opacity(new_thread_header_opacity(progress))
+                            .top(px(-8.0 * progress))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .child(
+                                        icon(icons::ZERON_LOGO)
+                                            .w(px(41.9))
+                                            .h(px(48.0))
+                                            .text_color(theme.text.opacity(0.2)),
+                                    )
+                                    .child(div().mt(px(16.0)).child(selectors))
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .mt(px(24.0))
+                                            .h(px(launch.source_height)),
+                                    ),
+                            ),
+                    )
+                    .into_any_element()
+            } else {
+                self.transcript.clone().cached(gpui::StyleRefinement::default().size_full()).into_any_element()
+            }
         } else if !has_spaces && !no_project {
             // Onboarding (first boot / after the destructive wipe): no folders
             // to work in yet — one clear affordance.
@@ -6837,7 +6966,26 @@ impl Shell {
                                 .text_color(theme.text.opacity(0.2)),
                         )
                         .child(div().mt(px(16.0)).child(selectors))
-                        .child(div().w_full().mt(px(24.0)).child(self.composer.clone())),
+                        .child({
+                            let bottom = self.new_thread_composer_bottom.clone();
+                            let height = self.new_thread_composer_height.clone();
+                            div()
+                                .w_full()
+                                .mt(px(24.0))
+                                .relative()
+                                .child(
+                                    gpui::canvas(
+                                        move |bounds, _, _| {
+                                            bottom.set(f32::from(bounds.bottom()));
+                                            height.set(f32::from(bounds.size.height));
+                                        },
+                                        |_, _, _, _| {},
+                                    )
+                                    .absolute()
+                                    .inset_0(),
+                                )
+                                .child(self.composer.clone())
+                        }),
                 ))
                 .into_any_element()
         };
@@ -6932,7 +7080,6 @@ impl Shell {
                     // tween the dock animates with; `stack_h` below is only
                     // the chrome that still overlaps the transcript (status
                     // strip + composer).
-                    let term_h = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
                     let stack_h = (self.bottom_stack.get() - term_h).max(0.0);
                     // Opaque from the composer PILL's top (the reserved
                     // status strip above it is empty air), zero at the
@@ -6983,7 +7130,12 @@ impl Shell {
                     )
                     .child(status)
                     .when((has_spaces || has_appshots) && has_selection, |el| {
-                        el.child(self.composer.clone())
+                        el.child(
+                            div()
+                                .relative()
+                                .top(px(launch_composer_offset.unwrap_or(0.0)))
+                                .child(self.composer.clone()),
+                        )
                     })
                     .child(self.render_terminal_container(cx))
             })
@@ -9056,6 +9208,7 @@ impl Render for Shell {
                 }
                 // MessageRail width gate: hide below 48rem of main-panel width.
                 let viewport = f32::from(window.viewport_size().width);
+                self.viewport_height = f32::from(window.viewport_size().height);
                 // Stamped for `right_target` — the expanded changes panel
                 // sizes itself to the viewport.
                 self.viewport_width = viewport;
@@ -9307,6 +9460,21 @@ mod tests {
                 id.label()
             );
         }
+    }
+
+    #[test]
+    fn new_thread_handoff_is_continuous_and_staged() {
+        // The bottom-anchored destination starts exactly at the centered
+        // source's bottom edge, then lands without overshoot.
+        assert_eq!(new_thread_composer_offset(520.0, 840.0, 0.0), -320.0);
+        assert_eq!(new_thread_composer_offset(520.0, 840.0, 0.5), -160.0);
+        assert_eq!(new_thread_composer_offset(520.0, 840.0, 1.0), 0.0);
+        // The source header leaves first; the transcript arrives just after
+        // motion begins and is fully opaque at rest.
+        assert_eq!(new_thread_header_opacity(0.0), 1.0);
+        assert_eq!(new_thread_header_opacity(1.0), 0.0);
+        assert_eq!(new_thread_transcript_opacity(0.0), 0.0);
+        assert_eq!(new_thread_transcript_opacity(1.0), 1.0);
     }
 
     #[test]
