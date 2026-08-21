@@ -6753,10 +6753,9 @@ impl Shell {
         let has_appshots = !self.composer.read(cx).staged_appshots().is_empty();
         let no_project = self.state.read(cx).no_project;
 
-        // Content outlet: selected chat → transcript; nothing selected → a
-        // bare canvas (the composer stack carries the affordances); no spaces
-        // at all → the onboarding card. The composer sits below the first two
-        // (new-chat mode mints the chat id on first send).
+        // Content outlet: selected chat → transcript; nothing selected → the
+        // centered new-thread composition; no spaces at all → the onboarding
+        // card. New-chat mode mints the chat id on first send.
         let outlet: AnyElement = if has_selection {
             self.transcript
                 .clone()
@@ -6810,11 +6809,37 @@ impl Shell {
                 ))
                 .into_any_element()
         } else {
-            // New-chat canvas: intentionally bare (user request — no logo, no
-            // helper line). The device + project selectors live above the
-            // composer pill (composer.rs renders them via
-            // `render_target_selectors`).
-            div().size_full().into_any_element()
+            // New-thread canvas: the mark, target selectors, composer, and
+            // checkout row form one vertically-centered composition. The
+            // composer lives here only while the canvas is blank; established
+            // sessions keep it in the bottom chrome stack below.
+            let pickers = self.composer.read(cx).pickers().clone();
+            let selectors = pickers.update(cx, |p, cx| p.render_target_selectors(cx));
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .child(motion::settle_down(
+                    "new-thread-composition",
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .child(
+                            icon(icons::ZERON_LOGO)
+                                .w(px(41.9))
+                                .h(px(48.0))
+                                // 0.09 read as barely-there on the glass
+                                // backdrop (user report).
+                                .text_color(theme.text.opacity(0.2)),
+                        )
+                        .child(div().mt(px(16.0)).child(selectors))
+                        .child(div().w_full().mt(px(24.0)).child(self.composer.clone())),
+                ))
+                .into_any_element()
         };
 
         let status = self.render_status_strip(cx);
@@ -6957,7 +6982,7 @@ impl Shell {
                         .inset_0(),
                     )
                     .child(status)
-                    .when(has_spaces || has_appshots, |el| {
+                    .when((has_spaces || has_appshots) && has_selection, |el| {
                         el.child(self.composer.clone())
                     })
                     .child(self.render_terminal_container(cx))

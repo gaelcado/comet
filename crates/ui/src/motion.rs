@@ -391,6 +391,19 @@ where
     })
 }
 
+/// New-thread composition entrance: opacity 0→1 while settling 10px down into
+/// place over [`FADE_IN`]. Keeping the logo, target selectors, composer, and
+/// checkout row under one animation makes the blank canvas arrive as a single
+/// object instead of four independently moving pieces.
+pub fn settle_down<E>(id: impl Into<ElementId>, element: E) -> AnimationElement<E>
+where
+    E: Styled + IntoElement + 'static,
+{
+    element.with_animation(id, FADE_IN.animation(), |el, t| {
+        el.relative().opacity(t).top(px(-10.0 * (1.0 - t)))
+    })
+}
+
 /// Quick opacity-only fade over [`FADE_QUICK`].
 pub fn fade_quick<E>(id: impl Into<ElementId>, element: E) -> AnimationElement<E>
 where
