@@ -28,7 +28,9 @@ use zeron_proto::{AuthState, WorkspaceScope};
 use zeron_rpc::methods;
 
 use crate::changes::{Changes, ChangesEvent};
-use crate::composer::{Composer, ComposerEvent, ComposerInput, ComposerInputEvent};
+use crate::composer::{
+    COMPOSER_MAX_WIDTH, Composer, ComposerEvent, ComposerInput, ComposerInputEvent,
+};
 use crate::files::{FilesCloseDisposition, FilesEvent, FilesSurface, WorkspacePathDrag};
 use crate::icons::{self, icon};
 use crate::loaders;
@@ -691,7 +693,10 @@ const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 /// selectors and composer are the control layer floating over its faded tail.
 const NEW_THREAD_COMET_WIDTH: f32 = 209.5;
 const NEW_THREAD_COMET_HEIGHT: f32 = 240.0;
-const NEW_THREAD_CONTROLS_PULL_UP: f32 = 88.0;
+const NEW_THREAD_COMET_X_CORRECTION: f32 = -8.0;
+const NEW_THREAD_HERO_HEIGHT: f32 = 240.0;
+const NEW_THREAD_SELECTOR_INSET: f32 = 24.0;
+const NEW_THREAD_SELECTOR_BOTTOM: f32 = 14.0;
 
 /// Drag marker for the sidebar resize handle.
 struct SidebarResize;
@@ -822,6 +827,47 @@ fn new_thread_composer_offset(
     progress: f32,
 ) -> f32 {
     (source_bottom - destination_bottom) * (1.0 - progress.clamp(0.0, 1.0))
+}
+
+/// The new-thread visual and context controls occupy one bounded hero region.
+/// Only the comet layer clips at the composer's top edge; the selector rail
+/// remains free to open its deferred popovers over the composer.
+fn new_thread_hero(selectors: AnyElement, theme: &Theme) -> AnyElement {
+    div()
+        .w_full()
+        .max_w(px(COMPOSER_MAX_WIDTH))
+        .h(px(NEW_THREAD_HERO_HEIGHT))
+        .relative()
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .overflow_hidden()
+                .flex()
+                .items_end()
+                .justify_center()
+                .child(
+                    icon(icons::ZERON_LOGO_FADED)
+                        .w(px(NEW_THREAD_COMET_WIDTH))
+                        .h(px(NEW_THREAD_COMET_HEIGHT))
+                        // The asymmetric comet reads optically right-heavy.
+                        .ml(px(NEW_THREAD_COMET_X_CORRECTION))
+                        .text_color(theme.text.opacity(0.18)),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(NEW_THREAD_SELECTOR_INSET))
+                .bottom(px(NEW_THREAD_SELECTOR_BOTTOM))
+                .p(px(2.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(theme.border.opacity(0.6))
+                .bg(theme.surface_raised.opacity(0.55))
+                .child(selectors),
+        )
+        .into_any_element()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6877,21 +6923,10 @@ impl Shell {
                                     .flex()
                                     .flex_col()
                                     .items_center()
-                                    .child(
-                                        icon(icons::ZERON_LOGO_FADED)
-                                            .w(px(NEW_THREAD_COMET_WIDTH))
-                                            .h(px(NEW_THREAD_COMET_HEIGHT))
-                                            .text_color(theme.text.opacity(0.18)),
-                                    )
-                                    .child(
-                                        div()
-                                            .mt(px(-NEW_THREAD_CONTROLS_PULL_UP))
-                                            .child(selectors),
-                                    )
+                                    .child(new_thread_hero(selectors, theme))
                                     .child(
                                         div()
                                             .w_full()
-                                            .mt(px(24.0))
                                             .h(px(launch.source_height)),
                                     ),
                             ),
@@ -6967,23 +7002,12 @@ impl Shell {
                         .flex()
                         .flex_col()
                         .items_center()
-                        .child(
-                            icon(icons::ZERON_LOGO_FADED)
-                                .w(px(NEW_THREAD_COMET_WIDTH))
-                                .h(px(NEW_THREAD_COMET_HEIGHT))
-                                .text_color(theme.text.opacity(0.18)),
-                        )
-                        .child(
-                            div()
-                                .mt(px(-NEW_THREAD_CONTROLS_PULL_UP))
-                                .child(selectors),
-                        )
+                        .child(new_thread_hero(selectors, theme))
                         .child({
                             let bottom = self.new_thread_composer_bottom.clone();
                             let height = self.new_thread_composer_height.clone();
                             div()
                                 .w_full()
-                                .mt(px(24.0))
                                 .relative()
                                 .child(
                                     gpui::canvas(

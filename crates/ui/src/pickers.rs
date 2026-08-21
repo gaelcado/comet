@@ -2408,10 +2408,10 @@ impl Pickers {
             .child(div().min_w_0().truncate().child(label))
     }
 
-    /// The new-session target row — device + project selector chips rendered
-    /// ABOVE the composer pill, left-aligned like the checkout toolbar (the
-    /// composer footer carries only checkout + ref, and sessions show their
-    /// target in the titlebar instead).
+    /// The new-session canvas's target row — device + project selector chips
+    /// form one context rail at the composer's leading edge (their popovers
+    /// anchor BELOW; the composer footer carries only checkout + ref now, and
+    /// sessions show their target in the titlebar instead).
     pub fn render_target_selectors(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let closing = self.open.closing_since();
@@ -2472,9 +2472,8 @@ impl Pickers {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4.0))
-            .px(px(10.0))
-            .child(attach_overlay(
+            .gap(px(2.0))
+            .child(attach_overlay_below(
                 device_chip,
                 &mut overlay,
                 PickerKind::Device,
