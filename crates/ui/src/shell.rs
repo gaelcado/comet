@@ -691,13 +691,16 @@ const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 
 /// New-thread hero geometry. The comet is the full-bleed visual layer; the
 /// selectors and composer are the control layer floating over its faded tail.
-const NEW_THREAD_COMET_WIDTH: f32 = 209.5;
-const NEW_THREAD_COMET_HEIGHT: f32 = 240.0;
+const NEW_THREAD_COMET_WIDTH: f32 = 174.5;
+const NEW_THREAD_COMET_HEIGHT: f32 = 200.0;
 const NEW_THREAD_COMET_X_CORRECTION: f32 = -8.0;
 const NEW_THREAD_COMET_CLIP_OVERSHOOT: f32 = 16.0;
-const NEW_THREAD_HERO_HEIGHT: f32 = 224.0;
+const NEW_THREAD_HERO_HEIGHT: f32 = 184.0;
 const NEW_THREAD_SELECTOR_INSET: f32 = 24.0;
 const NEW_THREAD_SELECTOR_BOTTOM: f32 = 14.0;
+/// The composer carries more visual mass than the fading mark, so mathematical
+/// centering reads low. Lift the entire composition to its optical center.
+const NEW_THREAD_COMPOSITION_Y_CORRECTION: f32 = -20.0;
 
 /// Drag marker for the sidebar resize handle.
 struct SidebarResize;
@@ -6922,6 +6925,8 @@ impl Shell {
                             .child(
                                 div()
                                     .w_full()
+                                    .relative()
+                                    .top(px(NEW_THREAD_COMPOSITION_Y_CORRECTION))
                                     .flex()
                                     .flex_col()
                                     .items_center()
@@ -7001,6 +7006,8 @@ impl Shell {
                     "new-thread-composition",
                     div()
                         .w_full()
+                        .relative()
+                        .top(px(NEW_THREAD_COMPOSITION_Y_CORRECTION))
                         .flex()
                         .flex_col()
                         .items_center()
