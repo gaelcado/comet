@@ -101,7 +101,8 @@ const TOOL_TEXT_SIZE: f32 = 12.0;
 /// the 30px chip body intact while bringing the tree cadence close to the
 /// reference's compact 26px rows.
 const TOOL_TREE_ROW_HEIGHT: f32 = 32.0;
-const TOOL_GROUP_MAX_HEIGHT: f32 = 320.0;
+const TOOL_GROUP_VISIBLE_COUNT: usize = 8;
+const TOOL_HISTORY_CONTROL_HEIGHT: f32 = 28.0;
 const TOOL_FOLD: motion::MotionSpec = motion::MotionSpec::new(140, motion::EASE_OUT);
 /// BoardUI task-list cadence: a slow light sweep keeps the active summary
 /// legible, while each newly appended row reveals quickly enough to read as a
@@ -2128,36 +2129,11 @@ struct ToolGroupReveal {
     rendered_height: f32,
 }
 
-#[derive(Default, Clone)]
-struct ToolGroupScroll {
-    handle: gpui::ScrollHandle,
-}
-
-impl ToolGroupScroll {
-    fn viewport(&self, id: SharedString, height: f32, child: impl IntoElement) -> AnyElement {
-        // The handle still describes the previous layout here. Sample the
-        // user's position before this frame adds height, then ask GPUI to
-        // resolve the new bottom during layout only while pinned.
-        if f32::from(self.handle.max_offset().y + self.handle.offset().y) <= 2.0 {
-            self.handle.scroll_to_bottom();
-        }
-        let scroller = div()
-            .id(id.clone())
-            // The virtualized List registers its wheel listener after its
-            // children. Block its hitbox before dispatch, not just bubbling.
-            .occlude()
-            .h(px(height.min(TOOL_GROUP_MAX_HEIGHT)))
-            .overflow_y_scroll()
-            .track_scroll(&self.handle)
-            .child(child);
-        div()
-            .id(SharedString::from(format!("{id}-boundary")))
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .child(
-                crate::edge_fade::edge_faded(20.0, true, true, scroller)
-                    .fade_overflow_y(&self.handle),
-            )
-            .into_any_element()
+fn tool_history_start(count: usize, compact: bool) -> usize {
+    if compact {
+        count.saturating_sub(TOOL_GROUP_VISIBLE_COUNT)
+    } else {
+        0
     }
 }
 
@@ -2573,7 +2549,7 @@ pub struct Transcript {
     /// Entrance state follows stable groups through completion so fast calls
     /// finish revealing. Replay rows have no entrance timestamps.
     tool_group_reveals: HashMap<SharedString, ToolGroupReveal>,
-    tool_group_scrolls: HashMap<SharedString, ToolGroupScroll>,
+    tool_group_history: HashSet<SharedString>,
     /// Detail folds (output/diff) per chip, keyed `"{row_id}#d{ix}"` — full
     /// [`FoldState`]s so detail bodies tween open/closed exactly like the
     /// group fold. Render-local like `folds` — never part of the row
@@ -2839,7 +2815,7 @@ impl Transcript {
             tree_cache: HashMap::new(),
             folds: HashMap::new(),
             tool_group_reveals: HashMap::new(),
-            tool_group_scrolls: HashMap::new(),
+            tool_group_history: HashSet::new(),
             tool_details: HashMap::new(),
             user_folds: HashMap::new(),
             user_heights: HashMap::new(),
@@ -3910,7 +3886,7 @@ impl Transcript {
             self.tree_cache.clear();
             self.folds.clear();
             self.tool_group_reveals.clear();
-            self.tool_group_scrolls.clear();
+            self.tool_group_history.clear();
             self.user_folds.clear();
             self.user_heights.clear();
             self.user_hold_token = self.user_hold_token.wrapping_add(1);
@@ -4039,8 +4015,8 @@ impl Transcript {
         }
         self.tool_group_reveals
             .retain(|row_id, _| live_tool_groups.contains(row_id));
-        self.tool_group_scrolls
-            .retain(|row_id, _| live_tool_groups.contains(row_id));
+        self.tool_group_history
+            .retain(|row_id| live_tool_groups.contains(row_id));
 
         // Runtime scroll handles follow the stable code rows exactly. A live
         // block keeps its handle through completion; deleted/reindexed tail
@@ -5853,13 +5829,23 @@ impl Transcript {
         {
             motion_active = true;
         }
+        let show_history = self.tool_group_history.contains(row_id);
+        let first_visible = tool_history_start(tools.len(), collapses && !show_history);
+        let has_history = collapses && tools.len() > TOOL_GROUP_VISIBLE_COUNT;
+        let history_controls_height = if has_history {
+            TOOL_HISTORY_CONTROL_HEIGHT * if show_history { 2.0 } else { 1.0 }
+        } else {
+            0.0
+        };
         let revealed_height = CHIPS_TOP_PAD
+            + history_controls_height
             + row_heights
                 .iter()
                 .zip(&reveal_progress)
+                .skip(first_visible)
                 .map(|(height, progress)| height * progress)
                 .sum::<f32>();
-        let viewport_height = revealed_height.min(TOOL_GROUP_MAX_HEIGHT);
+        let viewport_height = revealed_height;
         let target = if open { viewport_height } else { 0.0 };
         let summary: SharedString = tool_group_summary(tools).into();
         let shimmer_phase = if active && !reduce_motion {
@@ -5937,206 +5923,273 @@ impl Transcript {
             .flex()
             .flex_col()
             .gap(px(CHIP_GAP))
-            .children(tools.iter().enumerate().map(|(ix, tool)| {
-                let reveal = reveal_progress[ix];
-                let connector_reveal = connector_progress[ix];
-                let content_reveal = tool_connector_parts(connector_reveal, ix > 0).1;
-                let continuation_reveal =
-                    tool_connector_continuation(connector_progress.get(ix + 1).copied());
-                let row_height = row_heights[ix];
-                // Spawn chips are LINKS, not accordions: the click opens the
-                // subagent's transcript as a right-pane tab (the shell hosts
-                // the surface — the chip only announces which doc it indexes).
-                if let Some(doc_id) = tool.subagent_ref.clone().filter(|_| is_spawn_link(tool)) {
-                    let chat_id = self.chat_id.clone().unwrap_or_default();
-                    let title = subagent_tab_title(&tool.call);
-                    let frozen = matches!(
-                        tool.subagent_status,
-                        Some(SubagentStatus::Done) | Some(SubagentStatus::Failed)
-                    );
-                    return subagent_chip(
-                        tool,
-                        SharedString::from(format!("{row_id}#s{ix}")),
-                        cx.listener(move |_, _, _, cx| {
-                            cx.emit(TranscriptEvent::OpenSubagent {
-                                chat_id: chat_id.clone(),
-                                doc_id: doc_id.to_string(),
-                                title: title.to_string(),
-                                frozen,
-                            });
-                        }),
-                        collapses,
-                        theme,
-                        cx.entity_id(),
-                        cx,
-                    );
-                }
-                let detail = details[ix].clone();
-                let invocation = invocations[ix].clone();
-                if detail.is_none() && invocation.is_none() {
-                    return reveal_tool_row(
-                        tool_chip(
-                            tool,
-                            collapses,
-                            ix > 0,
-                            ix + 1 < tools.len(),
-                            content_reveal,
-                            connector_reveal,
-                            continuation_reveal,
-                            theme,
-                            cx.entity_id(),
-                            cx,
-                        ),
-                        row_height,
-                        reveal,
-                    );
-                }
-                let affordance = affordances[ix].clone();
-                let open = detail_opens[ix];
-                let dfold = detail_folds[ix];
-                let key = SharedString::from(format!("{row_id}#d{ix}"));
-                // Ordinary tools expand into muted text along the same column.
-                // Subagent fallbacks retain their card; explicit heights keep
-                // the row and group fold animations in sync.
-                let animating = dfold.epoch > 0
-                    && dfold
-                        .toggled_at
-                        .is_some_and(|at| at.elapsed() < FOLD_TWEEN_WINDOW);
-                let toggle_key = key.clone();
-                let mut card = div()
-                    .my(px((base_row_height - CHIP_CARD_HEIGHT) / 2.0))
-                    .when(collapses, |el| el.ml(px(ACTIVITY_TEXT_GAP)))
-                    .min_w_0()
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .overflow_hidden()
-                    .when(!collapses, |card| {
-                        card.rounded(px(9.0))
-                            .border_1()
-                            .border_color(crate::theme::hairline(0.07))
-                            .bg(crate::theme::ink(0.03))
-                    })
-                    .child(
-                        div()
-                            .id(key.clone())
-                            .h(px(if collapses {
-                                CHIP_CARD_HEIGHT
-                            } else {
-                                CHIP_HEADER_HEIGHT
-                            }))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                let entry =
-                                    this.tool_details.entry(toggle_key.clone()).or_default();
-                                let currently_open = entry.open.unwrap_or(open);
-                                entry.from = row_height - base_row_height + CHIP_CARD_HEIGHT;
-                                entry.open = Some(!currently_open);
-                                entry.epoch += 1;
-                                entry.toggled_at = Some(Instant::now());
-                                cx.notify();
-                            }))
-                            .child(chip_header(tool, open, theme, cx.entity_id(), cx)),
-                    );
-                // The body stays mounted while the close tween shrinks over it.
-                // Invocation first (what was asked), then output/diff (what
-                // came back), separated by a small gap.
-                if open || animating {
-                    let mut panel = div()
-                        .flex_none()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .overflow_hidden();
-                    if let Some(invocation) = invocation.as_deref() {
-                        panel = panel
-                            .child(
-                                div()
-                                    .h(px(DETAIL_SEPARATOR))
-                                    .flex_none()
-                                    .when(!collapses, |line| line.bg(crate::theme::hairline(0.06))),
-                            )
-                            .child(detail_body(invocation, None, theme));
-                    }
-                    if let Some(detail) = detail.as_deref() {
-                        panel = panel
-                            .child(
-                                div()
-                                    .h(px(DETAIL_SEPARATOR))
-                                    .flex_none()
-                                    .when(!collapses, |line| line.bg(crate::theme::hairline(0.06))),
-                            )
-                            .child(detail_body(detail, detail_highlights[ix].clone(), theme));
-                    }
-                    if let Some(ChipAffordance { blob_ref, label }) = affordance {
-                        let loading = matches!(
-                            self.blob_details.get(&blob_ref),
-                            Some(BlobFetch::Loading(_))
-                        );
-                        let mut row = div()
-                            .id(SharedString::from(format!("{key}-blob")))
-                            .h(px(BLOB_AFFORDANCE_HEIGHT))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .text_size(px(TOOL_TEXT_SIZE))
-                            .text_color(theme.text_faint)
-                            .child(label);
-                        if !loading {
-                            row = row
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(theme.text_muted))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.spawn_blob_fetch(blob_ref.clone(), cx);
-                                    cx.notify();
-                                }));
+            .children(
+                tools
+                    .iter()
+                    .enumerate()
+                    .skip(first_visible)
+                    .map(|(ix, tool)| {
+                        let reveal = reveal_progress[ix];
+                        let connector_reveal = connector_progress[ix];
+                        let content_reveal =
+                            tool_connector_parts(connector_reveal, ix > first_visible).1;
+                        let continuation_reveal =
+                            tool_connector_continuation(connector_progress.get(ix + 1).copied());
+                        let row_height = row_heights[ix];
+                        // Spawn chips are LINKS, not accordions: the click opens the
+                        // subagent's transcript as a right-pane tab (the shell hosts
+                        // the surface — the chip only announces which doc it indexes).
+                        if let Some(doc_id) =
+                            tool.subagent_ref.clone().filter(|_| is_spawn_link(tool))
+                        {
+                            let chat_id = self.chat_id.clone().unwrap_or_default();
+                            let title = subagent_tab_title(&tool.call);
+                            let frozen = matches!(
+                                tool.subagent_status,
+                                Some(SubagentStatus::Done) | Some(SubagentStatus::Failed)
+                            );
+                            return subagent_chip(
+                                tool,
+                                SharedString::from(format!("{row_id}#s{ix}")),
+                                cx.listener(move |_, _, _, cx| {
+                                    cx.emit(TranscriptEvent::OpenSubagent {
+                                        chat_id: chat_id.clone(),
+                                        doc_id: doc_id.to_string(),
+                                        title: title.to_string(),
+                                        frozen,
+                                    });
+                                }),
+                                collapses,
+                                theme,
+                                cx.entity_id(),
+                                cx,
+                            );
                         }
-                        panel = panel.child(row);
-                    }
-                    card = card.child(panel);
-                }
-                let card = card.h(px(row_height - base_row_height + CHIP_CARD_HEIGHT));
-                let card = div().min_w_0().flex_1().child(card);
-                let row = div()
-                    .w_full()
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    // Stretch the line alongside the expanded text.
-                    .when(collapses, |row| {
-                        row.child(activity_rail(
-                            tool,
-                            ix > 0,
-                            ix + 1 < tools.len(),
-                            connector_reveal,
-                            continuation_reveal,
-                            base_row_height,
-                            theme,
-                        ))
-                    })
-                    .child(card.when(collapses && content_reveal < 1.0, |card| {
-                        card.relative()
-                            .top(px(4.0 * (1.0 - content_reveal)))
-                            .opacity(content_reveal)
-                    }))
-                    .into_any_element();
-                reveal_tool_row(row, row_height, reveal)
-            }));
+                        let detail = details[ix].clone();
+                        let invocation = invocations[ix].clone();
+                        if detail.is_none() && invocation.is_none() {
+                            return reveal_tool_row(
+                                tool_chip(
+                                    tool,
+                                    collapses,
+                                    ix > first_visible,
+                                    ix + 1 < tools.len(),
+                                    content_reveal,
+                                    connector_reveal,
+                                    continuation_reveal,
+                                    theme,
+                                    cx.entity_id(),
+                                    cx,
+                                ),
+                                row_height,
+                                reveal,
+                            );
+                        }
+                        let affordance = affordances[ix].clone();
+                        let open = detail_opens[ix];
+                        let dfold = detail_folds[ix];
+                        let key = SharedString::from(format!("{row_id}#d{ix}"));
+                        // Ordinary tools expand into muted text along the same column.
+                        // Subagent fallbacks retain their card; explicit heights keep
+                        // the row and group fold animations in sync.
+                        let animating = dfold.epoch > 0
+                            && dfold
+                                .toggled_at
+                                .is_some_and(|at| at.elapsed() < FOLD_TWEEN_WINDOW);
+                        let toggle_key = key.clone();
+                        let mut card = div()
+                            .my(px((base_row_height - CHIP_CARD_HEIGHT) / 2.0))
+                            .when(collapses, |el| el.ml(px(ACTIVITY_TEXT_GAP)))
+                            .min_w_0()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .when(!collapses, |card| {
+                                card.rounded(px(9.0))
+                                    .border_1()
+                                    .border_color(crate::theme::hairline(0.07))
+                                    .bg(crate::theme::ink(0.03))
+                            })
+                            .child(
+                                div()
+                                    .id(key.clone())
+                                    .h(px(if collapses {
+                                        CHIP_CARD_HEIGHT
+                                    } else {
+                                        CHIP_HEADER_HEIGHT
+                                    }))
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        let entry = this
+                                            .tool_details
+                                            .entry(toggle_key.clone())
+                                            .or_default();
+                                        let currently_open = entry.open.unwrap_or(open);
+                                        entry.from =
+                                            row_height - base_row_height + CHIP_CARD_HEIGHT;
+                                        entry.open = Some(!currently_open);
+                                        entry.epoch += 1;
+                                        entry.toggled_at = Some(Instant::now());
+                                        cx.notify();
+                                    }))
+                                    .child(chip_header(tool, open, theme, cx.entity_id(), cx)),
+                            );
+                        // The body stays mounted while the close tween shrinks over it.
+                        // Invocation first (what was asked), then output/diff (what
+                        // came back), separated by a small gap.
+                        if open || animating {
+                            let mut panel = div()
+                                .flex_none()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .overflow_hidden();
+                            if let Some(invocation) = invocation.as_deref() {
+                                panel = panel
+                                    .child(
+                                        div()
+                                            .h(px(DETAIL_SEPARATOR))
+                                            .flex_none()
+                                            .when(!collapses, |line| {
+                                                line.bg(crate::theme::hairline(0.06))
+                                            }),
+                                    )
+                                    .child(detail_body(invocation, None, theme));
+                            }
+                            if let Some(detail) = detail.as_deref() {
+                                panel = panel
+                                    .child(
+                                        div()
+                                            .h(px(DETAIL_SEPARATOR))
+                                            .flex_none()
+                                            .when(!collapses, |line| {
+                                                line.bg(crate::theme::hairline(0.06))
+                                            }),
+                                    )
+                                    .child(detail_body(
+                                        detail,
+                                        detail_highlights[ix].clone(),
+                                        theme,
+                                    ));
+                            }
+                            if let Some(ChipAffordance { blob_ref, label }) = affordance {
+                                let loading = matches!(
+                                    self.blob_details.get(&blob_ref),
+                                    Some(BlobFetch::Loading(_))
+                                );
+                                let mut row = div()
+                                    .id(SharedString::from(format!("{key}-blob")))
+                                    .h(px(BLOB_AFFORDANCE_HEIGHT))
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .text_size(px(TOOL_TEXT_SIZE))
+                                    .text_color(theme.text_faint)
+                                    .child(label);
+                                if !loading {
+                                    row = row
+                                        .cursor_pointer()
+                                        .hover(|s| s.text_color(theme.text_muted))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.spawn_blob_fetch(blob_ref.clone(), cx);
+                                            cx.notify();
+                                        }));
+                                }
+                                panel = panel.child(row);
+                            }
+                            card = card.child(panel);
+                        }
+                        let card = card.h(px(row_height - base_row_height + CHIP_CARD_HEIGHT));
+                        let card = div().min_w_0().flex_1().child(card);
+                        let row = div()
+                            .w_full()
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            // Stretch the line alongside the expanded text.
+                            .when(collapses, |row| {
+                                row.child(activity_rail(
+                                    tool,
+                                    ix > first_visible,
+                                    ix + 1 < tools.len(),
+                                    connector_reveal,
+                                    continuation_reveal,
+                                    base_row_height,
+                                    theme,
+                                ))
+                            })
+                            .child(card.when(collapses && content_reveal < 1.0, |card| {
+                                card.relative()
+                                    .top(px(4.0 * (1.0 - content_reveal)))
+                                    .opacity(content_reveal)
+                            }))
+                            .into_any_element();
+                        reveal_tool_row(row, row_height, reveal)
+                    }),
+            );
 
-        let chips = if collapses {
-            let scroll = self.tool_group_scrolls.entry(row_id.clone()).or_default();
-            scroll.viewport(
-                SharedString::from(format!("{row_id}-scroll")),
-                viewport_height,
-                chips,
-            )
-        } else {
-            chips.into_any_element()
+        let history_control = |suffix: &str, label: String| {
+            let key = row_id.clone();
+            div()
+                .id(SharedString::from(format!("{row_id}-{suffix}")))
+                .h(px(TOOL_HISTORY_CONTROL_HEIGHT))
+                .flex_none()
+                .pl(px(ACTIVITY_GUTTER_WIDTH + ACTIVITY_TEXT_GAP))
+                .flex()
+                .items_center()
+                .text_size(px(TOOL_TEXT_SIZE))
+                .text_color(theme.text_muted)
+                .cursor_pointer()
+                .hover(|style| style.text_color(theme.text))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if show_history {
+                        this.tool_group_history.remove(&key);
+                    } else {
+                        this.tool_group_history.insert(key.clone());
+                    }
+                    let fold = this.folds.entry(key.clone()).or_default();
+                    // Reading history is an explicit choice; completion must
+                    // not close the group while the user is inspecting it.
+                    fold.open = Some(true);
+                    fold.from = revealed_height;
+                    fold.toggled_at = Some(Instant::now());
+                    this.pinned = false;
+                    if show_history {
+                        if let Some(item_ix) = this.rows.iter().position(|row| row.id == key) {
+                            this.list.scroll_to(ListOffset {
+                                item_ix,
+                                offset_in_item: px(0.0),
+                            });
+                        }
+                    }
+                    cx.notify();
+                }))
+                .child(label)
         };
+        let chips = div()
+            .flex()
+            .flex_col()
+            .when(has_history, |body| {
+                body.child(history_control(
+                    "history-top",
+                    if show_history {
+                        "Show less".to_owned()
+                    } else {
+                        format!("Show {} more", first_visible)
+                    },
+                ))
+            })
+            .child(chips)
+            .when(has_history && show_history, |body| {
+                body.child(history_control("history-bottom", "Show less".to_owned()))
+            })
+            .into_any_element();
 
         // Evaluate the group on the same clock as its disclosure. This also
         // gives completion a gentle close after the last arrival finishes,
@@ -7495,125 +7548,14 @@ mod tests {
     use super::*;
     use zeron_doc::MessagePart;
 
-    struct ToolScrollFixture {
-        scroll: ToolGroupScroll,
-        outer: gpui::ScrollHandle,
-        height: f32,
-    }
-
-    struct VirtualToolScrollFixture {
-        scroll: ToolGroupScroll,
-        page: ListState,
-    }
-
-    impl Render for VirtualToolScrollFixture {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let scroll = self.scroll.clone();
-            list(self.page.clone(), move |ix, _, _| {
-                if ix == 0 {
-                    scroll.viewport("nested-tools".into(), 800.0, div().h(px(800.0)))
-                } else {
-                    div().h(px(1000.0)).into_any_element()
-                }
-            })
-            .w_full()
-            .h(px(400.0))
-        }
-    }
-
-    #[gpui::test]
-    fn tool_wheel_is_isolated_from_virtual_page_in_both_directions(cx: &mut gpui::TestAppContext) {
-        let (view, cx) = cx.add_window_view(|_, _| VirtualToolScrollFixture {
-            scroll: ToolGroupScroll::default(),
-            page: ListState::new(2, ListAlignment::Top, px(0.0)),
-        });
-        cx.simulate_resize(size(px(400.0), px(400.0)));
-        cx.run_until_parked();
-        let (inner, page) = view.read_with(cx, |v, _| (v.scroll.handle.clone(), v.page.clone()));
-        let page_position = || {
-            let offset = page.logical_scroll_top();
-            (offset.item_ix, offset.offset_in_item)
-        };
-        let before = page_position();
-        for delta in [80.0, 10000.0, 80.0, -10000.0, -80.0] {
-            cx.simulate_event(gpui::ScrollWheelEvent {
-                position: point(px(100.0), px(100.0)),
-                delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(delta))),
-                ..Default::default()
-            });
-            cx.run_until_parked();
-            assert_eq!(page_position(), before, "inner wheel moved virtual page");
-        }
-        let inner_before = inner.offset();
-        cx.simulate_event(gpui::ScrollWheelEvent {
-            position: point(px(100.0), px(370.0)),
-            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-30.0))),
-            ..Default::default()
-        });
-        cx.run_until_parked();
-        assert_ne!(
-            page_position(),
-            before,
-            "wheel outside tools must scroll page"
-        );
-        assert_eq!(inner.offset(), inner_before, "page wheel moved inner tools");
-    }
-
-    impl Render for ToolScrollFixture {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div()
-                .id("outer")
-                .h(px(400.0))
-                .overflow_y_scroll()
-                .track_scroll(&self.outer)
-                .child(self.scroll.viewport(
-                    "tools".into(),
-                    self.height,
-                    div().h(px(self.height)).flex_none(),
-                ))
-                .child(div().h(px(1000.0)))
-        }
-    }
-
-    #[gpui::test]
-    fn tool_scroll_follows_growth_until_user_detaches(cx: &mut gpui::TestAppContext) {
-        let (view, cx) = cx.add_window_view(|_, _| ToolScrollFixture {
-            scroll: ToolGroupScroll::default(),
-            outer: gpui::ScrollHandle::new(),
-            height: 800.0,
-        });
-        cx.simulate_resize(size(px(400.0), px(400.0)));
-        cx.run_until_parked();
-        let (inner, outer) = view.read_with(cx, |v, _| (v.scroll.handle.clone(), v.outer.clone()));
-        assert_eq!(inner.offset().y, -inner.max_offset().y);
-        cx.simulate_event(gpui::ScrollWheelEvent {
-            position: point(px(100.0), px(100.0)),
-            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(80.0))),
-            ..Default::default()
-        });
-        cx.run_until_parked();
-        let detached_offset = inner.offset().y;
-        assert!(detached_offset > -inner.max_offset().y);
-        view.update(cx, |v, cx| {
-            v.height = 1000.0;
-            cx.notify();
-        });
-        cx.run_until_parked();
-        assert_eq!(inner.offset().y, detached_offset);
-        assert_eq!(outer.offset().y, px(0.0));
-        cx.simulate_event(gpui::ScrollWheelEvent {
-            position: point(px(100.0), px(100.0)),
-            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-10000.0))),
-            ..Default::default()
-        });
-        cx.run_until_parked();
-        view.update(cx, |v, cx| {
-            v.height = 1200.0;
-            cx.notify();
-        });
-        cx.run_until_parked();
-        assert_eq!(inner.offset().y, -inner.max_offset().y);
-        assert_eq!(outer.offset().y, px(0.0));
+    #[test]
+    fn tool_history_keeps_latest_calls_and_expands_without_reindexing() {
+        assert_eq!(tool_history_start(0, true), 0);
+        assert_eq!(tool_history_start(8, true), 0);
+        assert_eq!(tool_history_start(9, true), 1);
+        assert_eq!(tool_history_start(100, true), 92);
+        assert_eq!(tool_history_start(100, false), 0);
+        assert_eq!(tool_history_start(101, false), 0);
     }
 
     #[test]
