@@ -102,6 +102,7 @@ const TOOL_TEXT_SIZE: f32 = 12.0;
 /// reference's compact 26px rows.
 const TOOL_TREE_ROW_HEIGHT: f32 = 32.0;
 const TOOL_GROUP_MAX_HEIGHT: f32 = 320.0;
+const TOOL_FOLD: motion::MotionSpec = motion::MotionSpec::new(140, motion::EASE_OUT);
 /// BoardUI task-list cadence: a slow light sweep keeps the active summary
 /// legible, while each newly appended row reveals quickly enough to read as a
 /// continuous log rather than a stack of discrete pop-ins.
@@ -2127,7 +2128,7 @@ struct ToolGroupReveal {
     rendered_height: f32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct ToolGroupScroll {
     handle: gpui::ScrollHandle,
 }
@@ -2142,6 +2143,9 @@ impl ToolGroupScroll {
         }
         let scroller = div()
             .id(id.clone())
+            // The virtualized List registers its wheel listener after its
+            // children. Block its hitbox before dispatch, not just bubbling.
+            .occlude()
             .h(px(height.min(TOOL_GROUP_MAX_HEIGHT)))
             .overflow_y_scroll()
             .track_scroll(&self.handle)
@@ -2211,8 +2215,8 @@ fn tool_disclosure_progress(open: bool, fold: FoldState, now: Instant) -> f32 {
         .checked_duration_since(start)
         .unwrap_or_default()
         .as_secs_f32()
-        / RESIZE.total().as_secs_f32();
-    let progress = RESIZE.curve.eval(raw);
+        / TOOL_FOLD.total().as_secs_f32();
+    let progress = TOOL_FOLD.curve.eval(raw);
     if open { progress } else { 1.0 - progress }
 }
 
@@ -5774,6 +5778,7 @@ impl Transcript {
         } else {
             CHIP_HEIGHT
         };
+        let mut motion_active = false;
         let row_heights: Vec<f32> = details
             .iter()
             .zip(&invocations)
@@ -5795,11 +5800,11 @@ impl Transcript {
                 };
                 if !cx.reduce_motion() {
                     if let Some(at) = fold.toggled_at {
-                        let t = RESIZE
+                        let t = TOOL_FOLD
                             .curve
-                            .eval(at.elapsed().as_secs_f32() / RESIZE.total().as_secs_f32());
+                            .eval(at.elapsed().as_secs_f32() / TOOL_FOLD.total().as_secs_f32());
                         if t < 1.0 {
-                            motion::pulse_lease(cx.entity_id(), cx);
+                            motion_active = true;
                         }
                         return motion::lerp(
                             fold.from + base_row_height - CHIP_CARD_HEIGHT,
@@ -5846,7 +5851,7 @@ impl Transcript {
             || reveal_progress.iter().any(|progress| *progress < 1.0)
             || connector_progress.iter().any(|progress| *progress < 1.0)
         {
-            motion::pulse_lease(cx.entity_id(), cx);
+            motion_active = true;
         }
         let revealed_height = CHIPS_TOP_PAD
             + row_heights
@@ -6139,12 +6144,12 @@ impl Transcript {
         let body_height = if !reduce_motion {
             fold.toggled_at
                 .map(|at| {
-                    let t = RESIZE.curve.eval(
+                    let t = TOOL_FOLD.curve.eval(
                         now.saturating_duration_since(at).as_secs_f32()
-                            / RESIZE.total().as_secs_f32(),
+                            / TOOL_FOLD.total().as_secs_f32(),
                     );
                     if t < 1.0 {
-                        motion::pulse_lease(cx.entity_id(), cx);
+                        motion_active = true;
                     }
                     motion::lerp(fold.from, target, t)
                 })
@@ -6165,7 +6170,9 @@ impl Transcript {
                 .into_any_element()
         };
 
+        let view = cx.entity_id();
         div()
+            .relative()
             .flex()
             .flex_col()
             // Tool summaries and cards are code-adjacent chrome. Detail bodies
@@ -6179,6 +6186,18 @@ impl Transcript {
                 ))
             })
             .child(body)
+            .when(motion_active, |group| {
+                group.child(
+                    canvas(
+                        |_, _, _| (),
+                        move |_, _, window, _| {
+                            window.on_next_frame(move |_, cx| cx.notify(view));
+                        },
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+            })
             .into_any_element()
     }
 }
@@ -7480,6 +7499,64 @@ mod tests {
         scroll: ToolGroupScroll,
         outer: gpui::ScrollHandle,
         height: f32,
+    }
+
+    struct VirtualToolScrollFixture {
+        scroll: ToolGroupScroll,
+        page: ListState,
+    }
+
+    impl Render for VirtualToolScrollFixture {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let scroll = self.scroll.clone();
+            list(self.page.clone(), move |ix, _, _| {
+                if ix == 0 {
+                    scroll.viewport("nested-tools".into(), 800.0, div().h(px(800.0)))
+                } else {
+                    div().h(px(1000.0)).into_any_element()
+                }
+            })
+            .w_full()
+            .h(px(400.0))
+        }
+    }
+
+    #[gpui::test]
+    fn tool_wheel_is_isolated_from_virtual_page_in_both_directions(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| VirtualToolScrollFixture {
+            scroll: ToolGroupScroll::default(),
+            page: ListState::new(2, ListAlignment::Top, px(0.0)),
+        });
+        cx.simulate_resize(size(px(400.0), px(400.0)));
+        cx.run_until_parked();
+        let (inner, page) = view.read_with(cx, |v, _| (v.scroll.handle.clone(), v.page.clone()));
+        let page_position = || {
+            let offset = page.logical_scroll_top();
+            (offset.item_ix, offset.offset_in_item)
+        };
+        let before = page_position();
+        for delta in [80.0, 10000.0, 80.0, -10000.0, -80.0] {
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: point(px(100.0), px(100.0)),
+                delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(delta))),
+                ..Default::default()
+            });
+            cx.run_until_parked();
+            assert_eq!(page_position(), before, "inner wheel moved virtual page");
+        }
+        let inner_before = inner.offset();
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(100.0), px(370.0)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-30.0))),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        assert_ne!(
+            page_position(),
+            before,
+            "wheel outside tools must scroll page"
+        );
+        assert_eq!(inner.offset(), inner_before, "page wheel moved inner tools");
     }
 
     impl Render for ToolScrollFixture {
