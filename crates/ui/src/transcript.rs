@@ -101,6 +101,7 @@ const TOOL_TEXT_SIZE: f32 = 12.0;
 /// the 30px chip body intact while bringing the tree cadence close to the
 /// reference's compact 26px rows.
 const TOOL_TREE_ROW_HEIGHT: f32 = 32.0;
+const TOOL_GROUP_MAX_HEIGHT: f32 = 320.0;
 /// BoardUI task-list cadence: a slow light sweep keeps the active summary
 /// legible, while each newly appended row reveals quickly enough to read as a
 /// continuous log rather than a stack of discrete pop-ins.
@@ -111,7 +112,8 @@ const TOOL_ROW_REVEAL: motion::MotionSpec = motion::MotionSpec::new(360, motion:
 /// The connector deliberately uses a gentler curve than the row's height
 /// reveal. An expo ease made the line finish in the first few frames, so it
 /// looked static even though its geometry technically changed.
-const TOOL_CONNECTOR_REVEAL: motion::MotionSpec = motion::MotionSpec::new(320, motion::EASE_OUT);
+const TOOL_CONNECTOR_REVEAL: motion::MotionSpec =
+    motion::MotionSpec::new(480, motion::CubicBezier::new(0.0, 0.0, 1.0, 1.0));
 const TOOL_FIRST_ROW_DELAY_MS: u64 = 90;
 const TOOL_ROW_STAGGER_MS: u64 = 65;
 
@@ -2099,6 +2101,7 @@ struct FoldState {
     /// tween made every once-collapsed group flash open→closed on each
     /// reappearance (user report).
     toggled_at: Option<Instant>,
+    disclosure_at: Option<Instant>,
     /// Per-toggle duration. User bubbles scale this with travel distance;
     /// existing tool folds leave it at zero and keep their catalog constants.
     duration_ms: u64,
@@ -2120,6 +2123,38 @@ struct ToolGroupReveal {
     /// A title sweep begins with this group instead of inheriting the shared
     /// loader clock at an arbitrary point midway across the label.
     shimmer_started_at: Option<Instant>,
+    rendered_open: Option<bool>,
+    rendered_height: f32,
+}
+
+#[derive(Default)]
+struct ToolGroupScroll {
+    handle: gpui::ScrollHandle,
+}
+
+impl ToolGroupScroll {
+    fn viewport(&self, id: SharedString, height: f32, child: impl IntoElement) -> AnyElement {
+        // The handle still describes the previous layout here. Sample the
+        // user's position before this frame adds height, then ask GPUI to
+        // resolve the new bottom during layout only while pinned.
+        if f32::from(self.handle.max_offset().y + self.handle.offset().y) <= 2.0 {
+            self.handle.scroll_to_bottom();
+        }
+        let scroller = div()
+            .id(id.clone())
+            .h(px(height.min(TOOL_GROUP_MAX_HEIGHT)))
+            .overflow_y_scroll()
+            .track_scroll(&self.handle)
+            .child(child);
+        div()
+            .id(SharedString::from(format!("{id}-boundary")))
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .child(
+                crate::edge_fade::edge_faded(20.0, true, true, scroller)
+                    .fade_overflow_y(&self.handle),
+            )
+            .into_any_element()
+    }
 }
 
 fn tool_row_reveal_progress(start: Option<Instant>, now: Instant, reduce_motion: bool) -> f32 {
@@ -2169,7 +2204,7 @@ fn tool_connector_continuation(next_progress: Option<f32>) -> f32 {
 }
 
 fn tool_disclosure_progress(open: bool, fold: FoldState, now: Instant) -> f32 {
-    let Some(start) = fold.toggled_at else {
+    let Some(start) = fold.disclosure_at else {
         return if open { 1.0 } else { 0.0 };
     };
     let raw = now
@@ -2531,9 +2566,10 @@ pub struct Transcript {
     live_parsers: HashMap<String, IncrementalParser>,
     tree_cache: HashMap<String, (usize, Arc<BlockTree>)>,
     folds: HashMap<SharedString, FoldState>,
-    /// Paint-only entrance state for rows appended to the currently streaming
-    /// ordinary tool group. Settled and replayed groups never enter this map.
+    /// Entrance state follows stable groups through completion so fast calls
+    /// finish revealing. Replay rows have no entrance timestamps.
     tool_group_reveals: HashMap<SharedString, ToolGroupReveal>,
+    tool_group_scrolls: HashMap<SharedString, ToolGroupScroll>,
     /// Detail folds (output/diff) per chip, keyed `"{row_id}#d{ix}"` — full
     /// [`FoldState`]s so detail bodies tween open/closed exactly like the
     /// group fold. Render-local like `folds` — never part of the row
@@ -2799,6 +2835,7 @@ impl Transcript {
             tree_cache: HashMap::new(),
             folds: HashMap::new(),
             tool_group_reveals: HashMap::new(),
+            tool_group_scrolls: HashMap::new(),
             tool_details: HashMap::new(),
             user_folds: HashMap::new(),
             user_heights: HashMap::new(),
@@ -3869,6 +3906,7 @@ impl Transcript {
             self.tree_cache.clear();
             self.folds.clear();
             self.tool_group_reveals.clear();
+            self.tool_group_scrolls.clear();
             self.user_folds.clear();
             self.user_heights.clear();
             self.user_hold_token = self.user_hold_token.wrapping_add(1);
@@ -3964,11 +4002,11 @@ impl Transcript {
         let now = Instant::now();
         let mut live_tool_groups = HashSet::new();
         for row in &new_rows {
-            let RowKind::ToolGroup { tools, auto_open } = &row.kind else {
+            let RowKind::ToolGroup { tools, .. } = &row.kind else {
                 continue;
             };
             // Agent/spawn groups are standalone cards, not task trees.
-            if !*auto_open || !tool_group_collapses(tools) {
+            if !tool_group_collapses(tools) {
                 continue;
             }
             live_tool_groups.insert(row.id.clone());
@@ -3996,6 +4034,8 @@ impl Transcript {
             }
         }
         self.tool_group_reveals
+            .retain(|row_id, _| live_tool_groups.contains(row_id));
+        self.tool_group_scrolls
             .retain(|row_id, _| live_tool_groups.contains(row_id));
 
         // Runtime scroll handles follow the stable code rows exactly. A live
@@ -4405,6 +4445,7 @@ impl Transcript {
         entry.open = Some(!currently_open);
         entry.epoch += 1;
         entry.toggled_at = Some(Instant::now());
+        entry.disclosure_at = entry.toggled_at;
     }
 
     // ---- attachment read-back (user-attachments.tsx + transcript cache) ----
@@ -5573,11 +5614,34 @@ impl Transcript {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let fold = self.folds.get(row_id).copied().unwrap_or_default();
+        let mut fold = self.folds.get(row_id).copied().unwrap_or_default();
         // Agent/spawn chips never fold: they are their own row, always open,
         // no "Called N tools" header — a running subagent stays visible.
         let collapses = tool_group_collapses(tools);
-        let open = !collapses || fold.open.unwrap_or(auto_open);
+        let arrival_pending = !cx.reduce_motion()
+            && self.tool_group_reveals.get(row_id).is_some_and(|reveal| {
+                reveal.starts.iter().flatten().any(|start| {
+                    Instant::now()
+                        .checked_duration_since(*start)
+                        .unwrap_or_default()
+                        < TOOL_CONNECTOR_REVEAL.total()
+                })
+            });
+        let effective_auto_open = auto_open || arrival_pending;
+        let open = !collapses || fold.open.unwrap_or(effective_auto_open);
+        if collapses {
+            let reveal = self.tool_group_reveals.entry(row_id.clone()).or_default();
+            if reveal
+                .rendered_open
+                .is_some_and(|previous| previous != open)
+            {
+                fold.from = reveal.rendered_height;
+                fold.toggled_at = Some(Instant::now());
+                fold.disclosure_at = fold.toggled_at;
+                self.folds.insert(row_id.clone(), fold);
+            }
+            reveal.rendered_open = Some(open);
+        }
         let active = collapses && auto_open;
         // Chips render their EFFECTIVE detail: the precomputed doc-resident
         // one, upgraded in place by a fetched sidecar blob (chat2-sync A3).
@@ -5715,8 +5779,9 @@ impl Transcript {
             .zip(&invocations)
             .zip(&affordances)
             .zip(&detail_opens)
-            .map(|(((detail, invocation), affordance), open)| {
-                if *open {
+            .zip(&detail_folds)
+            .map(|((((detail, invocation), affordance), open), fold)| {
+                let target = if *open {
                     base_row_height
                         + invocation.as_deref().map_or(0.0, detail_height)
                         + detail.as_deref().map_or(0.0, detail_height)
@@ -5727,7 +5792,23 @@ impl Transcript {
                         }
                 } else {
                     base_row_height
+                };
+                if !cx.reduce_motion() {
+                    if let Some(at) = fold.toggled_at {
+                        let t = RESIZE
+                            .curve
+                            .eval(at.elapsed().as_secs_f32() / RESIZE.total().as_secs_f32());
+                        if t < 1.0 {
+                            motion::pulse_lease(cx.entity_id(), cx);
+                        }
+                        return motion::lerp(
+                            fold.from + base_row_height - CHIP_CARD_HEIGHT,
+                            target,
+                            t,
+                        );
+                    }
                 }
+                target
             })
             .collect();
         let reduce_motion = cx.reduce_motion();
@@ -5773,7 +5854,8 @@ impl Transcript {
                 .zip(&reveal_progress)
                 .map(|(height, progress)| height * progress)
                 .sum::<f32>();
-        let target = if open { revealed_height } else { 0.0 };
+        let viewport_height = revealed_height.min(TOOL_GROUP_MAX_HEIGHT);
+        let target = if open { viewport_height } else { 0.0 };
         let summary: SharedString = tool_group_summary(tools).into();
         let shimmer_phase = if active && !reduce_motion {
             motion::pulse_lease(cx.entity_id(), cx);
@@ -5813,7 +5895,8 @@ impl Transcript {
             .text_color(theme.text_muted)
             .hover(|s| s.text_color(theme.text))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_fold(toggle_id.clone(), revealed_height, auto_open);
+                cx.stop_propagation();
+                this.toggle_fold(toggle_id.clone(), viewport_height, effective_auto_open);
                 cx.notify();
             }))
             .child(
@@ -5852,6 +5935,7 @@ impl Transcript {
             .children(tools.iter().enumerate().map(|(ix, tool)| {
                 let reveal = reveal_progress[ix];
                 let connector_reveal = connector_progress[ix];
+                let content_reveal = tool_connector_parts(connector_reveal, ix > 0).1;
                 let continuation_reveal =
                     tool_connector_continuation(connector_progress.get(ix + 1).copied());
                 let row_height = row_heights[ix];
@@ -5891,7 +5975,7 @@ impl Transcript {
                             collapses,
                             ix > 0,
                             ix + 1 < tools.len(),
-                            reveal,
+                            content_reveal,
                             connector_reveal,
                             continuation_reveal,
                             theme,
@@ -5903,29 +5987,17 @@ impl Transcript {
                     );
                 }
                 let affordance = affordances[ix].clone();
-                let affordance_h = if affordance.is_some() {
-                    BLOB_AFFORDANCE_HEIGHT
-                } else {
-                    0.0
-                };
                 let open = detail_opens[ix];
                 let dfold = detail_folds[ix];
                 let key = SharedString::from(format!("{row_id}#d{ix}"));
                 // Ordinary tools expand into muted text along the same column.
                 // Subagent fallbacks retain their card; explicit heights keep
                 // the row and group fold animations in sync.
-                let closed_h = CHIP_CARD_HEIGHT;
-                let open_h = CHIP_CARD_HEIGHT
-                    + invocation.as_deref().map_or(0.0, detail_height)
-                    + detail.as_deref().map_or(0.0, detail_height)
-                    + affordance_h;
-                let card_target = if open { open_h } else { closed_h };
                 let animating = dfold.epoch > 0
                     && dfold
                         .toggled_at
                         .is_some_and(|at| at.elapsed() < FOLD_TWEEN_WINDOW);
                 let toggle_key = key.clone();
-                let group_key = row_id.clone();
                 let mut card = div()
                     .my(px((base_row_height - CHIP_CARD_HEIGHT) / 2.0))
                     .when(collapses, |el| el.ml(px(ACTIVITY_TEXT_GAP)))
@@ -5953,30 +6025,14 @@ impl Transcript {
                             .items_center()
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
                                 let entry =
                                     this.tool_details.entry(toggle_key.clone()).or_default();
                                 let currently_open = entry.open.unwrap_or(open);
-                                entry.from = if currently_open { open_h } else { closed_h };
+                                entry.from = row_height - base_row_height + CHIP_CARD_HEIGHT;
                                 entry.open = Some(!currently_open);
                                 entry.epoch += 1;
                                 entry.toggled_at = Some(Instant::now());
-                                // Arm the GROUP body's height tween too (open
-                                // state untouched): the body's height is
-                                // analytic over the final detail state, so
-                                // without a tween the row snaps to the target
-                                // height while the card is still mid-tween —
-                                // content below teleported on expand and the
-                                // shrinking card clipped on collapse (user
-                                // report). `open_height` was computed with
-                                // the detail still in its pre-click state,
-                                // which is exactly the tween's start; both
-                                // tweens share the click instant and the
-                                // RESIZE curve, so the row tracks the card's
-                                // bottom edge frame-for-frame.
-                                let group = this.folds.entry(group_key.clone()).or_default();
-                                group.from = revealed_height;
-                                group.epoch += 1;
-                                group.toggled_at = Some(Instant::now());
                                 cx.notify();
                             }))
                             .child(chip_header(tool, open, theme, cx.entity_id(), cx)),
@@ -6038,17 +6094,7 @@ impl Transcript {
                     }
                     card = card.child(panel);
                 }
-                let card: AnyElement = if animating {
-                    let from = dfold.from;
-                    card.with_animation(
-                        SharedString::from(format!("{key}-tween{}", dfold.epoch)),
-                        RESIZE.animation(),
-                        move |el, t| el.h(px(motion::lerp(from, card_target, t))),
-                    )
-                    .into_any_element()
-                } else {
-                    card.h(px(card_target)).into_any_element()
-                };
+                let card = card.h(px(row_height - base_row_height + CHIP_CARD_HEIGHT));
                 let card = div().min_w_0().flex_1().child(card);
                 let row = div()
                     .w_full()
@@ -6067,44 +6113,54 @@ impl Transcript {
                             theme,
                         ))
                     })
-                    .child(card.when(collapses && reveal < 1.0, |card| {
+                    .child(card.when(collapses && content_reveal < 1.0, |card| {
                         card.relative()
-                            .top(px(4.0 * (1.0 - reveal)))
-                            .opacity(reveal)
+                            .top(px(4.0 * (1.0 - content_reveal)))
+                            .opacity(content_reveal)
                     }))
                     .into_any_element();
                 reveal_tool_row(row, row_height, reveal)
             }));
 
-        // Fold body: 200ms committed-height tween on a USER toggle only — and
-        // only within a short window of the click. Auto-open (streaming) and
-        // content growth never tween, and a SETTLED fold renders at its static
-        // height: leaving the tween armed replayed it on every remount, which
-        // in a virtualized list means every scroll-back-into-view (only `open`
-        // toggles animate — composes with the stick spring). Agent groups skip
-        // the fold entirely (always open, no header).
-        let animating = collapses
-            && fold.epoch > 0
-            && fold
-                .toggled_at
-                .is_some_and(|at| at.elapsed() < FOLD_TWEEN_WINDOW);
+        let chips = if collapses {
+            let scroll = self.tool_group_scrolls.entry(row_id.clone()).or_default();
+            scroll.viewport(
+                SharedString::from(format!("{row_id}-scroll")),
+                viewport_height,
+                chips,
+            )
+        } else {
+            chips.into_any_element()
+        };
+
+        // Evaluate the group on the same clock as its disclosure. This also
+        // gives completion a gentle close after the last arrival finishes,
+        // without restarting an element animation when the list remounts it.
+        let body_height = if !reduce_motion {
+            fold.toggled_at
+                .map(|at| {
+                    let t = RESIZE.curve.eval(
+                        now.saturating_duration_since(at).as_secs_f32()
+                            / RESIZE.total().as_secs_f32(),
+                    );
+                    if t < 1.0 {
+                        motion::pulse_lease(cx.entity_id(), cx);
+                    }
+                    motion::lerp(fold.from, target, t)
+                })
+                .unwrap_or(target)
+        } else {
+            target
+        };
+        if let Some(reveal) = self.tool_group_reveals.get_mut(row_id) {
+            reveal.rendered_height = body_height;
+        }
         let body: AnyElement = if !collapses {
             chips.into_any_element()
-        } else if animating {
-            let from = fold.from;
-            div()
-                .overflow_hidden()
-                .child(chips)
-                .with_animation(
-                    SharedString::from(format!("{row_id}-fold{}", fold.epoch)),
-                    RESIZE.animation(),
-                    move |el, t| el.h(px(motion::lerp(from, target, t))),
-                )
-                .into_any_element()
         } else {
             div()
                 .overflow_hidden()
-                .h(px(target))
+                .h(px(body_height))
                 .child(chips)
                 .into_any_element()
         };
@@ -6956,47 +7012,49 @@ fn activity_rail(
                     let x = bounds.origin.x + px(ACTIVITY_TRUNK_X);
                     let branch_y = bounds.origin.y + px(row_height / 2.0);
                     let bend_y = branch_y - px(ACTIVITY_BEND_RADIUS);
-                    let mut tree = PathBuilder::stroke(px(1.0));
+                    // Union the ribbons before painting. Stroke tessellation
+                    // blends intersections twice, even in a single path.
+                    let mut tree = PathBuilder::fill().with_style(gpui::PathStyle::Fill(
+                        gpui::FillOptions::default().with_fill_rule(gpui::FillRule::NonZero),
+                    ));
                     if incoming_reveal > 0.0 {
-                        tree.move_to(point(x, bounds.origin.y));
-                        tree.line_to(point(
+                        let mut bottom = point(
                             x,
                             bounds.origin.y
                                 + px((row_height / 2.0 - ACTIVITY_BEND_RADIUS) * incoming_reveal),
-                        ));
+                        );
                         if incoming_reveal >= 1.0 && continues && continuation_reveal > 0.0 {
                             let continuation_height = (f32::from(bounds.size.height)
                                 - (row_height / 2.0 - ACTIVITY_BEND_RADIUS))
                                 .max(0.0);
-                            tree.line_to(point(
-                                x,
-                                bend_y + px(continuation_height * continuation_reveal),
-                            ));
+                            bottom =
+                                point(x, bend_y + px(continuation_height * continuation_reveal));
                         }
+                        activity_ribbon(&mut tree, &[point(x, bounds.origin.y), bottom]);
                     }
                     if branch_reveal > 0.0 {
                         let curve_progress = (branch_reveal * 2.0).min(1.0);
                         // Exact subdivision of the quadratic elbow. The curve
                         // grows along its own arc instead of scaling or popping.
-                        tree.move_to(point(x, bend_y));
-                        tree.curve_to(
-                            point(
-                                x + px(ACTIVITY_BEND_RADIUS * curve_progress * curve_progress),
-                                bend_y
-                                    + px(ACTIVITY_BEND_RADIUS
-                                        * (2.0 * curve_progress - curve_progress * curve_progress)),
-                            ),
-                            point(x, bend_y + px(ACTIVITY_BEND_RADIUS * curve_progress)),
-                        );
+                        let mut points: Vec<Point<Pixels>> = (0..=24)
+                            .map(|step| {
+                                let t = curve_progress * step as f32 / 24.0;
+                                point(
+                                    x + px(ACTIVITY_BEND_RADIUS * t * t),
+                                    bend_y + px(ACTIVITY_BEND_RADIUS * (2.0 * t - t * t)),
+                                )
+                            })
+                            .collect();
                         if branch_reveal > 0.5 {
                             let horizontal = (branch_reveal - 0.5) * 2.0;
                             let horizontal_length =
                                 ACTIVITY_BRANCH_END_X - ACTIVITY_TRUNK_X - ACTIVITY_BEND_RADIUS;
-                            tree.line_to(point(
+                            points.push(point(
                                 x + px(ACTIVITY_BEND_RADIUS + horizontal_length * horizontal),
                                 branch_y,
                             ));
                         }
+                        activity_ribbon(&mut tree, &points);
                     }
                     if let Ok(path) = tree.build() {
                         window.paint_path(path, color);
@@ -7019,6 +7077,28 @@ fn activity_rail(
             .opacity(branch_reveal)
             .text_color(tint),
         )
+}
+
+/// A clockwise ribbon contour. Nonzero fill unions intersecting contours,
+/// preserving one alpha contribution at the fork on transparent surfaces.
+fn activity_ribbon(path: &mut PathBuilder, points: &[Point<Pixels>]) {
+    let mut left = Vec::with_capacity(points.len());
+    let mut right = Vec::with_capacity(points.len());
+    for (ix, p) in points.iter().enumerate() {
+        let a = points[ix.saturating_sub(1)];
+        let b = points[(ix + 1).min(points.len() - 1)];
+        let dx = f32::from(b.x - a.x);
+        let dy = f32::from(b.y - a.y);
+        let length = dx.hypot(dy).max(0.0001);
+        let normal = point(px(-dy / length * 0.5), px(dx / length * 0.5));
+        left.push(*p + normal);
+        right.push(*p - normal);
+    }
+    path.move_to(left[0]);
+    for p in left.iter().skip(1).chain(right.iter().rev()) {
+        path.line_to(*p);
+    }
+    path.close();
 }
 
 /// A plain activity row, or a card for a subagent without a linked document.
@@ -7395,6 +7475,113 @@ impl Render for Transcript {
 mod tests {
     use super::*;
     use zeron_doc::MessagePart;
+
+    struct ToolScrollFixture {
+        scroll: ToolGroupScroll,
+        outer: gpui::ScrollHandle,
+        height: f32,
+    }
+
+    impl Render for ToolScrollFixture {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("outer")
+                .h(px(400.0))
+                .overflow_y_scroll()
+                .track_scroll(&self.outer)
+                .child(self.scroll.viewport(
+                    "tools".into(),
+                    self.height,
+                    div().h(px(self.height)).flex_none(),
+                ))
+                .child(div().h(px(1000.0)))
+        }
+    }
+
+    #[gpui::test]
+    fn tool_scroll_follows_growth_until_user_detaches(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| ToolScrollFixture {
+            scroll: ToolGroupScroll::default(),
+            outer: gpui::ScrollHandle::new(),
+            height: 800.0,
+        });
+        cx.simulate_resize(size(px(400.0), px(400.0)));
+        cx.run_until_parked();
+        let (inner, outer) = view.read_with(cx, |v, _| (v.scroll.handle.clone(), v.outer.clone()));
+        assert_eq!(inner.offset().y, -inner.max_offset().y);
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(100.0), px(100.0)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(80.0))),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        let detached_offset = inner.offset().y;
+        assert!(detached_offset > -inner.max_offset().y);
+        view.update(cx, |v, cx| {
+            v.height = 1000.0;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(inner.offset().y, detached_offset);
+        assert_eq!(outer.offset().y, px(0.0));
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(100.0), px(100.0)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-10000.0))),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        view.update(cx, |v, cx| {
+            v.height = 1200.0;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(inner.offset().y, -inner.max_offset().y);
+        assert_eq!(outer.offset().y, px(0.0));
+    }
+
+    #[test]
+    fn resizing_details_does_not_restart_group_disclosure() {
+        let now = Instant::now();
+        let fold = FoldState {
+            toggled_at: Some(now),
+            ..Default::default()
+        };
+        assert_eq!(tool_disclosure_progress(true, fold, now), 1.0);
+        assert_eq!(tool_disclosure_progress(false, fold, now), 0.0);
+    }
+
+    #[test]
+    fn connector_intersection_is_tessellated_only_once() {
+        let mut path = PathBuilder::fill().with_style(gpui::PathStyle::Fill(
+            gpui::FillOptions::default().with_fill_rule(gpui::FillRule::NonZero),
+        ));
+        activity_ribbon(
+            &mut path,
+            &[point(px(0.0), px(0.0)), point(px(0.0), px(10.0))],
+        );
+        activity_ribbon(
+            &mut path,
+            &[point(px(-5.0), px(5.0)), point(px(5.0), px(5.0))],
+        );
+        let path = path.build().unwrap();
+        let area: f32 = path
+            .vertices
+            .chunks_exact(3)
+            .map(|triangle| {
+                let a = triangle[0].xy_position;
+                let b = triangle[1].xy_position;
+                let c = triangle[2].xy_position;
+                (f32::from(b.x - a.x) * f32::from(c.y - a.y)
+                    - f32::from(b.y - a.y) * f32::from(c.x - a.x))
+                .abs()
+                    / 2.0
+            })
+            .sum();
+        assert!(
+            (area - 19.0).abs() < 0.001,
+            "overlap must contribute once: {area}"
+        );
+    }
 
     #[test]
     fn file_badge_icon_well_counter_shades_each_appearance() {
