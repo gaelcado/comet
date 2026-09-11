@@ -13,8 +13,10 @@
 //! - failures are logged and swallowed — a missing player must never bother
 //!   the session flow.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 const DISABLE_ENV: &str = "ZERON_DISABLE_SOUND";
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -53,17 +55,46 @@ pub fn play(sound: Sound) {
 }
 
 fn play_bytes(data: &[u8]) -> Result<(), String> {
-    // The system players want a file path; write the embedded bytes out.
-    let tmp = temp_path();
-    std::fs::write(&tmp, data).map_err(|e| e.to_string())?;
-    let result = run_player(&tmp);
-    let _ = std::fs::remove_file(&tmp);
+    // The system players want a file path. Exclusive creation prevents a
+    // predictable-name collision (including a pre-planted symlink) from
+    // redirecting the embedded bytes to another file.
+    let (mut file, tmp) = create_temp_file().map_err(|e| e.to_string())?;
+    file.write_all(data).map_err(|e| e.to_string())?;
+    drop(file);
+    let result = run_player(&tmp.path);
+    drop(tmp);
     result
 }
 
-fn temp_path() -> PathBuf {
-    let id = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("zeron-sound-{}-{id}.wav", std::process::id()))
+struct TempSoundFile {
+    path: PathBuf,
+}
+
+impl Drop for TempSoundFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn create_temp_file() -> std::io::Result<(std::fs::File, TempSoundFile)> {
+    for _ in 0..128 {
+        let id = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("zeron-sound-{}-{id}.wav", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((file, TempSoundFile { path })),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not reserve a notification sound file",
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -74,19 +105,18 @@ fn run_player(path: &Path) -> Result<(), String> {
 #[cfg(windows)]
 fn run_player(path: &Path) -> Result<(), String> {
     // SoundPlayer handles WAV natively; PlaySync keeps the process alive for
-    // the chime's duration.
-    let script = format!(
-        "(New-Object Media.SoundPlayer '{}').PlaySync()",
-        path.display()
-    );
+    // the chime's duration. Pass the path through the child environment rather
+    // than interpolating it into PowerShell source (paths may contain quotes).
+    let script = "(New-Object Media.SoundPlayer $env:ZERON_SOUND_PATH).PlaySync()";
     let output = std::process::Command::new("powershell.exe")
         .args([
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            &script,
+            script,
         ])
+        .env("ZERON_SOUND_PATH", path)
         .output()
         .map_err(|e| format!("powershell failed: {e}"))?;
     if output.status.success() {
@@ -213,6 +243,66 @@ pub(crate) fn connectivity_sound_since(
     (degraded && !was_degraded).then_some(Sound::Attention)
 }
 
+/// A newly attached engine can report `Connected` while its four-second
+/// degradation grace is still measuring an outage that predates the UI. Arm
+/// alerts only after a longer healthy observation, or after recovery from a
+/// boot-time outage. Runtime replacement resets the observation flag.
+#[derive(Debug, Default)]
+pub(crate) struct ConnectivityNotificationState {
+    previous: Option<zeron_proto::ConnectivityState>,
+    first_observed_at: Option<Instant>,
+    armed: bool,
+}
+
+impl ConnectivityNotificationState {
+    const STARTUP_QUIET: Duration = Duration::from_secs(5);
+
+    pub(crate) fn update(
+        &mut self,
+        current: zeron_proto::ConnectivityState,
+        observed: bool,
+        now: Instant,
+    ) -> Option<Sound> {
+        if !observed {
+            *self = Self::default();
+            return None;
+        }
+
+        let first = *self.first_observed_at.get_or_insert(now);
+        let previous = self.previous.replace(current);
+        if !self.armed {
+            if now.duration_since(first) >= Self::STARTUP_QUIET {
+                self.armed = true;
+                return previous.and_then(|previous| connectivity_sound_since(current, previous));
+            }
+            return None;
+        }
+        previous.and_then(|previous| connectivity_sound_since(current, previous))
+    }
+}
+
+/// Coalesce attention requests delivered by independent state watches. The
+/// persistent gate also collapses multiple failures in one session snapshot.
+#[derive(Debug, Default)]
+pub(crate) struct AttentionSoundGate {
+    last_played: Option<Instant>,
+}
+
+impl AttentionSoundGate {
+    const COALESCE: Duration = Duration::from_millis(250);
+
+    pub(crate) fn should_play(&mut self, now: Instant) -> bool {
+        if self
+            .last_played
+            .is_some_and(|last| now.duration_since(last) < Self::COALESCE)
+        {
+            return false;
+        }
+        self.last_played = Some(now);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,8 +394,20 @@ mod tests {
     }
 
     #[test]
-    fn temp_paths_are_unique() {
-        assert_ne!(temp_path(), temp_path());
+    fn temp_files_are_exclusive_and_cleaned_up() {
+        let (first_file, first) = create_temp_file().expect("reserve first temp file");
+        let (second_file, second) = create_temp_file().expect("reserve second temp file");
+        assert_ne!(first.path, second.path);
+        assert!(first.path.exists());
+        assert!(second.path.exists());
+        drop(first_file);
+        drop(second_file);
+        let first_path = first.path.clone();
+        let second_path = second.path.clone();
+        drop(first);
+        drop(second);
+        assert!(!first_path.exists());
+        assert!(!second_path.exists());
     }
 
     #[test]
@@ -315,5 +417,70 @@ mod tests {
             assert_eq!(&data[..4], b"RIFF");
             assert_eq!(&data[8..12], b"WAVE");
         }
+    }
+
+    #[test]
+    fn connectivity_boot_outages_seed_silently_then_later_outages_alert() {
+        use zeron_proto::ConnectivityState as State;
+        let t0 = Instant::now();
+
+        // Warm daemon: the first authoritative snapshot is already degraded.
+        let mut warm = ConnectivityNotificationState::default();
+        assert_eq!(warm.update(State::Disabled, false, t0), None);
+        assert_eq!(warm.update(State::Offline, true, t0), None);
+        assert_eq!(
+            warm.update(State::Connected, true, t0 + Duration::from_secs(6)),
+            None
+        );
+        assert_eq!(
+            warm.update(State::Offline, true, t0 + Duration::from_secs(7)),
+            Some(Sound::Attention)
+        );
+
+        // Cold daemon: the engine's grace initially masks the existing outage.
+        let mut cold = ConnectivityNotificationState::default();
+        assert_eq!(cold.update(State::Connected, true, t0), None);
+        assert_eq!(
+            cold.update(State::Offline, true, t0 + Duration::from_secs(4)),
+            None
+        );
+        assert_eq!(
+            cold.update(State::Connected, true, t0 + Duration::from_secs(5)),
+            None
+        );
+        assert_eq!(
+            cold.update(State::Reconnecting, true, t0 + Duration::from_secs(6)),
+            Some(Sound::Attention)
+        );
+
+        // A quiet healthy boot may not publish another frame until the first
+        // genuine outage; elapsed time arms that transition itself.
+        let mut healthy = ConnectivityNotificationState::default();
+        assert_eq!(healthy.update(State::Connected, true, t0), None);
+        assert_eq!(
+            healthy.update(State::Offline, true, t0 + Duration::from_secs(6)),
+            Some(Sound::Attention)
+        );
+
+        // Replacing the runtime returns to bootstrap semantics even if the
+        // prior runtime had already armed alerts.
+        assert_eq!(
+            healthy.update(State::Disabled, false, t0 + Duration::from_secs(7)),
+            None
+        );
+        assert_eq!(
+            healthy.update(State::Offline, true, t0 + Duration::from_secs(7)),
+            None
+        );
+    }
+
+    #[test]
+    fn attention_gate_coalesces_session_and_connectivity_watch_callbacks() {
+        let t0 = Instant::now();
+        let mut gate = AttentionSoundGate::default();
+        assert!(gate.should_play(t0));
+        assert!(!gate.should_play(t0));
+        assert!(!gate.should_play(t0 + Duration::from_millis(200)));
+        assert!(gate.should_play(t0 + Duration::from_millis(250)));
     }
 }

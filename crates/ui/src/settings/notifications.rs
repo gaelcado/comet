@@ -127,17 +127,27 @@ impl Render for NotificationsPage {
         let desktop = self.desktop;
         let background_only = self.background_only;
         let toggle = |id: &'static str, label: &'static str, enabled: bool, interactive: bool| {
-            widgets::toggle_switch(&theme, enabled)
+            // Keep the familiar 32×18 visual inside a 40×40 activation target.
+            // Disabled subordinate controls remain named switches in the
+            // accessibility tree, but have no focus or input handlers.
+            div()
                 .id(id)
-                .when(interactive, |el| {
-                    el.role(gpui::Role::Switch)
-                        .aria_label(label)
-                        .aria_toggled(if enabled {
-                            gpui::Toggled::True
-                        } else {
-                            gpui::Toggled::False
-                        })
+                .flex_none()
+                .size(px(40.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .role(gpui::Role::Switch)
+                .aria_label(label)
+                .aria_toggled(if enabled {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
                 })
+                .when(!interactive, |el| {
+                    el.aria_description("Unavailable while its parent setting is off")
+                })
+                .child(widgets::toggle_switch(&theme, enabled))
         };
         let card = widgets::section_card(&theme)
             .child(
