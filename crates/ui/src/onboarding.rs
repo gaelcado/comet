@@ -1,13 +1,12 @@
-//! First-run onboarding: a six-step, two-panel journey. The leading pane uses
-//! the supplied Zeron workspace artwork while the trailing pane holds one
-//! decision. Durable choices continue to live in their authoritative stores;
-//! this module only persists navigation/lifecycle state in `UiSettings`.
+//! First-run onboarding: a focused six-step journey. Durable choices continue
+//! to live in their authoritative stores; this module only persists
+//! navigation/lifecycle state in `UiSettings`.
 
 use std::sync::Arc;
 
 use gpui::{
     AnyElement, Context, Empty, Entity, FocusHandle, Image, ImageFormat, IntoElement, KeyDownEvent,
-    ObjectFit, Pixels, ScrollHandle, SharedString, Task, div, prelude::*, px,
+    Pixels, ScrollHandle, SharedString, Task, div, prelude::*, px,
 };
 use serde::{Deserialize, Serialize};
 use zeron_engine::registry::{HarnessDescriptor, TitleSettings, descriptor_enabled};
@@ -190,7 +189,6 @@ pub struct OnboardingUi {
     pub agent_settings_open: bool,
     pub focus: FocusHandle,
     pub controls: Vec<FocusHandle>,
-    pub artwork: Arc<Image>,
     pub brand_mark: Arc<Image>,
     pub theme_menu: Popup<usize>,
     pub theme_scroll: ScrollHandle,
@@ -237,10 +235,6 @@ impl OnboardingUi {
             agent_settings_open: false,
             focus: cx.focus_handle(),
             controls,
-            artwork: Arc::new(Image::from_bytes(
-                ImageFormat::Jpeg,
-                include_bytes!("../../../apps/landing/public/assets/app-screenshot.jpg").to_vec(),
-            )),
             brand_mark: Arc::new(Image::from_bytes(
                 ImageFormat::Png,
                 include_bytes!("../../../apps/landing/public/assets/zeron-app-icon.png").to_vec(),
@@ -1988,70 +1982,6 @@ fn render_project_step(
         .into_any_element()
 }
 
-#[derive(Clone, Copy)]
-enum ArtworkFocus {
-    Top,
-    Right,
-}
-
-fn fitted_artwork_bounds(
-    bounds: gpui::Bounds<Pixels>,
-    image_size: gpui::Size<gpui::DevicePixels>,
-    focus: ArtworkFocus,
-) -> gpui::Bounds<Pixels> {
-    let mut fitted = ObjectFit::Cover.get_bounds(bounds, image_size);
-    match focus {
-        ArtworkFocus::Top => fitted.origin.y = bounds.origin.y,
-        ArtworkFocus::Right => {
-            fitted.origin.x = bounds.origin.x + bounds.size.width - fitted.size.width
-        }
-    }
-    fitted
-}
-
-fn render_artwork(ui: &OnboardingUi, theme: &Theme, focus: ArtworkFocus) -> AnyElement {
-    const RADIUS: f32 = 14.0;
-    let artwork = ui.artwork.clone();
-    let image = gpui::canvas(
-        move |_, window, cx| artwork.use_render_image(window, cx),
-        move |bounds, image, window, _| {
-            let Some(image) = image else {
-                return;
-            };
-            // Preserve ObjectFit::Cover's normal scale and move only the crop
-            // origin. Expanded panes reveal the right edge; compact panes
-            // reveal the top edge.
-            let fitted = fitted_artwork_bounds(bounds, image.size(0), focus);
-            let _ = window.paint_image_fitted(
-                bounds,
-                fitted,
-                gpui::Corners::all(px(RADIUS)),
-                image,
-                0,
-                false,
-            );
-        },
-    )
-    .absolute()
-    .inset_0();
-    div()
-        .size_full()
-        .relative()
-        .rounded(px(RADIUS))
-        .overflow_hidden()
-        .bg(theme.surface)
-        .child(image)
-        .child(
-            div()
-                .absolute()
-                .inset_0()
-                .rounded(px(RADIUS))
-                .border_1()
-                .border_color(theme.border),
-        )
-        .into_any_element()
-}
-
 fn render_progress(step: OnboardingStep, theme: &Theme) -> AnyElement {
     div()
         .id("onboarding-progress")
@@ -2089,19 +2019,10 @@ pub fn render(
     let step = ui.step();
     let viewport_width = f32::from(viewport.width);
     let viewport_height = f32::from(viewport.height);
-    let compact = viewport_width < 980.0 || viewport_height < 620.0;
-    let compact_preview_height =
-        ((viewport_height - Theme::TITLEBAR_HEIGHT) * 0.34).clamp(190.0, 280.0);
-    let decision_top_pad = (viewport_height * 0.15).clamp(88.0, 144.0);
-    // Let the invisible titlebar establish the top safe area, then leave a
-    // small visual buffer below it. The remaining edges share a tighter inset
-    // so they stay balanced without inheriting the titlebar's dimensions.
-    let panel_edge = 14.0;
-    let panel_top = Theme::TITLEBAR_HEIGHT + 8.0;
-    let panel_bottom = panel_edge;
-    let panel_x = panel_edge;
-    let panel_gap = if compact { 12.0 } else { 24.0 };
-    let wide_preview_width = ((viewport_width - panel_x * 2.0 - panel_gap) * 0.48).max(1.0);
+    let constrained = viewport_width < 680.0 || viewport_height < 680.0;
+    let outer_x = if constrained { 12.0 } else { 32.0 };
+    let outer_y = if constrained { 12.0 } else { 24.0 };
+    let inner_pad = if constrained { 20.0 } else { 32.0 };
     let decision = match step {
         OnboardingStep::Workspace => render_workspace_step(ui, &theme, cx),
         OnboardingStep::Appearance => render_appearance_step(ui, &theme, cx),
@@ -2113,95 +2034,53 @@ pub fn render(
     };
     let decision_content = div()
         .size_full()
-        .max_w(px(440.0))
         .min_w_0()
         .min_h_0()
         .flex()
         .flex_col()
-        // Every step starts on the same baseline. Vertical centering made the
-        // whole form jump whenever async rows or configuration controls changed
-        // its height; a stable top inset lets new content grow downward instead.
-        .when(!compact, |content| {
-            content.pt(px(decision_top_pad)).pb(px(28.0))
-        })
         .child(decision);
     let decision_content = crate::motion::fade_quick(
         SharedString::from(format!("onboarding-step-{}", step.index())),
         decision_content,
     );
-    let decision_host = div()
-        .size_full()
+    let journey = div()
+        .w_full()
+        .h_full()
+        .max_w(px(560.0))
+        .max_h(px(720.0))
         .min_w_0()
         .min_h_0()
         .overflow_hidden()
-        .px(px(if compact { 18.0 } else { 40.0 }))
-        .py(px(if compact { 20.0 } else { 28.0 }))
-        .flex()
-        .justify_center()
-        .child(decision_content);
-    let decision_pane = div()
-        .flex_1()
-        .min_w_0()
-        .min_h_0()
+        .p(px(inner_pad))
+        .rounded(px(18.0))
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.card_glass_bg())
+        .shadow_sm()
         .flex()
         .flex_col()
-        .child(div().flex_1().min_h_0().child(decision_host))
+        .child(div().flex_1().min_h_0().child(decision_content))
         .child(
             div()
-                .h(px(34.0))
+                .h(px(40.0))
                 .flex_none()
                 .flex()
                 .items_end()
                 .justify_center()
                 .child(render_progress(step, &theme)),
         );
-    let panel = if compact {
-        div()
-            .absolute()
-            .inset_0()
-            .pt(px(panel_top))
-            .px(px(panel_x))
-            .pb(px(panel_bottom))
-            .min_w_0()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .gap(px(panel_gap))
-            // In a reduced window, choices keep the primary/top position and
-            // the artwork becomes a bottom-anchored visual coda.
-            .child(decision_pane)
-            .child(
-                div()
-                    .w_full()
-                    .h(px(compact_preview_height))
-                    .min_w_0()
-                    .min_h_0()
-                    .flex_none()
-                    .child(render_artwork(ui, &theme, ArtworkFocus::Top)),
-            )
-    } else {
-        div()
-            .absolute()
-            .inset_0()
-            .pt(px(panel_top))
-            .px(px(panel_x))
-            .pb(px(panel_bottom))
-            .min_w_0()
-            .min_h_0()
-            .flex()
-            .flex_row()
-            .gap(px(panel_gap))
-            .child(
-                div()
-                    .w(px(wide_preview_width))
-                    .h_full()
-                    .min_w_0()
-                    .min_h_0()
-                    .flex_none()
-                    .child(render_artwork(ui, &theme, ArtworkFocus::Right)),
-            )
-            .child(decision_pane)
-    };
+    let panel = div()
+        .absolute()
+        .inset_0()
+        .pt(px(Theme::TITLEBAR_HEIGHT + outer_y))
+        .px(px(outer_x))
+        .pb(px(outer_y))
+        .min_w_0()
+        .min_h_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(journey);
     let close_confirm: AnyElement = if ui.close_confirm {
         div()
             .absolute()
@@ -2407,33 +2286,5 @@ mod tests {
         assert!(!project_target_is_chosen(false, false));
         assert!(project_target_is_chosen(true, false));
         assert!(project_target_is_chosen(false, true));
-    }
-
-    #[test]
-    fn artwork_focus_moves_only_the_cover_crop_origin() {
-        let image_size = gpui::size(2560u32.into(), 1655u32.into());
-
-        let expanded = gpui::Bounds::new(
-            gpui::point(px(0.0), px(0.0)),
-            gpui::size(px(500.0), px(900.0)),
-        );
-        let expanded_centered = ObjectFit::Cover.get_bounds(expanded, image_size);
-        let expanded_right = fitted_artwork_bounds(expanded, image_size, ArtworkFocus::Right);
-        assert_eq!(expanded_right.size, expanded_centered.size);
-        assert_eq!(expanded_right.origin.y, expanded_centered.origin.y);
-        assert_eq!(
-            expanded_right.origin.x,
-            expanded.origin.x + expanded.size.width - expanded_right.size.width
-        );
-
-        let compact = gpui::Bounds::new(
-            gpui::point(px(0.0), px(0.0)),
-            gpui::size(px(900.0), px(260.0)),
-        );
-        let compact_centered = ObjectFit::Cover.get_bounds(compact, image_size);
-        let compact_top = fitted_artwork_bounds(compact, image_size, ArtworkFocus::Top);
-        assert_eq!(compact_top.size, compact_centered.size);
-        assert_eq!(compact_top.origin.x, compact_centered.origin.x);
-        assert_eq!(compact_top.origin.y, compact.origin.y);
     }
 }
