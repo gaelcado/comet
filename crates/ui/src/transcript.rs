@@ -33,10 +33,10 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, BorderStyle, Bounds, ClipboardItem, Context, Entity, ListAlignment, ListOffset,
-    ListScrollEvent, ListState, MouseButton, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels,
-    Point, SharedString, StyledImage as _, StyledText, Subscription, Task, TextRun, Window, canvas,
-    div, img, list, prelude::*, px, quad,
+    AnyElement, BorderStyle, Bounds, ClipboardItem, ContentMask, Context, Entity, ListAlignment,
+    ListOffset, ListScrollEvent, ListState, MouseButton, MouseMoveEvent, MouseUpEvent, ObjectFit,
+    PathBuilder, Pixels, Point, SharedString, StyledImage as _, StyledText, Subscription, Task,
+    TextAlign, TextRun, Window, canvas, div, img, list, point, prelude::*, px, quad, size,
 };
 
 use zeron_doc::{MessagePart, MessageRole, MessageStatus, SessionMessageEntry, SubagentStatus};
@@ -87,9 +87,33 @@ pub const CHIP_CARD_HEIGHT: f32 = 30.0;
 /// glyph/icon reads high (user report).
 const CHIP_HEADER_HEIGHT: f32 = CHIP_CARD_HEIGHT - 2.0;
 /// Shared columns keep the group summary, tool labels, and expanded text aligned.
-const ACTIVITY_GUTTER_WIDTH: f32 = 26.0;
+/// A compact tree gutter: 1px trunk + rounded elbow + the restored 14px tool
+/// glyph, with 2px between the branch tip and glyph and 4px before the label.
+const ACTIVITY_GUTTER_WIDTH: f32 = 38.0;
 const ACTIVITY_TEXT_GAP: f32 = 4.0;
+const ACTIVITY_TRUNK_X: f32 = 12.5;
+const ACTIVITY_BEND_RADIUS: f32 = 6.0;
+const ACTIVITY_BRANCH_END_X: f32 = 22.0;
+const ACTIVITY_ICON_LEFT: f32 = 24.0;
+const ACTIVITY_ICON_SIZE: f32 = 14.0;
 const TOOL_TEXT_SIZE: f32 = 12.0;
+/// Ordinary task-tree rows are denser than standalone agent cards. This keeps
+/// the 30px chip body intact while bringing the tree cadence close to the
+/// reference's compact 26px rows.
+const TOOL_TREE_ROW_HEIGHT: f32 = 32.0;
+/// BoardUI task-list cadence: a slow light sweep keeps the active summary
+/// legible, while each newly appended row reveals quickly enough to read as a
+/// continuous log rather than a stack of discrete pop-ins.
+const TOOL_GROUP_SHIMMER_DURATION: Duration = Duration::from_millis(3_400);
+const TOOL_GROUP_SHIMMER_HALF_WIDTH: f32 = 0.36;
+const TOOL_GROUP_SHIMMER_STRIP_WIDTH: f32 = 2.0;
+const TOOL_ROW_REVEAL: motion::MotionSpec = motion::MotionSpec::new(360, motion::EASE_OUT_EXPO);
+/// The connector deliberately uses a gentler curve than the row's height
+/// reveal. An expo ease made the line finish in the first few frames, so it
+/// looked static even though its geometry technically changed.
+const TOOL_CONNECTOR_REVEAL: motion::MotionSpec = motion::MotionSpec::new(320, motion::EASE_OUT);
+const TOOL_FIRST_ROW_DELAY_MS: u64 = 90;
+const TOOL_ROW_STAGGER_MS: u64 = 65;
 
 /// Signed list scroll step for a pointer near a viewport edge.
 ///
@@ -1677,6 +1701,91 @@ pub fn tool_group_summary(tools: &[ToolItem]) -> String {
     }
 }
 
+fn tool_group_title(text: SharedString, shimmer_phase: Option<f32>, theme: &Theme) -> AnyElement {
+    let Some(shimmer_phase) = shimmer_phase else {
+        // Keep the ordinary inherited hover color when the group is settled
+        // (and when reduced motion turns the active shimmer off).
+        return text.into_any_element();
+    };
+    // Keep the title as ONE normal text run. Splitting it per character copies
+    // the gradient stops, but also splits shaping/kerning and makes the sweep
+    // visibly hop one glyph at a time. The overlay repaints the intact shaped
+    // line through narrow moving clips, which is the native equivalent of
+    // CSS `background-clip: text` without duplicating accessible text.
+    let overlay_text = text.clone();
+    let overlay_font = gpui::font(theme.font_sans_fixed.clone());
+    let base = theme.text_muted;
+    let peak = theme.text;
+    let overlay = canvas(
+        move |bounds, window, _| {
+            let probe = window.text_system().shape_line(
+                overlay_text.clone(),
+                px(TOOL_TEXT_SIZE),
+                &[TextRun {
+                    len: overlay_text.len(),
+                    font: overlay_font.clone(),
+                    color: peak,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }],
+                None,
+            );
+            let text_width = f32::from(probe.width()).min(f32::from(bounds.size.width));
+            let strip_count = (text_width / TOOL_GROUP_SHIMMER_STRIP_WIDTH).ceil() as usize;
+            let mut strips = Vec::with_capacity(strip_count);
+            for ix in 0..strip_count {
+                let left = ix as f32 * TOOL_GROUP_SHIMMER_STRIP_WIDTH;
+                let right = ((ix + 1) as f32 * TOOL_GROUP_SHIMMER_STRIP_WIDTH).min(text_width);
+                let x = (left + right) * 0.5 / text_width.max(1.0);
+                let amount = tool_title_shimmer_amount(x, shimmer_phase);
+                if amount <= 0.001 {
+                    continue;
+                }
+                let line = window.text_system().shape_line(
+                    overlay_text.clone(),
+                    px(TOOL_TEXT_SIZE),
+                    &[TextRun {
+                        len: overlay_text.len(),
+                        font: overlay_font.clone(),
+                        color: motion::mix(base, peak, amount),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                );
+                strips.push((left, right, line));
+            }
+            strips
+        },
+        move |bounds, strips, window, cx| {
+            for (left, right, line) in strips {
+                let mask = ContentMask {
+                    bounds: Bounds {
+                        origin: point(bounds.origin.x + px(left), bounds.origin.y),
+                        size: size(px(right - left), bounds.size.height),
+                    },
+                };
+                window.with_content_mask(Some(mask), |window| {
+                    let _ = line.paint(bounds.origin, px(18.0), TextAlign::Left, None, window, cx);
+                });
+            }
+        },
+    )
+    .absolute()
+    .inset_0();
+    div()
+        .relative()
+        .h_full()
+        .min_w_0()
+        .flex_1()
+        .overflow_hidden()
+        .child(text)
+        .child(overlay)
+        .into_any_element()
+}
+
 // `single_line` and the per-kind chip label/detail are shared with the terminal
 // viewport (`zeron_proto::view`): a tool must be named identically on every
 // surface, and the one-line collapse is needed for the same reason in both (a
@@ -1996,6 +2105,97 @@ struct FoldState {
     /// Extra user-body height revealed by Show more. It is not reply growth
     /// and must not permanently consume the sent turn's reservation.
     user_expansion_height: f32,
+}
+
+/// Reveal epochs for one live ordinary tool group. `None` means the row was
+/// already present when this transcript attached (or has finished revealing),
+/// so replaying history and scrolling a virtualized row back into view stay
+/// completely still.
+#[derive(Default)]
+struct ToolGroupReveal {
+    /// A newly streamed task header participates in the same height/fade/lift
+    /// reveal as its steps. Replayed headers leave this unset.
+    header_started_at: Option<Instant>,
+    starts: Vec<Option<Instant>>,
+    /// A title sweep begins with this group instead of inheriting the shared
+    /// loader clock at an arbitrary point midway across the label.
+    shimmer_started_at: Option<Instant>,
+}
+
+fn tool_row_reveal_progress(start: Option<Instant>, now: Instant, reduce_motion: bool) -> f32 {
+    let Some(start) = start.filter(|_| !reduce_motion) else {
+        return 1.0;
+    };
+    let elapsed = now.checked_duration_since(start).unwrap_or_default();
+    let raw = elapsed.as_secs_f32() / TOOL_ROW_REVEAL.total().as_secs_f32();
+    TOOL_ROW_REVEAL.curve.eval(raw)
+}
+
+fn tool_connector_reveal_progress(
+    start: Option<Instant>,
+    now: Instant,
+    reduce_motion: bool,
+) -> f32 {
+    let Some(start) = start.filter(|_| !reduce_motion) else {
+        return 1.0;
+    };
+    let elapsed = now.checked_duration_since(start).unwrap_or_default();
+    let raw = elapsed.as_secs_f32() / TOOL_CONNECTOR_REVEAL.total().as_secs_f32();
+    TOOL_CONNECTOR_REVEAL.curve.eval(raw)
+}
+
+/// Split one arrival into a continuous tree draw. For child rows, the previous
+/// row grows its continuation to the boundary first, then this row draws its
+/// incoming trunk and elbow. The branch slightly overlaps the end of the
+/// incoming phase so there is no dead frame at the bend.
+fn tool_connector_parts(progress: f32, has_predecessor: bool) -> (f32, f32) {
+    let progress = progress.clamp(0.0, 1.0);
+    let (incoming_start, incoming_end, branch_start) = if has_predecessor {
+        (0.45, 0.72, 0.68)
+    } else {
+        (0.0, 0.62, 0.58)
+    };
+    let incoming = ((progress - incoming_start) / (incoming_end - incoming_start)).clamp(0.0, 1.0);
+    let branch = ((progress - branch_start) / (1.0 - branch_start)).clamp(0.0, 1.0);
+    (incoming, branch)
+}
+
+/// The outgoing trunk belongs visually to the row that is already present,
+/// but its timing belongs to the next row's arrival.
+fn tool_connector_continuation(next_progress: Option<f32>) -> f32 {
+    next_progress
+        .map(|progress| (progress / 0.45).clamp(0.0, 1.0))
+        .unwrap_or(0.0)
+}
+
+fn tool_disclosure_progress(open: bool, fold: FoldState, now: Instant) -> f32 {
+    let Some(start) = fold.toggled_at else {
+        return if open { 1.0 } else { 0.0 };
+    };
+    let raw = now
+        .checked_duration_since(start)
+        .unwrap_or_default()
+        .as_secs_f32()
+        / RESIZE.total().as_secs_f32();
+    let progress = RESIZE.curve.eval(raw);
+    if open { progress } else { 1.0 - progress }
+}
+
+/// BoardUI's measured recipe: a 300%-wide repeating gradient moves from 200%
+/// to -100%. Its 38→50→62% highlight maps to a 36%-of-title shoulder around
+/// each peak; adjacent copies sit three title-widths apart. Sampling this by
+/// x-coordinate lets the paint clips reproduce the continuous pattern.
+fn tool_title_shimmer_amount(x: f32, phase: f32) -> f32 {
+    let primary_center = -2.5 + phase.clamp(0.0, 1.0) * 6.0;
+    (-2..=2)
+        .map(|copy| primary_center + copy as f32 * 3.0)
+        .map(|center| (1.0 - (x - center).abs() / TOOL_GROUP_SHIMMER_HALF_WIDTH).clamp(0.0, 1.0))
+        .fold(0.0, f32::max)
+}
+
+fn tool_title_shimmer_phase(start: Instant, now: Instant) -> f32 {
+    let elapsed = now.checked_duration_since(start).unwrap_or_default();
+    (elapsed.as_secs_f32() / TOOL_GROUP_SHIMMER_DURATION.as_secs_f32()).fract()
 }
 
 /// Viewport compensation paired with a long user-message collapse. While the
@@ -2331,6 +2531,9 @@ pub struct Transcript {
     live_parsers: HashMap<String, IncrementalParser>,
     tree_cache: HashMap<String, (usize, Arc<BlockTree>)>,
     folds: HashMap<SharedString, FoldState>,
+    /// Paint-only entrance state for rows appended to the currently streaming
+    /// ordinary tool group. Settled and replayed groups never enter this map.
+    tool_group_reveals: HashMap<SharedString, ToolGroupReveal>,
     /// Detail folds (output/diff) per chip, keyed `"{row_id}#d{ix}"` — full
     /// [`FoldState`]s so detail bodies tween open/closed exactly like the
     /// group fold. Render-local like `folds` — never part of the row
@@ -2595,6 +2798,7 @@ impl Transcript {
             live_parsers: HashMap::new(),
             tree_cache: HashMap::new(),
             folds: HashMap::new(),
+            tool_group_reveals: HashMap::new(),
             tool_details: HashMap::new(),
             user_folds: HashMap::new(),
             user_heights: HashMap::new(),
@@ -3664,6 +3868,7 @@ impl Transcript {
             self.live_parsers.clear();
             self.tree_cache.clear();
             self.folds.clear();
+            self.tool_group_reveals.clear();
             self.user_folds.clear();
             self.user_heights.clear();
             self.user_hold_token = self.user_hold_token.wrapping_add(1);
@@ -3742,6 +3947,56 @@ impl Transcript {
                     .is_some_and(|e| e.status == Some(MessageStatus::Streaming)),
             )
         };
+
+        // Give only rows that ARRIVE after the replay baseline an entrance.
+        // The first populated frame after a chat attach may already contain a
+        // live tool group; treating it as history prevents a whole existing
+        // task tree from reanimating on every chat switch.
+        let replay_baseline = self.veil_attach_pending && !entries_empty;
+        let previous_tool_counts: HashMap<SharedString, usize> = self
+            .rows
+            .iter()
+            .filter_map(|row| match &row.kind {
+                RowKind::ToolGroup { tools, .. } => Some((row.id.clone(), tools.len())),
+                _ => None,
+            })
+            .collect();
+        let now = Instant::now();
+        let mut live_tool_groups = HashSet::new();
+        for row in &new_rows {
+            let RowKind::ToolGroup { tools, auto_open } = &row.kind else {
+                continue;
+            };
+            // Agent/spawn groups are standalone cards, not task trees.
+            if !*auto_open || !tool_group_collapses(tools) {
+                continue;
+            }
+            live_tool_groups.insert(row.id.clone());
+            let old_count = if replay_baseline {
+                tools.len()
+            } else {
+                previous_tool_counts.get(&row.id).copied().unwrap_or(0)
+            }
+            .min(tools.len());
+            let is_new_group = !replay_baseline && !previous_tool_counts.contains_key(&row.id);
+            let reveal = self.tool_group_reveals.entry(row.id.clone()).or_default();
+            reveal.shimmer_started_at.get_or_insert(now);
+            if is_new_group {
+                reveal.header_started_at.get_or_insert(now);
+            }
+            reveal.starts.truncate(tools.len());
+            reveal.starts.resize(tools.len(), None);
+            let first_row_delay = is_new_group.then_some(TOOL_FIRST_ROW_DELAY_MS).unwrap_or(0);
+            for (arrival_ix, tool_ix) in (old_count..tools.len()).enumerate() {
+                reveal.starts[tool_ix] = Some(
+                    now + Duration::from_millis(
+                        first_row_delay + arrival_ix as u64 * TOOL_ROW_STAGGER_MS,
+                    ),
+                );
+            }
+        }
+        self.tool_group_reveals
+            .retain(|row_id, _| live_tool_groups.contains(row_id));
 
         // Runtime scroll handles follow the stable code rows exactly. A live
         // block keeps its handle through completion; deleted/reindexed tail
@@ -4819,6 +5074,15 @@ impl Transcript {
         };
         self.rendered_rows.insert(row.id.clone());
         let theme = Theme::of(cx).clone();
+        let workspace_root = {
+            let state = self.state.read(cx);
+            self.chat_id
+                .as_deref()
+                .and_then(|chat_id| state.chats.iter().find(|chat| chat.id == chat_id))
+                .or_else(|| state.selected_chat_row())
+                .and_then(|chat| chat.cwd.as_deref())
+                .map(SharedString::from)
+        };
         // The viewport spans the full window (under the titlebar): the first
         // row's gap adds the titlebar's height so a top-scrolled transcript
         // rests below the chrome it fades under. The right pane already pads
@@ -4931,6 +5195,7 @@ impl Transcript {
                     now: Instant::now(),
                     copy: Some(self.copy_ui_for(&row.id, cx)),
                     link: self.workspace_link.clone(),
+                    workspace_root: workspace_root.clone(),
                     code,
                 };
                 let highlight = self.code_highlight_for(&row.id, tree, Some(*block_ix), cx);
@@ -4978,6 +5243,7 @@ impl Transcript {
                     now: Instant::now(),
                     copy: Some(self.copy_ui_for(&row.id, cx)),
                     link: self.workspace_link.clone(),
+                    workspace_root: workspace_root.clone(),
                     code,
                 };
                 let highlight = self.code_highlight_for(&row.id, tree, Some(*block_ix), cx);
@@ -5312,6 +5578,7 @@ impl Transcript {
         // no "Called N tools" header — a running subagent stays visible.
         let collapses = tool_group_collapses(tools);
         let open = !collapses || fold.open.unwrap_or(auto_open);
+        let active = collapses && auto_open;
         // Chips render their EFFECTIVE detail: the precomputed doc-resident
         // one, upgraded in place by a fetched sidecar blob (chat2-sync A3).
         // Resolved per paint (a HashMap probe per chip) so fetched content
@@ -5438,31 +5705,97 @@ impl Transcript {
                     .and_then(|detail| self.tool_diff_highlight_for(row_id, ix, detail, cx))
             })
             .collect();
-        let open_height = chips_height(tools.len())
-            + details
-                .iter()
-                .zip(&invocations)
-                .zip(&affordances)
-                .zip(&detail_opens)
-                .filter(|(_, open)| **open)
-                .map(|(((detail, invocation), affordance), _)| {
-                    invocation.as_deref().map_or(0.0, detail_height)
+        let base_row_height = if collapses {
+            TOOL_TREE_ROW_HEIGHT
+        } else {
+            CHIP_HEIGHT
+        };
+        let row_heights: Vec<f32> = details
+            .iter()
+            .zip(&invocations)
+            .zip(&affordances)
+            .zip(&detail_opens)
+            .map(|(((detail, invocation), affordance), open)| {
+                if *open {
+                    base_row_height
+                        + invocation.as_deref().map_or(0.0, detail_height)
                         + detail.as_deref().map_or(0.0, detail_height)
                         + if affordance.is_some() {
                             BLOB_AFFORDANCE_HEIGHT
                         } else {
                             0.0
                         }
-                })
+                } else {
+                    base_row_height
+                }
+            })
+            .collect();
+        let reduce_motion = cx.reduce_motion();
+        let now = Instant::now();
+        let reveal_progress: Vec<f32> = (0..tools.len())
+            .map(|ix| {
+                let start = self
+                    .tool_group_reveals
+                    .get(row_id)
+                    .and_then(|reveal| reveal.starts.get(ix))
+                    .copied()
+                    .flatten();
+                tool_row_reveal_progress(start, now, reduce_motion)
+            })
+            .collect();
+        let connector_progress: Vec<f32> = (0..tools.len())
+            .map(|ix| {
+                let start = self
+                    .tool_group_reveals
+                    .get(row_id)
+                    .and_then(|reveal| reveal.starts.get(ix))
+                    .copied()
+                    .flatten();
+                tool_connector_reveal_progress(start, now, reduce_motion)
+            })
+            .collect();
+        let header_reveal = tool_row_reveal_progress(
+            self.tool_group_reveals
+                .get(row_id)
+                .and_then(|reveal| reveal.header_started_at),
+            now,
+            reduce_motion,
+        );
+        if header_reveal < 1.0
+            || reveal_progress.iter().any(|progress| *progress < 1.0)
+            || connector_progress.iter().any(|progress| *progress < 1.0)
+        {
+            motion::pulse_lease(cx.entity_id(), cx);
+        }
+        let revealed_height = CHIPS_TOP_PAD
+            + row_heights
+                .iter()
+                .zip(&reveal_progress)
+                .map(|(height, progress)| height * progress)
                 .sum::<f32>();
-        let target = if open { open_height } else { 0.0 };
-        let summary = tool_group_summary(tools);
+        let target = if open { revealed_height } else { 0.0 };
+        let summary: SharedString = tool_group_summary(tools).into();
+        let shimmer_phase = if active && !reduce_motion {
+            motion::pulse_lease(cx.entity_id(), cx);
+            self.tool_group_reveals
+                .get(row_id)
+                .and_then(|reveal| reveal.shimmer_started_at)
+                .map(|start| tool_title_shimmer_phase(start, now))
+        } else {
+            None
+        };
+        let disclosure_progress = if reduce_motion {
+            if open { 1.0 } else { 0.0 }
+        } else {
+            tool_disclosure_progress(open, fold, now)
+        };
 
         let toggle_id = row_id.clone();
-        // A quiet summary sits above the activity rail; its chevron has the
-        // same footprint as the tool icons below it.
+        // A quiet summary sits above the activity rail; its chevron occupies
+        // the same gutter as the rounded task-tree elbows below it.
         let header = div()
             .id(SharedString::from(format!("{row_id}-hdr")))
+            .relative()
             .flex()
             .flex_row()
             .items_center()
@@ -5480,7 +5813,7 @@ impl Transcript {
             .text_color(theme.text_muted)
             .hover(|s| s.text_color(theme.text))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_fold(toggle_id.clone(), open_height, auto_open);
+                this.toggle_fold(toggle_id.clone(), revealed_height, auto_open);
                 cx.notify();
             }))
             .child(
@@ -5488,17 +5821,17 @@ impl Transcript {
                     .w(px(ACTIVITY_GUTTER_WIDTH))
                     .h(px(18.0))
                     .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
+                    .relative()
                     .child(
-                        crate::icons::icon(if open {
-                            crate::icons::ALT_ARROW_DOWN
-                        } else {
-                            crate::icons::ALT_ARROW_RIGHT
-                        })
-                        .size(px(14.0))
-                        .text_color(theme.text_muted),
+                        crate::icons::icon(crate::icons::ALT_ARROW_DOWN)
+                            .absolute()
+                            .left(px(ACTIVITY_TRUNK_X - 7.0))
+                            .top(px(2.0))
+                            .size(px(14.0))
+                            .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                                -std::f32::consts::FRAC_PI_2 * (1.0 - disclosure_progress),
+                            )))
+                            .text_color(theme.text_muted),
                     ),
             )
             .child(
@@ -5508,7 +5841,7 @@ impl Transcript {
                     .flex()
                     .items_center()
                     .truncate()
-                    .child(SharedString::from(summary)),
+                    .child(tool_group_title(summary, shimmer_phase, theme)),
             );
 
         let chips = div()
@@ -5517,6 +5850,11 @@ impl Transcript {
             .flex_col()
             .gap(px(CHIP_GAP))
             .children(tools.iter().enumerate().map(|(ix, tool)| {
+                let reveal = reveal_progress[ix];
+                let connector_reveal = connector_progress[ix];
+                let continuation_reveal =
+                    tool_connector_continuation(connector_progress.get(ix + 1).copied());
+                let row_height = row_heights[ix];
                 // Spawn chips are LINKS, not accordions: the click opens the
                 // subagent's transcript as a right-pane tab (the shell hosts
                 // the surface — the chip only announces which doc it indexes).
@@ -5547,13 +5885,21 @@ impl Transcript {
                 let detail = details[ix].clone();
                 let invocation = invocations[ix].clone();
                 if detail.is_none() && invocation.is_none() {
-                    return tool_chip(
-                        tool,
-                        collapses,
-                        ix + 1 < tools.len(),
-                        theme,
-                        cx.entity_id(),
-                        cx,
+                    return reveal_tool_row(
+                        tool_chip(
+                            tool,
+                            collapses,
+                            ix > 0,
+                            ix + 1 < tools.len(),
+                            reveal,
+                            connector_reveal,
+                            continuation_reveal,
+                            theme,
+                            cx.entity_id(),
+                            cx,
+                        ),
+                        row_height,
+                        reveal,
                     );
                 }
                 let affordance = affordances[ix].clone();
@@ -5581,7 +5927,7 @@ impl Transcript {
                 let toggle_key = key.clone();
                 let group_key = row_id.clone();
                 let mut card = div()
-                    .my(px((CHIP_HEIGHT - CHIP_CARD_HEIGHT) / 2.0))
+                    .my(px((base_row_height - CHIP_CARD_HEIGHT) / 2.0))
                     .when(collapses, |el| el.ml(px(ACTIVITY_TEXT_GAP)))
                     .min_w_0()
                     .flex_1()
@@ -5628,7 +5974,7 @@ impl Transcript {
                                 // RESIZE curve, so the row tracks the card's
                                 // bottom edge frame-for-frame.
                                 let group = this.folds.entry(group_key.clone()).or_default();
-                                group.from = open_height;
+                                group.from = revealed_height;
                                 group.epoch += 1;
                                 group.toggled_at = Some(Instant::now());
                                 cx.notify();
@@ -5704,17 +6050,30 @@ impl Transcript {
                     card.h(px(card_target)).into_any_element()
                 };
                 let card = div().min_w_0().flex_1().child(card);
-                div()
+                let row = div()
                     .w_full()
                     .flex_none()
                     .flex()
                     .flex_row()
                     // Stretch the line alongside the expanded text.
                     .when(collapses, |row| {
-                        row.child(activity_rail(tool, ix + 1 < tools.len(), theme))
+                        row.child(activity_rail(
+                            tool,
+                            ix > 0,
+                            ix + 1 < tools.len(),
+                            connector_reveal,
+                            continuation_reveal,
+                            base_row_height,
+                            theme,
+                        ))
                     })
-                    .child(card)
-                    .into_any_element()
+                    .child(card.when(collapses && reveal < 1.0, |card| {
+                        card.relative()
+                            .top(px(4.0 * (1.0 - reveal)))
+                            .opacity(reveal)
+                    }))
+                    .into_any_element();
+                reveal_tool_row(row, row_height, reveal)
             }));
 
         // Fold body: 200ms committed-height tween on a USER toggle only — and
@@ -5756,7 +6115,13 @@ impl Transcript {
             // Tool summaries and cards are code-adjacent chrome. Detail bodies
             // retain their explicit mono/diff typography below this boundary.
             .font_family(theme.font_sans_fixed.clone())
-            .when(collapses, |el| el.child(header))
+            .when(collapses, |el| {
+                el.child(reveal_tool_row(
+                    header.into_any_element(),
+                    26.0,
+                    header_reveal,
+                ))
+            })
             .child(body)
             .into_any_element()
     }
@@ -6013,6 +6378,16 @@ fn tool_icon_path(call: &ToolCall) -> &'static str {
     }
 }
 
+/// Compact file-action chips show only the final path component. The full
+/// path remains on the tool call (and in expanded diagnostics) for identity
+/// and disambiguation. Accept both separator styles because remote tools can
+/// report Windows paths even when the UI is running elsewhere.
+fn file_badge_name(path: &str) -> &str {
+    path.rsplit(['/', '\\'])
+        .find(|component| !component.is_empty())
+        .unwrap_or(path)
+}
+
 /// The body of an expanded chip card, under the header's separator. Diffs
 /// render through the changes pane's section body — the real component, with
 /// hunk headers, dual line-number gutters, accent bars, row washes, and
@@ -6047,6 +6422,14 @@ fn detail_body(
                     .flex()
                     .items_center()
                     .gap(px(8.0))
+                    .child(
+                        crate::file_icons::icon(
+                            crate::file_icons::FileIconIdentity::file(&stat.path),
+                            theme.appearance,
+                        )
+                        .size(px(14.0))
+                        .flex_none(),
+                    )
                     .child(
                         div()
                             .min_w_0()
@@ -6292,7 +6675,7 @@ fn chip_header_row(
             div()
                 .when(!activity, |detail| detail.flex_1())
                 .min_w_0()
-                .h(px(if file_path.is_some() { 24.0 } else { 18.0 }))
+                .h(px(if file_path.is_some() { 22.0 } else { 18.0 }))
                 .flex()
                 .when(activity && detail.is_empty(), |detail| detail.hidden())
                 .items_center()
@@ -6310,26 +6693,40 @@ fn chip_header_row(
                         .h(px(22.0))
                         .flex()
                         .items_center()
-                        .gap(px(5.0))
-                        .px(px(6.0))
+                        .overflow_hidden()
+                        .gap(px(3.0))
                         .rounded(px(5.0))
-                        .bg(crate::theme::ink(0.06))
+                        .bg(theme.ink(0.06))
+                        .pl(px(1.0))
+                        .pr(px(6.0))
                         .text_color(if failed {
                             theme.danger
                         } else {
                             theme.text.opacity(0.85)
                         })
                         .child(
-                            crate::icons::icon(crate::icons::for_file(path))
-                                .size(px(14.0))
-                                .text_color(tint)
-                                .when(activity && !failed, |icon| {
-                                    icon.group_hover("tool-header", |style| {
-                                        style.text_color(theme.text)
-                                    })
-                                }),
+                            div()
+                                .size(px(20.0))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(4.0))
+                                .bg(crate::file_icons::well_bg(theme))
+                                .child(
+                                    crate::file_icons::icon(
+                                        crate::file_icons::FileIconIdentity::file(path),
+                                        theme.appearance,
+                                    )
+                                    .size(px(14.0)),
+                                ),
                         )
-                        .child(div().min_w_0().truncate().child(SharedString::from(detail)))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .child(SharedString::from(file_badge_name(path).to_owned())),
+                        )
                         .map(|badge| {
                             if hover_text {
                                 badge
@@ -6512,39 +6909,103 @@ fn subagent_tab_title(call: &ToolCall) -> SharedString {
     "Subagent".into()
 }
 
-/// The icon interrupts the rail, leaving a small breathing gap on each side.
-/// Absolute line segments stretch with the row, including expanded output.
-/// The final row ends at its icon instead of leaving a dangling line.
-fn activity_rail(tool: &ToolItem, continues: bool, theme: &Theme) -> gpui::Div {
+/// Clip one newly appended task row to its committed height. Fade and lift are
+/// applied to the row content itself, leaving the connector at full contrast
+/// while it draws; fading the whole row made the path animation imperceptible.
+fn reveal_tool_row(row: AnyElement, height: f32, progress: f32) -> AnyElement {
+    if progress >= 1.0 {
+        return row;
+    }
+    div()
+        .w_full()
+        .h(px(height * progress))
+        .flex_none()
+        .overflow_hidden()
+        .child(row)
+        .into_any_element()
+}
+
+/// BoardUI-style task tree with Zeron's tool glyph restored at each branch tip.
+/// The previous row draws the first leg of a new arrival to its lower boundary;
+/// this row then continues down, rounds the elbow, and finally reveals the icon.
+/// One paint owns every segment in a row, avoiding alpha-darkened joints.
+fn activity_rail(
+    tool: &ToolItem,
+    has_predecessor: bool,
+    continues: bool,
+    reveal: f32,
+    continuation_reveal: f32,
+    row_height: f32,
+    theme: &Theme,
+) -> gpui::Div {
+    let color = theme.hairline(0.12);
     let tint = if tool.is_error {
         theme.danger
     } else {
         theme.text_muted
     };
+    let (incoming_reveal, branch_reveal) = tool_connector_parts(reveal, has_predecessor);
     div()
         .relative()
         .w(px(ACTIVITY_GUTTER_WIDTH))
         .flex_none()
         .child(
-            div()
-                .absolute()
-                .left(px(12.5))
-                .top_0()
-                .w(px(1.0))
-                .h(px(7.0))
-                .bg(crate::theme::hairline(0.12)),
-        )
-        .when(continues, |rail| {
-            rail.child(
-                div()
-                    .absolute()
-                    .left(px(12.5))
-                    .top(px(31.0))
-                    .bottom_0()
-                    .w(px(1.0))
-                    .bg(crate::theme::hairline(0.12)),
+            canvas(
+                move |_, _, _| (),
+                move |bounds, _, window, _| {
+                    let x = bounds.origin.x + px(ACTIVITY_TRUNK_X);
+                    let branch_y = bounds.origin.y + px(row_height / 2.0);
+                    let bend_y = branch_y - px(ACTIVITY_BEND_RADIUS);
+                    let mut tree = PathBuilder::stroke(px(1.0));
+                    if incoming_reveal > 0.0 {
+                        tree.move_to(point(x, bounds.origin.y));
+                        tree.line_to(point(
+                            x,
+                            bounds.origin.y
+                                + px((row_height / 2.0 - ACTIVITY_BEND_RADIUS) * incoming_reveal),
+                        ));
+                        if incoming_reveal >= 1.0 && continues && continuation_reveal > 0.0 {
+                            let continuation_height = (f32::from(bounds.size.height)
+                                - (row_height / 2.0 - ACTIVITY_BEND_RADIUS))
+                                .max(0.0);
+                            tree.line_to(point(
+                                x,
+                                bend_y + px(continuation_height * continuation_reveal),
+                            ));
+                        }
+                    }
+                    if branch_reveal > 0.0 {
+                        let curve_progress = (branch_reveal * 2.0).min(1.0);
+                        // Exact subdivision of the quadratic elbow. The curve
+                        // grows along its own arc instead of scaling or popping.
+                        tree.move_to(point(x, bend_y));
+                        tree.curve_to(
+                            point(
+                                x + px(ACTIVITY_BEND_RADIUS * curve_progress * curve_progress),
+                                bend_y
+                                    + px(ACTIVITY_BEND_RADIUS
+                                        * (2.0 * curve_progress - curve_progress * curve_progress)),
+                            ),
+                            point(x, bend_y + px(ACTIVITY_BEND_RADIUS * curve_progress)),
+                        );
+                        if branch_reveal > 0.5 {
+                            let horizontal = (branch_reveal - 0.5) * 2.0;
+                            let horizontal_length =
+                                ACTIVITY_BRANCH_END_X - ACTIVITY_TRUNK_X - ACTIVITY_BEND_RADIUS;
+                            tree.line_to(point(
+                                x + px(ACTIVITY_BEND_RADIUS + horizontal_length * horizontal),
+                                branch_y,
+                            ));
+                        }
+                    }
+                    if let Ok(path) = tree.build() {
+                        window.paint_path(path, color);
+                    }
+                },
             )
-        })
+            .absolute()
+            .inset_0(),
+        )
         .child(
             crate::icons::icon(if tool.is_thought {
                 crate::icons::CHAT_ROUND_LINE
@@ -6552,9 +7013,10 @@ fn activity_rail(tool: &ToolItem, continues: bool, theme: &Theme) -> gpui::Div {
                 tool_icon_path(&tool.call)
             })
             .absolute()
-            .left(px(6.0))
-            .top(px(12.0))
-            .size(px(14.0))
+            .left(px(ACTIVITY_ICON_LEFT))
+            .top(px(row_height / 2.0 - ACTIVITY_ICON_SIZE / 2.0))
+            .size(px(ACTIVITY_ICON_SIZE))
+            .opacity(branch_reveal)
             .text_color(tint),
         )
 }
@@ -6563,22 +7025,41 @@ fn activity_rail(tool: &ToolItem, continues: bool, theme: &Theme) -> gpui::Div {
 fn tool_chip(
     tool: &ToolItem,
     rail: bool,
+    has_predecessor: bool,
     continues: bool,
+    content_reveal: f32,
+    connector_reveal: f32,
+    continuation_reveal: f32,
     theme: &Theme,
     view: gpui::EntityId,
     cx: &mut gpui::App,
 ) -> AnyElement {
+    let row_height = if rail {
+        TOOL_TREE_ROW_HEIGHT
+    } else {
+        CHIP_HEIGHT
+    };
     div()
-        .h(px(CHIP_HEIGHT))
+        .h(px(row_height))
         .w_full()
         .flex_none()
         .flex()
         .flex_row()
-        .when(rail, |row| row.child(activity_rail(tool, continues, theme)))
+        .when(rail, |row| {
+            row.child(activity_rail(
+                tool,
+                has_predecessor,
+                continues,
+                connector_reveal,
+                continuation_reveal,
+                row_height,
+                theme,
+            ))
+        })
         .child(
             div()
                 .when(rail, |el| el.ml(px(ACTIVITY_TEXT_GAP)))
-                .my(px((CHIP_HEIGHT - CHIP_CARD_HEIGHT) / 2.0))
+                .my(px((row_height - CHIP_CARD_HEIGHT) / 2.0))
                 .h(px(CHIP_CARD_HEIGHT))
                 .min_w_0()
                 .flex_1()
@@ -6590,6 +7071,11 @@ fn tool_chip(
                         .border_1()
                         .border_color(crate::theme::hairline(0.07))
                         .bg(crate::theme::ink(0.03))
+                })
+                .when(rail && content_reveal < 1.0, |card| {
+                    card.relative()
+                        .top(px(4.0 * (1.0 - content_reveal)))
+                        .opacity(content_reveal)
                 })
                 .child(chip_header_row(tool, None, theme, view, cx)),
         )
@@ -6909,6 +7395,54 @@ impl Render for Transcript {
 mod tests {
     use super::*;
     use zeron_doc::MessagePart;
+
+    #[test]
+    fn file_badge_icon_well_counter_shades_each_appearance() {
+        for (mut theme, base) in [
+            (Theme::dark(), crate::theme::grey(48)),
+            (Theme::light(), crate::theme::grey(230)),
+        ] {
+            theme.surface_treatment = zeron_theme::SurfaceTreatment::Opaque;
+            let badge = crate::theme::flatten(theme.ink(0.06), base);
+            let icon_well = crate::theme::flatten(crate::file_icons::well_bg(&theme), badge);
+            let contrast = crate::theme::contrast_ratio(icon_well, badge);
+
+            match theme.appearance {
+                crate::theme::Appearance::Dark => assert!(icon_well.l < badge.l),
+                crate::theme::Appearance::Light => assert!(icon_well.l > badge.l),
+            }
+            assert!(contrast > 1.04, "icon well must remain visible: {contrast}");
+            assert!(
+                contrast < 1.20,
+                "icon well must not become a harsh split surface: {contrast}"
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn file_badge_icon_well_uses_more_coverage_on_frost() {
+        for mut theme in [Theme::dark(), Theme::light()] {
+            theme.surface_treatment = zeron_theme::SurfaceTreatment::Opaque;
+            let opaque_alpha = crate::file_icons::well_bg(&theme).a;
+            theme.surface_treatment = zeron_theme::SurfaceTreatment::Frosted;
+            let frosted = crate::file_icons::well_bg(&theme);
+            let badge = crate::theme::flatten(theme.ink(0.06), theme.bg);
+            let icon_well = crate::theme::flatten(frosted, badge);
+            let contrast = crate::theme::contrast_ratio(icon_well, badge);
+
+            assert!(opaque_alpha > 0.0 && opaque_alpha < 1.0);
+            assert!(frosted.a > opaque_alpha && frosted.a < 1.0);
+            assert!(
+                contrast > 1.03,
+                "frosted icon well must remain visible: {contrast}"
+            );
+            assert!(
+                contrast < 1.20,
+                "frosted icon well must not become a harsh split surface: {contrast}"
+            );
+        }
+    }
 
     #[test]
     fn selection_scroll_ramps_at_viewport_edges() {
@@ -9807,6 +10341,19 @@ mod tests {
     }
 
     #[test]
+    fn file_action_badges_show_only_the_file_name() {
+        assert_eq!(file_badge_name("/Users/me/project/src/main.rs"), "main.rs");
+        assert_eq!(
+            file_badge_name("crates/ui/src/transcript.rs"),
+            "transcript.rs"
+        );
+        assert_eq!(file_badge_name(r"C:\project\src\main.rs"), "main.rs");
+        assert_eq!(file_badge_name("src/components/"), "components");
+        assert_eq!(file_badge_name("main.rs"), "main.rs");
+        assert_eq!(file_badge_name(""), "");
+    }
+
+    #[test]
     fn multiline_command_flattens_to_one_chip_line() {
         // The user's breaker: a multi-line script in a Run chip. The detail
         // must come out as ONE sanitized line — the chip's fixed 30px card
@@ -9980,6 +10527,77 @@ mod tests {
         assert_eq!(
             chips_height(3),
             CHIPS_TOP_PAD + 3.0 * CHIP_HEIGHT + 2.0 * CHIP_GAP
+        );
+    }
+
+    #[test]
+    fn tool_row_reveal_honors_delay_easing_and_reduced_motion() {
+        let epoch = Instant::now();
+        let start = epoch + Duration::from_millis(TOOL_ROW_STAGGER_MS);
+        assert_eq!(tool_row_reveal_progress(Some(start), epoch, false), 0.0);
+        let halfway = tool_row_reveal_progress(
+            Some(start),
+            start + Duration::from_millis(TOOL_ROW_REVEAL.duration_ms / 2),
+            false,
+        );
+        assert!(halfway > 0.5 && halfway < 1.0);
+        assert_eq!(
+            tool_row_reveal_progress(Some(start), start + TOOL_ROW_REVEAL.total(), false,),
+            1.0
+        );
+        assert_eq!(tool_row_reveal_progress(Some(start), epoch, true), 1.0);
+        assert_eq!(tool_row_reveal_progress(None, epoch, false), 1.0);
+    }
+
+    #[test]
+    fn tool_connector_draws_continuously_before_revealing_the_branch() {
+        let epoch = Instant::now();
+        let start = epoch + Duration::from_millis(TOOL_ROW_STAGGER_MS);
+        assert_eq!(
+            tool_connector_reveal_progress(Some(start), epoch, false),
+            0.0
+        );
+        assert_eq!(
+            tool_connector_reveal_progress(Some(start), epoch, true),
+            1.0
+        );
+        assert_eq!(tool_connector_reveal_progress(None, epoch, false), 1.0);
+
+        assert_eq!(tool_connector_parts(0.0, false), (0.0, 0.0));
+        assert_eq!(tool_connector_parts(0.44, true), (0.0, 0.0));
+        assert_eq!(tool_connector_continuation(Some(0.0)), 0.0);
+        assert!(tool_connector_continuation(Some(0.3)) > 0.0);
+        assert_eq!(tool_connector_continuation(Some(0.45)), 1.0);
+
+        let (incoming, branch) = tool_connector_parts(0.60, true);
+        assert!(incoming > 0.0 && incoming < 1.0);
+        assert_eq!(branch, 0.0);
+        assert_eq!(tool_connector_parts(1.0, true), (1.0, 1.0));
+        assert_eq!(tool_connector_continuation(None), 0.0);
+    }
+
+    #[test]
+    fn tool_title_shimmer_crosses_the_title_without_a_loop_seam() {
+        assert_eq!(tool_title_shimmer_amount(0.5, 0.5), 1.0);
+        assert_eq!(tool_title_shimmer_amount(0.0, 0.5), 0.0);
+        assert_eq!(tool_title_shimmer_amount(1.0, 0.5), 0.0);
+        assert!(tool_title_shimmer_amount(0.3, 0.5) > 0.4);
+        assert!(tool_title_shimmer_amount(0.7, 0.5) > 0.4);
+        for x in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            assert_eq!(
+                tool_title_shimmer_amount(x, 0.0),
+                tool_title_shimmer_amount(x, 1.0),
+                "the repeating background must meet itself at x={x}"
+            );
+        }
+
+        let start = Instant::now();
+        assert_eq!(tool_title_shimmer_phase(start, start), 0.0);
+        let halfway = start + TOOL_GROUP_SHIMMER_DURATION / 2;
+        assert!((tool_title_shimmer_phase(start, halfway) - 0.5).abs() < f32::EPSILON);
+        assert_eq!(
+            tool_title_shimmer_phase(start, start + TOOL_GROUP_SHIMMER_DURATION),
+            0.0
         );
     }
 
