@@ -1387,6 +1387,45 @@ impl Pickers {
         cx.notify();
     }
 
+    /// Apply first-run choices through the same draft/default state used by
+    /// the real composer. `None` keeps the corresponding Automatic behavior.
+    pub(crate) fn apply_onboarding_defaults(
+        &mut self,
+        harness: HarnessId,
+        model: Option<String>,
+        reasoning: Option<ReasoningLevel>,
+        cx: &mut Context<Self>,
+    ) {
+        let harness_locked = self.harness_locked(cx);
+        if !harness_locked {
+            if self.config.harness != Some(harness) {
+                self.config.model_options.clear();
+            }
+            self.config.harness = Some(harness);
+            self.config.model = model.clone();
+            self.config.reasoning = reasoning;
+        }
+        self.defaults.harness = Some(harness);
+        if let Some(model_id) = model {
+            let label = self
+                .models
+                .get(&harness)
+                .and_then(|slot| slot.ready())
+                .and_then(|models| models.iter().find(|candidate| candidate.id == model_id))
+                .map(|model| model.label.clone())
+                .unwrap_or_else(|| model_id.clone());
+            self.defaults.remember_model(harness, model_id, label);
+        } else {
+            self.defaults.model_by_harness.remove(&harness);
+        }
+        self.defaults.reasoning = reasoning;
+        self.save_defaults();
+        if !harness_locked {
+            self.ensure_models(harness, false, cx);
+        }
+        cx.notify();
+    }
+
     fn pick_option(
         &mut self,
         option_id: String,
