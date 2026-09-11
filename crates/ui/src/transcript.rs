@@ -5892,7 +5892,9 @@ impl Transcript {
             }))
             .child(
                 div()
-                    .w(px(ACTIVITY_GUTTER_WIDTH))
+                    // The summary needs only the chevron's gutter; the
+                    // wider child gutter also reserves space for tool icons.
+                    .w(px(26.0))
                     .h(px(18.0))
                     .flex_none()
                     .relative()
