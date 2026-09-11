@@ -3,7 +3,7 @@
 //!
 //! The ShortcutsPage arrangement: the page holds a working copy, every flip
 //! emits [`NotificationsEvent::Changed`], and the shell persists it. Nothing
-//! here talks RPC — both flags are device-local UI settings.
+//! here talks RPC — all preferences are device-local UI settings.
 
 use gpui::{Context, EventEmitter, SharedString, Window, div, prelude::*, px};
 
@@ -35,6 +35,41 @@ pub struct NotificationsPage {
 
 impl EventEmitter<NotificationsEvent> for NotificationsPage {}
 
+#[derive(Clone, Copy)]
+enum NotificationPreference {
+    Sound,
+    CompletionSound,
+    InputSound,
+    AttentionSound,
+    Desktop,
+    BackgroundOnly,
+}
+
+fn is_switch_activation(key: &str, is_held: bool) -> bool {
+    !is_held && matches!(key, "enter" | "space")
+}
+
+fn interactive_switch(
+    element: gpui::Stateful<gpui::Div>,
+    accent: gpui::Hsla,
+    preference: NotificationPreference,
+    cx: &mut Context<NotificationsPage>,
+) -> gpui::Stateful<gpui::Div> {
+    element
+        .tab_index(0)
+        .focus_visible(move |style| style.border_2().border_color(accent))
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.toggle(preference, cx);
+        }))
+        .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+            if is_switch_activation(&event.keystroke.key, event.is_held) {
+                cx.stop_propagation();
+                this.toggle(preference, cx);
+            }
+        }))
+}
+
 impl NotificationsPage {
     pub fn new(
         sound: bool,
@@ -65,6 +100,20 @@ impl NotificationsPage {
             background_only: self.background_only,
         });
     }
+
+    fn toggle(&mut self, preference: NotificationPreference, cx: &mut Context<Self>) {
+        let value = match preference {
+            NotificationPreference::Sound => &mut self.sound,
+            NotificationPreference::CompletionSound => &mut self.completion_sound,
+            NotificationPreference::InputSound => &mut self.input_sound,
+            NotificationPreference::AttentionSound => &mut self.attention_sound,
+            NotificationPreference::Desktop => &mut self.desktop,
+            NotificationPreference::BackgroundOnly => &mut self.background_only,
+        };
+        *value = !*value;
+        self.emit(cx);
+        cx.notify();
+    }
 }
 
 impl Render for NotificationsPage {
@@ -77,15 +126,17 @@ impl Render for NotificationsPage {
         let attention_sound = self.attention_sound;
         let desktop = self.desktop;
         let background_only = self.background_only;
-        let toggle = |id: &'static str, label: &'static str, enabled: bool| {
+        let toggle = |id: &'static str, label: &'static str, enabled: bool, interactive: bool| {
             widgets::toggle_switch(&theme, enabled)
                 .id(id)
-                .role(gpui::Role::Switch)
-                .aria_label(label)
-                .aria_toggled(if enabled {
-                    gpui::Toggled::True
-                } else {
-                    gpui::Toggled::False
+                .when(interactive, |el| {
+                    el.role(gpui::Role::Switch)
+                        .aria_label(label)
+                        .aria_toggled(if enabled {
+                            gpui::Toggled::True
+                        } else {
+                            gpui::Toggled::False
+                        })
                 })
         };
         let card = widgets::section_card(&theme)
@@ -111,17 +162,12 @@ impl Render for NotificationsPage {
                             )),
                     )
                     .child(
-                        toggle("notifications-sound-toggle", "Session sounds", sound)
-                            .tab_index(0)
-                            .focus_visible(move |style| {
-                                style.border_2().border_color(accent)
-                            })
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.sound = !this.sound;
-                                this.emit(cx);
-                                cx.notify();
-                            })),
+                        interactive_switch(
+                            toggle("notifications-sound-toggle", "Session sounds", sound, true),
+                            accent,
+                            NotificationPreference::Sound,
+                            cx,
+                        ),
                     ),
             )
             .child(
@@ -149,18 +195,15 @@ impl Render for NotificationsPage {
                             "notifications-completion-sound-toggle",
                             "Task completed sound",
                             completion_sound,
+                            sound,
                         )
                         .when(sound, |el| {
-                            el.tab_index(0)
-                                .focus_visible(move |style| {
-                                    style.border_2().border_color(accent)
-                                })
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.completion_sound = !this.completion_sound;
-                                    this.emit(cx);
-                                    cx.notify();
-                                }))
+                            interactive_switch(
+                                el,
+                                accent,
+                                NotificationPreference::CompletionSound,
+                                cx,
+                            )
                         }),
                     ),
             )
@@ -189,18 +232,15 @@ impl Render for NotificationsPage {
                             "notifications-input-sound-toggle",
                             "Input required sound",
                             input_sound,
+                            sound,
                         )
                         .when(sound, |el| {
-                            el.tab_index(0)
-                                .focus_visible(move |style| {
-                                    style.border_2().border_color(accent)
-                                })
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.input_sound = !this.input_sound;
-                                    this.emit(cx);
-                                    cx.notify();
-                                }))
+                            interactive_switch(
+                                el,
+                                accent,
+                                NotificationPreference::InputSound,
+                                cx,
+                            )
                         }),
                     ),
             )
@@ -229,18 +269,15 @@ impl Render for NotificationsPage {
                             "notifications-attention-sound-toggle",
                             "Errors and disconnections sound",
                             attention_sound,
+                            sound,
                         )
                         .when(sound, |el| {
-                            el.tab_index(0)
-                                .focus_visible(move |style| {
-                                    style.border_2().border_color(accent)
-                                })
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.attention_sound = !this.attention_sound;
-                                    this.emit(cx);
-                                    cx.notify();
-                                }))
+                            interactive_switch(
+                                el,
+                                accent,
+                                NotificationPreference::AttentionSound,
+                                cx,
+                            )
                         }),
                     ),
             )
@@ -267,21 +304,17 @@ impl Render for NotificationsPage {
                             )),
                     )
                     .child(
-                        toggle(
-                            "notifications-desktop-toggle",
-                            "Desktop notifications",
-                            desktop,
-                        )
-                            .tab_index(0)
-                            .focus_visible(move |style| {
-                                style.border_2().border_color(accent)
-                            })
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.desktop = !this.desktop;
-                                this.emit(cx);
-                                cx.notify();
-                            })),
+                        interactive_switch(
+                            toggle(
+                                "notifications-desktop-toggle",
+                                "Desktop notifications",
+                                desktop,
+                                true,
+                            ),
+                            accent,
+                            NotificationPreference::Desktop,
+                            cx,
+                        ),
                     ),
             )
             .child(
@@ -313,20 +346,16 @@ impl Render for NotificationsPage {
                             "notifications-background-toggle",
                             "Only notify when Zeron is in the background",
                             background_only,
+                            desktop,
                         )
-                            .when(desktop, |el| {
-                                el.tab_index(0)
-                                    .focus_visible(move |style| {
-                                        style.border_2().border_color(accent)
-                                    })
-                                    .cursor_pointer().on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.background_only = !this.background_only;
-                                        this.emit(cx);
-                                        cx.notify();
-                                    },
-                                ))
-                            }),
+                        .when(desktop, |el| {
+                            interactive_switch(
+                                el,
+                                accent,
+                                NotificationPreference::BackgroundOnly,
+                                cx,
+                            )
+                        }),
                     ),
             );
 
@@ -348,5 +377,18 @@ impl Render for NotificationsPage {
                     )
                     .child(card),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_switch_activation;
+
+    #[test]
+    fn switches_accept_enter_or_space_once_per_press() {
+        assert!(is_switch_activation("enter", false));
+        assert!(is_switch_activation("space", false));
+        assert!(!is_switch_activation("escape", false));
+        assert!(!is_switch_activation("space", true));
     }
 }
