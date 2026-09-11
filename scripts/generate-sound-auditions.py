@@ -95,23 +95,32 @@ def write(path, frames):
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=Path(__file__).resolve().parents[1] / 'docs/sound-design/auditions')
-    folder = parser.parse_args().output_dir
+    parser.add_argument(
+        '--install-attention',
+        action='store_true',
+        help='Also install the selected attention cue as the application asset.',
+    )
+    args = parser.parse_args()
+    folder = args.output_dir
     folder.mkdir(parents=True, exist_ok=True)
     manifest=[]
     for cue in CUES:
         frames,peak=render(cue)
         write(folder/(cue[0]+'.wav'),frames)
+        if args.install_attention and cue[0] == '06-attention':
+            asset = Path(__file__).resolve().parents[1] / 'crates/ui/assets/sounds/attention.wav'
+            write(asset, frames)
         manifest.append(dict(file=cue[0]+'.wav',name=cue[1],description=cue[2],duration=cue[3],
                              peak_dbfs=round(20*math.log10(peak),1)))
     (folder/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     rows=['# Rounded sound family — ten additional auditions\n',
-          'Original synthesis using the approved rounded clicks, with wider rhythmic and tonal variety. Quiet levels, no noisy tails or metallic impacts. Auditions only: application assets and triggers are unchanged.\n',
-          'These cues are auditions only; no additional application triggers are installed.\n',
+          'Original synthesis using the approved rounded clicks, with wider rhythmic and tonal variety. Quiet levels, no noisy tails or metallic impacts.\n',
+          'The numbered files remain audition references. `06-attention.wav` is also the source for the selected application attention cue.\n',
           '| # | Intended action | Character | Duration | Peak |',
           '|---|---|---|---:|---:|']
     for n,item in enumerate(manifest,1):
         rows.append(f"| {n:02} | [{item['name']}]({item['file']}) | {item['description']} | {item['duration']:.2f}s | {item['peak_dbfs']:.1f} dBFS |")
-    rows += ['\nRegenerate with `python3 scripts/generate-sound-auditions.py`. Stereo 48 kHz, 16-bit PCM. No external samples. Perceived loudness depends on playback; no upward normalization is applied.',
-             '\nThe action names are audition contexts, not recommendations to enable all ten. Frequent actions such as Send and Undo would suit an opt-in interaction-sound setting; completion, questions and microphone state are stronger default candidates.']
+    rows += ['\nRegenerate with `python3 scripts/generate-sound-auditions.py`; pass `--install-attention` to refresh the selected runtime copy. Stereo 48 kHz, 16-bit PCM. No external samples. Perceived loudness depends on playback; no upward normalization is applied.',
+             '\nThe action names are audition contexts, not recommendations to enable all ten. Frequent actions such as Send and Undo stay silent; the product sound scope is intentionally limited to completion, input required, errors or durable disconnections, and Appshot capture.']
     (folder/'README.md').write_text('\n'.join(rows)+'\n')
     print(json.dumps(manifest,indent=2))

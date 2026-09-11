@@ -1,8 +1,8 @@
 # Rounded sound family — ten additional auditions
 
-Original synthesis using the approved rounded clicks, with wider rhythmic and tonal variety. Quiet levels, no noisy tails or metallic impacts. Auditions only: application assets and triggers are unchanged.
+Original synthesis using the approved rounded clicks, with wider rhythmic and tonal variety. Quiet levels, no noisy tails or metallic impacts.
 
-These cues are auditions only; no additional application triggers are installed.
+The numbered files remain audition references. `06-attention.wav` is also the source for the selected application attention cue.
 
 | # | Intended action | Character | Duration | Peak |
 |---|---|---|---:|---:|
@@ -17,6 +17,6 @@ These cues are auditions only; no additional application triggers are installed.
 | 09 | [Connection restored](09-reconnected.wav) | Three growing taps land on a soft two-note harmony. | 0.76s | -19.2 dBFS |
 | 10 | [Undo / restore](10-undo.wav) | Two reversed-weight clicks with a brief falling chime. | 0.49s | -19.2 dBFS |
 
-Regenerate with `python3 scripts/generate-sound-auditions.py`. Stereo 48 kHz, 16-bit PCM. No external samples. Perceived loudness depends on playback; no upward normalization is applied.
+Regenerate with `python3 scripts/generate-sound-auditions.py`; pass `--install-attention` to refresh the selected runtime copy. Stereo 48 kHz, 16-bit PCM. No external samples. Perceived loudness depends on playback; no upward normalization is applied.
 
-The action names are audition contexts, not recommendations to enable all ten. Frequent actions such as Send and Undo would suit an opt-in interaction-sound setting; completion, questions and microphone state are stronger default candidates.
+The action names are audition contexts, not recommendations to enable all ten. Frequent actions such as Send and Undo stay silent; the product sound scope is intentionally limited to completion, input required, errors or durable disconnections, and Appshot capture.

@@ -1,9 +1,10 @@
 //! Session notification sounds — the herdr approach (state-transition chimes
 //! played through the platform's own audio CLI, zero Rust audio deps):
 //!
-//! - two short chimes embedded in the binary (`assets/sounds/*.wav`, synthesized
-//!   in-repo — no external assets): **done** (run finished) and **request**
-//!   (agent is asking a question);
+//! - three short chimes embedded in the binary (`assets/sounds/*.wav`, synthesized
+//!   in-repo — no external assets): **done** (run finished), **request**
+//!   (agent is asking a question), and **attention** (run failed or durable
+//!   connection outage);
 //! - playback = write to a temp file, hand it to the system player on a
 //!   background thread: `afplay` (macOS), PowerShell `Media.SoundPlayer`
 //!   (Windows), first of `paplay`/`pw-play`/`aplay`/`ffplay`/`mpv` (Linux —
@@ -20,6 +21,7 @@ static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 static SOUND_DONE: &[u8] = include_bytes!("../assets/sounds/done.wav");
 static SOUND_REQUEST: &[u8] = include_bytes!("../assets/sounds/request.wav");
+static SOUND_ATTENTION: &[u8] = include_bytes!("../assets/sounds/attention.wav");
 
 /// Which notification chime to play.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +30,8 @@ pub enum Sound {
     Done,
     /// The agent is waiting on a question (→ AwaitingInput).
     Request,
+    /// A run failed or the durable connection state degraded.
+    Attention,
 }
 
 /// Play a chime on a background thread. Silently a no-op when disabled or no
@@ -40,6 +44,7 @@ pub fn play(sound: Sound) {
         let data = match sound {
             Sound::Done => SOUND_DONE,
             Sound::Request => SOUND_REQUEST,
+            Sound::Attention => SOUND_ATTENTION,
         };
         if let Err(err) = play_bytes(data) {
             tracing::debug!(?sound, error = %err, "notification sound playback failed");
@@ -177,6 +182,9 @@ impl SessionNotificationState {
     /// Call after saving the new baseline, including when delivery is pending
     /// or outputs are disabled. Suppressed pings must never be replayed later.
     pub(crate) fn sound_since(&self, prev: &Self, send_pending: bool) -> Option<Sound> {
+        if self.indicator == Indicator::Errored && prev.indicator != Indicator::Errored {
+            return Some(Sound::Attention);
+        }
         if self.indicator == Indicator::AwaitingInput && prev.indicator != Indicator::AwaitingInput
         {
             return Some(Sound::Request);
@@ -190,6 +198,19 @@ impl SessionNotificationState {
         }
         None
     }
+}
+
+/// The engine already holds raw transport degradation for four seconds before
+/// exposing `Offline` or `Reconnecting`. Notify once when that durable state is
+/// first crossed; booting into an outage is seeded silently by the shell.
+pub(crate) fn connectivity_sound_since(
+    current: zeron_proto::ConnectivityState,
+    previous: zeron_proto::ConnectivityState,
+) -> Option<Sound> {
+    use zeron_proto::ConnectivityState as State;
+    let degraded = matches!(current, State::Offline | State::Reconnecting);
+    let was_degraded = matches!(previous, State::Offline | State::Reconnecting);
+    (degraded && !was_degraded).then_some(Sound::Attention)
 }
 
 #[cfg(test)]
@@ -209,14 +230,44 @@ mod tests {
         let working = baseline(Indicator::Working, Some("old"));
         let idle = baseline(Indicator::None, Some("old"));
         assert_eq!(idle.sound_since(&working, false), None);
-        assert_eq!(
-            baseline(Indicator::Errored, Some("old")).sound_since(&working, false),
-            None
-        );
         // An older host without explicit completion metadata is silent too.
         assert_eq!(
             baseline(Indicator::None, None).sound_since(&baseline(Indicator::Working, None), false),
             None
+        );
+    }
+
+    #[test]
+    fn a_run_error_chimes_once_and_never_masquerades_as_completion() {
+        let working = baseline(Indicator::Working, Some("old"));
+        let errored = baseline(Indicator::Errored, Some("failed"));
+        assert_eq!(errored.sound_since(&working, false), Some(Sound::Attention));
+        assert_eq!(errored.sound_since(&errored, false), None);
+    }
+
+    #[test]
+    fn durable_connectivity_degradation_chimes_once_per_outage() {
+        use zeron_proto::ConnectivityState as State;
+
+        assert_eq!(
+            connectivity_sound_since(State::Connected, State::Disabled),
+            None
+        );
+        assert_eq!(
+            connectivity_sound_since(State::Reconnecting, State::Connected),
+            Some(Sound::Attention)
+        );
+        assert_eq!(
+            connectivity_sound_since(State::Offline, State::Reconnecting),
+            None
+        );
+        assert_eq!(
+            connectivity_sound_since(State::Connected, State::Offline),
+            None
+        );
+        assert_eq!(
+            connectivity_sound_since(State::Offline, State::Connected),
+            Some(Sound::Attention)
         );
     }
 
@@ -259,7 +310,7 @@ mod tests {
 
     #[test]
     fn embedded_chimes_are_wav() {
-        for data in [SOUND_DONE, SOUND_REQUEST] {
+        for data in [SOUND_DONE, SOUND_REQUEST, SOUND_ATTENTION] {
             assert!(data.len() > 1000);
             assert_eq!(&data[..4], b"RIFF");
             assert_eq!(&data[8..12], b"WAVE");

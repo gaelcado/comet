@@ -1281,6 +1281,9 @@ pub struct Shell {
     /// Last seen session status per chat — the chime trigger compares against
     /// it (a row's FIRST appearance never chimes, so boot stays silent).
     sound_prev: std::collections::HashMap<String, crate::sound::SessionNotificationState>,
+    /// Last durable global connectivity state. The first frame seeds silently;
+    /// later healthy→degraded edges share the attention cue with run errors.
+    connectivity_sound_prev: Option<zeron_proto::ConnectivityState>,
     user_menu: popover::Popup<()>,
     /// Inline sidebar error strip (mutation failures); click dismisses.
     sidebar_notice: Option<SharedString>,
@@ -1606,6 +1609,7 @@ impl Shell {
             sidebar_scroll: gpui::ScrollHandle::new(),
             space_boot_applied: false,
             sound_prev: std::collections::HashMap::new(),
+            connectivity_sound_prev: None,
             user_menu: popover::Popup::default(),
             sidebar_notice: None,
             update_flow: UpdateFlow::Idle,
@@ -1772,7 +1776,7 @@ impl Shell {
                 });
             }
         }
-        // Banners and chimes share one detector. Completion markers survive
+        // Banners and chimes share one session detector. Completion markers survive
         // queue handoffs and never advance for interrupts or stale activity.
         // A row's first appearance seeds the baseline silently (boot/replay).
         // Pending sends consume completion changes silently, while questions
@@ -1785,9 +1789,9 @@ impl Shell {
                 bool,
                 Option<String>,
             );
-            let sessions: Vec<Ping> = {
+            let (sessions, connectivity) = {
                 let state = state.read(cx);
-                state
+                let sessions: Vec<Ping> = state
                     .sessions
                     .iter()
                     .map(|s| {
@@ -1800,20 +1804,23 @@ impl Shell {
                             .and_then(|c| c.title.clone());
                         (s.chat_id.clone(), status, send_pending, title)
                     })
-                    .collect()
+                    .collect();
+                (sessions, state.connectivity.state)
             };
             // Background-only banners: `active_window()` is app-level (any
             // Zeron window being key), so a ping for a *background chat* in a
             // focused app still stays a chime — you're already looking at
             // Zeron; the sidebar dot carries the rest.
             let app_focused = cx.active_window().is_some();
+            let mut attention_played = false;
             for (chat_id, status, send_pending, title) in sessions {
                 let prev = self.sound_prev.insert(chat_id, status.clone());
                 if let Some(prev) = prev
                     && let Some(sound) = status.sound_since(&prev, send_pending)
                 {
-                    if self.settings.sound_enabled {
+                    if self.settings.session_sound_enabled(sound) {
                         crate::sound::play(sound);
+                        attention_played |= sound == crate::sound::Sound::Attention;
                     }
                     if self.settings.notifications_enabled
                         && !(self.settings.notifications_background_only && app_focused)
@@ -1822,10 +1829,20 @@ impl Shell {
                         let body = match sound {
                             crate::sound::Sound::Done => "Run finished",
                             crate::sound::Sound::Request => "Waiting on your input",
+                            crate::sound::Sound::Attention => "Run failed",
                         };
                         crate::notify::post(&title, body);
                     }
                 }
+            }
+            let previous_connectivity = self.connectivity_sound_prev.replace(connectivity);
+            if let Some(previous_connectivity) = previous_connectivity
+                && let Some(sound) =
+                    crate::sound::connectivity_sound_since(connectivity, previous_connectivity)
+                && self.settings.session_sound_enabled(sound)
+                && !attention_played
+            {
+                crate::sound::play(sound);
             }
         }
         // An explicit projectless canvas must be visible in the sidebar:
@@ -3337,6 +3354,9 @@ impl Shell {
                     let page = cx.new(|cx| {
                         NotificationsPage::new(
                             self.settings.sound_enabled,
+                            self.settings.sound_completion_enabled,
+                            self.settings.sound_input_enabled,
+                            self.settings.sound_attention_enabled,
                             self.settings.notifications_enabled,
                             self.settings.notifications_background_only,
                             cx,
@@ -3348,10 +3368,16 @@ impl Shell {
                         |this: &mut Shell, _, event: &NotificationsEvent, cx| {
                             let NotificationsEvent::Changed {
                                 sound,
+                                completion_sound,
+                                input_sound,
+                                attention_sound,
                                 desktop,
                                 background_only,
                             } = *event;
                             this.settings.sound_enabled = sound;
+                            this.settings.sound_completion_enabled = completion_sound;
+                            this.settings.sound_input_enabled = input_sound;
+                            this.settings.sound_attention_enabled = attention_sound;
                             this.settings.notifications_enabled = desktop;
                             this.settings.notifications_background_only = background_only;
                             this.schedule_save(cx);
