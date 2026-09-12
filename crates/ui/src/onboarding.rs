@@ -32,9 +32,9 @@ const HARNESS_MAX_HEIGHT: f32 = Theme::SPACE_LG * 40.0;
 const PROJECT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 30.0;
 const HARNESS_ROW_HEIGHT: f32 = 54.0;
 const HARNESS_ROW_GAP: f32 = 8.0;
-// Five complete rows plus half of the next one makes the list's overflow
-// obvious without spending the entire step on agent detection.
-const HARNESS_LIST_MAX_HEIGHT: f32 = HARNESS_ROW_HEIGHT * 5.5 + HARNESS_ROW_GAP * 5.0;
+// Six complete rows plus half of the next one uses the available height while
+// still making the list's overflow obvious.
+const HARNESS_LIST_MAX_HEIGHT: f32 = HARNESS_ROW_HEIGHT * 6.5 + HARNESS_ROW_GAP * 6.0;
 const STEP_GROUP_GAP: f32 = Theme::SPACE_LG + Theme::SPACE_SM;
 const VIEWPORT_INSET: f32 = Theme::SPACE_LG;
 const ROOMY_VIEWPORT_INSET: f32 = Theme::SPACE_LG * 2.0;
@@ -483,23 +483,19 @@ fn choice_card(
         .py(px(13.0))
         .rounded(px(12.0))
         .border_1()
-        .border_color(if selected {
-            theme.border_strong
-        } else {
-            theme.border
-        })
-        .bg(if selected {
-            theme.element_active
-        } else {
-            theme.card_glass_bg()
-        })
+        .border_color(theme.border)
+        .bg(theme.card_glass_bg())
         .flex()
         .flex_row()
         .items_start()
         .gap(px(12.0))
         .cursor_pointer()
         .hover(|style| style.bg(theme.element_hover))
-        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .focus_visible(|style| style.border_2().border_color(theme.text))
+        .when(selected, |card| {
+            card.bg(crate::theme::card_selected_bg())
+                .shadow(crate::theme::card_selected_shadows())
+        })
         .child(
             div()
                 .mt(px(2.0))
@@ -508,7 +504,7 @@ fn choice_card(
                 .rounded_full()
                 .border_1()
                 .border_color(if selected {
-                    theme.accent
+                    theme.text
                 } else {
                     theme.border_strong
                 })
@@ -516,7 +512,7 @@ fn choice_card(
                 .items_center()
                 .justify_center()
                 .when(selected, |dot| {
-                    dot.child(div().size(px(8.0)).rounded_full().bg(theme.accent))
+                    dot.child(div().size(px(8.0)).rounded_full().bg(theme.text))
                 }),
         )
         .child(
@@ -570,7 +566,7 @@ fn action_button(theme: &Theme, label: &'static str) -> gpui::Div {
         .justify_center()
         .cursor_pointer()
         .hover(|style| style.opacity(0.9))
-        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .focus_visible(|style| style.border_2().border_color(theme.bg))
         .child(label)
 }
 
@@ -587,7 +583,7 @@ fn quiet_button(theme: &Theme, label: &'static str) -> gpui::Div {
         .text_color(theme.text_muted)
         .cursor_pointer()
         .hover(|style| style.bg(theme.element_hover).text_color(theme.text))
-        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .focus_visible(|style| style.border_2().border_color(theme.text))
         .child(label)
 }
 
@@ -600,11 +596,9 @@ fn footer_secondary_button(
     div()
         .id(id)
         .h(px(Theme::SPACE_SM * 5.0))
-        .flex_none()
+        .min_w_0()
         .px(px(Theme::SPACE_MD))
         .rounded(px(Theme::CONTROL_RADIUS))
-        .border_1()
-        .border_color(theme.border.opacity(0.72))
         .bg(crate::motion::hover_blend(
             id,
             gpui::transparent_black(),
@@ -617,7 +611,7 @@ fn footer_secondary_button(
         .text_size(crate::typography::ui_rems(12.5))
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(crate::motion::hover_blend(id, theme.text_muted, theme.text))
-        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .focus_visible(|style| style.border_2().border_color(theme.text))
         .when_some(icon_path, |button, icon_path| {
             button.child(
                 icon(icon_path)
@@ -626,38 +620,6 @@ fn footer_secondary_button(
             )
         })
         .child(label)
-}
-
-fn footer_back_button(theme: &Theme, enabled: bool) -> gpui::Stateful<gpui::Div> {
-    let id = "onboarding-back";
-    div()
-        .id(id)
-        .size(px(Theme::SPACE_SM * 5.0))
-        .flex_none()
-        .rounded(px(Theme::CONTROL_RADIUS))
-        .border_1()
-        .border_color(theme.border.opacity(0.72))
-        .bg(crate::motion::hover_blend(
-            id,
-            gpui::transparent_black(),
-            theme.glass_hover(),
-        ))
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_color(crate::motion::hover_blend(id, theme.text_muted, theme.text))
-        .focus_visible(|style| style.border_2().border_color(theme.accent))
-        .when(enabled, |button| button.cursor_pointer())
-        .when(!enabled, |button| button.opacity(0.38).cursor_default())
-        .child(
-            icon(crate::icons::ALT_ARROW_LEFT)
-                .size(px(Theme::SPACE_MD))
-                .text_color(if enabled {
-                    theme.text_muted
-                } else {
-                    theme.text_faint
-                }),
-        )
 }
 
 fn footer_primary_button(
@@ -678,7 +640,7 @@ fn footer_primary_button(
         .bg(theme.solid)
         .text_color(theme.on_solid)
         .cursor_pointer()
-        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .focus_visible(|style| style.border_2().border_color(theme.bg))
         .child(
             div()
                 .size_full()
@@ -970,6 +932,7 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
             chip(theme, mode.label().into(), selected, None)
                 .id(("onboarding-appearance-mode", index))
                 .min_h(px(44.0))
+                .flex_1()
                 .role(gpui::Role::RadioButton)
                 .aria_toggled(toggled(selected))
                 .track_focus(ui.control(index))
@@ -1000,7 +963,7 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
         .aria_expanded(ui.theme_menu.is_open())
         .track_focus(ui.control(3))
         .hover(|style| style.bg(theme.element_hover))
-        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .focus_visible(|style| style.border_2().border_color(theme.text))
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(|shell, _, _, _| shell.onboarding_note_theme_trigger_press()),
@@ -1055,7 +1018,7 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
                     slot.child(
                         icon(crate::icons::CHECK)
                             .size(px(14.0))
-                            .text_color(theme.accent),
+                            .text_color(theme.text),
                     )
                 }))
             });
@@ -1125,6 +1088,7 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
             let selected = surface == current_surface;
             chip(theme, surface_label(surface).into(), selected, None)
                 .id(("onboarding-surface", index))
+                .flex_1()
                 .role(gpui::Role::RadioButton)
                 .aria_toggled(toggled(selected))
                 .track_focus(ui.control(16 + index))
@@ -1308,6 +1272,8 @@ fn render_harness_step(
                             };
                             chip(theme, label, selected, None)
                                 .id(("onboarding-device", index))
+                                .flex_1()
+                                .min_w(px(120.0))
                                 .role(gpui::Role::RadioButton)
                                 .aria_toggled(toggled(selected))
                                 .track_focus(ui.control(20 + index))
@@ -1378,16 +1344,8 @@ fn render_harness_step(
                             .px(px(12.0))
                             .rounded(px(10.0))
                             .border_1()
-                            .border_color(if enabled {
-                                theme.border_strong
-                            } else {
-                                theme.border
-                            })
-                            .bg(if enabled {
-                                theme.element_active
-                            } else {
-                                theme.card_glass_bg()
-                            })
+                            .border_color(theme.border)
+                            .bg(theme.card_glass_bg())
                             .flex()
                             .items_center()
                             .gap(px(10.0))
@@ -1402,7 +1360,11 @@ fn render_harness_step(
                                         shell.onboarding_toggle_harness(descriptor.id, !enabled, cx)
                                     }))
                             })
-                            .focus_visible(|style| style.border_2().border_color(theme.accent))
+                            .focus_visible(|style| style.border_2().border_color(theme.text))
+                            .when(enabled, |row| {
+                                row.bg(crate::theme::card_selected_bg())
+                                    .shadow(crate::theme::card_selected_shadows())
+                            })
                             .when(!installed, |row| row.opacity(0.58))
                             .when(!interactive, |row| {
                                 row.aria_description(format!(
@@ -1462,7 +1424,7 @@ fn render_harness_step(
                                         .rounded_full()
                                         .p(px(2.0))
                                         .bg(if enabled {
-                                            theme.accent_strong
+                                            theme.text
                                         } else {
                                             theme.border_strong
                                         })
@@ -1470,7 +1432,11 @@ fn render_harness_step(
                                         .justify_end()
                                         .when(!enabled, |toggle| toggle.justify_start())
                                         .child(
-                                            div().size(px(16.0)).rounded_full().bg(theme.on_accent),
+                                            div().size(px(16.0)).rounded_full().bg(if enabled {
+                                                theme.bg
+                                            } else {
+                                                theme.text_muted
+                                            }),
                                         ),
                                 )
                             })
@@ -1492,32 +1458,6 @@ fn render_harness_step(
             &ui.harness_scroll,
             list,
         ));
-    let agent_actions = div()
-        .mt(px(Theme::SPACE_SM))
-        .flex()
-        .items_center()
-        .gap(px(Theme::SPACE_SM))
-        .when(matches!(ui.harnesses, Loadable::Ready(_)), |row| {
-            row.child(
-                quiet_button(theme, "Retry agent detection")
-                    .id("onboarding-harness-retry-ready")
-                    .flex_1()
-                    .role(gpui::Role::Button)
-                    .track_focus(ui.control(11))
-                    .on_click(cx.listener(|shell, _, _, cx| {
-                        shell.onboarding_load_harnesses(cx);
-                        shell.onboarding_load_accounts(cx);
-                    })),
-            )
-        })
-        .child(
-            quiet_button(theme, "Manage agent sign-ins")
-                .id("onboarding-manage-agent-signins")
-                .flex_1()
-                .role(gpui::Role::Button)
-                .track_focus(ui.control(12))
-                .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_open_agent_settings(cx))),
-        );
     div()
         .size_full()
         .min_h_0()
@@ -1531,7 +1471,6 @@ fn render_harness_step(
         .child(body(theme, "Turn on the agents you want to use."))
         .child(device_switcher)
         .child(harness_list)
-        .child(agent_actions)
         .when_some(ui.error.clone(), |column, error| {
             column.child(
                 div()
@@ -1557,16 +1496,8 @@ fn chip(
         .px(px(12.0))
         .rounded(px(9.0))
         .border_1()
-        .border_color(if selected {
-            theme.border_strong
-        } else {
-            theme.border
-        })
-        .bg(if selected {
-            theme.element_active
-        } else {
-            theme.card_glass_bg()
-        })
+        .border_color(theme.border)
+        .bg(theme.card_glass_bg())
         .text_size(crate::typography::ui_rems(12.5))
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(if selected {
@@ -1580,7 +1511,11 @@ fn chip(
         .gap(px(7.0))
         .cursor_pointer()
         .hover(|style| style.bg(theme.element_hover))
-        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .focus_visible(|style| style.border_2().border_color(theme.text))
+        .when(selected, |chip| {
+            chip.bg(crate::theme::card_selected_bg())
+                .shadow(crate::theme::card_selected_shadows())
+        })
         .when_some(harness, |chip, harness| {
             let (icon_path, tint) = crate::pickers::harness_brand_icon(harness);
             chip.child(
@@ -1644,6 +1579,8 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                         Some(id),
                     )
                     .id(("onboarding-default-harness", index))
+                    .flex_1()
+                    .min_w(px(132.0))
                     .role(gpui::Role::RadioButton)
                     .aria_toggled(toggled(ui.selected_harness == Some(id)))
                     .track_focus(ui.control(index))
@@ -1679,6 +1616,8 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                 .child(
                     chip(theme, "Automatic".into(), ui.selected_model.is_none(), None)
                         .id("onboarding-default-model-auto")
+                        .flex_1()
+                        .min_w(px(100.0))
                         .role(gpui::Role::RadioButton)
                         .aria_toggled(toggled(ui.selected_model.is_none()))
                         .track_focus(ui.control(8))
@@ -1696,6 +1635,8 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                             let id = model.id;
                             chip(theme, model.label.into(), selected, ui.selected_harness)
                                 .id(("onboarding-default-model", index))
+                                .flex_1()
+                                .min_w(px(100.0))
                                 .role(gpui::Role::RadioButton)
                                 .aria_toggled(toggled(selected))
                                 .track_focus(ui.control(9 + index))
@@ -1722,6 +1663,8 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                     None,
                 )
                 .id("onboarding-default-reasoning-auto")
+                .flex_1()
+                .min_w(px(88.0))
                 .role(gpui::Role::RadioButton)
                 .aria_toggled(toggled(ui.selected_reasoning.is_none()))
                 .track_focus(ui.control(16))
@@ -1735,6 +1678,8 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                     None,
                 )
                 .id(("onboarding-default-reasoning", index))
+                .flex_1()
+                .min_w(px(88.0))
                 .role(gpui::Role::RadioButton)
                 .aria_toggled(toggled(ui.selected_reasoning == Some(level)))
                 .track_focus(ui.control(17 + index))
@@ -1938,6 +1883,8 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                                 None,
                             )
                             .id("onboarding-title-model-auto")
+                            .flex_1()
+                            .min_w(px(180.0))
                             .role(gpui::Role::RadioButton)
                             .aria_toggled(toggled(current.model.is_none()))
                             .track_focus(ui.control(8))
@@ -1950,6 +1897,8 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                             let id = model.id.clone();
                             chip(theme, model.label.clone().into(), selected, current.harness)
                                 .id(("onboarding-title-model", index))
+                                .flex_1()
+                                .min_w(px(120.0))
                                 .role(gpui::Role::RadioButton)
                                 .aria_toggled(toggled(selected))
                                 .track_focus(ui.control(9 + index))
@@ -2117,9 +2066,9 @@ fn render_progress(step: OnboardingStep, theme: &Theme, compact: bool) -> AnyEle
                         }))
                         .rounded_full()
                         .bg(if index < step.index() {
-                            theme.accent.opacity(0.62)
+                            theme.text_muted
                         } else if index == step.index() {
-                            theme.accent
+                            theme.text
                         } else {
                             theme.border_strong
                         })
@@ -2174,23 +2123,33 @@ fn render_footer_actions(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let at_first_step = step == OnboardingStep::Workspace;
-    let previous = footer_back_button(theme, !at_first_step)
-        .role(gpui::Role::Button)
-        .aria_label("Previous setup step")
-        .when(at_first_step, |button| {
-            button.aria_description("Unavailable on the first step")
-        })
-        .when(!at_first_step, |button| {
-            button
-                .cursor_pointer()
-                .on_hover(crate::motion::hover_listener("onboarding-back"))
-                .track_focus(ui.control(28))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    shell.onboarding_back(cx);
-                    shell.onboarding_focus_control(0, window, cx);
-                }))
-        });
+    let previous = footer_secondary_button(
+        theme,
+        "onboarding-back",
+        "Previous",
+        Some(crate::icons::ALT_ARROW_LEFT),
+    )
+    .flex_1()
+    .role(gpui::Role::Button)
+    .aria_label("Previous setup step")
+    .when(at_first_step, |button| {
+        button
+            .opacity(0.38)
+            .cursor_default()
+            .aria_description("Unavailable on the first step")
+    })
+    .when(!at_first_step, |button| {
+        button
+            .cursor_pointer()
+            .on_hover(crate::motion::hover_listener("onboarding-back"))
+            .track_focus(ui.control(28))
+            .on_click(cx.listener(|shell, _, window, cx| {
+                shell.onboarding_back(cx);
+                shell.onboarding_focus_control(0, window, cx);
+            }))
+    });
     let skip = footer_secondary_button(theme, "onboarding-skip", "Skip", None)
+        .flex_1()
         .role(gpui::Role::Button)
         .aria_label("Skip setup")
         .cursor_pointer()
@@ -2205,7 +2164,7 @@ fn render_footer_actions(
         if finishes { "Finish setup" } else { "Continue" },
         compact,
     )
-    .flex_1()
+    .w_full()
     .role(gpui::Role::Button)
     .when(!enabled, |button| {
         button
@@ -2224,14 +2183,54 @@ fn render_footer_actions(
                 }
             }))
     });
-    let actions = div()
+    let secondary_navigation = div()
         .w_full()
         .flex()
         .items_center()
         .gap(px(Theme::SPACE_XS + 2.0))
         .child(previous)
-        .child(continue_button)
         .child(skip);
+    let actions = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(Theme::SPACE_SM))
+        .when(step == OnboardingStep::Harnesses, |column| {
+            column.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(Theme::SPACE_SM))
+                    .when(matches!(ui.harnesses, Loadable::Ready(_)), |row| {
+                        row.child(
+                            quiet_button(theme, "Retry agent detection")
+                                .id("onboarding-harness-retry-ready")
+                                .h(px(Theme::SPACE_SM * 5.0))
+                                .flex_1()
+                                .role(gpui::Role::Button)
+                                .track_focus(ui.control(11))
+                                .on_click(cx.listener(|shell, _, _, cx| {
+                                    shell.onboarding_load_harnesses(cx);
+                                    shell.onboarding_load_accounts(cx);
+                                })),
+                        )
+                    })
+                    .child(
+                        quiet_button(theme, "Manage agent sign-ins")
+                            .id("onboarding-manage-agent-signins")
+                            .h(px(Theme::SPACE_SM * 5.0))
+                            .flex_1()
+                            .role(gpui::Role::Button)
+                            .track_focus(ui.control(12))
+                            .on_click(cx.listener(|shell, _, _, cx| {
+                                shell.onboarding_open_agent_settings(cx)
+                            })),
+                    ),
+            )
+        })
+        .child(continue_button)
+        .child(secondary_navigation);
     actions.into_any_element()
 }
 
@@ -2294,7 +2293,7 @@ pub fn render(
         .child(div().flex_1().min_h_0().child(decision_content))
         .child(
             div()
-                .mt(px(STEP_GROUP_GAP))
+                .mt(px(Theme::SPACE_MD))
                 .flex_none()
                 .child(render_footer_actions(
                     ui,
@@ -2432,7 +2431,7 @@ mod tests {
         assert_eq!(journey_max_height(OnboardingStep::Project), 480.0);
         assert_eq!(journey_max_height(OnboardingStep::Harnesses), 640.0);
         assert_eq!(journey_max_height(OnboardingStep::Appearance), 560.0);
-        assert_eq!(HARNESS_LIST_MAX_HEIGHT, 337.0);
+        assert_eq!(HARNESS_LIST_MAX_HEIGHT, 399.0);
     }
 
     #[test]
