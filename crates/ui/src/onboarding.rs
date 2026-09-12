@@ -17,6 +17,7 @@ use crate::appearance::AppearanceMode;
 use crate::icons::icon;
 use crate::popover::{self, Loadable, Popup};
 use crate::settings::composer::ComposerDefaults;
+use crate::settings::widgets;
 use crate::shell::Shell;
 use crate::state::AppState;
 use crate::theme::{Theme, ink};
@@ -552,37 +553,20 @@ fn choice_card(
 }
 
 fn action_button(theme: &Theme, label: &'static str) -> gpui::Div {
-    div()
+    popover::btn_primary(theme, label)
         .w_full()
-        .min_h(px(44.0))
-        .px(px(16.0))
-        .rounded(px(10.0))
-        .bg(theme.solid)
-        .text_color(theme.on_solid)
-        .text_size(crate::typography::ui_rems(14.0))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .min_h(px(40.0))
         .flex()
         .items_center()
         .justify_center()
-        .cursor_pointer()
-        .hover(|style| style.opacity(0.9))
         .focus_visible(|style| style.border_2().border_color(theme.bg))
-        .child(label)
 }
 
 fn quiet_button(theme: &Theme, label: &'static str) -> gpui::Div {
-    div()
+    widgets::ghost_action(theme)
         .min_h(px(36.0))
-        .px(px(10.0))
-        .rounded(px(8.0))
-        .flex()
-        .items_center()
         .justify_center()
-        .text_size(crate::typography::ui_rems(12.5))
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(theme.text_muted)
-        .cursor_pointer()
-        .hover(|style| style.bg(theme.element_hover).text_color(theme.text))
+        .hover(|style| widgets::ghost_hover(theme, style))
         .focus_visible(|style| style.border_2().border_color(theme.text))
         .child(label)
 }
@@ -593,12 +577,12 @@ fn footer_secondary_button(
     label: &'static str,
     icon_path: Option<&'static str>,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
+    widgets::ghost_action(theme)
         .id(id)
         .h(px(Theme::SPACE_SM * 5.0))
         .min_w_0()
         .px(px(Theme::SPACE_MD))
-        .rounded(px(Theme::CONTROL_RADIUS))
+        .rounded(px(8.0))
         .bg(crate::motion::hover_blend(
             id,
             gpui::transparent_black(),
@@ -608,8 +592,7 @@ fn footer_secondary_button(
         .items_center()
         .justify_center()
         .gap(px(Theme::SPACE_XS))
-        .text_size(crate::typography::ui_rems(12.5))
-        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_size(crate::typography::ui_rems(13.0))
         .text_color(crate::motion::hover_blend(id, theme.text_muted, theme.text))
         .focus_visible(|style| style.border_2().border_color(theme.text))
         .when_some(icon_path, |button, icon_path| {
@@ -628,40 +611,22 @@ fn footer_primary_button(
     label: &'static str,
     compact: bool,
 ) -> gpui::Stateful<gpui::Div> {
-    let wash =
-        crate::motion::hover_blend(id, gpui::transparent_black(), theme.on_solid.opacity(0.10));
-    div()
+    popover::btn_primary(theme, label)
         .id(id)
         .h(px(Theme::SPACE_SM * 5.0))
         .min_w_0()
-        .rounded(px(Theme::CONTROL_RADIUS))
-        .border_1()
-        .border_color(theme.solid)
-        .bg(theme.solid)
-        .text_color(theme.on_solid)
-        .cursor_pointer()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(Theme::SPACE_XS))
         .focus_visible(|style| style.border_2().border_color(theme.bg))
-        .child(
-            div()
-                .size_full()
-                .px(px(Theme::SPACE_MD))
-                .rounded(px(Theme::CONTROL_RADIUS))
-                .bg(wash)
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap(px(Theme::SPACE_XS))
-                .text_size(crate::typography::ui_rems(12.5))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(label)
-                .when(!compact, |content| {
-                    content.child(
-                        icon(crate::icons::ALT_ARROW_RIGHT)
-                            .size(px(Theme::SPACE_MD))
-                            .text_color(theme.on_solid),
-                    )
-                }),
-        )
+        .when(!compact, |button| {
+            button.child(
+                icon(crate::icons::ALT_ARROW_RIGHT)
+                    .size(px(Theme::SPACE_MD))
+                    .text_color(theme.on_solid),
+            )
+        })
 }
 
 pub(crate) fn activates(event: &KeyDownEvent) -> bool {
@@ -1415,28 +1380,7 @@ fn render_harness_step(
                                     ),
                             )
                             .when(interactive, |row| {
-                                row.child(
-                                    div()
-                                        .w(px(34.0))
-                                        .h(px(20.0))
-                                        .rounded_full()
-                                        .p(px(2.0))
-                                        .bg(if enabled {
-                                            theme.text
-                                        } else {
-                                            theme.border_strong
-                                        })
-                                        .flex()
-                                        .justify_end()
-                                        .when(!enabled, |toggle| toggle.justify_start())
-                                        .child(
-                                            div().size(px(16.0)).rounded_full().bg(if enabled {
-                                                theme.bg
-                                            } else {
-                                                theme.text_muted
-                                            }),
-                                        ),
-                                )
+                                row.child(widgets::toggle_switch(theme, enabled))
                             })
                     }),
             )
@@ -2216,8 +2160,9 @@ fn render_global_navigation(
             Some(crate::icons::ALT_ARROW_LEFT),
         )
         .border_1()
-        .border_color(theme.border_strong)
+        .border_color(theme.border)
         .flex_none()
+        .text_color(theme.text)
         .role(gpui::Role::Button)
         .aria_label("Previous setup step")
         .cursor_pointer()
