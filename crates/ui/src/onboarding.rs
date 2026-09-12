@@ -27,6 +27,8 @@ const CONTENT_MAX_WIDTH: f32 = Theme::SPACE_LG * 30.0;
 // The journey grows with the window until this cap; dense steps should expose
 // several useful rows before their overflow affordance becomes necessary.
 const CONTENT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 35.0;
+const WORKSPACE_MAX_HEIGHT: f32 = Theme::SPACE_LG * 23.0;
+const PROJECT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 30.0;
 const STEP_GROUP_GAP: f32 = Theme::SPACE_LG + Theme::SPACE_SM;
 const VIEWPORT_INSET: f32 = Theme::SPACE_LG;
 const ROOMY_VIEWPORT_INSET: f32 = Theme::SPACE_LG * 2.0;
@@ -2092,6 +2094,17 @@ fn can_continue(ui: &OnboardingUi, step: OnboardingStep) -> bool {
             .any(|h| h.id != HarnessId::Mock && harness_is_usable(h, &ui.accounts)))
 }
 
+fn journey_max_height(step: OnboardingStep) -> f32 {
+    match step {
+        OnboardingStep::Workspace => WORKSPACE_MAX_HEIGHT,
+        OnboardingStep::Project | OnboardingStep::FirstSession => PROJECT_MAX_HEIGHT,
+        OnboardingStep::Appearance
+        | OnboardingStep::Harnesses
+        | OnboardingStep::Defaults
+        | OnboardingStep::Titles => CONTENT_MAX_HEIGHT,
+    }
+}
+
 fn render_footer(
     ui: &OnboardingUi,
     step: OnboardingStep,
@@ -2188,10 +2201,11 @@ pub fn render(
     let step = ui.step();
     let viewport_width = f32::from(viewport.width);
     let viewport_height = f32::from(viewport.height);
+    let journey_max_height = journey_max_height(step);
     let compact_navigation = viewport_width < COMPACT_NAVIGATION_WIDTH;
     let roomy_x = viewport_width >= CONTENT_MAX_WIDTH + ROOMY_VIEWPORT_INSET * 2.0;
     let roomy_y =
-        viewport_height >= Theme::TITLEBAR_HEIGHT + CONTENT_MAX_HEIGHT + ROOMY_VIEWPORT_INSET * 2.0;
+        viewport_height >= Theme::TITLEBAR_HEIGHT + journey_max_height + ROOMY_VIEWPORT_INSET * 2.0;
     let outer_x = if roomy_x {
         ROOMY_VIEWPORT_INSET
     } else {
@@ -2226,8 +2240,7 @@ pub fn render(
         .w_full()
         .h_full()
         .max_w(px(CONTENT_MAX_WIDTH))
-        .max_h(px(CONTENT_MAX_HEIGHT))
-        .mx_auto()
+        .max_h(px(journey_max_height))
         .min_w_0()
         .min_h_0()
         .flex()
@@ -2351,6 +2364,13 @@ mod tests {
         assert_eq!(OnboardingStep::Appearance.next(), OnboardingStep::Harnesses);
         assert_eq!(OnboardingStep::Project.next(), OnboardingStep::Project);
         assert_eq!(OnboardingStep::Project.index() + 1, STEP_COUNT);
+    }
+
+    #[test]
+    fn simple_steps_do_not_inherit_the_dense_journey_height() {
+        assert_eq!(journey_max_height(OnboardingStep::Workspace), 368.0);
+        assert_eq!(journey_max_height(OnboardingStep::Project), 480.0);
+        assert_eq!(journey_max_height(OnboardingStep::Appearance), 560.0);
     }
 
     #[test]
