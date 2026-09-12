@@ -28,7 +28,13 @@ const CONTENT_MAX_WIDTH: f32 = Theme::SPACE_LG * 30.0;
 // several useful rows before their overflow affordance becomes necessary.
 const CONTENT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 35.0;
 const WORKSPACE_MAX_HEIGHT: f32 = Theme::SPACE_LG * 23.0;
+const HARNESS_MAX_HEIGHT: f32 = Theme::SPACE_LG * 40.0;
 const PROJECT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 30.0;
+const HARNESS_ROW_HEIGHT: f32 = 54.0;
+const HARNESS_ROW_GAP: f32 = 8.0;
+// Five complete rows plus half of the next one makes the list's overflow
+// obvious without spending the entire step on agent detection.
+const HARNESS_LIST_MAX_HEIGHT: f32 = HARNESS_ROW_HEIGHT * 5.5 + HARNESS_ROW_GAP * 5.0;
 const STEP_GROUP_GAP: f32 = Theme::SPACE_LG + Theme::SPACE_SM;
 const VIEWPORT_INSET: f32 = Theme::SPACE_LG;
 const ROOMY_VIEWPORT_INSET: f32 = Theme::SPACE_LG * 2.0;
@@ -478,11 +484,15 @@ fn choice_card(
         .rounded(px(12.0))
         .border_1()
         .border_color(if selected {
-            theme.accent.opacity(0.65)
+            theme.border_strong
         } else {
             theme.border
         })
-        .bg(theme.card_glass_bg())
+        .bg(if selected {
+            theme.element_active
+        } else {
+            theme.card_glass_bg()
+        })
         .flex()
         .flex_row()
         .items_start()
@@ -609,9 +619,45 @@ fn footer_secondary_button(
         .text_color(crate::motion::hover_blend(id, theme.text_muted, theme.text))
         .focus_visible(|style| style.border_2().border_color(theme.accent))
         .when_some(icon_path, |button, icon_path| {
-            button.child(icon(icon_path).size(px(Theme::SPACE_MD)))
+            button.child(
+                icon(icon_path)
+                    .size(px(Theme::SPACE_MD))
+                    .text_color(theme.text_muted),
+            )
         })
         .child(label)
+}
+
+fn footer_back_button(theme: &Theme, enabled: bool) -> gpui::Stateful<gpui::Div> {
+    let id = "onboarding-back";
+    div()
+        .id(id)
+        .size(px(Theme::SPACE_SM * 5.0))
+        .flex_none()
+        .rounded(px(Theme::CONTROL_RADIUS))
+        .border_1()
+        .border_color(theme.border.opacity(0.72))
+        .bg(crate::motion::hover_blend(
+            id,
+            gpui::transparent_black(),
+            theme.glass_hover(),
+        ))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(crate::motion::hover_blend(id, theme.text_muted, theme.text))
+        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .when(enabled, |button| button.cursor_pointer())
+        .when(!enabled, |button| button.opacity(0.38).cursor_default())
+        .child(
+            icon(crate::icons::ALT_ARROW_LEFT)
+                .size(px(Theme::SPACE_MD))
+                .text_color(if enabled {
+                    theme.text_muted
+                } else {
+                    theme.text_faint
+                }),
+        )
 }
 
 fn footer_primary_button(
@@ -1328,16 +1374,20 @@ fn render_harness_step(
                         let (icon_path, tint) = crate::pickers::harness_brand_icon(descriptor.id);
                         div()
                             .id(("onboarding-harness", index))
-                            .min_h(px(54.0))
+                            .min_h(px(HARNESS_ROW_HEIGHT))
                             .px(px(12.0))
                             .rounded(px(10.0))
                             .border_1()
                             .border_color(if enabled {
-                                theme.accent.opacity(0.65)
+                                theme.border_strong
                             } else {
                                 theme.border
                             })
-                            .bg(theme.card_glass_bg())
+                            .bg(if enabled {
+                                theme.element_active
+                            } else {
+                                theme.card_glass_bg()
+                            })
                             .flex()
                             .items_center()
                             .gap(px(10.0))
@@ -1436,11 +1486,38 @@ fn render_harness_step(
         }))
         .flex_1()
         .min_h_0()
+        .max_h(px(HARNESS_LIST_MAX_HEIGHT))
         .child(faded_step_scroll(
             "onboarding-harness-scroll",
             &ui.harness_scroll,
             list,
         ));
+    let agent_actions = div()
+        .mt(px(Theme::SPACE_SM))
+        .flex()
+        .items_center()
+        .gap(px(Theme::SPACE_SM))
+        .when(matches!(ui.harnesses, Loadable::Ready(_)), |row| {
+            row.child(
+                quiet_button(theme, "Retry agent detection")
+                    .id("onboarding-harness-retry-ready")
+                    .flex_1()
+                    .role(gpui::Role::Button)
+                    .track_focus(ui.control(11))
+                    .on_click(cx.listener(|shell, _, _, cx| {
+                        shell.onboarding_load_harnesses(cx);
+                        shell.onboarding_load_accounts(cx);
+                    })),
+            )
+        })
+        .child(
+            quiet_button(theme, "Manage agent sign-ins")
+                .id("onboarding-manage-agent-signins")
+                .flex_1()
+                .role(gpui::Role::Button)
+                .track_focus(ui.control(12))
+                .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_open_agent_settings(cx))),
+        );
     div()
         .size_full()
         .min_h_0()
@@ -1454,27 +1531,7 @@ fn render_harness_step(
         .child(body(theme, "Turn on the agents you want to use."))
         .child(device_switcher)
         .child(harness_list)
-        .when(matches!(ui.harnesses, Loadable::Ready(_)), |column| {
-            column.child(
-                quiet_button(theme, "Retry agent detection")
-                    .id("onboarding-harness-retry-ready")
-                    .mt(px(8.0))
-                    .role(gpui::Role::Button)
-                    .track_focus(ui.control(11))
-                    .on_click(cx.listener(|shell, _, _, cx| {
-                        shell.onboarding_load_harnesses(cx);
-                        shell.onboarding_load_accounts(cx);
-                    })),
-            )
-        })
-        .child(
-            quiet_button(theme, "Manage agent sign-ins")
-                .id("onboarding-manage-agent-signins")
-                .mt(px(8.0))
-                .role(gpui::Role::Button)
-                .track_focus(ui.control(12))
-                .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_open_agent_settings(cx))),
-        )
+        .child(agent_actions)
         .when_some(ui.error.clone(), |column, error| {
             column.child(
                 div()
@@ -1501,11 +1558,15 @@ fn chip(
         .rounded(px(9.0))
         .border_1()
         .border_color(if selected {
-            theme.accent.opacity(0.65)
+            theme.border_strong
         } else {
             theme.border
         })
-        .bg(theme.card_glass_bg())
+        .bg(if selected {
+            theme.element_active
+        } else {
+            theme.card_glass_bg()
+        })
         .text_size(crate::typography::ui_rems(12.5))
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(if selected {
@@ -2097,15 +2158,15 @@ fn can_continue(ui: &OnboardingUi, step: OnboardingStep) -> bool {
 fn journey_max_height(step: OnboardingStep) -> f32 {
     match step {
         OnboardingStep::Workspace => WORKSPACE_MAX_HEIGHT,
+        OnboardingStep::Harnesses => HARNESS_MAX_HEIGHT,
         OnboardingStep::Project | OnboardingStep::FirstSession => PROJECT_MAX_HEIGHT,
-        OnboardingStep::Appearance
-        | OnboardingStep::Harnesses
-        | OnboardingStep::Defaults
-        | OnboardingStep::Titles => CONTENT_MAX_HEIGHT,
+        OnboardingStep::Appearance | OnboardingStep::Defaults | OnboardingStep::Titles => {
+            CONTENT_MAX_HEIGHT
+        }
     }
 }
 
-fn render_footer(
+fn render_footer_actions(
     ui: &OnboardingUi,
     step: OnboardingStep,
     theme: &Theme,
@@ -2113,30 +2174,22 @@ fn render_footer(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let at_first_step = step == OnboardingStep::Workspace;
-    let previous = footer_secondary_button(
-        theme,
-        "onboarding-back",
-        "Previous",
-        (!compact).then_some(crate::icons::ALT_ARROW_LEFT),
-    )
-    .role(gpui::Role::Button)
-    .aria_label("Previous setup step")
-    .when(at_first_step, |button| {
-        button
-            .opacity(0.38)
-            .cursor_default()
-            .aria_description("Unavailable on the first step")
-    })
-    .when(!at_first_step, |button| {
-        button
-            .cursor_pointer()
-            .on_hover(crate::motion::hover_listener("onboarding-back"))
-            .track_focus(ui.control(28))
-            .on_click(cx.listener(|shell, _, window, cx| {
-                shell.onboarding_back(cx);
-                shell.onboarding_focus_control(0, window, cx);
-            }))
-    });
+    let previous = footer_back_button(theme, !at_first_step)
+        .role(gpui::Role::Button)
+        .aria_label("Previous setup step")
+        .when(at_first_step, |button| {
+            button.aria_description("Unavailable on the first step")
+        })
+        .when(!at_first_step, |button| {
+            button
+                .cursor_pointer()
+                .on_hover(crate::motion::hover_listener("onboarding-back"))
+                .track_focus(ui.control(28))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.onboarding_back(cx);
+                    shell.onboarding_focus_control(0, window, cx);
+                }))
+        });
     let skip = footer_secondary_button(theme, "onboarding-skip", "Skip", None)
         .role(gpui::Role::Button)
         .aria_label("Skip setup")
@@ -2177,17 +2230,9 @@ fn render_footer(
         .items_center()
         .gap(px(Theme::SPACE_XS + 2.0))
         .child(previous)
-        .child(skip)
-        .child(continue_button);
-    div()
-        .w_full()
-        .flex_none()
-        .flex()
-        .flex_col()
-        .gap(px(Theme::SPACE_MD))
-        .child(actions)
-        .child(render_progress(step, theme, compact))
-        .into_any_element()
+        .child(continue_button)
+        .child(skip);
+    actions.into_any_element()
 }
 
 pub fn render(
@@ -2216,6 +2261,7 @@ pub fn render(
     } else {
         VIEWPORT_INSET
     };
+    let progress_reserve = Theme::SPACE_LG + Theme::SPACE_SM;
     let decision = match step {
         OnboardingStep::Workspace => render_workspace_step(ui, &theme, cx),
         OnboardingStep::Appearance => render_appearance_step(ui, &theme, cx),
@@ -2250,20 +2296,34 @@ pub fn render(
             div()
                 .mt(px(STEP_GROUP_GAP))
                 .flex_none()
-                .child(render_footer(ui, step, &theme, compact_navigation, cx)),
+                .child(render_footer_actions(
+                    ui,
+                    step,
+                    &theme,
+                    compact_navigation,
+                    cx,
+                )),
         );
     let panel = div()
         .absolute()
         .inset_0()
         .pt(px(Theme::TITLEBAR_HEIGHT + outer_y))
         .px(px(outer_x))
-        .pb(px(outer_y))
+        .pb(px(outer_y + progress_reserve))
         .min_w_0()
         .min_h_0()
         .flex()
         .items_center()
         .justify_center()
-        .child(journey);
+        .child(journey)
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom(px(outer_y))
+                .child(render_progress(step, &theme, compact_navigation)),
+        );
     let close_confirm: AnyElement = if ui.close_confirm {
         div()
             .absolute()
@@ -2370,7 +2430,9 @@ mod tests {
     fn simple_steps_do_not_inherit_the_dense_journey_height() {
         assert_eq!(journey_max_height(OnboardingStep::Workspace), 368.0);
         assert_eq!(journey_max_height(OnboardingStep::Project), 480.0);
+        assert_eq!(journey_max_height(OnboardingStep::Harnesses), 640.0);
         assert_eq!(journey_max_height(OnboardingStep::Appearance), 560.0);
+        assert_eq!(HARNESS_LIST_MAX_HEIGHT, 337.0);
     }
 
     #[test]
