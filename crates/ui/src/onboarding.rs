@@ -23,6 +23,14 @@ use crate::theme::{Theme, ink};
 
 pub const SCHEMA_VERSION: u16 = 1;
 pub const STEP_COUNT: usize = 6;
+const CONTENT_MAX_WIDTH: f32 = Theme::SPACE_LG * 30.0;
+// The journey grows with the window until this cap; dense steps should expose
+// several useful rows before their overflow affordance becomes necessary.
+const CONTENT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 35.0;
+const STEP_GROUP_GAP: f32 = Theme::SPACE_LG + Theme::SPACE_SM;
+const VIEWPORT_INSET: f32 = Theme::SPACE_LG;
+const ROOMY_VIEWPORT_INSET: f32 = Theme::SPACE_LG * 2.0;
+const COMPACT_NAVIGATION_WIDTH: f32 = Theme::SPACE_LG * 26.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -431,6 +439,8 @@ fn heading(theme: &Theme, id: &'static str, text: &'static str) -> gpui::Statefu
         .id(id)
         .role(gpui::Role::Heading)
         .aria_level(1)
+        .w_full()
+        .text_center()
         .text_size(crate::typography::ui_rems(28.0))
         .line_height(px(32.0))
         .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -440,8 +450,10 @@ fn heading(theme: &Theme, id: &'static str, text: &'static str) -> gpui::Statefu
 
 fn body(theme: &Theme, text: impl Into<SharedString>) -> gpui::Div {
     div()
-        .mt(px(10.0))
-        .max_w(px(440.0))
+        .mt(px(Theme::SPACE_SM))
+        .w_full()
+        .max_w(px(CONTENT_MAX_WIDTH))
+        .text_center()
         .text_size(crate::typography::ui_rems(14.0))
         .line_height(px(21.0))
         .text_color(theme.text_muted)
@@ -565,6 +577,81 @@ fn quiet_button(theme: &Theme, label: &'static str) -> gpui::Div {
         .hover(|style| style.bg(theme.element_hover).text_color(theme.text))
         .focus_visible(|style| style.border_2().border_color(theme.accent))
         .child(label)
+}
+
+fn footer_secondary_button(
+    theme: &Theme,
+    id: &'static str,
+    label: &'static str,
+    icon_path: Option<&'static str>,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .h(px(Theme::SPACE_SM * 5.0))
+        .flex_none()
+        .px(px(Theme::SPACE_MD))
+        .rounded(px(Theme::CONTROL_RADIUS))
+        .border_1()
+        .border_color(theme.border.opacity(0.72))
+        .bg(crate::motion::hover_blend(
+            id,
+            gpui::transparent_black(),
+            theme.glass_hover(),
+        ))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(Theme::SPACE_XS))
+        .text_size(crate::typography::ui_rems(12.5))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(crate::motion::hover_blend(id, theme.text_muted, theme.text))
+        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .when_some(icon_path, |button, icon_path| {
+            button.child(icon(icon_path).size(px(Theme::SPACE_MD)))
+        })
+        .child(label)
+}
+
+fn footer_primary_button(
+    theme: &Theme,
+    id: &'static str,
+    label: &'static str,
+    compact: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let wash =
+        crate::motion::hover_blend(id, gpui::transparent_black(), theme.on_solid.opacity(0.10));
+    div()
+        .id(id)
+        .h(px(Theme::SPACE_SM * 5.0))
+        .min_w_0()
+        .rounded(px(Theme::CONTROL_RADIUS))
+        .border_1()
+        .border_color(theme.solid)
+        .bg(theme.solid)
+        .text_color(theme.on_solid)
+        .cursor_pointer()
+        .focus_visible(|style| style.border_2().border_color(theme.accent))
+        .child(
+            div()
+                .size_full()
+                .px(px(Theme::SPACE_MD))
+                .rounded(px(Theme::CONTROL_RADIUS))
+                .bg(wash)
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(Theme::SPACE_XS))
+                .text_size(crate::typography::ui_rems(12.5))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(label)
+                .when(!compact, |content| {
+                    content.child(
+                        icon(crate::icons::ALT_ARROW_RIGHT)
+                            .size(px(Theme::SPACE_MD))
+                            .text_color(theme.on_solid),
+                    )
+                }),
+        )
 }
 
 pub(crate) fn activates(event: &KeyDownEvent) -> bool {
@@ -722,69 +809,47 @@ fn render_workspace_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shel
         .child(heading(theme, "onboarding-heading-workspace", "Workspace"))
         .child(body(theme, "Choose where Zeron keeps your sessions."))
         .child(
-            div()
-                .mt(px(28.0))
-                .flex_1()
-                .min_h_0()
-                .child(faded_step_scroll(
-                    "onboarding-workspace-scroll",
-                    &ui.step_scroll,
-                    div()
-                        .id("onboarding-workspace-choices")
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.0))
-                        .role(gpui::Role::RadioGroup)
-                        .aria_label("Workspace mode")
-                        .child(
-                            choice_card(
-                                theme,
-                                "This device",
-                                "Store sessions on this device.",
-                                local,
-                                None,
-                            )
-                            .id("onboarding-workspace-local")
-                            .role(gpui::Role::RadioButton)
-                            .aria_toggled(toggled(local))
-                            .track_focus(ui.control(0))
-                            .on_click(cx.listener(
-                                |shell, _, _, cx| {
-                                    shell.onboarding_pick_workspace(WorkspaceMode::Local, cx)
-                                },
-                            )),
+            div().mt(px(STEP_GROUP_GAP)).flex_1().min_h_0().child(
+                div()
+                    .id("onboarding-workspace-choices")
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.0))
+                    .role(gpui::Role::RadioGroup)
+                    .aria_label("Workspace mode")
+                    .child(
+                        choice_card(
+                            theme,
+                            "This device",
+                            "Store sessions on this device.",
+                            local,
+                            None,
                         )
-                        .child(
-                            choice_card(
-                                theme,
-                                "Sync devices",
-                                "Sign in to use the same workspace on your devices.",
-                                synced,
-                                None,
-                            )
-                            .id("onboarding-workspace-sync")
-                            .role(gpui::Role::RadioButton)
-                            .aria_toggled(toggled(synced))
-                            .track_focus(ui.control(1))
-                            .on_click(cx.listener(
-                                |shell, _, _, cx| {
-                                    shell.onboarding_pick_workspace(WorkspaceMode::Synced, cx)
-                                },
-                            )),
+                        .id("onboarding-workspace-local")
+                        .role(gpui::Role::RadioButton)
+                        .aria_toggled(toggled(local))
+                        .track_focus(ui.control(0))
+                        .on_click(cx.listener(|shell, _, _, cx| {
+                            shell.onboarding_pick_workspace(WorkspaceMode::Local, cx)
+                        })),
+                    )
+                    .child(
+                        choice_card(
+                            theme,
+                            "Sync devices",
+                            "Sign in to use the same workspace on your devices.",
+                            synced,
+                            None,
                         )
-                        .into_any_element(),
-                )),
-        )
-        .child(
-            action_button(theme, "Continue")
-                .mt(px(28.0))
-                .id("onboarding-continue-workspace")
-                .role(gpui::Role::Button)
-                .track_focus(ui.control(2))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    shell.onboarding_continue(cx);
-                    shell.onboarding_focus_control(0, window, cx);
-                })),
+                        .id("onboarding-workspace-sync")
+                        .role(gpui::Role::RadioButton)
+                        .aria_toggled(toggled(synced))
+                        .track_focus(ui.control(1))
+                        .on_click(cx.listener(|shell, _, _, cx| {
+                            shell.onboarding_pick_workspace(WorkspaceMode::Synced, cx)
+                        })),
+                    ),
+            ),
         )
         .into_any_element()
 }
@@ -1128,7 +1193,7 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
         .child(body(theme, "Choose a theme and accent."))
         .child(
             div()
-                .mt(px(24.0))
+                .mt(px(STEP_GROUP_GAP))
                 .flex_1()
                 .min_h_0()
                 .child(faded_step_scroll(
@@ -1136,17 +1201,6 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
                     &ui.step_scroll,
                     controls,
                 )),
-        )
-        .child(
-            action_button(theme, "Continue")
-                .mt(px(24.0))
-                .id("onboarding-continue-appearance")
-                .role(gpui::Role::Button)
-                .track_focus(ui.control(25))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    shell.onboarding_continue(cx);
-                    shell.onboarding_focus_control(0, window, cx);
-                })),
         )
         .into_any_element()
 }
@@ -1372,11 +1426,12 @@ fn render_harness_step(
             )
             .into_any_element(),
     };
-    let ready = matches!(&ui.harnesses, Loadable::Ready(rows) if rows
-        .iter()
-        .any(|h| h.id != HarnessId::Mock && harness_is_usable(h, &ui.accounts)));
     let harness_list = div()
-        .mt(px(if multiple_devices { 14.0 } else { 22.0 }))
+        .mt(px(if multiple_devices {
+            Theme::SPACE_MD
+        } else {
+            STEP_GROUP_GAP
+        }))
         .flex_1()
         .min_h_0()
         .child(faded_step_scroll(
@@ -1429,26 +1484,6 @@ fn render_harness_step(
                     .child(error),
             )
         })
-        .child(
-            action_button(theme, "Continue")
-                .mt(px(18.0))
-                .id("onboarding-continue-harnesses")
-                .role(gpui::Role::Button)
-                .when(!ready, |button| {
-                    button
-                        .opacity(0.45)
-                        .cursor_default()
-                        .aria_description("Unavailable until at least one agent is ready")
-                })
-                .when(ready, |button| {
-                    button.track_focus(ui.control(10)).on_click(cx.listener(
-                        |shell, _, window, cx| {
-                            shell.onboarding_continue(cx);
-                            shell.onboarding_focus_control(0, window, cx);
-                        },
-                    ))
-                }),
-        )
         .into_any_element()
 }
 
@@ -1647,7 +1682,7 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
     let fields = div()
         .flex()
         .flex_col()
-        .gap(px(22.0))
+        .gap(px(STEP_GROUP_GAP))
         .child(field("Agent", harness_chips.into_any_element()))
         .child(field("Model", model_content))
         .child(field("Reasoning", reasoning_chips.into_any_element()))
@@ -1665,7 +1700,7 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
         .child(body(theme, "Choose defaults for new sessions."))
         .child(
             div()
-                .mt(px(26.0))
+                .mt(px(STEP_GROUP_GAP))
                 .flex_1()
                 .min_h_0()
                 .child(faded_step_scroll(
@@ -1673,19 +1708,6 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                     &ui.step_scroll,
                     fields,
                 )),
-        )
-        .child(
-            action_button(theme, "Continue")
-                .mt(px(28.0))
-                .id("onboarding-continue-defaults")
-                .role(gpui::Role::Button)
-                // Keep the full nine-level reasoning ladder addressable; its
-                // final option occupies control 25.
-                .track_focus(ui.control(26))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    shell.onboarding_continue(cx);
-                    shell.onboarding_focus_control(0, window, cx);
-                })),
         )
         .into_any_element()
 }
@@ -1708,23 +1730,12 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                 .child(
                     div()
                         .id("onboarding-title-settings-loading")
-                        .mt(px(26.0))
+                        .mt(px(STEP_GROUP_GAP))
                         .h(px(44.0))
                         .rounded(px(10.0))
                         .bg(ink(0.045))
                         .role(gpui::Role::ProgressIndicator)
                         .aria_label("Loading title settings"),
-                )
-                .child(
-                    action_button(theme, "Continue")
-                        .mt(px(28.0))
-                        .id("onboarding-continue-titles-loading")
-                        .role(gpui::Role::Button)
-                        .track_focus(ui.control(25))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.onboarding_continue(cx);
-                            shell.onboarding_focus_control(0, window, cx);
-                        })),
                 )
                 .into_any_element();
         }
@@ -1743,7 +1754,7 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                 .child(
                     div()
                         .id("onboarding-title-settings-error")
-                        .mt(px(26.0))
+                        .mt(px(STEP_GROUP_GAP))
                         .p(px(14.0))
                         .rounded(px(10.0))
                         .border_1()
@@ -1762,17 +1773,6 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                         .role(gpui::Role::Button)
                         .track_focus(ui.control(24))
                         .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_load_titles(cx))),
-                )
-                .child(
-                    action_button(theme, "Continue")
-                        .mt(px(18.0))
-                        .id("onboarding-continue-titles-error")
-                        .role(gpui::Role::Button)
-                        .track_focus(ui.control(25))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.onboarding_continue(cx);
-                            shell.onboarding_focus_control(0, window, cx);
-                        })),
                 )
                 .into_any_element();
         }
@@ -1926,7 +1926,7 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
         .child(body(theme, "Choose how new sessions are named."))
         .child(
             div()
-                .mt(px(25.0))
+                .mt(px(STEP_GROUP_GAP))
                 .flex_1()
                 .min_h_0()
                 .child(faded_step_scroll(
@@ -1934,17 +1934,6 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                     &ui.step_scroll,
                     title_options,
                 )),
-        )
-        .child(
-            action_button(theme, "Continue")
-                .mt(px(28.0))
-                .id("onboarding-continue-titles")
-                .role(gpui::Role::Button)
-                .track_focus(ui.control(25))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    shell.onboarding_continue(cx);
-                    shell.onboarding_focus_control(0, window, cx);
-                })),
         )
         .into_any_element()
 }
@@ -2030,31 +2019,21 @@ fn render_project_step(
         .child(body(theme, "Choose a folder now, or add one later."))
         .child(
             div()
-                .mt(px(27.0))
+                .mt(px(STEP_GROUP_GAP))
                 .flex_1()
                 .min_h_0()
-                .child(faded_step_scroll(
-                    "onboarding-project-scroll",
-                    &ui.step_scroll,
-                    choices,
-                )),
-        )
-        .child(
-            action_button(theme, "Finish setup")
-                .mt(px(28.0))
-                .id("onboarding-continue-project")
-                .role(gpui::Role::Button)
-                .track_focus(ui.control(2))
-                .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_continue(cx))),
+                .child(choices),
         )
         .into_any_element()
 }
 
-fn render_progress(step: OnboardingStep, theme: &Theme) -> AnyElement {
+fn render_progress(step: OnboardingStep, theme: &Theme, compact: bool) -> AnyElement {
     div()
         .id("onboarding-progress")
         .flex()
-        .gap(px(6.0))
+        .items_center()
+        .justify_center()
+        .gap(px(Theme::SPACE_SM))
         .role(gpui::Role::ProgressIndicator)
         .aria_label(format!("Step {} of {STEP_COUNT}", step.index() + 1))
         .children(
@@ -2063,16 +2042,138 @@ fn render_progress(step: OnboardingStep, theme: &Theme) -> AnyElement {
                 .enumerate()
                 .map(|(index, _)| {
                     div()
-                        .h(px(3.0))
-                        .w(px(34.0))
+                        .h(px(Theme::SPACE_XS))
+                        .w(px(if index == step.index() {
+                            if compact {
+                                Theme::SPACE_LG + Theme::SPACE_SM
+                            } else {
+                                Theme::SPACE_LG * 2.0
+                            }
+                        } else {
+                            Theme::SPACE_SM
+                        }))
                         .rounded_full()
-                        .bg(if index <= step.index() {
+                        .bg(if index < step.index() {
+                            theme.accent.opacity(0.62)
+                        } else if index == step.index() {
                             theme.accent
                         } else {
                             theme.border_strong
                         })
                 }),
         )
+        .into_any_element()
+}
+
+fn continue_control(step: OnboardingStep) -> usize {
+    match step {
+        OnboardingStep::Workspace | OnboardingStep::Project | OnboardingStep::FirstSession => 2,
+        OnboardingStep::Appearance | OnboardingStep::Titles => 25,
+        OnboardingStep::Harnesses => 10,
+        OnboardingStep::Defaults => 26,
+    }
+}
+
+fn continue_id(step: OnboardingStep) -> &'static str {
+    match step {
+        OnboardingStep::Workspace => "onboarding-continue-workspace",
+        OnboardingStep::Appearance => "onboarding-continue-appearance",
+        OnboardingStep::Harnesses => "onboarding-continue-harnesses",
+        OnboardingStep::Defaults => "onboarding-continue-defaults",
+        OnboardingStep::Titles => "onboarding-continue-titles",
+        OnboardingStep::Project | OnboardingStep::FirstSession => "onboarding-continue-project",
+    }
+}
+
+fn can_continue(ui: &OnboardingUi, step: OnboardingStep) -> bool {
+    step != OnboardingStep::Harnesses
+        || matches!(&ui.harnesses, Loadable::Ready(rows) if rows
+            .iter()
+            .any(|h| h.id != HarnessId::Mock && harness_is_usable(h, &ui.accounts)))
+}
+
+fn render_footer(
+    ui: &OnboardingUi,
+    step: OnboardingStep,
+    theme: &Theme,
+    compact: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let at_first_step = step == OnboardingStep::Workspace;
+    let previous = footer_secondary_button(
+        theme,
+        "onboarding-back",
+        "Previous",
+        (!compact).then_some(crate::icons::ALT_ARROW_LEFT),
+    )
+    .role(gpui::Role::Button)
+    .aria_label("Previous setup step")
+    .when(at_first_step, |button| {
+        button
+            .opacity(0.38)
+            .cursor_default()
+            .aria_description("Unavailable on the first step")
+    })
+    .when(!at_first_step, |button| {
+        button
+            .cursor_pointer()
+            .on_hover(crate::motion::hover_listener("onboarding-back"))
+            .track_focus(ui.control(28))
+            .on_click(cx.listener(|shell, _, window, cx| {
+                shell.onboarding_back(cx);
+                shell.onboarding_focus_control(0, window, cx);
+            }))
+    });
+    let skip = footer_secondary_button(theme, "onboarding-skip", "Skip", None)
+        .role(gpui::Role::Button)
+        .aria_label("Skip setup")
+        .cursor_pointer()
+        .on_hover(crate::motion::hover_listener("onboarding-skip"))
+        .track_focus(ui.control(29))
+        .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_skip(cx)));
+    let enabled = can_continue(ui, step);
+    let finishes = matches!(step, OnboardingStep::Project | OnboardingStep::FirstSession);
+    let continue_button = footer_primary_button(
+        theme,
+        continue_id(step),
+        if finishes { "Finish setup" } else { "Continue" },
+        compact,
+    )
+    .flex_1()
+    .role(gpui::Role::Button)
+    .when(!enabled, |button| {
+        button
+            .opacity(0.45)
+            .cursor_default()
+            .aria_description("Unavailable until at least one agent is ready")
+    })
+    .when(enabled, |button| {
+        button
+            .on_hover(crate::motion::hover_listener(continue_id(step)))
+            .track_focus(ui.control(continue_control(step)))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.onboarding_continue(cx);
+                if !finishes {
+                    shell.onboarding_focus_control(0, window, cx);
+                }
+            }))
+    });
+    let actions = div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap(px(Theme::SPACE_XS + 2.0))
+        .child(previous)
+        .child(skip)
+        .child(continue_button);
+    div()
+        .w_full()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(px(Theme::SPACE_MD))
+        .child(actions)
+        .child(render_progress(step, theme, compact))
         .into_any_element()
 }
 
@@ -2087,14 +2188,19 @@ pub fn render(
     let step = ui.step();
     let viewport_width = f32::from(viewport.width);
     let viewport_height = f32::from(viewport.height);
-    let constrained = viewport_width < 680.0 || viewport_height < 680.0;
-    let outer_x = if constrained { 12.0 } else { 32.0 };
-    let outer_y = if constrained { 12.0 } else { 24.0 };
-    let inner_pad = if constrained { 20.0 } else { 32.0 };
-    let card_max_height = if matches!(step, OnboardingStep::Workspace | OnboardingStep::Project) {
-        480.0
+    let compact_navigation = viewport_width < COMPACT_NAVIGATION_WIDTH;
+    let roomy_x = viewport_width >= CONTENT_MAX_WIDTH + ROOMY_VIEWPORT_INSET * 2.0;
+    let roomy_y =
+        viewport_height >= Theme::TITLEBAR_HEIGHT + CONTENT_MAX_HEIGHT + ROOMY_VIEWPORT_INSET * 2.0;
+    let outer_x = if roomy_x {
+        ROOMY_VIEWPORT_INSET
     } else {
-        720.0
+        VIEWPORT_INSET
+    };
+    let outer_y = if roomy_y {
+        ROOMY_VIEWPORT_INSET
+    } else {
+        VIEWPORT_INSET
     };
     let decision = match step {
         OnboardingStep::Workspace => render_workspace_step(ui, &theme, cx),
@@ -2119,28 +2225,19 @@ pub fn render(
     let journey = div()
         .w_full()
         .h_full()
-        .max_w(px(560.0))
-        .max_h(px(card_max_height))
+        .max_w(px(CONTENT_MAX_WIDTH))
+        .max_h(px(CONTENT_MAX_HEIGHT))
+        .mx_auto()
         .min_w_0()
         .min_h_0()
-        .overflow_hidden()
-        .p(px(inner_pad))
-        .rounded(px(18.0))
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.card_glass_bg())
-        .shadow_sm()
         .flex()
         .flex_col()
         .child(div().flex_1().min_h_0().child(decision_content))
         .child(
             div()
-                .h(px(40.0))
+                .mt(px(STEP_GROUP_GAP))
                 .flex_none()
-                .flex()
-                .items_end()
-                .justify_center()
-                .child(render_progress(step, &theme)),
+                .child(render_footer(ui, step, &theme, compact_navigation, cx)),
         );
     let panel = div()
         .absolute()
