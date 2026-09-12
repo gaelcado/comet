@@ -5919,99 +5919,9 @@ impl Shell {
 
     /// Compact onboarding titlebar: preserve the native traffic-light safe
     /// area and window drag/double-click behavior while keeping a centered app
-    /// identity. Journey controls occupy the trailing safe area and explicitly
-    /// occlude the native drag target beneath them.
-    fn render_onboarding_title_bar(
-        &mut self,
-        viewport_width: f32,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// identity. Journey navigation lives with the onboarding content.
+    fn render_onboarding_title_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let at_first_step = self.onboarding.step() == OnboardingStep::Workspace;
-        let icon_only_skip = viewport_width < 420.0;
-        let back = div()
-            .id("onboarding-back")
-            .size(px(24.0))
-            .flex_none()
-            .rounded_full()
-            .border_1()
-            .border_color(theme.border_strong.opacity(0.72))
-            .bg(theme.glass_hover())
-            .flex()
-            .items_center()
-            .justify_center()
-            .role(gpui::Role::Button)
-            .aria_label("Previous setup step")
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .when(at_first_step, |button| {
-                button
-                    .opacity(0.32)
-                    .aria_description("Unavailable on the first step")
-            })
-            .when(!at_first_step, |button| {
-                button
-                    .cursor_pointer()
-                    .track_focus(self.onboarding.control(28))
-                    .hover(|style| style.bg(theme.element_hover))
-                    .focus_visible(|style| style.border_2().border_color(theme.accent))
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.onboarding_back(cx);
-                        shell.onboarding_focus_control(0, window, cx);
-                    }))
-            })
-            .child(
-                icon(icons::ALT_ARROW_LEFT)
-                    .size(px(11.0))
-                    .text_color(theme.text),
-            );
-        let skip = div()
-            .id("onboarding-skip")
-            .h(px(24.0))
-            .when(icon_only_skip, |button| button.w(px(24.0)))
-            .when(!icon_only_skip, |button| button.px(px(8.0)))
-            .flex_none()
-            .rounded_full()
-            .border_1()
-            .border_color(theme.border_strong.opacity(0.72))
-            .bg(theme.glass_hover())
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(4.0))
-            .cursor_pointer()
-            .text_size(crate::typography::ui_rems(11.0))
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(theme.text)
-            .role(gpui::Role::Button)
-            .aria_label("Skip setup")
-            .track_focus(self.onboarding.control(29))
-            .hover(|style| style.bg(theme.element_hover))
-            .focus_visible(|style| style.border_2().border_color(theme.accent))
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .on_click(cx.listener(|shell, _, _, cx| {
-                cx.stop_propagation();
-                shell.onboarding_skip(cx);
-            }))
-            .when(!icon_only_skip, |button| button.child("Skip"))
-            .child(
-                icon(icons::ALT_ARROW_RIGHT)
-                    .size(px(11.0))
-                    .text_color(theme.text),
-            );
-        let controls = div()
-            .absolute()
-            .top_0()
-            .right(px(self.titlebar_right_pad(14.0)))
-            .h(px(Theme::TITLEBAR_HEIGHT))
-            .pt(px(Theme::TITLEBAR_TOP_PAD))
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .child(back)
-            .child(skip);
         let identity = div()
             .absolute()
             .top_0()
@@ -6040,8 +5950,7 @@ impl Shell {
                 .left_0()
                 .right_0()
                 .h(px(Theme::TITLEBAR_HEIGHT))
-                .child(identity)
-                .child(controls),
+                .child(identity),
             cx,
         )
         .into_any_element()
@@ -12030,7 +11939,7 @@ impl Render for Shell {
         let root = match &render_gate {
             GatePhase::Ready if self.onboarding.active() => {
                 let viewport = window.viewport_size();
-                let title_bar = self.render_onboarding_title_bar(f32::from(viewport.width), cx);
+                let title_bar = self.render_onboarding_title_bar(cx);
                 let page = crate::onboarding::render(
                     &self.onboarding,
                     &self.state,
