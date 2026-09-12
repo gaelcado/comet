@@ -3305,7 +3305,7 @@ impl Shell {
                         rows.iter()
                             .filter(|row| {
                                 row.id != zeron_proto::HarnessId::Mock
-                                    && crate::onboarding::harness_is_ready(
+                                    && crate::onboarding::harness_is_usable(
                                         row,
                                         &self.onboarding.accounts,
                                     )
@@ -3405,14 +3405,23 @@ impl Shell {
         cx.notify();
     }
 
-    pub(crate) fn onboarding_request_close(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn onboarding_request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.onboarding_close_theme_menu(cx);
+        self.onboarding.close_return_focus = self
+            .onboarding
+            .controls
+            .iter()
+            .position(|handle| handle.is_focused(window))
+            .filter(|index| !matches!(index, 26 | 27))
+            .or(Some(0));
         self.onboarding.close_confirm = true;
         cx.notify();
     }
 
-    pub(crate) fn onboarding_cancel_close(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn onboarding_cancel_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.onboarding.close_confirm = false;
+        let target = self.onboarding.close_return_focus.take().unwrap_or(0);
+        window.focus(self.onboarding.control(target), cx);
         cx.notify();
     }
 
@@ -3427,6 +3436,7 @@ impl Shell {
 
     pub(crate) fn onboarding_defer(&mut self, cx: &mut Context<Self>) {
         self.onboarding.close_confirm = false;
+        self.onboarding.close_return_focus = None;
         self.onboarding.state.disposition = OnboardingDisposition::Deferred;
         self.persist_onboarding(cx);
         cx.notify();
@@ -3467,34 +3477,7 @@ impl Shell {
                         .unwrap_or_else(|error| Loadable::Error(error.to_string())),
                     Err(error) => Loadable::Error(error.to_string()),
                 };
-                let selected_is_ready = shell.onboarding.harnesses.ready().is_some_and(
-                    |rows: &Vec<zeron_engine::registry::HarnessDescriptor>| {
-                        rows.iter().any(|row| {
-                            Some(row.id) == shell.onboarding.selected_harness
-                                && row.id != zeron_proto::HarnessId::Mock
-                                && crate::onboarding::harness_is_ready(
-                                    row,
-                                    &shell.onboarding.accounts,
-                                )
-                        })
-                    },
-                );
-                if !selected_is_ready {
-                    shell.onboarding.selected_harness =
-                        shell.onboarding.harnesses.ready().and_then(
-                            |rows: &Vec<zeron_engine::registry::HarnessDescriptor>| {
-                                rows.iter()
-                                    .find(|row| {
-                                        row.id != zeron_proto::HarnessId::Mock
-                                            && crate::onboarding::harness_is_ready(
-                                                row,
-                                                &shell.onboarding.accounts,
-                                            )
-                                    })
-                                    .map(|row| row.id)
-                            },
-                        );
-                }
+                shell.onboarding.resolve_default_harness();
                 cx.notify();
             })
             .ok();
@@ -3523,26 +3506,7 @@ impl Shell {
                         .unwrap_or_else(|error| Loadable::Error(error.to_string())),
                     Err(error) => Loadable::Error(error.to_string()),
                 };
-                let selected_is_ready = shell.onboarding.harnesses.ready().is_some_and(|rows| {
-                    rows.iter().any(|row| {
-                        Some(row.id) == shell.onboarding.selected_harness
-                            && crate::onboarding::harness_is_ready(row, &shell.onboarding.accounts)
-                    })
-                });
-                if !selected_is_ready {
-                    shell.onboarding.selected_harness =
-                        shell.onboarding.harnesses.ready().and_then(|rows| {
-                            rows.iter()
-                                .find(|row| {
-                                    row.id != HarnessId::Mock
-                                        && crate::onboarding::harness_is_ready(
-                                            row,
-                                            &shell.onboarding.accounts,
-                                        )
-                                })
-                                .map(|row| row.id)
-                        });
-                }
+                shell.onboarding.resolve_default_harness();
                 cx.notify();
             })
             .ok();
@@ -3598,6 +3562,7 @@ impl Shell {
             {
                 row.enabled = Some(enabled);
             }
+            self.onboarding.resolve_default_harness();
             cx.notify();
             return;
         }
@@ -3619,6 +3584,7 @@ impl Shell {
                     Ok(value) => match serde_json::from_value(value) {
                         Ok(rows) => {
                             shell.onboarding.harnesses = Loadable::Ready(rows);
+                            shell.onboarding.resolve_default_harness();
                             crate::pickers::bump_harness_catalog(cx);
                         }
                         Err(error) => shell.onboarding.error = Some(error.to_string().into()),
@@ -3870,17 +3836,8 @@ impl Shell {
         if self.onboarding.fixture.is_some() {
             return;
         }
-        let mut defaults = crate::settings::composer::ComposerDefaults::load(&self.data_dir);
-        {
-            let state = self.state.read(cx);
-            defaults.device = state
-                .selected_device
-                .clone()
-                .or_else(|| state.local_device_id.clone());
-            defaults.project = state.selected_space.clone();
-            defaults.no_project = state.no_project;
-        }
-        if let Err(error) = defaults.save(&self.data_dir) {
+        let pickers = self.composer.read(cx).pickers().clone();
+        if let Err(error) = pickers.update(cx, |pickers, cx| pickers.remember_target(cx)) {
             self.onboarding.error = Some(format!("Unable to remember this choice: {error}").into());
         }
     }
@@ -7097,11 +7054,14 @@ impl Shell {
             return true;
         }
         if self.onboarding.active() {
+            if self.onboarding.theme_menu.is_open() {
+                self.onboarding_close_theme_menu(cx);
+                return true;
+            }
             if self.onboarding.close_confirm {
-                self.onboarding_cancel_close(cx);
-                self.onboarding_focus_control(29, window, cx);
+                self.onboarding_cancel_close(window, cx);
             } else {
-                self.onboarding_request_close(cx);
+                self.onboarding_request_close(window, cx);
                 self.onboarding_focus_control(26, window, cx);
             }
             return true;
@@ -7187,22 +7147,27 @@ impl Shell {
                 }
             }
         }
-        if self.onboarding.close_confirm
-            && event.keystroke.key == "tab"
+        if event.keystroke.key == "tab"
             && !event.keystroke.modifiers.control
             && !event.keystroke.modifiers.alt
             && !event.keystroke.modifiers.platform
         {
-            let focused = self
-                .onboarding
-                .controls
-                .iter()
-                .position(|handle| handle.is_focused(window));
-            let target = crate::onboarding::close_dialog_tab_target(
-                focused,
-                event.keystroke.modifiers.shift,
-            );
-            window.focus(self.onboarding.control(target), cx);
+            if self.onboarding.close_confirm {
+                let focused = self
+                    .onboarding
+                    .controls
+                    .iter()
+                    .position(|handle| handle.is_focused(window));
+                let target = crate::onboarding::close_dialog_tab_target(
+                    focused,
+                    event.keystroke.modifiers.shift,
+                );
+                window.focus(self.onboarding.control(target), cx);
+            } else if event.keystroke.modifiers.shift {
+                window.focus_prev(cx);
+            } else {
+                window.focus_next(cx);
+            }
             return true;
         }
         let focused = self
@@ -7250,7 +7215,7 @@ impl Shell {
                             .iter()
                             .filter(|row| {
                                 row.id != HarnessId::Mock
-                                    && crate::onboarding::harness_is_ready(
+                                    && crate::onboarding::harness_is_usable(
                                         row,
                                         &self.onboarding.accounts,
                                     )
@@ -7265,20 +7230,7 @@ impl Shell {
                     .ready()
                     .map(|models| (8, 8 + models.len().min(4))),
                 OnboardingStep::Defaults if (16..26).contains(&focused) => {
-                    let count = self
-                        .onboarding
-                        .models
-                        .ready()
-                        .and_then(|models| {
-                            models
-                                .iter()
-                                .find(|model| {
-                                    Some(model.id.as_str())
-                                        == self.onboarding.selected_model.as_deref()
-                                })
-                                .map(|model| model.reasoning_levels.len())
-                        })
-                        .unwrap_or(0);
+                    let count = self.onboarding.reasoning_levels().len();
                     Some((16, 16 + count.min(9)))
                 }
                 OnboardingStep::Titles if focused < 8 => {
@@ -7323,7 +7275,7 @@ impl Shell {
         }
         if self.onboarding.close_confirm {
             match focused {
-                26 => self.onboarding_cancel_close(cx),
+                26 => self.onboarding_cancel_close(window, cx),
                 27 => self.onboarding_defer(cx),
                 _ => return false,
             }
@@ -7332,7 +7284,10 @@ impl Shell {
         match focused {
             28 if self.onboarding.step() != OnboardingStep::Workspace => self.onboarding_back(cx),
             29 => self.onboarding_skip(cx),
-            30 => self.onboarding_request_close(cx),
+            30 => {
+                self.onboarding_request_close(window, cx);
+                self.onboarding_focus_control(26, window, cx);
+            }
             _ => match self.onboarding.step() {
                 OnboardingStep::Workspace => match focused {
                     0 => self.onboarding_pick_workspace(WorkspaceMode::Local, cx),
@@ -7425,20 +7380,7 @@ impl Shell {
                     } else if focused == 16 {
                         self.onboarding_pick_reasoning(None, cx);
                     } else if (17..26).contains(&focused) {
-                        let levels = self
-                            .onboarding
-                            .models
-                            .ready()
-                            .and_then(|models| {
-                                models
-                                    .iter()
-                                    .find(|model| {
-                                        Some(model.id.as_str())
-                                            == self.onboarding.selected_model.as_deref()
-                                    })
-                                    .map(|model| model.reasoning_levels.clone())
-                            })
-                            .unwrap_or_default();
+                        let levels = self.onboarding.reasoning_levels();
                         let Some(level) = levels.get(focused - 17).copied() else {
                             return false;
                         };
@@ -7448,7 +7390,7 @@ impl Shell {
                             rows.iter()
                                 .filter(|row| {
                                     row.id != HarnessId::Mock
-                                        && crate::onboarding::harness_is_ready(
+                                        && crate::onboarding::harness_is_usable(
                                             row,
                                             &self.onboarding.accounts,
                                         )
@@ -10037,6 +9979,14 @@ impl Render for Shell {
         }
         let shortcut_focus = self.shortcut_focus.clone();
         let unfocused = self.unfocused.clone();
+        let onboarding_needs_initial_focus = matches!(gate, GatePhase::Ready)
+            && !restart_required
+            && self.onboarding.active()
+            && self.onboarding.step() != OnboardingStep::FirstSession
+            && !self.onboarding.focus_initialized;
+        if onboarding_needs_initial_focus {
+            self.onboarding.focus_initialized = true;
+        }
         let preferred_focus =
             if self.onboarding.active() && self.onboarding.step() != OnboardingStep::FirstSession {
                 self.onboarding.control(0).clone()
@@ -10044,7 +9994,11 @@ impl Render for Shell {
                 self.composer.focus_handle(cx)
             };
         window.defer(cx, move |window, cx| {
-            restore_mounted_focus(&shortcut_focus, &preferred_focus, &unfocused, window, cx);
+            if onboarding_needs_initial_focus && window.focused(cx).is_none() {
+                window.focus(&preferred_focus, cx);
+            } else {
+                restore_mounted_focus(&shortcut_focus, &preferred_focus, &unfocused, window, cx);
+            }
         });
 
         // Modifier events follow focus too. Reconcile from the window's input
