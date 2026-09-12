@@ -581,6 +581,46 @@ fn surface_choice(
         .child(surface_label(surface))
 }
 
+fn background_effect_choice(
+    theme: &Theme,
+    effect: crate::settings::NewThreadBackgroundEffect,
+    selected: bool,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(SharedString::from(format!(
+            "new-thread-background-effect-{}",
+            effect.label().to_lowercase()
+        )))
+        .h(px(28.0))
+        .px(px(9.0))
+        .rounded(px(7.0))
+        .border_1()
+        .border_color(if selected { theme.accent } else { theme.border })
+        .bg(if selected {
+            theme.accent_wash
+        } else {
+            theme.surface_raised.opacity(0.28)
+        })
+        .text_size(crate::typography::ui_rems(11.0))
+        .font_weight(if selected {
+            gpui::FontWeight::MEDIUM
+        } else {
+            gpui::FontWeight::NORMAL
+        })
+        .text_color(if selected {
+            theme.accent
+        } else {
+            theme.text_muted
+        })
+        .flex()
+        .items_center()
+        .cursor_pointer()
+        .when(!selected, |control| {
+            control.hover(|style| style.bg(theme.surface_raised_hover))
+        })
+        .child(effect.label())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Corners {
     All,
@@ -1950,7 +1990,9 @@ impl Render for AppearancePage {
         let current_themes = appearance::themes(cx);
         let current_accent = appearance::accent(cx);
         let current_surface = appearance::surface(cx);
-        let current_background = crate::settings::current(cx).new_thread_composer_background;
+        let ui_settings = crate::settings::current(cx);
+        let current_background = ui_settings.new_thread_composer_background;
+        let current_background_effect = ui_settings.new_thread_background_effect;
         let cards = AppearanceMode::ALL
             .into_iter()
             .map(|mode| {
@@ -2188,6 +2230,48 @@ impl Render for AppearancePage {
                 )
                 .into_any_element(),
         );
+        if background_available {
+            let effect_controls = crate::settings::NewThreadBackgroundEffect::ALL
+                .into_iter()
+                .map(|effect| {
+                    background_effect_choice(&theme, effect, effect == current_background_effect)
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            crate::settings::set_new_thread_background_effect(effect, cx);
+                            cx.notify();
+                        }))
+                })
+                .collect::<Vec<_>>();
+            settings_rows.push(
+                widgets::card_row(&theme, false)
+                    .child(widgets::row_tile(&theme, icons::TUNING))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(widgets::row_title(&theme, "Background effect"))
+                            .child(widgets::meta_line(
+                                &theme,
+                                vec![
+                                    div()
+                                        .child(current_background_effect.description())
+                                        .into_any_element(),
+                                ],
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .ml(px(10.0))
+                            .max_w(px(430.0))
+                            .flex()
+                            .flex_wrap()
+                            .justify_end()
+                            .gap(px(6.0))
+                            .children(effect_controls),
+                    )
+                    .into_any_element(),
+            );
+        }
         if let Some(error) = self.background_error.clone() {
             settings_rows.push(
                 div()

@@ -887,6 +887,7 @@ fn new_thread_background_side_fade(viewport_width: f32) -> f32 {
 
 fn new_thread_background(
     background: Option<&settings::NewThreadComposerBackground>,
+    effect: settings::NewThreadBackgroundEffect,
     theme: &Theme,
     viewport_width: f32,
     viewport_height: f32,
@@ -901,6 +902,12 @@ fn new_thread_background(
     }
     let hero_height = new_thread_background_height(viewport_height);
     let side_fade = new_thread_background_side_fade(viewport_width);
+    let (image_opacity, effect_layer) = crate::new_thread_background_effects::treatment(
+        effect,
+        theme,
+        &path,
+        new_thread_background_opacity(theme.is_frost()),
+    );
     div()
         .absolute()
         .top_0()
@@ -921,14 +928,19 @@ fn new_thread_background(
                 // Give the mask a definite relayout box. A percentage-sized
                 // image as the custom element's direct child could briefly
                 // resolve to zero during live window resize.
-                div().relative().w_full().h(px(hero_height)).child(
-                    img(path)
-                        .absolute()
-                        .inset_0()
-                        .size_full()
-                        .object_fit(ObjectFit::Cover)
-                        .opacity(new_thread_background_opacity(theme.is_frost())),
-                ),
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(hero_height))
+                    .child(
+                        img(path)
+                            .absolute()
+                            .inset_0()
+                            .size_full()
+                            .object_fit(ObjectFit::Cover)
+                            .opacity(image_opacity),
+                    )
+                    .child(effect_layer),
             )
             .band_bottom(hero_height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO)
             .fade_left(true)
@@ -7014,12 +7026,15 @@ impl Shell {
             (has_spaces || has_appshots) && has_selection,
         );
         let no_project = self.state.read(cx).no_project;
-        let new_thread_background_setting = settings::current(cx).new_thread_composer_background;
+        let ui_settings = settings::current(cx);
+        let new_thread_background_setting = ui_settings.new_thread_composer_background;
+        let new_thread_background_effect = ui_settings.new_thread_background_effect;
         let transition_frame = self.new_thread_transition_frame();
         let term_h = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
         let new_thread_background_layer = if !has_selection {
             Some(new_thread_background(
                 new_thread_background_setting.as_ref(),
+                new_thread_background_effect,
                 theme,
                 main_content_width,
                 self.viewport_height,
@@ -7039,6 +7054,7 @@ impl Shell {
                 .map(|(transition, progress)| {
                     new_thread_background(
                         new_thread_background_setting.as_ref(),
+                        new_thread_background_effect,
                         theme,
                         main_content_width,
                         self.viewport_height,

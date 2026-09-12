@@ -68,6 +68,47 @@ pub struct NewThreadComposerBackground {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NewThreadBackgroundEffect {
+    #[default]
+    None,
+    Dither,
+    Ascii,
+    Halftone,
+    Scanlines,
+}
+
+impl NewThreadBackgroundEffect {
+    pub const ALL: [Self; 5] = [
+        Self::None,
+        Self::Dither,
+        Self::Ascii,
+        Self::Halftone,
+        Self::Scanlines,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Dither => "Dither",
+            Self::Ascii => "ASCII",
+            Self::Halftone => "Halftone",
+            Self::Scanlines => "Scanlines",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::None => "Shows the original artwork.",
+            Self::Dither => "Adds a fine ordered-dot texture.",
+            Self::Ascii => "Layers a quiet monospaced glyph field.",
+            Self::Halftone => "Adds a larger print-style dot screen.",
+            Self::Scanlines => "Adds subtle horizontal display lines.",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GitHistoryColumns {
@@ -313,6 +354,14 @@ pub fn remove_new_thread_composer_background(cx: &mut App) -> Result<(), String>
     );
     cx.refresh_windows();
     Ok(())
+}
+
+pub fn set_new_thread_background_effect(effect: NewThreadBackgroundEffect, cx: &mut App) {
+    if update(SavePolicy::Immediate, cx, |settings| {
+        settings.new_thread_background_effect = effect;
+    }) {
+        cx.refresh_windows();
+    }
 }
 
 fn remove_managed_new_thread_background(
@@ -563,6 +612,8 @@ pub struct UiSettings {
     /// Optional device-local artwork behind the blank new-thread composer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_thread_composer_background: Option<NewThreadComposerBackground>,
+    /// Non-destructive treatment composited inside the artwork's fade mask.
+    pub new_thread_background_effect: NewThreadBackgroundEffect,
     /// Pre-theme settings used `accentColor`. Read it once, migrate to
     /// [`Self::accent`], and never write it again.
     #[serde(default, rename = "accentColor", skip_serializing)]
@@ -620,6 +671,7 @@ impl Default for UiSettings {
             accent: zeron_theme::AccentSelection::default(),
             surface: zeron_theme::SurfacePreference::default(),
             new_thread_composer_background: None,
+            new_thread_background_effect: NewThreadBackgroundEffect::None,
             legacy_accent_color: None,
         }
     }
@@ -1235,6 +1287,10 @@ mod tests {
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.composer_send_behavior, ComposerSendBehavior::Enter);
         assert!(loaded.new_thread_composer_background.is_none());
+        assert_eq!(
+            loaded.new_thread_background_effect,
+            NewThreadBackgroundEffect::None
+        );
         assert_eq!(loaded.sidebar_width, 300.0);
         assert!(!loaded.sound_enabled);
         for sound in [
@@ -1444,6 +1500,7 @@ mod tests {
                 path: "/tmp/zeron/new-thread-background.png".into(),
                 name: "background.png".into(),
             }),
+            new_thread_background_effect: NewThreadBackgroundEffect::Ascii,
             legacy_accent_color: None,
         };
         settings.save(dir.path()).unwrap();
@@ -1451,6 +1508,7 @@ mod tests {
         assert!(json.contains(r#""diffWrap": true"#));
         assert_eq!(UiSettings::load(dir.path()), settings);
         assert!(json.contains(r#""codeFencesFitContent": true"#));
+        assert!(json.contains(r#""newThreadBackgroundEffect": "ascii""#));
     }
 
     #[test]
