@@ -186,6 +186,10 @@ pub struct OnboardingUi {
     pub selected_reasoning: Option<ReasoningLevel>,
     pub error: Option<SharedString>,
     pub close_confirm: bool,
+    /// Control that owned focus before the close confirmation opened.
+    pub close_return_focus: Option<usize>,
+    /// The first mounted frame explicitly places keyboard focus in the journey.
+    pub focus_initialized: bool,
     pub agent_settings_open: bool,
     pub focus: FocusHandle,
     pub controls: Vec<FocusHandle>,
@@ -232,6 +236,8 @@ impl OnboardingUi {
             title_models: Loadable::Idle,
             error: None,
             close_confirm: false,
+            close_return_focus: None,
+            focus_initialized: false,
             agent_settings_open: false,
             focus: cx.focus_handle(),
             controls,
@@ -273,6 +279,32 @@ impl OnboardingUi {
 
     pub fn control(&self, index: usize) -> &FocusHandle {
         &self.controls[index.min(self.controls.len() - 1)]
+    }
+
+    /// Keep a valid saved choice, otherwise choose the first usable agent in
+    /// registry order. Usability deliberately does not depend on OAuth account
+    /// discovery: API-key-backed CLIs are valid even without an account row.
+    pub(crate) fn resolve_default_harness(&mut self) {
+        let selected = self
+            .harnesses
+            .ready()
+            .and_then(|rows| preferred_harness(rows, &self.accounts, self.selected_harness));
+        if self.selected_harness != selected {
+            self.selected_harness = selected;
+            self.selected_model = None;
+            self.selected_reasoning = None;
+        }
+    }
+
+    /// Resolve the reasoning ladder exactly once for rendering and keyboard
+    /// interaction. Automatic model selection falls back to the harness ladder.
+    pub(crate) fn reasoning_levels(&self) -> Vec<ReasoningLevel> {
+        reasoning_levels(
+            &self.models,
+            self.selected_model.as_deref(),
+            &self.harnesses,
+            self.selected_harness,
+        )
     }
 
     fn apply_fixture(&mut self, fixture: OnboardingFixture) {
@@ -597,15 +629,15 @@ fn harness_status(
         return ("Ready", true);
     }
     match accounts {
-        Loadable::Idle | Loadable::Loading => ("Checking sign-in…", false),
-        Loadable::Error(_) => ("Detection error", false),
+        Loadable::Idle | Loadable::Loading => ("Checking sign-in…", true),
+        Loadable::Error(_) => ("Sign-in status unavailable", true),
         Loadable::Ready(snapshot) => {
             if snapshot
                 .warnings
                 .iter()
                 .any(|warning| warning.harness == descriptor.id)
             {
-                ("Detection error", false)
+                ("Sign-in status unavailable", true)
             } else if snapshot
                 .accounts
                 .iter()
@@ -613,17 +645,59 @@ fn harness_status(
             {
                 ("Ready", true)
             } else {
-                ("Sign-in required", false)
+                ("Sign-in not detected", true)
             }
         }
     }
 }
 
-pub(crate) fn harness_is_ready(
+pub(crate) fn harness_is_usable(
     descriptor: &HarnessDescriptor,
     accounts: &Loadable<AgentAccountsSnapshot>,
 ) -> bool {
     harness_status(descriptor, accounts).1
+}
+
+fn preferred_harness(
+    rows: &[HarnessDescriptor],
+    accounts: &Loadable<AgentAccountsSnapshot>,
+    selected: Option<HarnessId>,
+) -> Option<HarnessId> {
+    selected
+        .filter(|selected| {
+            rows.iter().any(|row| {
+                row.id == *selected && row.id != HarnessId::Mock && harness_is_usable(row, accounts)
+            })
+        })
+        .or_else(|| {
+            rows.iter()
+                .find(|row| row.id != HarnessId::Mock && harness_is_usable(row, accounts))
+                .map(|row| row.id)
+        })
+}
+
+fn reasoning_levels(
+    models: &Loadable<Vec<Model>>,
+    selected_model: Option<&str>,
+    harnesses: &Loadable<Vec<HarnessDescriptor>>,
+    selected_harness: Option<HarnessId>,
+) -> Vec<ReasoningLevel> {
+    models
+        .ready()
+        .and_then(|models| {
+            models
+                .iter()
+                .find(|model| Some(model.id.as_str()) == selected_model)
+                .map(|model| model.reasoning_levels.clone())
+        })
+        .or_else(|| {
+            harnesses.ready().and_then(|rows| {
+                rows.iter()
+                    .find(|row| Some(row.id) == selected_harness)
+                    .map(|row| row.reasoning_levels.clone())
+            })
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn harness_is_interactive(descriptor: &HarnessDescriptor) -> bool {
@@ -767,9 +841,11 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
         .find(|variant| variant.id == current_theme_id)
         .or_else(|| theme_variants.first())
         .expect("the built-in registry has both appearances");
+    let selected_variant_id = selected_variant.id.clone();
+    let selected_variant_name = selected_variant.name.clone();
     let selected_theme = Theme::for_selection(
         effective_appearance,
-        &selected_variant.id,
+        &selected_variant_id,
         AccentSelection::ThemeDefault,
         theme.surface_preference,
     );
@@ -788,61 +864,6 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
                     cx.listener(move |shell, _, _, cx| shell.onboarding_pick_appearance(mode, cx)),
                 )
         });
-    let theme_rows = theme_variants.iter().enumerate().map(|(index, variant)| {
-        let id = variant.id.clone();
-        let selected = id == current_theme_id;
-        let sample = Theme::for_selection(
-            effective_appearance,
-            &id,
-            AccentSelection::ThemeDefault,
-            theme.surface_preference,
-        );
-        popover::menu_row_nav(
-            theme,
-            selected,
-            ui.theme_menu.as_open().copied() == Some(index),
-            format!("onboarding-theme-row-{index}"),
-        )
-        .id(("onboarding-theme-row", index))
-        .on_click(cx.listener(move |shell, _, _, cx| {
-            shell.onboarding_pick_theme(effective_appearance, id.clone(), cx)
-        }))
-        .child(palette_preview(&sample))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child(SharedString::from(variant.name.clone())),
-        )
-        .child(div().w(px(18.0)).flex_none().when(selected, |slot| {
-            slot.child(
-                icon(crate::icons::CHECK)
-                    .size(px(14.0))
-                    .text_color(theme.accent),
-            )
-        }))
-    });
-    let theme_menu = popover::popover_card(theme)
-        .id("onboarding-theme-menu")
-        .w(px(320.0))
-        .max_h(px(320.0))
-        .overflow_y_scroll()
-        .track_scroll(&ui.theme_scroll)
-        .on_mouse_down_out(cx.listener(|shell, _, _, cx| shell.onboarding_close_theme_menu(cx)))
-        .flex()
-        .flex_col()
-        .gap(px(2.0))
-        .child(popover::menu_heading(
-            theme,
-            if effective_appearance.is_dark() {
-                "Dark themes"
-            } else {
-                "Light themes"
-            },
-        ))
-        .children(theme_rows)
-        .into_any_element();
     let theme_trigger = div()
         .id("onboarding-theme-selector")
         .relative()
@@ -862,7 +883,7 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
         .gap(px(9.0))
         .cursor_pointer()
         .role(gpui::Role::Button)
-        .aria_label(format!("Theme, selected {}", selected_variant.name))
+        .aria_label(format!("Theme, selected {selected_variant_name}"))
         .aria_expanded(ui.theme_menu.is_open())
         .track_focus(ui.control(3))
         .hover(|style| style.bg(theme.element_hover))
@@ -881,7 +902,7 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
                 .text_size(crate::typography::ui_rems(12.5))
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(theme.text)
-                .child(SharedString::from(selected_variant.name.clone())),
+                .child(SharedString::from(selected_variant_name)),
         )
         .child(
             icon(crate::icons::ALT_ARROW_DOWN)
@@ -890,6 +911,63 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
                 .text_color(theme.text_muted),
         )
         .when_some(ui.theme_menu.get(), |trigger, _| {
+            let theme_rows = theme_variants.iter().enumerate().map(|(index, variant)| {
+                let id = variant.id.clone();
+                let selected = id == current_theme_id;
+                let sample = Theme::for_selection(
+                    effective_appearance,
+                    &id,
+                    AccentSelection::ThemeDefault,
+                    theme.surface_preference,
+                );
+                popover::menu_row_nav(
+                    theme,
+                    selected,
+                    ui.theme_menu.as_open().copied() == Some(index),
+                    format!("onboarding-theme-row-{index}"),
+                )
+                .id(("onboarding-theme-row", index))
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    shell.onboarding_pick_theme(effective_appearance, id.clone(), cx)
+                }))
+                .child(palette_preview(&sample))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(SharedString::from(variant.name.clone())),
+                )
+                .child(div().w(px(18.0)).flex_none().when(selected, |slot| {
+                    slot.child(
+                        icon(crate::icons::CHECK)
+                            .size(px(14.0))
+                            .text_color(theme.accent),
+                    )
+                }))
+            });
+            let theme_menu = popover::popover_card(theme)
+                .id("onboarding-theme-menu")
+                .w(px(320.0))
+                .max_h(px(320.0))
+                .overflow_y_scroll()
+                .track_scroll(&ui.theme_scroll)
+                .on_mouse_down_out(
+                    cx.listener(|shell, _, _, cx| shell.onboarding_close_theme_menu(cx)),
+                )
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(popover::menu_heading(
+                    theme,
+                    if effective_appearance.is_dark() {
+                        "Dark themes"
+                    } else {
+                        "Light themes"
+                    },
+                ))
+                .children(theme_rows)
+                .into_any_element();
             trigger.child(popover::anchored_menu_below(
                 "onboarding-theme-menu-layer",
                 theme_menu,
@@ -1296,7 +1374,7 @@ fn render_harness_step(
     };
     let ready = matches!(&ui.harnesses, Loadable::Ready(rows) if rows
         .iter()
-        .any(|h| h.id != HarnessId::Mock && harness_is_ready(h, &ui.accounts)));
+        .any(|h| h.id != HarnessId::Mock && harness_is_usable(h, &ui.accounts)));
     let harness_list = div()
         .mt(px(if multiple_devices { 14.0 } else { 22.0 }))
         .flex_1()
@@ -1427,23 +1505,13 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
         .ready()
         .map(|rows| {
             rows.iter()
-                .filter(|h| h.id != HarnessId::Mock && harness_is_ready(h, &ui.accounts))
+                .filter(|h| h.id != HarnessId::Mock && harness_is_usable(h, &ui.accounts))
                 .cloned()
                 .collect()
         })
         .unwrap_or_default();
     let models = ui.models.ready().cloned().unwrap_or_default();
-    let reasoning = models
-        .iter()
-        .find(|model| Some(model.id.as_str()) == ui.selected_model.as_deref())
-        .map(|model| model.reasoning_levels.clone())
-        .or_else(|| {
-            harnesses
-                .iter()
-                .find(|h| Some(h.id) == ui.selected_harness)
-                .map(|h| h.reasoning_levels.clone())
-        })
-        .unwrap_or_default();
+    let reasoning = ui.reasoning_levels();
     let field = |label: &'static str, content: AnyElement| {
         div()
             .flex()
@@ -2023,6 +2091,11 @@ pub fn render(
     let outer_x = if constrained { 12.0 } else { 32.0 };
     let outer_y = if constrained { 12.0 } else { 24.0 };
     let inner_pad = if constrained { 20.0 } else { 32.0 };
+    let card_max_height = if matches!(step, OnboardingStep::Workspace | OnboardingStep::Project) {
+        480.0
+    } else {
+        720.0
+    };
     let decision = match step {
         OnboardingStep::Workspace => render_workspace_step(ui, &theme, cx),
         OnboardingStep::Appearance => render_appearance_step(ui, &theme, cx),
@@ -2047,7 +2120,7 @@ pub fn render(
         .w_full()
         .h_full()
         .max_w(px(560.0))
-        .max_h(px(720.0))
+        .max_h(px(card_max_height))
         .min_w_0()
         .min_h_0()
         .overflow_hidden()
@@ -2086,6 +2159,7 @@ pub fn render(
             .absolute()
             .inset_0()
             .bg(theme.scrim())
+            .occlude()
             .flex()
             .items_center()
             .justify_center()
@@ -2126,8 +2200,7 @@ pub fn render(
                                     .role(gpui::Role::Button)
                                     .track_focus(ui.control(26))
                                     .on_click(cx.listener(|shell, _, window, cx| {
-                                        shell.onboarding_cancel_close(cx);
-                                        shell.onboarding_focus_control(29, window, cx);
+                                        shell.onboarding_cancel_close(window, cx);
                                     })),
                             )
                             .child(
@@ -2158,9 +2231,11 @@ pub fn render(
         .track_focus(&ui.focus)
         .text_color(theme.text)
         .font_family(theme.font_sans.clone())
-        // Keep the dialog's accessibility tree and tab order isolated. The
-        // underlying journey is remounted when the dialog closes.
-        .when(!ui.close_confirm, |root| root.child(panel).child(title_bar))
+        // Keep the journey and native drag region mounted behind the modal.
+        // The full-window occluding scrim owns pointer input, while the shell's
+        // key handler traps focus inside the dialog.
+        .child(panel)
+        .child(title_bar)
         .child(close_confirm)
         .into_any_element()
 }
@@ -2217,15 +2292,22 @@ mod tests {
     }
 
     #[test]
-    fn readiness_includes_enablement_installation_and_sign_in() {
+    fn readiness_requires_installation_and_enablement_but_not_oauth_detection() {
         let rows = fixture_harnesses();
         let codex = rows.iter().find(|row| row.id == HarnessId::Codex).unwrap();
         let opencode = rows
             .iter()
             .find(|row| row.id == HarnessId::Opencode)
             .unwrap();
-        assert!(!harness_is_ready(codex, &Loadable::Loading));
-        assert!(!harness_is_ready(
+        assert!(harness_is_usable(codex, &Loadable::Loading));
+        assert!(harness_is_usable(
+            codex,
+            &Loadable::Ready(AgentAccountsSnapshot {
+                accounts: Vec::new(),
+                warnings: Vec::new(),
+            })
+        ));
+        assert!(!harness_is_usable(
             opencode,
             &Loadable::Ready(AgentAccountsSnapshot {
                 accounts: Vec::new(),
@@ -2235,7 +2317,7 @@ mod tests {
         let mut enabled_opencode = opencode.clone();
         enabled_opencode.installed = true;
         enabled_opencode.enabled = Some(true);
-        assert!(harness_is_ready(&enabled_opencode, &Loadable::Idle));
+        assert!(harness_is_usable(&enabled_opencode, &Loadable::Idle));
 
         let accounts = Loadable::Ready(AgentAccountsSnapshot {
             accounts: vec![zeron_proto::AgentAccount {
@@ -2253,7 +2335,59 @@ mod tests {
             }],
             warnings: Vec::new(),
         });
-        assert!(harness_is_ready(codex, &accounts));
+        assert!(harness_is_usable(codex, &accounts));
+    }
+
+    #[test]
+    fn default_harness_is_stable_across_account_callback_order() {
+        let rows = fixture_harnesses();
+        let no_accounts = Loadable::Ready(AgentAccountsSnapshot {
+            accounts: Vec::new(),
+            warnings: Vec::new(),
+        });
+
+        assert_eq!(
+            preferred_harness(&rows, &Loadable::Loading, None),
+            Some(HarnessId::ClaudeCode)
+        );
+        assert_eq!(
+            preferred_harness(&rows, &no_accounts, None),
+            Some(HarnessId::ClaudeCode)
+        );
+        assert_eq!(
+            preferred_harness(&rows, &no_accounts, Some(HarnessId::Codex)),
+            Some(HarnessId::Codex)
+        );
+    }
+
+    #[test]
+    fn automatic_model_uses_the_selected_harness_reasoning_ladder() {
+        let harnesses = Loadable::Ready(fixture_harnesses());
+        let models = Loadable::Ready(fixture_models());
+        let automatic = reasoning_levels(&models, None, &harnesses, Some(HarnessId::ClaudeCode));
+        assert_eq!(
+            automatic,
+            vec![
+                ReasoningLevel::Low,
+                ReasoningLevel::Medium,
+                ReasoningLevel::High
+            ]
+        );
+
+        let explicit = reasoning_levels(
+            &models,
+            Some("gpt-6-astra"),
+            &harnesses,
+            Some(HarnessId::ClaudeCode),
+        );
+        assert_eq!(
+            explicit,
+            vec![
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+                ReasoningLevel::XHigh
+            ]
+        );
     }
 
     #[test]
