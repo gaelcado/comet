@@ -1616,8 +1616,7 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                 .child(
                     chip(theme, "Automatic".into(), ui.selected_model.is_none(), None)
                         .id("onboarding-default-model-auto")
-                        .flex_1()
-                        .min_w(px(100.0))
+                        .flex_none()
                         .role(gpui::Role::RadioButton)
                         .aria_toggled(toggled(ui.selected_model.is_none()))
                         .track_focus(ui.control(8))
@@ -1635,8 +1634,7 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                             let id = model.id;
                             chip(theme, model.label.into(), selected, ui.selected_harness)
                                 .id(("onboarding-default-model", index))
-                                .flex_1()
-                                .min_w(px(100.0))
+                                .flex_none()
                                 .role(gpui::Role::RadioButton)
                                 .aria_toggled(toggled(selected))
                                 .track_focus(ui.control(9 + index))
@@ -1663,8 +1661,7 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                     None,
                 )
                 .id("onboarding-default-reasoning-auto")
-                .flex_1()
-                .min_w(px(88.0))
+                .flex_none()
                 .role(gpui::Role::RadioButton)
                 .aria_toggled(toggled(ui.selected_reasoning.is_none()))
                 .track_focus(ui.control(16))
@@ -1678,8 +1675,7 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                     None,
                 )
                 .id(("onboarding-default-reasoning", index))
-                .flex_1()
-                .min_w(px(88.0))
+                .flex_none()
                 .role(gpui::Role::RadioButton)
                 .aria_toggled(toggled(ui.selected_reasoning == Some(level)))
                 .track_focus(ui.control(17 + index))
@@ -1883,8 +1879,7 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                                 None,
                             )
                             .id("onboarding-title-model-auto")
-                            .flex_1()
-                            .min_w(px(180.0))
+                            .flex_none()
                             .role(gpui::Role::RadioButton)
                             .aria_toggled(toggled(current.model.is_none()))
                             .track_focus(ui.control(8))
@@ -1897,8 +1892,7 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                             let id = model.id.clone();
                             chip(theme, model.label.clone().into(), selected, current.harness)
                                 .id(("onboarding-title-model", index))
-                                .flex_1()
-                                .min_w(px(120.0))
+                                .flex_none()
                                 .role(gpui::Role::RadioButton)
                                 .aria_toggled(toggled(selected))
                                 .track_focus(ui.control(9 + index))
@@ -2122,40 +2116,6 @@ fn render_footer_actions(
     compact: bool,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let at_first_step = step == OnboardingStep::Workspace;
-    let previous = footer_secondary_button(
-        theme,
-        "onboarding-back",
-        "Previous",
-        Some(crate::icons::ALT_ARROW_LEFT),
-    )
-    .flex_1()
-    .role(gpui::Role::Button)
-    .aria_label("Previous setup step")
-    .when(at_first_step, |button| {
-        button
-            .opacity(0.38)
-            .cursor_default()
-            .aria_description("Unavailable on the first step")
-    })
-    .when(!at_first_step, |button| {
-        button
-            .cursor_pointer()
-            .on_hover(crate::motion::hover_listener("onboarding-back"))
-            .track_focus(ui.control(28))
-            .on_click(cx.listener(|shell, _, window, cx| {
-                shell.onboarding_back(cx);
-                shell.onboarding_focus_control(0, window, cx);
-            }))
-    });
-    let skip = footer_secondary_button(theme, "onboarding-skip", "Skip", None)
-        .flex_1()
-        .role(gpui::Role::Button)
-        .aria_label("Skip setup")
-        .cursor_pointer()
-        .on_hover(crate::motion::hover_listener("onboarding-skip"))
-        .track_focus(ui.control(29))
-        .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_skip(cx)));
     let enabled = can_continue(ui, step);
     let finishes = matches!(step, OnboardingStep::Project | OnboardingStep::FirstSession);
     let continue_button = footer_primary_button(
@@ -2183,13 +2143,6 @@ fn render_footer_actions(
                 }
             }))
     });
-    let secondary_navigation = div()
-        .w_full()
-        .flex()
-        .items_center()
-        .gap(px(Theme::SPACE_XS + 2.0))
-        .child(previous)
-        .child(skip);
     let actions = div()
         .w_full()
         .flex()
@@ -2229,9 +2182,51 @@ fn render_footer_actions(
                     ),
             )
         })
-        .child(continue_button)
-        .child(secondary_navigation);
+        .child(continue_button);
     actions.into_any_element()
+}
+
+fn render_global_navigation(
+    ui: &OnboardingUi,
+    step: OnboardingStep,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let previous: AnyElement = if step == OnboardingStep::Workspace {
+        Empty.into_any_element()
+    } else {
+        footer_secondary_button(
+            theme,
+            "onboarding-back",
+            "Previous",
+            Some(crate::icons::ALT_ARROW_LEFT),
+        )
+        .role(gpui::Role::Button)
+        .aria_label("Previous setup step")
+        .cursor_pointer()
+        .on_hover(crate::motion::hover_listener("onboarding-back"))
+        .track_focus(ui.control(28))
+        .on_click(cx.listener(|shell, _, window, cx| {
+            shell.onboarding_back(cx);
+            shell.onboarding_focus_control(0, window, cx);
+        }))
+        .into_any_element()
+    };
+    let skip = footer_secondary_button(theme, "onboarding-skip", "Skip", None)
+        .role(gpui::Role::Button)
+        .aria_label("Skip setup")
+        .cursor_pointer()
+        .on_hover(crate::motion::hover_listener("onboarding-skip"))
+        .track_focus(ui.control(29))
+        .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_skip(cx)));
+
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .child(previous)
+        .child(skip.ml_auto())
+        .into_any_element()
 }
 
 pub fn render(
@@ -2314,6 +2309,14 @@ pub fn render(
         .flex()
         .items_center()
         .justify_center()
+        .child(
+            div()
+                .absolute()
+                .top(px(Theme::TITLEBAR_HEIGHT + outer_y))
+                .left(px(outer_x))
+                .right(px(outer_x))
+                .child(render_global_navigation(ui, step, &theme, cx)),
+        )
         .child(journey)
         .child(
             div()
