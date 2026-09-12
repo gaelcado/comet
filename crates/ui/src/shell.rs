@@ -8772,7 +8772,6 @@ impl Shell {
                     .title_models
                     .ready()
                     .map(|models| (8, 8 + models.len().min(4))),
-                OnboardingStep::Project if focused <= 1 => Some((0, 1)),
                 _ => None,
             };
             if let Some((start, end)) = group
