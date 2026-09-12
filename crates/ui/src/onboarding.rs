@@ -27,9 +27,9 @@ const CONTENT_MAX_WIDTH: f32 = Theme::SPACE_LG * 30.0;
 // The journey grows with the window until this cap; dense steps should expose
 // several useful rows before their overflow affordance becomes necessary.
 const CONTENT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 35.0;
-const WORKSPACE_MAX_HEIGHT: f32 = Theme::SPACE_LG * 23.0;
+const WORKSPACE_MAX_HEIGHT: f32 = Theme::SPACE_LG * 18.0;
 const HARNESS_MAX_HEIGHT: f32 = Theme::SPACE_LG * 40.0;
-const PROJECT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 30.0;
+const PROJECT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 18.0;
 const HARNESS_ROW_HEIGHT: f32 = 54.0;
 const HARNESS_ROW_GAP: f32 = 8.0;
 // Six complete rows plus half of the next one uses the available height while
@@ -817,7 +817,6 @@ fn render_workspace_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shel
         .flex()
         .flex_col()
         .child(heading(theme, "onboarding-heading-workspace", "Workspace"))
-        .child(body(theme, "Choose where Zeron keeps your sessions."))
         .child(
             div().mt(px(STEP_GROUP_GAP)).flex_1().min_h_0().child(
                 div()
@@ -1202,7 +1201,6 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
             "onboarding-heading-appearance",
             "Appearance",
         ))
-        .child(body(theme, "Choose a theme and accent."))
         .child(
             div()
                 .mt(px(STEP_GROUP_GAP))
@@ -1468,7 +1466,6 @@ fn render_harness_step(
             "onboarding-heading-harnesses",
             "Coding agents",
         ))
-        .child(body(theme, "Turn on the agents you want to use."))
         .child(device_switcher)
         .child(harness_list)
         .when_some(ui.error.clone(), |column, error| {
@@ -1701,7 +1698,6 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
             "onboarding-heading-defaults",
             "Session defaults",
         ))
-        .child(body(theme, "Choose defaults for new sessions."))
         .child(
             div()
                 .mt(px(STEP_GROUP_GAP))
@@ -1730,7 +1726,6 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                     "onboarding-heading-titles",
                     "Session titles",
                 ))
-                .child(body(theme, "Choose how new sessions are named."))
                 .child(
                     div()
                         .id("onboarding-title-settings-loading")
@@ -1754,7 +1749,6 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                     "onboarding-heading-titles",
                     "Session titles",
                 ))
-                .child(body(theme, "Choose how new sessions are named."))
                 .child(
                     div()
                         .id("onboarding-title-settings-error")
@@ -1929,7 +1923,6 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
             "onboarding-heading-titles",
             "Session titles",
         ))
-        .child(body(theme, "Choose how new sessions are named."))
         .child(
             div()
                 .mt(px(STEP_GROUP_GAP))
@@ -1942,6 +1935,33 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                 )),
         )
         .into_any_element()
+}
+
+fn project_action(
+    theme: &Theme,
+    label: &'static str,
+    description: impl Into<SharedString>,
+    selected: bool,
+) -> gpui::Div {
+    quiet_button(theme, label)
+        .w_full()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.card_glass_bg())
+        .min_h(px(76.0))
+        .flex_col()
+        .items_start()
+        .gap(px(Theme::SPACE_XS))
+        .px(px(Theme::SPACE_MD))
+        .when(selected, |button| {
+            button.bg(crate::theme::card_selected_bg())
+        })
+        .child(
+            div()
+                .text_size(crate::typography::ui_rems(12.0))
+                .text_color(theme.text_muted)
+                .child(description.into()),
+        )
 }
 
 fn render_project_step(
@@ -1975,33 +1995,28 @@ fn render_project_step(
         .flex()
         .flex_col()
         .gap(px(12.0))
-        .role(gpui::Role::RadioGroup)
         .aria_label("Project target")
         .child(
-            choice_card(
+            project_action(
                 theme,
                 "Start in a project",
                 selected_name,
                 selected && !no_project,
-                None,
             )
             .id("onboarding-project-choose")
-            .role(gpui::Role::RadioButton)
-            .aria_toggled(toggled(selected && !no_project))
+            .role(gpui::Role::Button)
             .track_focus(ui.control(0))
             .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_open_project(cx))),
         )
         .child(
-            choice_card(
+            project_action(
                 theme,
                 "Continue without a project",
                 "Add a project when you need one.",
                 no_project,
-                None,
             )
             .id("onboarding-project-none")
-            .role(gpui::Role::RadioButton)
-            .aria_toggled(toggled(no_project))
+            .role(gpui::Role::Button)
             .track_focus(ui.control(1))
             .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_pick_no_project(cx))),
         )
@@ -2022,7 +2037,6 @@ fn render_project_step(
         .flex()
         .flex_col()
         .child(heading(theme, "onboarding-heading-project", "Project"))
-        .child(body(theme, "Choose a folder now, or add one later."))
         .child(
             div()
                 .mt(px(STEP_GROUP_GAP))
@@ -2201,6 +2215,9 @@ fn render_global_navigation(
             "Previous",
             Some(crate::icons::ALT_ARROW_LEFT),
         )
+        .border_1()
+        .border_color(theme.border_strong)
+        .flex_none()
         .role(gpui::Role::Button)
         .aria_label("Previous setup step")
         .cursor_pointer()
@@ -2240,7 +2257,26 @@ pub fn render(
     let step = ui.step();
     let viewport_width = f32::from(viewport.width);
     let viewport_height = f32::from(viewport.height);
-    let journey_max_height = journey_max_height(step);
+    let journey_max_height = if step == OnboardingStep::Titles {
+        let rows = ui.harnesses.ready().map_or(0, |rows| {
+            rows.iter()
+                .filter(|h| title_harness_is_available(h))
+                .count()
+        }) + 1;
+        let has_models = ui
+            .title_settings
+            .ready()
+            .is_some_and(|s| s.harness.is_some());
+        (32.0
+            + STEP_GROUP_GAP
+            + rows as f32 * 86.0
+            + if has_models { 132.0 } else { 0.0 }
+            + Theme::SPACE_MD
+            + 40.0)
+            .min(journey_max_height(step))
+    } else {
+        journey_max_height(step)
+    };
     let compact_navigation = viewport_width < COMPACT_NAVIGATION_WIDTH;
     let roomy_x = viewport_width >= CONTENT_MAX_WIDTH + ROOMY_VIEWPORT_INSET * 2.0;
     let roomy_y =
@@ -2430,8 +2466,8 @@ mod tests {
 
     #[test]
     fn simple_steps_do_not_inherit_the_dense_journey_height() {
-        assert_eq!(journey_max_height(OnboardingStep::Workspace), 368.0);
-        assert_eq!(journey_max_height(OnboardingStep::Project), 480.0);
+        assert_eq!(journey_max_height(OnboardingStep::Workspace), 288.0);
+        assert_eq!(journey_max_height(OnboardingStep::Project), 288.0);
         assert_eq!(journey_max_height(OnboardingStep::Harnesses), 640.0);
         assert_eq!(journey_max_height(OnboardingStep::Appearance), 560.0);
         assert_eq!(HARNESS_LIST_MAX_HEIGHT, 399.0);
