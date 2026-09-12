@@ -85,6 +85,16 @@ const NEW_THREAD_TAB_OVERLAP: f32 = QUEUE_COMPOSER_OVERLAP;
 const NEW_THREAD_TAB_VISIBLE_HEIGHT: f32 =
     NEW_THREAD_TAB_CONTROL_HEIGHT + 2.0 * NEW_THREAD_TAB_PADDING;
 const NEW_THREAD_TAB_HEIGHT: f32 = NEW_THREAD_TAB_OVERLAP + NEW_THREAD_TAB_VISIBLE_HEIGHT;
+const SESSION_FOOTER_HEIGHT: f32 = 20.0;
+
+/// Route chrome dissolves around the middle of the shared-element move. The
+/// two ramps never overlap, which avoids duplicate picker ids/popovers while
+/// still letting their surrounding geometry collapse continuously.
+fn route_chrome_opacities(new_thread_chrome: f32) -> (f32, f32) {
+    let new_thread = ((new_thread_chrome.clamp(0.0, 1.0) - 0.5) * 2.0).clamp(0.0, 1.0);
+    let session = (((1.0 - new_thread_chrome.clamp(0.0, 1.0)) - 0.5) * 2.0).clamp(0.0, 1.0);
+    (new_thread, session)
+}
 /// Ignore subpixel noise when the shell reports the conversation width.
 const COMPOSER_WIDTH_EPSILON: f32 = 0.5;
 /// Below this pill input width the composer always expands.
@@ -7464,6 +7474,19 @@ impl Render for Composer {
         let coordinated_route_morph = self
             .flip_morph
             .filter(|m| m.spec == motion::NEW_THREAD_TRANSITION && !m.done(now_ms));
+        // The route state commits before its shared-element animation begins.
+        // Reconstruct the departing chrome at t=0, then progressively trade
+        // it for the destination chrome so neither route changes the outer
+        // composer geometry in a single frame.
+        let new_thread_chrome = coordinated_route_morph.map_or_else(
+            || if new_chat { 1.0 } else { 0.0 },
+            |morph| {
+                let progress = morph.progress(now_ms);
+                if new_chat { progress } else { 1.0 - progress }
+            },
+        );
+        let (new_thread_chrome_opacity, session_chrome_opacity) =
+            route_chrome_opacities(new_thread_chrome);
         self.height_morph = if coordinated_route_morph.is_some() {
             coordinated_route_morph
         } else {
@@ -7724,18 +7747,23 @@ impl Render for Composer {
                         ),
                 )
         };
-        let new_thread_target_selectors = new_chat.then(|| {
+        let new_thread_target_selectors = (new_thread_chrome_opacity > 0.0).then(|| {
             self.pickers.update(cx, |pickers, cx| {
                 pickers.render_new_thread_target_selectors(cx)
             })
         });
-        let new_thread_git_selectors = new_chat
+        let new_thread_git_selectors = (new_thread_chrome_opacity > 0.0)
             .then(|| {
                 self.pickers.update(cx, |pickers, cx| {
                     pickers.render_new_thread_git_selectors(cx)
                 })
             })
             .flatten();
+        let has_new_thread_git_tab = self
+            .state
+            .read(cx)
+            .selected_space_row()
+            .is_some_and(|space| space.git_detected);
         // The file dropzone lives in the shell (the whole conversation column,
         // not just the pill — shell.rs `chat-dropzone`); drops land back here
         // via `add_paths`.
@@ -7754,46 +7782,54 @@ impl Render for Composer {
             .children(self.render_slash_popup(&theme, cx));
         let composer_stack = div()
             .relative()
-            .when_some(new_thread_target_selectors, |stack, selectors| {
-                stack.pt(px(NEW_THREAD_TAB_VISIBLE_HEIGHT)).child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(NEW_THREAD_TAB_HEIGHT))
-                        .px(px(QUEUE_SIDE_INSET))
-                        .flex()
-                        .justify_end()
-                        .child(
-                            div()
-                                .min_w_0()
-                                .max_w_full()
-                                .h_full()
-                                .occlude()
-                                .rounded_t(px(NEW_THREAD_TAB_RADIUS))
-                                .bg(theme.input_glass_bg())
-                                .border_1()
-                                .border_color(theme.border)
-                                .when(!theme.is_frost(), |el| el.shadow_lg())
-                                .pt(px(NEW_THREAD_TAB_PADDING))
-                                .px(px(NEW_THREAD_TAB_PADDING))
-                                .pb(px(NEW_THREAD_TAB_OVERLAP + NEW_THREAD_TAB_PADDING))
-                                .child(selectors),
-                        ),
-                )
+            .when(new_thread_chrome > 0.0, |stack| {
+                stack
+                    .pt(px(NEW_THREAD_TAB_VISIBLE_HEIGHT * new_thread_chrome))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .h(px(NEW_THREAD_TAB_HEIGHT
+                                - NEW_THREAD_TAB_VISIBLE_HEIGHT
+                                    * (1.0 - new_thread_chrome)))
+                            .px(px(QUEUE_SIDE_INSET))
+                            .flex()
+                            .justify_end()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .max_w_full()
+                                    .h_full()
+                                    .occlude()
+                                    .rounded_t(px(NEW_THREAD_TAB_RADIUS))
+                                    .bg(theme.input_glass_bg())
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .when(!theme.is_frost(), |el| el.shadow_lg())
+                                    .overflow_hidden()
+                                    .opacity(new_thread_chrome_opacity)
+                                    .pt(px(NEW_THREAD_TAB_PADDING))
+                                    .px(px(NEW_THREAD_TAB_PADDING))
+                                    .pb(px(NEW_THREAD_TAB_OVERLAP + NEW_THREAD_TAB_PADDING))
+                                    .children(new_thread_target_selectors),
+                            ),
+                    )
             })
-            .when(new_thread_git_selectors.is_some(), |stack| {
-                stack.pb(px(NEW_THREAD_TAB_VISIBLE_HEIGHT))
+            .when(has_new_thread_git_tab && new_thread_chrome > 0.0, |stack| {
+                stack.pb(px(NEW_THREAD_TAB_VISIBLE_HEIGHT * new_thread_chrome))
             })
-            .when_some(new_thread_git_selectors, |stack, selectors| {
+            .when(has_new_thread_git_tab && new_thread_chrome > 0.0, |stack| {
                 stack.child(
                     div()
                         .absolute()
                         .bottom_0()
                         .left_0()
                         .right_0()
-                        .h(px(NEW_THREAD_TAB_HEIGHT))
+                        .h(px(NEW_THREAD_TAB_HEIGHT
+                            - NEW_THREAD_TAB_VISIBLE_HEIGHT
+                                * (1.0 - new_thread_chrome)))
                         .px(px(QUEUE_SIDE_INSET))
                         .flex()
                         .child(
@@ -7807,10 +7843,12 @@ impl Render for Composer {
                                 .border_1()
                                 .border_color(theme.border)
                                 .when(!theme.is_frost(), |el| el.shadow_lg())
+                                .overflow_hidden()
+                                .opacity(new_thread_chrome_opacity)
                                 .pt(px(NEW_THREAD_TAB_OVERLAP + NEW_THREAD_TAB_PADDING))
                                 .px(px(NEW_THREAD_TAB_PADDING))
                                 .pb(px(NEW_THREAD_TAB_PADDING))
-                                .child(selectors),
+                                .children(new_thread_git_selectors),
                         ),
                 )
             })
@@ -7821,23 +7859,35 @@ impl Render for Composer {
         // Branch/worktree toolbar under the pill (t3code BranchToolbar): the
         // checkout-kind selector + ref picker for new sessions, read-only
         // labels once the session exists. Git spaces only.
-        let container = if !new_chat {
+        let container = if session_chrome_opacity > 0.0 {
             let footer = self
                 .pickers
                 .update(cx, |pickers, cx| pickers.render_footer(cx));
-            {
-                let usage = self.state.read(cx).context_usage;
-                container.child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .child(div().flex_1().min_w_0().children(footer))
-                        .child(div().pr(px(10.0)).mb(px(-8.0)).child(
-                            crate::context_usage::render(usage, self.state.clone(), &theme),
-                        )),
-                )
-            }
+            let usage = self.state.read(cx).context_usage;
+            let session_chrome = 1.0 - new_thread_chrome;
+            container.child(
+                div()
+                    // A flex-column gap is inserted before this child. Cancel
+                    // it at t=0, then hand it back while the 20px row reveals;
+                    // the proportional -8px bottom bleed preserves the old
+                    // steady-state 8px/8px optical padding.
+                    .h(px(SESSION_FOOTER_HEIGHT * session_chrome))
+                    .mt(px(-Theme::SPACE_SM * (1.0 - session_chrome)))
+                    .mb(px(-Theme::SPACE_SM * session_chrome))
+                    .overflow_hidden()
+                    .opacity(session_chrome_opacity)
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(SESSION_FOOTER_HEIGHT))
+                            .flex()
+                            .items_center()
+                            .child(div().flex_1().min_w_0().children(footer))
+                            .child(div().pr(px(10.0)).mb(px(-8.0)).child(
+                                crate::context_usage::render(usage, self.state.clone(), &theme),
+                            )),
+                    ),
+            )
         } else {
             container
         };
@@ -9149,6 +9199,17 @@ mod tests {
             NEW_THREAD_TAB_RADIUS,
             crate::pickers::FOOTER_CHIP_RADIUS + NEW_THREAD_TAB_PADDING
         );
+    }
+
+    #[test]
+    fn route_chrome_crossfade_never_duplicates_picker_controls() {
+        assert_eq!(route_chrome_opacities(1.0), (1.0, 0.0));
+        assert_eq!(route_chrome_opacities(0.5), (0.0, 0.0));
+        assert_eq!(route_chrome_opacities(0.0), (0.0, 1.0));
+        for step in 0..=20 {
+            let (new_thread, session) = route_chrome_opacities(step as f32 / 20.0);
+            assert!(new_thread == 0.0 || session == 0.0);
+        }
     }
 
     #[test]

@@ -2605,9 +2605,10 @@ impl Pickers {
             (space, session, change_request)
         };
         let row = || {
-            // Symmetric: the container's 8px gap sits above the toolbar;
-            // bleeding 8 of the container's 16px bottom padding (mb -8)
-            // leaves 8 below — equal air on both sides of the row.
+            // The composer owns the row's animated reveal and negative bottom
+            // margin. Keeping that geometry outside this reusable content
+            // lets the new-thread route handoff collapse the footer without
+            // clipping its controls or changing its steady-state spacing.
             // `w_full` is load-bearing: without it the canvas layout sizes
             // the row to CONTENT, and the left cluster's flex_1 (basis 0)
             // collapsed to zero width — both clusters painted from the same
@@ -2620,7 +2621,6 @@ impl Pickers {
                 .justify_between()
                 .gap(px(8.0))
                 .px(px(10.0))
-                .mb(px(-8.0))
         };
 
         if let Some(chat) = &session {

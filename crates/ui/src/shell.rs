@@ -803,6 +803,23 @@ impl WidthTween {
     }
 }
 
+fn new_thread_transition_progress(transition: NewThreadTransition) -> f32 {
+    let total = motion::NEW_THREAD_TRANSITION
+        .total()
+        .mul_f32(motion::speed_scale());
+    let raw = transition.started.elapsed().as_secs_f32() / total.as_secs_f32();
+    motion::NEW_THREAD_TRANSITION.progress(raw.clamp(0.0, 1.0))
+}
+
+fn new_thread_transition_bottom(transition: NewThreadTransition) -> f32 {
+    transition.destination_bottom
+        + new_thread_composer_offset(
+            transition.origin_bottom,
+            transition.destination_bottom,
+            new_thread_transition_progress(transition),
+        )
+}
+
 /// One reversible new-thread ↔ session handoff. The composer's measured
 /// bottom edge is the shared-element anchor in both directions; canvas,
 /// transcript, and height staging all share [`motion::NEW_THREAD_TRANSITION`].
@@ -833,6 +850,10 @@ fn new_thread_canvas_opacity(direction: NewThreadTransitionDirection, progress: 
 
 fn new_thread_composer_offset(origin_bottom: f32, destination_bottom: f32, progress: f32) -> f32 {
     (origin_bottom - destination_bottom) * (1.0 - progress.clamp(0.0, 1.0))
+}
+
+fn canonical_new_thread_composer_bottom(painted_bottom: f32, transition_offset: f32) -> f32 {
+    painted_bottom - transition_offset
 }
 
 fn new_thread_transcript_settle(progress: f32) -> f32 {
@@ -4451,7 +4472,15 @@ impl Shell {
     // ---- render pieces ----
 
     fn begin_new_thread_launch(&mut self, cx: &mut Context<Self>) {
-        let origin_bottom = self.new_thread_composer_bottom.get();
+        if self.new_thread_transition.is_some_and(|transition| {
+            transition.direction == NewThreadTransitionDirection::IntoThread
+        }) {
+            return;
+        }
+        let origin_bottom = self
+            .new_thread_transition
+            .map(new_thread_transition_bottom)
+            .unwrap_or_else(|| self.new_thread_composer_bottom.get());
         let source_height = self.new_thread_composer_height.get();
         let destination_bottom =
             self.viewport_height - self.eval_tween(self.terminal_tween, self.terminal_target(cx));
@@ -4470,7 +4499,15 @@ impl Shell {
 
     fn begin_new_thread_return(&mut self, cx: &mut Context<Self>) {
         let terminal_height = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
-        let origin_bottom = self.viewport_height - terminal_height;
+        if self.new_thread_transition.is_some_and(|transition| {
+            transition.direction == NewThreadTransitionDirection::IntoNewThread
+        }) {
+            return;
+        }
+        let origin_bottom = self
+            .new_thread_transition
+            .map(new_thread_transition_bottom)
+            .unwrap_or(self.viewport_height - terminal_height);
         let measured_height = self.new_thread_composer_height.get();
         let destination_bottom = if self.new_thread_composer_bottom.get() > 0.0 {
             self.new_thread_composer_bottom.get()
@@ -6965,6 +7002,7 @@ impl Shell {
         let no_project = self.state.read(cx).no_project;
         let new_thread_background_setting = settings::current(cx).new_thread_composer_background;
         let transition_frame = self.new_thread_transition_frame();
+        let term_h = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
         let new_thread_background_layer = if !has_selection {
             Some(new_thread_background(
                 new_thread_background_setting.as_ref(),
@@ -6994,13 +7032,19 @@ impl Shell {
                     )
                 })
         };
-        let term_h = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
         let transition_composer_offset = transition_frame.map(|(transition, progress)| {
-            new_thread_composer_offset(
-                transition.origin_bottom,
-                transition.destination_bottom,
-                progress,
-            )
+            let destination_bottom = match transition.direction {
+                NewThreadTransitionDirection::IntoThread => self.viewport_height - term_h,
+                NewThreadTransitionDirection::IntoNewThread => {
+                    let measured = self.new_thread_composer_bottom.get();
+                    if measured > 0.0 {
+                        measured
+                    } else {
+                        transition.destination_bottom
+                    }
+                }
+            };
+            new_thread_composer_offset(transition.origin_bottom, destination_bottom, progress)
         });
 
         // Content outlet: selected chat → transcript; nothing selected → the
@@ -7080,17 +7124,15 @@ impl Shell {
             // vertically-centered controls composition. The composer lives
             // here only while the canvas is blank; established sessions keep
             // it in the bottom chrome stack below.
+            let transition_dy = transition_frame
+                .filter(|(transition, _)| {
+                    transition.direction == NewThreadTransitionDirection::IntoNewThread
+                })
+                .map_or(0.0, |_| transition_composer_offset.unwrap_or(0.0));
             let composition = div()
                 .w_full()
                 .relative()
-                .top(px(NEW_THREAD_COMPOSITION_Y_CORRECTION
-                    + transition_frame
-                        .filter(|(transition, _)| {
-                            transition.direction == NewThreadTransitionDirection::IntoNewThread
-                        })
-                        .map_or(0.0, |_| {
-                            transition_composer_offset.unwrap_or(0.0)
-                        })))
+                .top(px(NEW_THREAD_COMPOSITION_Y_CORRECTION + transition_dy))
                 .flex()
                 .flex_col()
                 .items_center()
@@ -7103,7 +7145,14 @@ impl Shell {
                         .child(
                             gpui::canvas(
                                 move |bounds, _, _| {
-                                    bottom.set(f32::from(bounds.bottom()));
+                                    // Record the resting blank-canvas anchor,
+                                    // not this frame's animated translation.
+                                    // Otherwise every reverse frame moves its
+                                    // own destination and produces a wobble.
+                                    bottom.set(canonical_new_thread_composer_bottom(
+                                        f32::from(bounds.bottom()),
+                                        transition_dy,
+                                    ));
                                     height.set(f32::from(bounds.size.height));
                                 },
                                 |_, _, _, _| {},
@@ -7113,13 +7162,10 @@ impl Shell {
                         )
                         .child(self.composer.clone())
                 });
-            let composition: AnyElement = if transition_frame.is_some_and(|(transition, _)| {
-                transition.direction == NewThreadTransitionDirection::IntoNewThread
-            }) {
-                composition.into_any_element()
-            } else {
-                motion::settle_down("new-thread-composition", composition).into_any_element()
-            };
+            // This is a persistent route surface, not an entrance. A keyed
+            // one-shot here replayed after reparents and competed with the
+            // shared-element transition, producing the final-frame flicker.
+            let composition: AnyElement = composition.into_any_element();
             div()
                 .size_full()
                 .relative()
@@ -9628,6 +9674,10 @@ mod tests {
         assert_eq!(new_thread_composer_offset(520.0, 840.0, 0.0), -320.0);
         assert_eq!(new_thread_composer_offset(520.0, 840.0, 0.5), -160.0);
         assert_eq!(new_thread_composer_offset(520.0, 840.0, 1.0), 0.0);
+        // Measuring while the reverse transition is translated must recover
+        // the same resting blank-canvas anchor on every frame.
+        assert_eq!(canonical_new_thread_composer_bottom(520.0, -320.0), 840.0);
+        assert_eq!(canonical_new_thread_composer_bottom(680.0, -160.0), 840.0);
         // The canvas leaves early on send and returns on the reverse path;
         // the transcript arrives just after motion begins and settles upward.
         assert_eq!(
