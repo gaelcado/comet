@@ -4114,6 +4114,8 @@ pub struct Composer {
     /// Pill height actually rendered last frame — a committed flip morphs
     /// from here, so mid-flight reversals hand off without a jump.
     last_rendered_height: f32,
+    dock_frame: Option<crate::composer_dock::DockFrame>,
+    dock_clearance_correction: f32,
     last_target_height: f32,
     height_morph: Option<FlipMorph>,
     /// Monotonic clock anchor for the morph timeline.
@@ -4130,6 +4132,26 @@ pub struct Composer {
 impl EventEmitter<ComposerEvent> for Composer {}
 
 impl Composer {
+    pub(crate) fn set_dock_frame(
+        &mut self,
+        frame: crate::composer_dock::DockFrame,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self.dock_frame != Some(frame);
+        self.dock_frame = Some(frame);
+        if frame.active {
+            self.flip_morph = None;
+            self.height_morph = None;
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn dock_clearance_correction(&self) -> f32 {
+        self.dock_clearance_correction
+    }
+
     /// The picker entity, for the shell's canvas target selectors.
     pub fn pickers(&self) -> &Entity<Pickers> {
         &self.pickers
@@ -4280,6 +4302,8 @@ impl Composer {
             settle_task: None,
             flip_morph: None,
             last_rendered_height: 0.0,
+            dock_frame: None,
+            dock_clearance_correction: 0.0,
             last_target_height: 0.0,
             height_morph: None,
             morph_clock: Instant::now(),
@@ -7252,14 +7276,18 @@ impl Render for Composer {
         let route_snap = self
             .route_snap_until
             .is_some_and(|until| Instant::now() < until);
-        self.flip_morph = flip_morph_step(
-            self.flip_morph,
-            committed_flip && !new_chat,
-            self.last_rendered_height,
-            now_ms,
-            motion::reduced_motion(cx),
-            route_snap,
-        );
+        self.flip_morph = if self.dock_frame.is_some() {
+            None
+        } else {
+            flip_morph_step(
+                self.flip_morph,
+                committed_flip && !new_chat,
+                self.last_rendered_height,
+                now_ms,
+                motion::reduced_motion(cx),
+                route_snap,
+            )
+        };
         let expanded = self.expanded_mode;
 
         // Chat-scoped failures render only under their own chat; a global
@@ -7438,10 +7466,16 @@ impl Render for Composer {
             }))
         });
 
-        // New chats always use the expanded layout: the repo/branch pickers
-        // need the full-width actions row (zeron composer-actions.tsx
-        // `mustExpand = isNew || …`).
-        let expanded = expanded || new_chat;
+        // The shared main composer keeps one two-row body on both routes.
+        // Docking reduces its empty textarea by 16px without changing the
+        // input's origin or moving the controls through a second layout.
+        let expanded = expanded || new_chat || self.dock_frame.is_some();
+        let dock_amount = self.dock_frame.map_or(0.0, |frame| frame.amount);
+        let dock_height = |amount: f32| {
+            (content_height + TEXTAREA_PAD_V).clamp(TEXTAREA_MIN - 16.0 * amount, TEXTAREA_MAX)
+                + ACTIONS_ROW_HEIGHT
+                + PILL_BORDER_V
+        };
 
         // Committed-height morph: the layout below is already the NEW mode's;
         // only the pill's height (and the entrance fade/text glide driven by
@@ -7457,7 +7491,9 @@ impl Render for Composer {
         let appshot_count = self.staged_appshots().len();
         let strip_h = attachment_strip_height(staged_count, strip_width_hint);
         let comment_strip_h = comment_strip_height(self.staged_comments(cx).len());
-        let base_height = if expanded {
+        let base_height = if self.dock_frame.is_some() {
+            dock_height(dock_amount)
+        } else if expanded {
             composer_total_height(content_height)
         } else {
             COMPACT_TOTAL_HEIGHT
@@ -7471,16 +7507,25 @@ impl Render for Composer {
         // Reconstruct the departing chrome at t=0, then progressively trade
         // it for the destination chrome so neither route changes the outer
         // composer geometry in a single frame.
-        let new_thread_chrome = coordinated_route_morph.map_or_else(
-            || if new_chat { 1.0 } else { 0.0 },
-            |morph| {
-                let progress = morph.progress(now_ms);
-                if new_chat { progress } else { 1.0 - progress }
-            },
+        let new_thread_chrome = self
+            .dock_frame
+            .map(|frame| frame.selectors())
+            .unwrap_or_else(|| {
+                coordinated_route_morph.map_or_else(
+                    || if new_chat { 1.0 } else { 0.0 },
+                    |morph| {
+                        let progress = morph.progress(now_ms);
+                        if new_chat { progress } else { 1.0 - progress }
+                    },
+                )
+            });
+        let (new_thread_chrome_opacity, session_chrome_opacity) = self.dock_frame.map_or_else(
+            || route_chrome_opacities(new_thread_chrome),
+            |frame| (frame.selectors(), frame.footer()),
         );
-        let (new_thread_chrome_opacity, session_chrome_opacity) =
-            route_chrome_opacities(new_thread_chrome);
-        self.height_morph = if coordinated_route_morph.is_some() {
+        self.height_morph = if self.dock_frame.is_some_and(|frame| frame.active) {
+            None
+        } else if coordinated_route_morph.is_some() {
             coordinated_route_morph
         } else {
             flip_morph_step(
@@ -7512,14 +7557,18 @@ impl Render for Composer {
             window.request_animation_frame();
         }
         self.last_rendered_height = pill_height;
-        let text_pt = morph_text_pad(morph_t);
-        let textarea_height = (pill_height
-            - strip_h
-            - appshot_strip_height(appshot_count)
-            - comment_strip_h
-            - PILL_BORDER_V
-            - ACTIONS_ROW_HEIGHT)
-            .max(0.0);
+        self.dock_clearance_correction = self.dock_frame.map_or(0.0, |frame| {
+            dock_height(if frame.docked { 1.0 } else { 0.0 }) + strip_h + appshot_strip_height(appshot_count) + comment_strip_h
+                - pill_height
+        });
+        let text_pt = if self.dock_frame.is_some() {
+            16.0
+        } else {
+            morph_text_pad(morph_t)
+        };
+        let surface_radius = COMPOSER_RADIUS - 4.0 * dock_amount;
+        let textarea_height =
+            (pill_height - strip_h - appshot_strip_height(appshot_count) - comment_strip_h - PILL_BORDER_V - ACTIONS_ROW_HEIGHT).max(0.0);
         self.input.update(cx, |input, cx| {
             let height = if expanded {
                 (textarea_height - text_pt - 4.0).max(0.0)
@@ -7604,7 +7653,7 @@ impl Render for Composer {
                     }
                 }),
             )
-            .rounded(px(COMPOSER_RADIUS))
+            .rounded(px(surface_radius))
             .bg(pill_bg)
             .border_1()
             .border_color(theme.border)
@@ -7625,7 +7674,6 @@ impl Render for Composer {
             // top padding eases 12→16. The whole control cluster stays at
             // full alpha — chips,
             // attach and send are all (near-)stationary on the bottom anchor.
-            let text_pt = morph_text_pad(morph_t);
             pill.h(px(pill_height))
                 .overflow_hidden()
                 .relative()
@@ -7659,9 +7707,13 @@ impl Render for Composer {
                         // Send has a larger structural separation.
                         .gap(px(ACTION_PRIMARY_GAP))
                         .pl(px(12.0))
-                        .pr(px(morph_cluster_inset(true, morph_t)))
+                        .pr(px(if self.dock_frame.is_some() {
+                            12.0 - 2.0 * dock_amount
+                        } else {
+                            morph_cluster_inset(true, morph_t)
+                        }))
                         .pt(px(4.0))
-                        .pb(px(10.0))
+                        .pb(px(10.0 - 2.0 * dock_amount))
                         .child(
                             div()
                                 .flex_1()
@@ -7762,13 +7814,12 @@ impl Render for Composer {
         // via `add_paths`.
         // Frosted: the pill backdrop-blurs the transcript scrolling under it
         // (the popover glass treatment; radius matches the pill's rounding).
-        // This entity is deliberately not wrapped in its own entrance fade.
-        // The shell reparents it between the blank canvas and transcript; a
-        // keyed opacity animation would remount and flash independently of
-        // the coordinated shared-element transition.
+        // The shell keeps this entity under one parent on both routes. The
+        // surface itself never fades, and frost follows the same morph radius.
         let pill_surface = div()
             .relative()
-            .child(crate::frost::frosted(COMPOSER_RADIUS, 16.0, body))
+            .id("composer-surface")
+            .child(crate::frost::frosted(surface_radius, 16.0, body))
             // Both completion popups span the full pill width above it —
             // the file-mention and slash tokens are mutually exclusive.
             .children(self.render_file_mention_popup(&theme, cx))
@@ -7776,7 +7827,23 @@ impl Render for Composer {
         // Restore the original chip-only selector treatment: destination at
         // the top-right, no surrounding surface. Cancel the column gap as the
         // row collapses so the pill never jumps at the route boundary.
-        let container = if new_thread_chrome > 0.0 {
+        let container = if self.dock_frame.is_some() {
+            // Floating selectors share the surface's origin and never change its height.
+            container.relative().child(
+                div()
+                    .id("dock-target-selectors")
+                    .absolute()
+                    .top(px(-28.0))
+                    .left(px(Theme::SPACE_LG + 10.0))
+                    .right(px(Theme::SPACE_LG + 10.0))
+                    .h(px(NEW_THREAD_SELECTOR_ROW_HEIGHT))
+                    .flex()
+                    .items_start()
+                    .justify_end()
+                    .opacity(new_thread_chrome_opacity)
+                    .children(new_thread_target_selectors),
+            )
+        } else if new_thread_chrome > 0.0 {
             container.child(
                 div()
                     .w_full()
@@ -7798,7 +7865,7 @@ impl Render for Composer {
         // old floating checkout/ref controls dissolve into the session footer.
         // Non-Git sessions grow the slot continuously from zero.
         let session_chrome = 1.0 - new_thread_chrome;
-        let bottom_slot = if has_new_thread_git_selectors {
+        let bottom_slot = if has_new_thread_git_selectors || self.dock_frame.is_some() {
             1.0
         } else {
             session_chrome
@@ -7904,6 +7971,46 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
             .unwrap();
         (dir, window)
+    }
+
+    #[gpui::test]
+    fn dock_morph_keeps_editor_origin_and_reserves_final_height(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        let input = handle
+            .read_with(cx, |composer, _| composer.input.clone())
+            .unwrap();
+        let mut first_origin = None;
+        for amount in [0.0, 0.2, 0.6, 0.98, 1.0, 0.7, 0.0] {
+            handle
+                .update(cx, |composer, _, cx| {
+                    let mut frame = crate::composer_dock::DockFrame::settled(true);
+                    frame.amount = amount;
+                    frame.active = amount < 1.0;
+                    composer.set_dock_frame(frame, cx);
+                })
+                .unwrap();
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            handle
+                .read_with(cx, |composer, cx| {
+                    assert_eq!(composer.input, input);
+                    let origin = input.read(cx).last_bounds.unwrap().origin;
+                    let first = *first_origin.get_or_insert(origin);
+                    assert!(
+                        (f32::from(origin.y - first.y)).abs() < 0.1,
+                        "editor jumped at {amount}"
+                    );
+                    assert!(
+                        (composer.last_rendered_height + composer.dock_clearance_correction
+                            - 108.0)
+                            .abs()
+                            < 0.1
+                    );
+                })
+                .unwrap();
+        }
     }
 
     #[gpui::test]

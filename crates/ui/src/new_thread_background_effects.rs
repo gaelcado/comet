@@ -281,6 +281,52 @@ fn paint_dot(
     ));
 }
 
+/// Deterministic dissolve grain. It requires no image decode on the first
+/// navigation frame, and its cells evaporate instead of re-randomizing each
+/// frame. The caller scopes this texture to the artwork's contracting mask.
+pub(super) fn dissolve_grain(theme: &Theme, progress: f32) -> AnyElement {
+    let color = theme.text;
+    gpui::canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            const BAYER: [[u8; 4]; 4] =
+                [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+            let width = f32::from(bounds.size.width);
+            let height = f32::from(bounds.size.height);
+            let step = 6.0;
+            let left = (width * 0.38 * progress / step).floor() as usize;
+            let right = ((width - width * 0.38 * progress) / step).ceil() as usize;
+            let top = (height * 0.82 * progress / step).floor() as usize;
+            let bottom = (height / step).ceil() as usize;
+            for row in top..bottom {
+                for column in left..right {
+                    let threshold = (BAYER[row % 4][column % 4] as f32 + 1.0) / 17.0;
+                    let alpha = 1.0
+                        - crate::composer_dock::stage(
+                            progress,
+                            threshold * 0.5,
+                            0.5 + threshold * 0.5,
+                        );
+                    if alpha < 0.01 {
+                        continue;
+                    }
+                    paint_dot(
+                        window,
+                        bounds,
+                        column as f32 * step,
+                        row as f32 * step,
+                        1.0 + alpha,
+                        color.opacity(0.3 * alpha),
+                    );
+                }
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
+    .into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
