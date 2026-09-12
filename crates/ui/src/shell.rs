@@ -693,7 +693,10 @@ const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 const NEW_THREAD_BACKGROUND_FROSTED_OPACITY: f32 = 0.84;
 const NEW_THREAD_BACKGROUND_VIEWPORT_RATIO: f32 = 0.46;
 const NEW_THREAD_BACKGROUND_MAX_HEIGHT: f32 = 440.0;
-const NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO: f32 = 0.62;
+// Keep the upper artwork clear, with a quiet tail over the lower 56%.
+// The hero meets the panel edges directly; side feathering belongs only to
+// the contracting dock mask, never the resting composition.
+const NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO: f32 = 0.56;
 const NEW_THREAD_BACKGROUND_SIDE_FADE: f32 = 72.0;
 const NEW_THREAD_BACKGROUND_SIDE_FADE_RATIO: f32 = 0.18;
 
@@ -821,9 +824,10 @@ fn new_thread_background_height(viewport_height: f32) -> f32 {
         .min(NEW_THREAD_BACKGROUND_MAX_HEIGHT)
 }
 
-fn new_thread_background_side_fade(viewport_width: f32) -> f32 {
+fn new_thread_background_side_fade(viewport_width: f32, dissolve: f32) -> f32 {
     (viewport_width.max(0.0) * NEW_THREAD_BACKGROUND_SIDE_FADE_RATIO)
         .min(NEW_THREAD_BACKGROUND_SIDE_FADE)
+        * dissolve.clamp(0.0, 1.0)
 }
 
 fn new_thread_background(
@@ -843,8 +847,8 @@ fn new_thread_background(
         return Empty.into_any_element();
     }
     let hero_height = new_thread_background_height(viewport_height);
-    let side_fade = new_thread_background_side_fade(viewport_width);
     let dissolve = dissolve.clamp(0.0, 1.0);
+    let side_fade = new_thread_background_side_fade(viewport_width, dissolve);
     let grain_strength = (std::f32::consts::PI * dissolve).sin().max(0.0);
     let (image_opacity, effect_layer) = crate::new_thread_background_effects::treatment(
         effect,
@@ -902,8 +906,8 @@ fn new_thread_background(
             .band_top(hero_height * 0.16 * dissolve)
             .outset_bottom(-hero_height * 0.06 * dissolve)
             .inset_x(viewport_width * 0.38 * dissolve)
-            .fade_left(true)
-            .fade_right(true),
+            .fade_left(dissolve > 0.0)
+            .fade_right(dissolve > 0.0),
         )
         .into_any_element()
 }
@@ -9528,9 +9532,14 @@ mod tests {
         assert_eq!(new_thread_background_height(600.0), 276.0);
         assert_eq!(new_thread_background_height(1_000.0), 440.0);
         assert!(new_thread_background_height(848.0) < 848.0 / 2.0);
-        assert!((new_thread_background_side_fade(160.0) - 28.8).abs() < 0.001);
-        assert_eq!(new_thread_background_side_fade(1_000.0), 72.0);
-        assert!(new_thread_background_side_fade(160.0) * 2.0 < 160.0);
+        // Full bleed at rest, including fullscreen; the feather grows from
+        // zero on departure rather than switching on a visible side band.
+        assert_eq!(new_thread_background_side_fade(160.0, 0.0), 0.0);
+        assert_eq!(new_thread_background_side_fade(2_560.0, 0.0), 0.0);
+        assert!((new_thread_background_side_fade(160.0, 1.0) - 28.8).abs() < 0.001);
+        assert_eq!(new_thread_background_side_fade(1_000.0, 0.5), 36.0);
+        assert_eq!(new_thread_background_side_fade(1_000.0, 1.0), 72.0);
+        assert!(new_thread_background_side_fade(160.0, 1.0) * 2.0 < 160.0);
     }
 
     #[test]
