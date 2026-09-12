@@ -856,6 +856,13 @@ fn canonical_new_thread_composer_bottom(painted_bottom: f32, transition_offset: 
     painted_bottom - transition_offset
 }
 
+fn bottom_stack_measurement_matches(
+    measured_has_composer: bool,
+    expected_has_composer: bool,
+) -> bool {
+    measured_has_composer == expected_has_composer
+}
+
 fn new_thread_transcript_settle(progress: f32) -> f32 {
     8.0 * (1.0 - new_thread_transcript_opacity(progress))
 }
@@ -1310,11 +1317,13 @@ pub struct Shell {
     /// column; a drop stages an image or inserts a file-mention chip.
     file_drag_active: bool,
     /// Measured height of the bottom chrome stack (status strip + composer +
-    /// terminal dock) the full-height transcript scrolls under — written by a
-    /// paint-time canvas each frame, read the NEXT frame for the fade inset,
-    /// the transcript's bottom clearance, and the jump pill's anchor (the
-    /// same one-frame lag every fade here rides).
+    /// terminal dock) the full-height transcript scrolls under. Paint-time
+    /// measurement schedules another frame whenever this value changes.
     bottom_stack: std::rc::Rc<std::cell::Cell<f32>>,
+    /// Whether `bottom_stack` was measured with the session composer present.
+    /// A newly selected transcript stays hidden until this matches its route,
+    /// preventing one frame at the blank canvas's stale bottom clearance.
+    bottom_stack_has_composer: std::rc::Rc<std::cell::Cell<bool>>,
     /// Last painted bounds of the centered new-thread composer. The first-send
     /// transition uses its bottom edge as the FLIP source anchor.
     new_thread_composer_bottom: std::rc::Rc<std::cell::Cell<f32>>,
@@ -1710,6 +1719,7 @@ impl Shell {
             // Seed with the compact composer stack's rough height so the
             // first frame's clearance isn't zero (the measure corrects it).
             bottom_stack: std::rc::Rc::new(std::cell::Cell::new(120.0)),
+            bottom_stack_has_composer: std::rc::Rc::new(std::cell::Cell::new(false)),
             new_thread_composer_bottom: std::rc::Rc::new(std::cell::Cell::new(0.0)),
             new_thread_composer_height: std::rc::Rc::new(std::cell::Cell::new(0.0)),
             new_thread_transition: None,
@@ -6999,6 +7009,10 @@ impl Shell {
         let has_selection = self.state.read(cx).selected_chat.is_some();
         let has_spaces = !self.state.read(cx).spaces.is_empty();
         let has_appshots = !self.composer.read(cx).staged_appshots().is_empty();
+        let transcript_geometry_ready = bottom_stack_measurement_matches(
+            self.bottom_stack_has_composer.get(),
+            (has_spaces || has_appshots) && has_selection,
+        );
         let no_project = self.state.read(cx).no_project;
         let new_thread_background_setting = settings::current(cx).new_thread_composer_background;
         let transition_frame = self.new_thread_transition_frame();
@@ -7062,14 +7076,23 @@ impl Shell {
                             .relative()
                             .top(px(new_thread_transcript_settle(progress)))
                             .size_full()
-                            .opacity(new_thread_transcript_opacity(progress))
+                            .opacity(if transcript_geometry_ready {
+                                new_thread_transcript_opacity(progress)
+                            } else {
+                                0.0
+                            })
                             .child(self.transcript.clone()),
                     )
                     .into_any_element()
             } else {
-                self.transcript
-                    .clone()
-                    .cached(gpui::StyleRefinement::default().size_full())
+                div()
+                    .size_full()
+                    .opacity(if transcript_geometry_ready { 1.0 } else { 0.0 })
+                    .child(
+                        self.transcript
+                            .clone()
+                            .cached(gpui::StyleRefinement::default().size_full()),
+                    )
                     .into_any_element()
             }
         } else if !has_spaces && !no_project {
@@ -7306,6 +7329,8 @@ impl Shell {
             .child(div().flex_1().min_h_0())
             .child({
                 let measured = self.bottom_stack.clone();
+                let measured_has_composer = self.bottom_stack_has_composer.clone();
+                let contains_composer = has_spaces && has_selection;
                 div()
                     .flex_none()
                     .relative()
@@ -7313,7 +7338,16 @@ impl Shell {
                     .flex_col()
                     .child(
                         gpui::canvas(
-                            move |bounds, _, _| measured.set(f32::from(bounds.size.height)),
+                            move |bounds, window, _| {
+                                let next_height = f32::from(bounds.size.height);
+                                let changed = (measured.get() - next_height).abs() > 0.5
+                                    || measured_has_composer.get() != contains_composer;
+                                measured.set(next_height);
+                                measured_has_composer.set(contains_composer);
+                                if changed {
+                                    window.request_animation_frame();
+                                }
+                            },
                             |_, _, _, _| {},
                         )
                         .absolute()
@@ -9419,9 +9453,19 @@ impl Render for Shell {
                 // `render_main`), so only the chrome above it overlaps.
                 let term_h = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
                 let stack_h = (self.bottom_stack.get() - term_h).max(0.0);
+                let expected_has_composer = {
+                    let state = self.state.read(cx);
+                    !state.spaces.is_empty() && state.selected_chat.is_some()
+                };
+                let bottom_stack_ready = bottom_stack_measurement_matches(
+                    self.bottom_stack_has_composer.get(),
+                    expected_has_composer,
+                );
                 self.transcript.update(cx, |t, cx| {
                     t.set_rail_enabled(rail::rail_visible(main_width), cx);
-                    t.set_bottom_clearance(stack_h, cx);
+                    if bottom_stack_ready {
+                        t.set_bottom_clearance(stack_h, cx);
+                    }
                 });
 
                 let sidebar = self.render_sidebar(cx);
@@ -9657,6 +9701,10 @@ mod tests {
 
     #[test]
     fn new_thread_handoff_is_continuous_and_staged() {
+        assert!(bottom_stack_measurement_matches(false, false));
+        assert!(bottom_stack_measurement_matches(true, true));
+        assert!(!bottom_stack_measurement_matches(false, true));
+        assert!(!bottom_stack_measurement_matches(true, false));
         assert_eq!(new_thread_background_opacity(false), 1.0);
         assert_eq!(
             new_thread_background_opacity(true),

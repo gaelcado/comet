@@ -31,12 +31,7 @@ use zeron_rpc::methods;
 /// pagination plumbing).
 const MAX_REF_ROWS: usize = 300;
 
-/// Icons, chevron, padding, and the 24px pointer-target floor still fit when
-/// responsive new-thread selectors have yielded all label width.
-const NEW_THREAD_SELECTOR_MIN_WIDTH: f32 = 52.0;
-/// Inner radius of the compact selector chips. New-thread tab surfaces derive
-/// their outer radius from this value plus their inset.
-pub(crate) const FOOTER_CHIP_RADIUS: f32 = 6.0;
+const FOOTER_CHIP_RADIUS: f32 = 6.0;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::motion;
@@ -2417,8 +2412,8 @@ impl Pickers {
             .child(div().min_w_0().truncate().child(label))
     }
 
-    /// New-session destination controls. Machine and project share the
-    /// trailing tab which emerges above the composer.
+    /// New-session destination controls. Machine and project form the
+    /// original chip-only cluster floating above the composer's trailing edge.
     pub fn render_new_thread_target_selectors(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let closing = self.open.closing_since();
@@ -2461,25 +2456,17 @@ impl Pickers {
                 &theme,
                 cx,
             )
-            .h(px(24.0))
-            .min_w(px(NEW_THREAD_SELECTOR_MIN_WIDTH))
-            .flex_shrink(1.0)
             .when(offline, |el| el.text_color(theme.warning.opacity(0.8)));
-        let project_chip = self
-            .footer_chip(
-                PickerKind::Space,
-                "picker-project",
-                crate::icons::FOLDER,
-                project_label,
-                &theme,
-                cx,
-            )
-            .h(px(24.0))
-            .min_w(px(NEW_THREAD_SELECTOR_MIN_WIDTH))
-            .flex_shrink(1.0);
+        let project_chip = self.footer_chip(
+            PickerKind::Space,
+            "picker-project",
+            crate::icons::FOLDER,
+            project_label,
+            &theme,
+            cx,
+        );
         div()
-            .min_w_0()
-            .max_w_full()
+            .flex_none()
             .flex()
             .flex_row()
             .items_center()
@@ -2501,8 +2488,8 @@ impl Pickers {
             .into_any_element()
     }
 
-    /// New-session Git controls. Checkout mode and branch share the leading
-    /// tab which emerges below the composer. Non-Git projects omit it.
+    /// New-session Git controls. Checkout mode and branch form the original
+    /// chip-only cluster floating below the composer's leading edge.
     pub fn render_new_thread_git_selectors(
         &mut self,
         cx: &mut Context<Self>,
@@ -2533,34 +2520,25 @@ impl Pickers {
             (CheckoutKind::Local, false) => crate::icons::FOLDER,
             _ => crate::icons::FOLDER_WITH_FILES,
         };
-        let checkout_chip = self
-            .footer_chip(
-                PickerKind::Checkout,
-                "picker-checkout",
-                kind_icon,
-                SharedString::from(self.checkout_label()),
-                &theme,
-                cx,
-            )
-            .h(px(24.0))
-            .min_w(px(NEW_THREAD_SELECTOR_MIN_WIDTH))
-            .flex_shrink(1.0);
-        let branch_chip = self
-            .footer_chip(
-                PickerKind::Branch,
-                "picker-branch",
-                crate::icons::GIT_BRANCH,
-                self.ref_label(),
-                &theme,
-                cx,
-            )
-            .h(px(24.0))
-            .min_w(px(NEW_THREAD_SELECTOR_MIN_WIDTH))
-            .flex_shrink(1.0);
+        let checkout_chip = self.footer_chip(
+            PickerKind::Checkout,
+            "picker-checkout",
+            kind_icon,
+            SharedString::from(self.checkout_label()),
+            &theme,
+            cx,
+        );
+        let branch_chip = self.footer_chip(
+            PickerKind::Branch,
+            "picker-branch",
+            crate::icons::GIT_BRANCH,
+            self.ref_label(),
+            &theme,
+            cx,
+        );
         Some(
             div()
-                .min_w_0()
-                .max_w_full()
+                .flex_none()
                 .flex()
                 .flex_row()
                 .items_center()
@@ -2585,7 +2563,7 @@ impl Pickers {
 
     /// The composer footer row: checkout-kind + ref, LEFT-aligned, only when
     /// the picked (or session's) project has git. New sessions use the floating
-    /// selector tabs; sessions name their target in the titlebar.
+    /// chip clusters; sessions name their target in the titlebar.
     pub fn render_footer(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         // A selected chat whose workspace row hasn't synced yet (the moment
@@ -2693,7 +2671,7 @@ impl Pickers {
                 let content = self.render_checkout_popover(cx);
                 Some((PickerKind::Checkout, self.popover_frame(224.0, content, cx)))
             }
-            // Space/Device popovers mount in the new-thread selector tab.
+            // Space/Device popovers mount in the floating row above the pill.
             _ => None,
         };
 
