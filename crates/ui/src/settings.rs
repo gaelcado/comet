@@ -57,6 +57,16 @@ pub const FILES_EDITOR_FONT_SIZE_MIN: f32 = 9.0;
 pub const FILES_EDITOR_FONT_SIZE_MAX: f32 = 24.0;
 
 const FILE_NAME: &str = "ui-settings.json";
+const NEW_THREAD_BACKGROUND_DIR: &str = "new-thread-backgrounds";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewThreadComposerBackground {
+    /// Managed copy inside Zeron's device-local data directory.
+    pub path: String,
+    /// Original file name shown in Appearance settings.
+    pub name: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -222,6 +232,102 @@ pub fn current(cx: &App) -> UiSettings {
     cx.try_global::<SettingsStore>()
         .map(|store| store.current.clone())
         .unwrap_or_default()
+}
+
+/// Copy a selected image into Zeron's device-local data directory and make it
+/// the new-thread canvas background. A unique file name avoids stale image
+/// caches when the background is replaced.
+pub fn install_new_thread_composer_background(source: &Path, cx: &mut App) -> Result<(), String> {
+    let staged = crate::attachments::stage_file(source)?;
+    let data_dir = cx
+        .try_global::<SettingsStore>()
+        .map(|store| store.data_dir.clone())
+        .ok_or_else(|| "Unable to save the image. Restart Zeron and try again.".to_string())?;
+    let backgrounds_dir = data_dir.join(NEW_THREAD_BACKGROUND_DIR);
+    std::fs::create_dir_all(&backgrounds_dir).map_err(|_| {
+        "Unable to save the image. Check folder permissions and try again.".to_string()
+    })?;
+
+    let extension = Path::new(&staged.name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("png");
+    let destination = backgrounds_dir.join(format!(
+        "new-thread-background-{}.{}",
+        uuid::Uuid::new_v4(),
+        extension
+    ));
+    let temporary = destination.with_extension(format!("{extension}.tmp"));
+    if std::fs::write(&temporary, staged.bytes())
+        .and_then(|_| std::fs::rename(&temporary, &destination))
+        .is_err()
+    {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(
+            "Unable to save the image. Check folder permissions and try again.".to_string(),
+        );
+    }
+
+    let replacement = NewThreadComposerBackground {
+        path: destination.to_string_lossy().into_owned(),
+        name: staged.name,
+    };
+    let mut next = current(cx);
+    let previous = next
+        .new_thread_composer_background
+        .replace(replacement.clone());
+    // Persist the pointer before retiring the old file. `update(Immediate)`
+    // updates memory first and only logs an I/O failure; for a file-backed
+    // setting that order can leave disk pointing at an image we just deleted.
+    if next.save(&data_dir).is_err() {
+        let _ = std::fs::remove_file(&destination);
+        return Err(
+            "Unable to save the image. Check folder permissions and try again.".to_string(),
+        );
+    }
+    replace(next, SavePolicy::Immediate, cx);
+    remove_managed_new_thread_background(previous.as_ref(), &backgrounds_dir);
+    cx.refresh_windows();
+    Ok(())
+}
+
+pub fn remove_new_thread_composer_background(cx: &mut App) -> Result<(), String> {
+    let data_dir = cx
+        .try_global::<SettingsStore>()
+        .map(|store| store.data_dir.clone())
+        .ok_or_else(|| "Unable to remove the image. Restart Zeron and try again.".to_string())?;
+    let mut next = current(cx);
+    let previous = next.new_thread_composer_background.take();
+    if previous.is_none() {
+        return Ok(());
+    }
+    if next.save(&data_dir).is_err() {
+        return Err(
+            "Unable to remove the image. Check folder permissions and try again.".to_string(),
+        );
+    }
+    replace(next, SavePolicy::Immediate, cx);
+    remove_managed_new_thread_background(
+        previous.as_ref(),
+        &data_dir.join(NEW_THREAD_BACKGROUND_DIR),
+    );
+    cx.refresh_windows();
+    Ok(())
+}
+
+fn remove_managed_new_thread_background(
+    background: Option<&NewThreadComposerBackground>,
+    backgrounds_dir: &Path,
+) {
+    let Some(background) = background else {
+        return;
+    };
+    let path = Path::new(&background.path);
+    // Never delete an arbitrary legacy or hand-edited path. Only files copied
+    // directly into the directory owned by this setting are disposable.
+    if path.parent() == Some(backgrounds_dir) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Monotonic id of the global code-fence layout choice. Every transcript
@@ -454,6 +560,9 @@ pub struct UiSettings {
     pub accent: zeron_theme::AccentSelection,
     /// Glass policy, independent from the selected appearance, theme, and accent.
     pub surface: zeron_theme::SurfacePreference,
+    /// Optional device-local artwork behind the blank new-thread composer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_thread_composer_background: Option<NewThreadComposerBackground>,
     /// Pre-theme settings used `accentColor`. Read it once, migrate to
     /// [`Self::accent`], and never write it again.
     #[serde(default, rename = "accentColor", skip_serializing)]
@@ -510,6 +619,7 @@ impl Default for UiSettings {
             files_show_all: false,
             accent: zeron_theme::AccentSelection::default(),
             surface: zeron_theme::SurfacePreference::default(),
+            new_thread_composer_background: None,
             legacy_accent_color: None,
         }
     }
@@ -1124,6 +1234,7 @@ mod tests {
 
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.composer_send_behavior, ComposerSendBehavior::Enter);
+        assert!(loaded.new_thread_composer_background.is_none());
         assert_eq!(loaded.sidebar_width, 300.0);
         assert!(!loaded.sound_enabled);
         for sound in [
@@ -1214,6 +1325,34 @@ mod tests {
     }
 
     #[test]
+    fn background_cleanup_only_removes_files_owned_by_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let backgrounds = dir.path().join(NEW_THREAD_BACKGROUND_DIR);
+        std::fs::create_dir(&backgrounds).unwrap();
+        let managed = backgrounds.join("new-thread-background-owned.png");
+        let unrelated = dir.path().join("keep.png");
+        std::fs::write(&managed, b"managed").unwrap();
+        std::fs::write(&unrelated, b"unrelated").unwrap();
+
+        remove_managed_new_thread_background(
+            Some(&NewThreadComposerBackground {
+                path: unrelated.to_string_lossy().into_owned(),
+                name: "keep.png".into(),
+            }),
+            &backgrounds,
+        );
+        assert!(unrelated.exists());
+        remove_managed_new_thread_background(
+            Some(&NewThreadComposerBackground {
+                path: managed.to_string_lossy().into_owned(),
+                name: "owned.png".into(),
+            }),
+            &backgrounds,
+        );
+        assert!(!managed.exists());
+    }
+
+    #[test]
     fn obsolete_steering_preference_does_not_reset_other_settings() {
         let loaded: UiSettings = serde_json::from_str(
             r#"{"activeTurnSendBehavior":"steer","sidebarWidth":300,"soundEnabled":false}"#,
@@ -1301,6 +1440,10 @@ mod tests {
             files_show_all: true,
             accent: zeron_theme::AccentSelection::Preset(zeron_theme::AccentPreset::Cyan),
             surface: zeron_theme::SurfacePreference::Frosted,
+            new_thread_composer_background: Some(NewThreadComposerBackground {
+                path: "/tmp/zeron/new-thread-background.png".into(),
+                name: "background.png".into(),
+            }),
             legacy_accent_color: None,
         };
         settings.save(dir.path()).unwrap();

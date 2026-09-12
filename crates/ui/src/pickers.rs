@@ -31,6 +31,13 @@ use zeron_rpc::methods;
 /// pagination plumbing).
 const MAX_REF_ROWS: usize = 300;
 
+/// Icons, chevron, padding, and the 24px pointer-target floor still fit when
+/// responsive new-thread selectors have yielded all label width.
+const NEW_THREAD_SELECTOR_MIN_WIDTH: f32 = 52.0;
+/// Inner radius of the compact selector chips. New-thread tab surfaces derive
+/// their outer radius from this value plus their inset.
+pub(crate) const FOOTER_CHIP_RADIUS: f32 = 6.0;
+
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::motion;
 use crate::popover::{self, Loadable, MenuKey};
@@ -2346,7 +2353,7 @@ impl Pickers {
             .items_center()
             .gap(px(6.0))
             .px(px(8.0))
-            .rounded(px(6.0))
+            .rounded(px(FOOTER_CHIP_RADIUS))
             .text_size(crate::typography::ui_rems(12.0))
             .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(motion::hover_blend(
@@ -2371,12 +2378,14 @@ impl Pickers {
             .child(
                 crate::icons::icon(icon_path)
                     .size(px(12.0))
+                    .flex_none()
                     .text_color(theme.text_muted.opacity(0.7)),
             )
             .child(div().min_w_0().truncate().child(label))
             .child(
                 crate::icons::icon(crate::icons::ALT_ARROW_DOWN)
                     .size(px(12.0))
+                    .flex_none()
                     .text_color(theme.text_muted.opacity(0.5)),
             )
     }
@@ -2408,10 +2417,9 @@ impl Pickers {
             .child(div().min_w_0().truncate().child(label))
     }
 
-    /// The new-session canvas's target row — device and project form one
-    /// compact cluster at the leading edge. Their popovers open upward, away
-    /// from the composer; sessions show their target in the titlebar instead.
-    pub fn render_target_selectors(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    /// New-session destination controls. Machine and project share the
+    /// trailing tab which emerges above the composer.
+    pub fn render_new_thread_target_selectors(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let closing = self.open.closing_since();
         let mut overlay: Option<(PickerKind, AnyElement)> = match self.mounted_kind() {
@@ -2453,21 +2461,25 @@ impl Pickers {
                 &theme,
                 cx,
             )
+            .h(px(24.0))
+            .min_w(px(NEW_THREAD_SELECTOR_MIN_WIDTH))
+            .flex_shrink(1.0)
             .when(offline, |el| el.text_color(theme.warning.opacity(0.8)));
-        let project_chip = self.footer_chip(
-            PickerKind::Space,
-            "picker-project",
-            crate::icons::FOLDER,
-            project_label,
-            &theme,
-            cx,
-        );
-        // Same left-edge geometry as the checkout toolbar under the pill
-        // (`render_footer`'s row): full-width, 10px inset, chips hugging the
-        // left. The row sits just above the composer pill, so the menus open
-        // UPWARD.
+        let project_chip = self
+            .footer_chip(
+                PickerKind::Space,
+                "picker-project",
+                crate::icons::FOLDER,
+                project_label,
+                &theme,
+                cx,
+            )
+            .h(px(24.0))
+            .min_w(px(NEW_THREAD_SELECTOR_MIN_WIDTH))
+            .flex_shrink(1.0);
         div()
-            .flex_none()
+            .min_w_0()
+            .max_w_full()
             .flex()
             .flex_row()
             .items_center()
@@ -2479,7 +2491,7 @@ impl Pickers {
                 "device-popover",
                 closing,
             ))
-            .child(attach_overlay(
+            .child(attach_overlay_end(
                 project_chip,
                 &mut overlay,
                 PickerKind::Space,
@@ -2489,10 +2501,91 @@ impl Pickers {
             .into_any_element()
     }
 
+    /// New-session Git controls. Checkout mode and branch share the leading
+    /// tab which emerges below the composer. Non-Git projects omit it.
+    pub fn render_new_thread_git_selectors(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let git = self
+            .state
+            .read(cx)
+            .selected_space_row()
+            .is_some_and(|space| space.git_detected);
+        if !git {
+            return None;
+        }
+        self.ensure_refs(false, cx);
+        let theme = Theme::of(cx).clone();
+        let closing = self.open.closing_since();
+        let mut overlay: Option<(PickerKind, AnyElement)> = match self.mounted_kind() {
+            Some(PickerKind::Branch) => {
+                let content = self.render_branch_popover(cx);
+                Some((PickerKind::Branch, self.popover_frame(320.0, content, cx)))
+            }
+            Some(PickerKind::Checkout) => {
+                let content = self.render_checkout_popover(cx);
+                Some((PickerKind::Checkout, self.popover_frame(224.0, content, cx)))
+            }
+            _ => None,
+        };
+        let kind_icon = match (self.config.checkout, self.selected_ref_worktree().is_some()) {
+            (CheckoutKind::Local, false) => crate::icons::FOLDER,
+            _ => crate::icons::FOLDER_WITH_FILES,
+        };
+        let checkout_chip = self
+            .footer_chip(
+                PickerKind::Checkout,
+                "picker-checkout",
+                kind_icon,
+                SharedString::from(self.checkout_label()),
+                &theme,
+                cx,
+            )
+            .h(px(24.0))
+            .min_w(px(NEW_THREAD_SELECTOR_MIN_WIDTH))
+            .flex_shrink(1.0);
+        let branch_chip = self
+            .footer_chip(
+                PickerKind::Branch,
+                "picker-branch",
+                crate::icons::GIT_BRANCH,
+                self.ref_label(),
+                &theme,
+                cx,
+            )
+            .h(px(24.0))
+            .min_w(px(NEW_THREAD_SELECTOR_MIN_WIDTH))
+            .flex_shrink(1.0);
+        Some(
+            div()
+                .min_w_0()
+                .max_w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .child(attach_overlay_below(
+                    checkout_chip,
+                    &mut overlay,
+                    PickerKind::Checkout,
+                    "checkout-popover",
+                    closing,
+                ))
+                .child(attach_overlay_below(
+                    branch_chip,
+                    &mut overlay,
+                    PickerKind::Branch,
+                    "branch-popover",
+                    closing,
+                ))
+                .into_any_element(),
+        )
+    }
+
     /// The composer footer row: checkout-kind + ref, LEFT-aligned, only when
-    /// the picked (or session's) project has git. Device + project moved to
-    /// the row above the pill ([`Self::render_target_selectors`]); sessions
-    /// name their target in the titlebar.
+    /// the picked (or session's) project has git. New sessions use the floating
+    /// selector tabs; sessions name their target in the titlebar.
     pub fn render_footer(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         // A selected chat whose workspace row hasn't synced yet (the moment
@@ -2600,8 +2693,7 @@ impl Pickers {
                 let content = self.render_checkout_popover(cx);
                 Some((PickerKind::Checkout, self.popover_frame(224.0, content, cx)))
             }
-            // Space/Device popovers mount on the target row above the pill
-            // (`render_target_selectors`), not here.
+            // Space/Device popovers mount in the new-thread selector tab.
             _ => None,
         };
 
@@ -2627,14 +2719,13 @@ impl Pickers {
             cx,
         );
         // Checkout on the left edge, ref on the right — the row's
-        // justify_between splits them. These controls sit below the composer,
-        // so their menus open downward, away from it.
+        // justify_between splits them.
         let left = div()
             .flex()
             .flex_row()
             .items_center()
             .min_w_0()
-            .child(attach_overlay_below(
+            .child(attach_overlay(
                 kind_chip,
                 &mut overlay,
                 PickerKind::Checkout,
@@ -2646,7 +2737,7 @@ impl Pickers {
             .flex_row()
             .items_center()
             .min_w_0()
-            .child(attach_overlay_below_end(
+            .child(attach_overlay_end(
                 ref_chip,
                 &mut overlay,
                 PickerKind::Branch,
@@ -3994,7 +4085,7 @@ fn offered_harnesses_impl(list: &[HarnessDescriptor], allow_mock: bool) -> Vec<H
         .collect()
 }
 
-/// Attach the (single) open popover overlay to its trigger chip.
+/// Attach the (single) open popover above a selector trigger.
 fn attach_overlay(
     chip: gpui::Stateful<gpui::Div>,
     overlay: &mut Option<(PickerKind, AnyElement)>,
@@ -4010,7 +4101,7 @@ fn attach_overlay(
     chip
 }
 
-/// [`attach_overlay`] opening DOWNWARD from controls below the composer.
+/// Attach the (single) open popover below a selector trigger.
 fn attach_overlay_below(
     chip: gpui::Stateful<gpui::Div>,
     overlay: &mut Option<(PickerKind, AnyElement)>,
@@ -4026,25 +4117,7 @@ fn attach_overlay_below(
     chip
 }
 
-/// [`attach_overlay_below`] with the menu RIGHT-ALIGNED to the trigger.
-fn attach_overlay_below_end(
-    chip: gpui::Stateful<gpui::Div>,
-    overlay: &mut Option<(PickerKind, AnyElement)>,
-    kind: PickerKind,
-    id: &'static str,
-    closing: Option<std::time::Instant>,
-) -> gpui::Stateful<gpui::Div> {
-    if overlay.as_ref().is_some_and(|(k, _)| *k == kind)
-        && let Some((_, element)) = overlay.take()
-    {
-        return chip
-            .relative()
-            .child(popover::anchored_menu_below_end(id, element, closing));
-    }
-    chip
-}
-
-/// [`attach_overlay`] with the menu RIGHT-ALIGNED to the trigger (t3code
+/// Attach the menu ABOVE and RIGHT-ALIGNED to the trigger (t3code
 /// `align="end"` — right-edge controls like the model picker open leftward).
 fn attach_overlay_end(
     chip: gpui::Stateful<gpui::Div>,

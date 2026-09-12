@@ -75,6 +75,16 @@ const QUEUE_SIDE_INSET: f32 = 16.0;
 /// The composer covers the tray's lower padding so the queue reads as emerging
 /// from behind it instead of as a separate rounded pill.
 pub(crate) const QUEUE_COMPOSER_OVERLAP: f32 = 18.0;
+/// New-session controls live in two content-sized tabs emerging from opposite
+/// composer corners. A 6px-radius control row sits inside 6px padding, so the
+/// containing tab uses a concentric 12px radius.
+const NEW_THREAD_TAB_CONTROL_HEIGHT: f32 = 24.0;
+const NEW_THREAD_TAB_PADDING: f32 = 6.0;
+const NEW_THREAD_TAB_RADIUS: f32 = crate::pickers::FOOTER_CHIP_RADIUS + NEW_THREAD_TAB_PADDING;
+const NEW_THREAD_TAB_OVERLAP: f32 = QUEUE_COMPOSER_OVERLAP;
+const NEW_THREAD_TAB_VISIBLE_HEIGHT: f32 =
+    NEW_THREAD_TAB_CONTROL_HEIGHT + 2.0 * NEW_THREAD_TAB_PADDING;
+const NEW_THREAD_TAB_HEIGHT: f32 = NEW_THREAD_TAB_OVERLAP + NEW_THREAD_TAB_VISIBLE_HEIGHT;
 /// Ignore subpixel noise when the shell reports the conversation width.
 const COMPOSER_WIDTH_EPSILON: f32 = 0.5;
 /// Below this pill input width the composer always expands.
@@ -299,7 +309,7 @@ pub fn comment_strip_height(count: usize) -> f32 {
 /// two pill layouts. The original has no height transition (its shell carries
 /// only `transition-colors`), so this is a native nicety: ONE committed flip
 /// starts exactly one 180ms ease-out morph ([`motion::COLLAPSE`]); the blank-
-/// thread handoff swaps in the coordinated 360ms launch spec. Both use the
+/// thread handoff swaps in the coordinated 420ms route-transition spec. Both use the
 /// manual-drive pattern from shell.rs `WidthTween` — never `with_animation`,
 /// whose element-id keying replays tweens on remount, round-6 §1–3.
 ///
@@ -319,7 +329,7 @@ pub struct FlipMorph {
     /// Commit time in ms on the caller's monotonic clock.
     pub start_ms: f32,
     /// Ordinary typing flips use the quick collapse spec; the first-send
-    /// handoff uses the shell's longer coordinated launch timeline.
+    /// handoff uses the shell's longer coordinated route timeline.
     pub spec: motion::MotionSpec,
 }
 
@@ -332,11 +342,11 @@ impl FlipMorph {
         }
     }
 
-    fn new_thread_launch(from: f32, start_ms: f32) -> Self {
+    fn new_thread_transition(from: f32, start_ms: f32) -> Self {
         Self {
             from,
             start_ms,
-            spec: motion::NEW_THREAD_LAUNCH,
+            spec: motion::NEW_THREAD_TRANSITION,
         }
     }
 
@@ -3826,15 +3836,14 @@ impl Render for ComposerInput {
 /// Events the shell listens for.
 #[derive(Debug, Clone)]
 pub enum ComposerEvent {
+    /// Arm the shared-element transition before the draft route is replaced
+    /// by the newly-created session. Emitting this before `select_chat` keeps
+    /// the first destination frame on the same timeline as the source frame.
+    NewThreadTransitionStarted,
     /// A prompt was sent optimistically — give the transcript its exact row
     /// identity so it can anchor the prompt at the top with the reply's
     /// reserved space below it.
-    Sent {
-        chat_id: String,
-        message_id: String,
-        /// True only for the first prompt sent from the blank-thread canvas.
-        from_new_thread: bool,
-    },
+    Sent { chat_id: String, message_id: String },
     /// A locally-authored queue row was accepted. It is not a transcript send
     /// yet: the transcript remembers the stable id and promotes it to an
     /// own-turn anchor only when the host materializes the matching bubble.
@@ -3980,9 +3989,8 @@ pub struct Composer {
     pub(crate) input: Entity<ComposerInput>,
     /// Draft displaced while a queued message occupies the composer.
     pub(crate) queue_edit_draft: Option<(String, Vec<StagedAttachment>, Vec<CapturedAppshot>)>,
-    /// Composer actions row: repo/branch/harness-model/traits (§1.7).
-    /// Shared with the shell's new-session canvas, which renders the
-    /// device/project target selectors ([`Pickers::render_target_selectors`]).
+    /// Composer actions row plus the new-session floating target tab
+    /// ([`Pickers::render_new_thread_target_selectors`]).
     pickers: Entity<Pickers>,
     /// Draft text per chat key ("" = new-chat canvas), surviving navigation.
     drafts: HashMap<String, String>,
@@ -5774,6 +5782,7 @@ impl Composer {
         if key != self.current_key {
             let new_thread_launch =
                 self.launching_new_chat && self.current_key.is_empty() && !key.is_empty();
+            let returning_to_new_thread = !self.current_key.is_empty() && key.is_empty();
             self.launching_new_chat = false;
             let old_text = self.input.read(cx).text().to_string();
             if old_text.is_empty() {
@@ -5800,15 +5809,16 @@ impl Composer {
             // window snaps (see ROUTE_SNAP_MS).
             self.height_morph = None;
             self.last_target_height = 0.0;
-            if new_thread_launch && !motion::reduced_motion(cx) && self.last_rendered_height > 0.0 {
-                // The blank canvas is visibly expanded even when the stored
-                // mode is compact. Commit that compact target now and morph
-                // from the actually-rendered expanded height on the same
-                // 360ms timeline as the shell's positional handoff.
-                self.expanded_mode = false;
+            if (new_thread_launch || returning_to_new_thread)
+                && !motion::reduced_motion(cx)
+                && self.last_rendered_height > 0.0
+            {
+                // Both directions share one timeline. The blank canvas is
+                // always expanded; an established session begins compact.
+                self.expanded_mode = returning_to_new_thread;
                 let now_ms =
                     self.morph_clock.elapsed().as_secs_f32() * 1000.0 / motion::speed_scale();
-                self.flip_morph = Some(FlipMorph::new_thread_launch(
+                self.flip_morph = Some(FlipMorph::new_thread_transition(
                     self.last_rendered_height,
                     now_ms,
                 ));
@@ -6195,6 +6205,9 @@ impl Composer {
             continuation_of: None,
         };
         self.launching_new_chat = is_new;
+        if is_new {
+            cx.emit(ComposerEvent::NewThreadTransitionStarted);
+        }
         // A queued message is not in the transcript yet — the queue panel is
         // its echo, and it gets a real bubble when the host sends it.
         self.state.update(cx, |s, cx| {
@@ -6222,7 +6235,6 @@ impl Composer {
             cx.emit(ComposerEvent::Sent {
                 chat_id: chat_id.clone(),
                 message_id: message_id.clone(),
-                from_new_thread: is_new,
             });
         }
         cx.notify();
@@ -7449,14 +7461,21 @@ impl Render for Composer {
         };
         let target_height =
             base_height + strip_h + appshot_strip_height(appshot_count) + comment_strip_h;
-        self.height_morph = flip_morph_step(
-            self.height_morph,
-            (target_height - self.last_target_height).abs() > 0.5,
-            self.last_rendered_height,
-            now_ms,
-            motion::reduced_motion(cx),
-            route_snap,
-        );
+        let coordinated_route_morph = self
+            .flip_morph
+            .filter(|m| m.spec == motion::NEW_THREAD_TRANSITION && !m.done(now_ms));
+        self.height_morph = if coordinated_route_morph.is_some() {
+            coordinated_route_morph
+        } else {
+            flip_morph_step(
+                self.height_morph,
+                (target_height - self.last_target_height).abs() > 0.5,
+                self.last_rendered_height,
+                now_ms,
+                motion::reduced_motion(cx),
+                route_snap,
+            )
+        };
         self.last_target_height = target_height;
         let pill_height = self
             .height_morph
@@ -7705,44 +7724,108 @@ impl Render for Composer {
                         ),
                 )
         };
-        // New sessions: the TARGET row (device + project chips) sits ABOVE
-        // the pill, left-aligned like the checkout toolbar below it (user
-        // request — moved off the canvas). Existing sessions name their
-        // target in the titlebar instead.
-        let container = if new_chat {
-            let selectors = self
-                .pickers
-                .update(cx, |pickers, cx| pickers.render_target_selectors(cx));
-            container.child(selectors)
-        } else {
-            container
-        };
+        let new_thread_target_selectors = new_chat.then(|| {
+            self.pickers.update(cx, |pickers, cx| {
+                pickers.render_new_thread_target_selectors(cx)
+            })
+        });
+        let new_thread_git_selectors = new_chat
+            .then(|| {
+                self.pickers.update(cx, |pickers, cx| {
+                    pickers.render_new_thread_git_selectors(cx)
+                })
+            })
+            .flatten();
         // The file dropzone lives in the shell (the whole conversation column,
         // not just the pill — shell.rs `chat-dropzone`); drops land back here
         // via `add_paths`.
         // Frosted: the pill backdrop-blurs the transcript scrolling under it
         // (the popover glass treatment; radius matches the pill's rounding).
-        let container = container.child(
-            div()
-                .relative()
-                .child(crate::frost::frosted(
-                    COMPOSER_RADIUS,
-                    16.0,
-                    motion::fade_quick("composer-input", body),
-                ))
-                // Both completion popups span the full pill width above it —
-                // the file-mention and slash tokens are mutually exclusive.
-                .children(self.render_file_mention_popup(&theme, cx))
-                .children(self.render_slash_popup(&theme, cx)),
-        );
+        // This entity is deliberately not wrapped in its own entrance fade.
+        // The shell reparents it between the blank canvas and transcript; a
+        // keyed opacity animation would remount and flash independently of
+        // the coordinated shared-element transition.
+        let pill_surface = div()
+            .relative()
+            .child(crate::frost::frosted(COMPOSER_RADIUS, 16.0, body))
+            // Both completion popups span the full pill width above it —
+            // the file-mention and slash tokens are mutually exclusive.
+            .children(self.render_file_mention_popup(&theme, cx))
+            .children(self.render_slash_popup(&theme, cx));
+        let composer_stack = div()
+            .relative()
+            .when_some(new_thread_target_selectors, |stack, selectors| {
+                stack.pt(px(NEW_THREAD_TAB_VISIBLE_HEIGHT)).child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(NEW_THREAD_TAB_HEIGHT))
+                        .px(px(QUEUE_SIDE_INSET))
+                        .flex()
+                        .justify_end()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .max_w_full()
+                                .h_full()
+                                .occlude()
+                                .rounded_t(px(NEW_THREAD_TAB_RADIUS))
+                                .bg(theme.input_glass_bg())
+                                .border_1()
+                                .border_color(theme.border)
+                                .when(!theme.is_frost(), |el| el.shadow_lg())
+                                .pt(px(NEW_THREAD_TAB_PADDING))
+                                .px(px(NEW_THREAD_TAB_PADDING))
+                                .pb(px(NEW_THREAD_TAB_OVERLAP + NEW_THREAD_TAB_PADDING))
+                                .child(selectors),
+                        ),
+                )
+            })
+            .when(new_thread_git_selectors.is_some(), |stack| {
+                stack.pb(px(NEW_THREAD_TAB_VISIBLE_HEIGHT))
+            })
+            .when_some(new_thread_git_selectors, |stack, selectors| {
+                stack.child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(NEW_THREAD_TAB_HEIGHT))
+                        .px(px(QUEUE_SIDE_INSET))
+                        .flex()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .max_w_full()
+                                .h_full()
+                                .occlude()
+                                .rounded_b(px(NEW_THREAD_TAB_RADIUS))
+                                .bg(theme.input_glass_bg())
+                                .border_1()
+                                .border_color(theme.border)
+                                .when(!theme.is_frost(), |el| el.shadow_lg())
+                                .pt(px(NEW_THREAD_TAB_OVERLAP + NEW_THREAD_TAB_PADDING))
+                                .px(px(NEW_THREAD_TAB_PADDING))
+                                .pb(px(NEW_THREAD_TAB_PADDING))
+                                .child(selectors),
+                        ),
+                )
+            })
+            // Paint the composer after both tabs so their overlaps sit behind
+            // its clean silhouette in opaque and frosted themes.
+            .child(pill_surface);
+        let container = container.child(composer_stack);
         // Branch/worktree toolbar under the pill (t3code BranchToolbar): the
         // checkout-kind selector + ref picker for new sessions, read-only
         // labels once the session exists. Git spaces only.
-        let footer = self
-            .pickers
-            .update(cx, |pickers, cx| pickers.render_footer(cx));
-        let container =
-            if !new_chat {
+        let container = if !new_chat {
+            let footer = self
+                .pickers
+                .update(cx, |pickers, cx| pickers.render_footer(cx));
+            {
                 let usage = self.state.read(cx).context_usage;
                 container.child(
                     div()
@@ -7754,12 +7837,10 @@ impl Render for Composer {
                             crate::context_usage::render(usage, self.state.clone(), &theme),
                         )),
                 )
-            } else {
-                match footer {
-                    Some(footer) => container.child(footer),
-                    None => container,
-                }
-            };
+            }
+        } else {
+            container
+        };
         // Full-size preview of a staged thumbnail (AttachmentPreviewDialog).
         if let Some(preview) = self.preview.clone() {
             if std::mem::take(&mut self.preview_focus_pending) {
@@ -9046,13 +9127,28 @@ mod tests {
     }
 
     #[test]
-    fn new_thread_launch_uses_the_coordinated_timeline() {
-        let m = FlipMorph::new_thread_launch(124.0, 0.0);
-        assert_eq!(m.spec, motion::NEW_THREAD_LAUNCH);
+    fn new_thread_route_changes_use_the_coordinated_timeline() {
+        let m = FlipMorph::new_thread_transition(124.0, 0.0);
+        assert_eq!(m.spec, motion::NEW_THREAD_TRANSITION);
         assert_eq!(m.height(49.0, 0.0), 124.0);
         assert!(m.height(49.0, 250.0) < 124.0);
         assert!(m.height(49.0, 250.0) > 49.0);
-        assert_eq!(m.height(49.0, 360.0), 49.0);
+        assert_eq!(m.height(49.0, 420.0), 49.0);
+        let reverse = FlipMorph::new_thread_transition(49.0, 0.0);
+        assert_eq!(reverse.height(124.0, 0.0), 49.0);
+        assert_eq!(reverse.height(124.0, 420.0), 124.0);
+    }
+
+    #[test]
+    fn new_thread_tabs_are_compact_balanced_and_concentric() {
+        assert_eq!(NEW_THREAD_TAB_PADDING, 6.0);
+        assert_eq!(NEW_THREAD_TAB_CONTROL_HEIGHT, 24.0);
+        assert_eq!(NEW_THREAD_TAB_VISIBLE_HEIGHT, 36.0);
+        assert_eq!(NEW_THREAD_TAB_HEIGHT, NEW_THREAD_TAB_OVERLAP + 36.0);
+        assert_eq!(
+            NEW_THREAD_TAB_RADIUS,
+            crate::pickers::FOOTER_CHIP_RADIUS + NEW_THREAD_TAB_PADDING
+        );
     }
 
     #[test]

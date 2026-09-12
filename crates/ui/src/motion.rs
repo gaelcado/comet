@@ -359,11 +359,11 @@ pub const RESIZE: MotionSpec = MotionSpec::new(200, EASE_OUT);
 pub const TAB_SLIDE: MotionSpec = MotionSpec::new(150, EASE_OUT);
 /// Diff-pane per-file collapse: 180ms height (§1.11).
 pub const COLLAPSE: MotionSpec = MotionSpec::new(180, EASE_OUT);
-/// First-send handoff: the centered new-thread composer travels to its
-/// in-session anchor while the transcript takes over. A brisk 360ms
-/// ease-in-out keeps the pieces reading as one transition while making the
-/// sent message feel immediately acknowledged.
-pub const NEW_THREAD_LAUNCH: MotionSpec = MotionSpec::new(360, EASE_IN_OUT);
+/// Reversible new-thread ↔ session handoff. The shared composer moves and
+/// morphs on a fast-starting, soft-landing curve while the canvas/transcript
+/// crossfade is staged around it. Slightly longer than a utility transition,
+/// but still short enough to acknowledge a send immediately.
+pub const NEW_THREAD_TRANSITION: MotionSpec = MotionSpec::new(420, EASE_RESORT);
 /// Diff-pane chevron rotate: 200ms (§1.11; approximated as a crossfade — gpui
 /// divs have no rotation transform at the pinned rev, same caveat as scale).
 pub const CHEVRON: MotionSpec = MotionSpec::new(200, EASE);
@@ -862,8 +862,8 @@ mod tests {
         assert_eq!(RESIZE.duration_ms, 200);
         assert_eq!(TAB_SLIDE.duration_ms, 150);
         assert_eq!(COLLAPSE.duration_ms, 180);
-        assert_eq!(NEW_THREAD_LAUNCH.duration_ms, 360);
-        assert_eq!(NEW_THREAD_LAUNCH.curve, EASE_IN_OUT);
+        assert_eq!(NEW_THREAD_TRANSITION.duration_ms, 420);
+        assert_eq!(NEW_THREAD_TRANSITION.curve, EASE_RESORT);
         assert_eq!(CHEVRON.duration_ms, 200);
         assert_eq!(ZERON_PULSE.duration_ms, 2400);
         assert_eq!(GRADIENT_SPIN.duration_ms, 750);

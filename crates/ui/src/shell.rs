@@ -18,8 +18,8 @@ use chrono::Utc;
 use gpui::{
     Action, AnyElement, App, ClipboardItem, Context, Empty, Entity, FocusHandle, Focusable as _,
     IntoElement, KeyBinding, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseUpEvent, Pixels, Point, Render, SharedString, Subscription, Task, Window,
-    WindowControlArea, actions, div, prelude::*, px,
+    MouseUpEvent, ObjectFit, Pixels, Point, Render, SharedString, StyledImage as _, Subscription,
+    Task, Window, WindowControlArea, actions, div, img, prelude::*, px,
 };
 
 use gpui_tokio::Tokio;
@@ -28,9 +28,7 @@ use zeron_proto::{AuthState, WorkspaceScope};
 use zeron_rpc::methods;
 
 use crate::changes::{Changes, ChangesEvent};
-use crate::composer::{
-    COMPOSER_MAX_WIDTH, Composer, ComposerEvent, ComposerInput, ComposerInputEvent,
-};
+use crate::composer::{Composer, ComposerEvent, ComposerInput, ComposerInputEvent};
 use crate::files::{FilesCloseDisposition, FilesEvent, FilesSurface, WorkspacePathDrag};
 use crate::icons::{self, icon};
 use crate::loaders;
@@ -689,19 +687,17 @@ const SIDEBAR_ARCHIVED_HARNESS_TITLE_GAP: f32 = 10.0;
 /// [`gpui::EdgeFade`] scope — per-primitive, so text fades per glyph).
 const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 
-/// New-thread hero geometry. The comet is the full-bleed visual layer; the
-/// selectors and composer are the control layer floating over its faded tail.
-const NEW_THREAD_COMET_WIDTH: f32 = 115.0;
-const NEW_THREAD_COMET_HEIGHT: f32 = 132.0;
-/// Keep the clip inside the SVG's final 1%-opacity row at every glyph size.
-/// A fixed pixel offset cut that row off after the artwork was reduced.
-const NEW_THREAD_COMET_CLIP_OVERSHOOT: f32 = NEW_THREAD_COMET_HEIGHT * 0.10;
-const NEW_THREAD_HERO_HEIGHT: f32 = 144.0;
-const NEW_THREAD_SELECTOR_INSET: f32 = 24.0;
-const NEW_THREAD_SELECTOR_BOTTOM: f32 = 14.0;
-/// The composer carries more visual mass than the fading mark, so mathematical
-/// centering reads low. Lift the entire composition to its optical center.
-const NEW_THREAD_COMPOSITION_Y_CORRECTION: f32 = -20.0;
+/// New-thread controls float over the tail of a top-anchored image hero. The
+/// hero never occupies half the viewport, and its lower mask dissolves into
+/// the page before the otherwise empty lower canvas.
+const NEW_THREAD_BACKGROUND_FROSTED_OPACITY: f32 = 0.84;
+const NEW_THREAD_BACKGROUND_VIEWPORT_RATIO: f32 = 0.46;
+const NEW_THREAD_BACKGROUND_MAX_HEIGHT: f32 = 440.0;
+const NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO: f32 = 0.62;
+const NEW_THREAD_BACKGROUND_SIDE_FADE: f32 = 72.0;
+const NEW_THREAD_BACKGROUND_SIDE_FADE_RATIO: f32 = 0.18;
+/// The reference composition sits just above the canvas midpoint.
+const NEW_THREAD_COMPOSITION_Y_CORRECTION: f32 = -16.0;
 
 /// Drag marker for the sidebar resize handle.
 struct SidebarResize;
@@ -807,75 +803,108 @@ impl WidthTween {
     }
 }
 
-/// One coordinated blank-thread → session handoff. The source composer bounds
-/// come from the last painted blank canvas; the destination is the ordinary
-/// bottom composer anchor. Position, composer height, outgoing header, and
-/// transcript reveal all share [`motion::NEW_THREAD_LAUNCH`].
+/// One reversible new-thread ↔ session handoff. The composer's measured
+/// bottom edge is the shared-element anchor in both directions; canvas,
+/// transcript, and height staging all share [`motion::NEW_THREAD_TRANSITION`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NewThreadTransitionDirection {
+    IntoThread,
+    IntoNewThread,
+}
+
 #[derive(Debug, Clone, Copy)]
-struct NewThreadLaunch {
-    source_bottom: f32,
-    source_height: f32,
+struct NewThreadTransition {
+    direction: NewThreadTransitionDirection,
+    origin_bottom: f32,
+    destination_bottom: f32,
     started: std::time::Instant,
 }
 
 fn new_thread_transcript_opacity(progress: f32) -> f32 {
-    ((progress - 0.12) / 0.88).clamp(0.0, 1.0)
+    ((progress - 0.14) / 0.72).clamp(0.0, 1.0)
 }
 
-fn new_thread_header_opacity(progress: f32) -> f32 {
-    (1.0 - progress / 0.55).clamp(0.0, 1.0)
+fn new_thread_canvas_opacity(direction: NewThreadTransitionDirection, progress: f32) -> f32 {
+    match direction {
+        NewThreadTransitionDirection::IntoThread => (1.0 - progress / 0.68).clamp(0.0, 1.0),
+        NewThreadTransitionDirection::IntoNewThread => ((progress - 0.06) / 0.78).clamp(0.0, 1.0),
+    }
 }
 
-fn new_thread_composer_offset(source_bottom: f32, destination_bottom: f32, progress: f32) -> f32 {
-    (source_bottom - destination_bottom) * (1.0 - progress.clamp(0.0, 1.0))
+fn new_thread_composer_offset(origin_bottom: f32, destination_bottom: f32, progress: f32) -> f32 {
+    (origin_bottom - destination_bottom) * (1.0 - progress.clamp(0.0, 1.0))
 }
 
-/// The new-thread visual and context controls occupy one bounded hero region.
-/// The selector cluster takes only its intrinsic width; the comet is centered
-/// in the space from the cluster's trailing edge to the composer's trailing
-/// edge. Only the comet's half clips at the composer boundary, leaving the
-/// selector half free to open its deferred popovers.
-fn new_thread_hero(selectors: AnyElement, theme: &Theme) -> AnyElement {
+fn new_thread_transcript_settle(progress: f32) -> f32 {
+    8.0 * (1.0 - new_thread_transcript_opacity(progress))
+}
+
+fn new_thread_background_opacity(is_frost: bool) -> f32 {
+    if is_frost {
+        NEW_THREAD_BACKGROUND_FROSTED_OPACITY
+    } else {
+        1.0
+    }
+}
+
+fn new_thread_background_height(viewport_height: f32) -> f32 {
+    (viewport_height.max(0.0) * NEW_THREAD_BACKGROUND_VIEWPORT_RATIO)
+        .min(NEW_THREAD_BACKGROUND_MAX_HEIGHT)
+}
+
+fn new_thread_background_side_fade(viewport_width: f32) -> f32 {
+    (viewport_width.max(0.0) * NEW_THREAD_BACKGROUND_SIDE_FADE_RATIO)
+        .min(NEW_THREAD_BACKGROUND_SIDE_FADE)
+}
+
+fn new_thread_background(
+    background: Option<&settings::NewThreadComposerBackground>,
+    theme: &Theme,
+    viewport_width: f32,
+    viewport_height: f32,
+    transition_opacity: f32,
+) -> AnyElement {
+    let Some(background) = background else {
+        return Empty.into_any_element();
+    };
+    let path = PathBuf::from(&background.path);
+    if !path.is_file() {
+        return Empty.into_any_element();
+    }
+    let hero_height = new_thread_background_height(viewport_height);
+    let side_fade = new_thread_background_side_fade(viewport_width);
     div()
-        .w_full()
-        .max_w(px(COMPOSER_MAX_WIDTH))
-        .h(px(NEW_THREAD_HERO_HEIGHT))
-        .relative()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .h(px(hero_height))
+        .overflow_hidden()
+        .opacity(transition_opacity.clamp(0.0, 1.0))
+        // Fade the image primitive itself instead of painting a theme-colored
+        // gradient above it. That creates a real alpha mask, so the tail
+        // resolves into the exact canvas beneath it on both opaque and glass
+        // themes without a horizontal color seam.
         .child(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .flex_row()
-                .items_end()
-                .child(
-                    div()
-                        .ml(px(NEW_THREAD_SELECTOR_INSET))
-                        .mb(px(NEW_THREAD_SELECTOR_BOTTOM))
-                        .flex_none()
-                        .child(selectors),
-                )
-                .child(
-                    div()
-                        .h_full()
-                        .min_w_0()
-                        .flex_1()
-                        .overflow_hidden()
-                        .flex()
-                        .items_end()
-                        .justify_center()
-                        .child(
-                            icon(icons::ZERON_LOGO_FADED)
-                                .w(px(NEW_THREAD_COMET_WIDTH))
-                                .h(px(NEW_THREAD_COMET_HEIGHT))
-                                // The layer ends at the composer; only the
-                                // artwork overshoots and is clipped, keeping
-                                // its last visible row flush with that edge.
-                                .relative()
-                                .top(px(NEW_THREAD_COMET_CLIP_OVERSHOOT))
-                                .text_color(theme.text.opacity(0.18)),
-                        ),
+            crate::edge_fade::edge_faded(
+                side_fade,
+                false,
+                true,
+                // Give the mask a definite relayout box. A percentage-sized
+                // image as the custom element's direct child could briefly
+                // resolve to zero during live window resize.
+                div().relative().w_full().h(px(hero_height)).child(
+                    img(path)
+                        .absolute()
+                        .inset_0()
+                        .size_full()
+                        .object_fit(ObjectFit::Cover)
+                        .opacity(new_thread_background_opacity(theme.is_frost())),
                 ),
+            )
+            .band_bottom(hero_height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO)
+            .fade_left(true)
+            .fade_right(true),
         )
         .into_any_element()
 }
@@ -1269,7 +1298,7 @@ pub struct Shell {
     /// transition uses its bottom edge as the FLIP source anchor.
     new_thread_composer_bottom: std::rc::Rc<std::cell::Cell<f32>>,
     new_thread_composer_height: std::rc::Rc<std::cell::Cell<f32>>,
-    new_thread_launch: Option<NewThreadLaunch>,
+    new_thread_transition: Option<NewThreadTransition>,
     /// The sidebar's archived accordion (t3code Sidebar): OPEN by default
     /// (user request), session-transient. `archived_shown` pages the
     /// expanded list ("Show more" reveals another page).
@@ -1532,17 +1561,16 @@ impl Shell {
         let composer_events = cx.subscribe(&composer, {
             let transcript = transcript.clone();
             move |this: &mut Shell, _, event: &ComposerEvent, cx| match event {
+                ComposerEvent::NewThreadTransitionStarted => {
+                    this.begin_new_thread_launch(cx);
+                }
                 ComposerEvent::Sent {
                     chat_id,
                     message_id,
-                    from_new_thread,
                 } => {
                     transcript.update(cx, |t, cx| {
                         t.on_own_send(chat_id.clone(), message_id.clone(), cx)
                     });
-                    if *from_new_thread {
-                        this.begin_new_thread_launch(cx);
-                    }
                 }
                 ComposerEvent::Queued {
                     chat_id,
@@ -1663,7 +1691,7 @@ impl Shell {
             bottom_stack: std::rc::Rc::new(std::cell::Cell::new(120.0)),
             new_thread_composer_bottom: std::rc::Rc::new(std::cell::Cell::new(0.0)),
             new_thread_composer_height: std::rc::Rc::new(std::cell::Cell::new(0.0)),
-            new_thread_launch: None,
+            new_thread_transition: None,
             archived_open: true,
             archived_shown: 0,
             archived_hover: None,
@@ -2096,6 +2124,14 @@ impl Shell {
         }
         if selected != self.active_chat {
             self.suspend_file_images(cx);
+            if !self.active_chat.is_empty()
+                && selected.is_empty()
+                && matches!(self.route, Route::Chat)
+            {
+                // Capture the established composer's bottom anchor before
+                // `active_chat` changes the panel key and terminal geometry.
+                self.begin_new_thread_return(cx);
+            }
             self.active_chat = selected;
             // Route history: a chat switch is a navigation. The very first
             // selection off the untouched boot canvas REPLACES that entry —
@@ -3306,6 +3342,8 @@ impl Shell {
         self.settings.theme_selection = crate::appearance::themes(cx);
         self.settings.accent = crate::appearance::accent(cx);
         self.settings.surface = crate::appearance::surface(cx);
+        self.settings.new_thread_composer_background =
+            settings::current(cx).new_thread_composer_background;
         self.settings.ui_font_family = crate::typography::requested(cx);
         self.settings.ui_font_size = crate::typography::font_size(cx);
         settings::replace(self.settings.clone(), SavePolicy::Debounced, cx);
@@ -4413,38 +4451,68 @@ impl Shell {
     // ---- render pieces ----
 
     fn begin_new_thread_launch(&mut self, cx: &mut Context<Self>) {
-        let source_bottom = self.new_thread_composer_bottom.get();
+        let origin_bottom = self.new_thread_composer_bottom.get();
         let source_height = self.new_thread_composer_height.get();
-        if motion::reduced_motion(cx) || source_bottom <= 0.0 || source_height <= 0.0 {
-            self.new_thread_launch = None;
+        let destination_bottom =
+            self.viewport_height - self.eval_tween(self.terminal_tween, self.terminal_target(cx));
+        if motion::reduced_motion(cx) || origin_bottom <= 0.0 || source_height <= 0.0 {
+            self.new_thread_transition = None;
             return;
         }
-        self.new_thread_launch = Some(NewThreadLaunch {
-            source_bottom,
-            source_height,
+        self.new_thread_transition = Some(NewThreadTransition {
+            direction: NewThreadTransitionDirection::IntoThread,
+            origin_bottom,
+            destination_bottom,
             started: std::time::Instant::now(),
         });
         cx.notify();
     }
 
-    /// Current coordinated first-send frame. Manual evaluation avoids a
-    /// remount replay when the composer moves between its two parents.
-    fn new_thread_launch_frame(&mut self) -> Option<(NewThreadLaunch, f32)> {
-        let launch = self.new_thread_launch?;
+    fn begin_new_thread_return(&mut self, cx: &mut Context<Self>) {
+        let terminal_height = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
+        let origin_bottom = self.viewport_height - terminal_height;
+        let measured_height = self.new_thread_composer_height.get();
+        let destination_bottom = if self.new_thread_composer_bottom.get() > 0.0 {
+            self.new_thread_composer_bottom.get()
+        } else {
+            // Boot may land directly in a session before the blank canvas has
+            // ever painted. Use its centered geometry as a safe first-return
+            // target; the canvas measure replaces this for later transitions.
+            self.viewport_height * 0.5
+                + measured_height.max(crate::composer::COMPOSER_MIN_HEIGHT) * 0.5
+                + NEW_THREAD_COMPOSITION_Y_CORRECTION
+        };
+        if motion::reduced_motion(cx) || origin_bottom <= 0.0 || destination_bottom <= 0.0 {
+            self.new_thread_transition = None;
+            return;
+        }
+        self.new_thread_transition = Some(NewThreadTransition {
+            direction: NewThreadTransitionDirection::IntoNewThread,
+            origin_bottom,
+            destination_bottom,
+            started: std::time::Instant::now(),
+        });
+        cx.notify();
+    }
+
+    /// Current coordinated route frame. Manual evaluation avoids a remount
+    /// replay when the composer moves between its two parents.
+    fn new_thread_transition_frame(&mut self) -> Option<(NewThreadTransition, f32)> {
+        let transition = self.new_thread_transition?;
         if self.reduced_motion {
-            self.new_thread_launch = None;
+            self.new_thread_transition = None;
             return None;
         }
-        let total = motion::NEW_THREAD_LAUNCH
+        let total = motion::NEW_THREAD_TRANSITION
             .total()
             .mul_f32(motion::speed_scale());
-        let raw = launch.started.elapsed().as_secs_f32() / total.as_secs_f32();
+        let raw = transition.started.elapsed().as_secs_f32() / total.as_secs_f32();
         if raw >= 1.0 {
-            self.new_thread_launch = None;
+            self.new_thread_transition = None;
             return None;
         }
         self.motion_active.set(true);
-        Some((launch, motion::NEW_THREAD_LAUNCH.progress(raw)))
+        Some((transition, motion::NEW_THREAD_TRANSITION.progress(raw)))
     }
 
     fn tween_elapsed(&self, started: std::time::Instant) -> Duration {
@@ -6864,7 +6932,12 @@ impl Shell {
             )
     }
 
-    fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_main(
+        &mut self,
+        window: &mut Window,
+        main_content_width: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme_owned = Theme::of(cx).clone();
         let theme = &theme_owned;
         let (border, text, faint) = (theme.border, theme.text, theme.text_faint);
@@ -6890,54 +6963,63 @@ impl Shell {
         let has_spaces = !self.state.read(cx).spaces.is_empty();
         let has_appshots = !self.composer.read(cx).staged_appshots().is_empty();
         let no_project = self.state.read(cx).no_project;
-        let launch_frame = self.new_thread_launch_frame();
+        let new_thread_background_setting = settings::current(cx).new_thread_composer_background;
+        let transition_frame = self.new_thread_transition_frame();
+        let new_thread_background_layer = if !has_selection {
+            Some(new_thread_background(
+                new_thread_background_setting.as_ref(),
+                theme,
+                main_content_width,
+                self.viewport_height,
+                transition_frame
+                    .filter(|(transition, _)| {
+                        transition.direction == NewThreadTransitionDirection::IntoNewThread
+                    })
+                    .map_or(1.0, |(transition, progress)| {
+                        new_thread_canvas_opacity(transition.direction, progress)
+                    }),
+            ))
+        } else {
+            transition_frame
+                .filter(|(transition, _)| {
+                    transition.direction == NewThreadTransitionDirection::IntoThread
+                })
+                .map(|(transition, progress)| {
+                    new_thread_background(
+                        new_thread_background_setting.as_ref(),
+                        theme,
+                        main_content_width,
+                        self.viewport_height,
+                        new_thread_canvas_opacity(transition.direction, progress),
+                    )
+                })
+        };
         let term_h = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
-        let launch_composer_offset = launch_frame.map(|(launch, progress)| {
-            let destination_bottom = self.viewport_height - term_h;
-            new_thread_composer_offset(launch.source_bottom, destination_bottom, progress)
+        let transition_composer_offset = transition_frame.map(|(transition, progress)| {
+            new_thread_composer_offset(
+                transition.origin_bottom,
+                transition.destination_bottom,
+                progress,
+            )
         });
 
         // Content outlet: selected chat → transcript; nothing selected → the
         // centered new-thread composition; no spaces at all → the onboarding
         // card. New-chat mode mints the chat id on first send.
         let outlet: AnyElement = if has_selection {
-            if let Some((launch, progress)) = launch_frame {
-                let pickers = self.composer.read(cx).pickers().clone();
-                let selectors = pickers.update(cx, |p, cx| p.render_target_selectors(cx));
+            if let Some((_, progress)) = transition_frame.filter(|(transition, _)| {
+                transition.direction == NewThreadTransitionDirection::IntoThread
+            }) {
                 div()
                     .relative()
                     .size_full()
                     .child(
                         div()
+                            .relative()
+                            .top(px(new_thread_transcript_settle(progress)))
                             .size_full()
                             .opacity(new_thread_transcript_opacity(progress))
                             .child(self.transcript.clone()),
-                    )
-                    // Let the source header dissolve while the composer leaves
-                    // it behind. The composer itself is rendered only once —
-                    // in the destination stack — and FLIP-offset to its old
-                    // bottom edge below.
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .opacity(new_thread_header_opacity(progress))
-                            .top(px(-8.0 * progress))
-                            .child(
-                                div()
-                                    .w_full()
-                                    .relative()
-                                    .top(px(NEW_THREAD_COMPOSITION_Y_CORRECTION))
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .child(new_thread_hero(selectors, theme))
-                                    .child(div().w_full().h(px(launch.source_height))),
-                            ),
                     )
                     .into_any_element()
             } else {
@@ -6994,48 +7076,58 @@ impl Shell {
                 ))
                 .into_any_element()
         } else {
-            // New-thread canvas: the mark, target selectors, composer, and
-            // checkout row form one vertically-centered composition. The
-            // composer lives here only while the canvas is blank; established
-            // sessions keep it in the bottom chrome stack below.
-            let pickers = self.composer.read(cx).pickers().clone();
-            let selectors = pickers.update(cx, |p, cx| p.render_target_selectors(cx));
+            // New-thread canvas: optional artwork fills the panel behind one
+            // vertically-centered controls composition. The composer lives
+            // here only while the canvas is blank; established sessions keep
+            // it in the bottom chrome stack below.
+            let composition = div()
+                .w_full()
+                .relative()
+                .top(px(NEW_THREAD_COMPOSITION_Y_CORRECTION
+                    + transition_frame
+                        .filter(|(transition, _)| {
+                            transition.direction == NewThreadTransitionDirection::IntoNewThread
+                        })
+                        .map_or(0.0, |_| {
+                            transition_composer_offset.unwrap_or(0.0)
+                        })))
+                .flex()
+                .flex_col()
+                .items_center()
+                .child({
+                    let bottom = self.new_thread_composer_bottom.clone();
+                    let height = self.new_thread_composer_height.clone();
+                    div()
+                        .w_full()
+                        .relative()
+                        .child(
+                            gpui::canvas(
+                                move |bounds, _, _| {
+                                    bottom.set(f32::from(bounds.bottom()));
+                                    height.set(f32::from(bounds.size.height));
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .inset_0(),
+                        )
+                        .child(self.composer.clone())
+                });
+            let composition: AnyElement = if transition_frame.is_some_and(|(transition, _)| {
+                transition.direction == NewThreadTransitionDirection::IntoNewThread
+            }) {
+                composition.into_any_element()
+            } else {
+                motion::settle_down("new-thread-composition", composition).into_any_element()
+            };
             div()
                 .size_full()
+                .relative()
                 .flex()
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .child(motion::settle_down(
-                    "new-thread-composition",
-                    div()
-                        .w_full()
-                        .relative()
-                        .top(px(NEW_THREAD_COMPOSITION_Y_CORRECTION))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .child(new_thread_hero(selectors, theme))
-                        .child({
-                            let bottom = self.new_thread_composer_bottom.clone();
-                            let height = self.new_thread_composer_height.clone();
-                            div()
-                                .w_full()
-                                .relative()
-                                .child(
-                                    gpui::canvas(
-                                        move |bounds, _, _| {
-                                            bottom.set(f32::from(bounds.bottom()));
-                                            height.set(f32::from(bounds.size.height));
-                                        },
-                                        |_, _, _, _| {},
-                                    )
-                                    .absolute()
-                                    .inset_0(),
-                                )
-                                .child(self.composer.clone())
-                        }),
-                ))
+                .child(composition)
                 .into_any_element()
         };
 
@@ -7108,6 +7200,10 @@ impl Shell {
                 }
                 cx.notify();
             }))
+            // The hero is deliberately outside the transcript EdgeFade below:
+            // it must paint under the overlaid titlebar instead of becoming
+            // fully transparent across the titlebar's inset band.
+            .children(new_thread_background_layer)
             .child(
                 // Full-height underlay: the transcript viewport spans the
                 // whole column, scrolling UNDER the titlebar above and the
@@ -7182,7 +7278,7 @@ impl Shell {
                         el.child(
                             div()
                                 .relative()
-                                .top(px(launch_composer_offset.unwrap_or(0.0)))
+                                .top(px(transition_composer_offset.unwrap_or(0.0)))
                                 .child(self.composer.clone()),
                         )
                     })
@@ -8982,6 +9078,8 @@ impl Render for Shell {
         self.settings.theme_selection = crate::appearance::themes(cx);
         self.settings.accent = crate::appearance::accent(cx);
         self.settings.surface = crate::appearance::surface(cx);
+        self.settings.new_thread_composer_background =
+            settings::current(cx).new_thread_composer_background;
         let theme = Theme::of(cx);
         // The shell tone (zeron `.frost`): the surface the sidebar sits on and
         // the main panel floats over as an inset rounded card. On macOS the
@@ -9287,7 +9385,7 @@ impl Render for Shell {
                     |shell, _| shell.settings.sidebar_width = SIDEBAR_DEFAULT,
                     cx,
                 );
-                let main = self.render_main(window, cx);
+                let main = self.render_main(window, main_content_width, cx);
                 // The Changes pane is chat-scoped chrome: the Settings route
                 // never renders it (zeron __root.tsx `!isSettings && activeChat`
                 // around the diff column) — the per-session open flags stay
@@ -9513,24 +9611,45 @@ mod tests {
 
     #[test]
     fn new_thread_handoff_is_continuous_and_staged() {
-        // The artwork remains tall enough to survive its explicit bottom
-        // overshoot, so the fade visibly reaches the composer boundary even
-        // when the glyph is smaller than the selector-bearing hero region.
-        assert!(
-            (NEW_THREAD_COMET_CLIP_OVERSHOOT / NEW_THREAD_COMET_HEIGHT - 0.10).abs() < f32::EPSILON
+        assert_eq!(new_thread_background_opacity(false), 1.0);
+        assert_eq!(
+            new_thread_background_opacity(true),
+            NEW_THREAD_BACKGROUND_FROSTED_OPACITY
         );
-        assert!(NEW_THREAD_COMET_HEIGHT > NEW_THREAD_COMET_CLIP_OVERSHOOT);
+        assert_eq!(new_thread_background_height(400.0), 184.0);
+        assert_eq!(new_thread_background_height(600.0), 276.0);
+        assert_eq!(new_thread_background_height(1_000.0), 440.0);
+        assert!(new_thread_background_height(848.0) < 848.0 / 2.0);
+        assert!((new_thread_background_side_fade(160.0) - 28.8).abs() < 0.001);
+        assert_eq!(new_thread_background_side_fade(1_000.0), 72.0);
+        assert!(new_thread_background_side_fade(160.0) * 2.0 < 160.0);
         // The bottom-anchored destination starts exactly at the centered
         // source's bottom edge, then lands without overshoot.
         assert_eq!(new_thread_composer_offset(520.0, 840.0, 0.0), -320.0);
         assert_eq!(new_thread_composer_offset(520.0, 840.0, 0.5), -160.0);
         assert_eq!(new_thread_composer_offset(520.0, 840.0, 1.0), 0.0);
-        // The source header leaves first; the transcript arrives just after
-        // motion begins and is fully opaque at rest.
-        assert_eq!(new_thread_header_opacity(0.0), 1.0);
-        assert_eq!(new_thread_header_opacity(1.0), 0.0);
+        // The canvas leaves early on send and returns on the reverse path;
+        // the transcript arrives just after motion begins and settles upward.
+        assert_eq!(
+            new_thread_canvas_opacity(NewThreadTransitionDirection::IntoThread, 0.0),
+            1.0
+        );
+        assert_eq!(
+            new_thread_canvas_opacity(NewThreadTransitionDirection::IntoThread, 1.0),
+            0.0
+        );
+        assert_eq!(
+            new_thread_canvas_opacity(NewThreadTransitionDirection::IntoNewThread, 0.0),
+            0.0
+        );
+        assert_eq!(
+            new_thread_canvas_opacity(NewThreadTransitionDirection::IntoNewThread, 1.0),
+            1.0
+        );
         assert_eq!(new_thread_transcript_opacity(0.0), 0.0);
         assert_eq!(new_thread_transcript_opacity(1.0), 1.0);
+        assert_eq!(new_thread_transcript_settle(0.0), 8.0);
+        assert_eq!(new_thread_transcript_settle(1.0), 0.0);
     }
 
     #[test]
