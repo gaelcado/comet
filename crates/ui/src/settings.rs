@@ -101,10 +101,10 @@ impl NewThreadBackgroundEffect {
     pub const fn description(self) -> &'static str {
         match self {
             Self::None => "Shows the original artwork.",
-            Self::Dither => "Adds a fine ordered-dot texture.",
-            Self::Ascii => "Layers a quiet monospaced glyph field.",
-            Self::Halftone => "Adds a larger print-style dot screen.",
-            Self::Scanlines => "Adds subtle horizontal display lines.",
+            Self::Dither => "Rebuilds the artwork with a dithered color palette.",
+            Self::Ascii => "Recreates the artwork with colored characters on black.",
+            Self::Halftone => "Recreates the artwork with colored print dots on black.",
+            Self::Scanlines => "Adds a pronounced horizontal display-line texture.",
         }
     }
 }

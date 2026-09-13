@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use crate::settings::NewThreadBackgroundEffect;
-use crate::theme::{Appearance, Theme};
+use crate::theme::Theme;
 
 const ASCII_FONT_SIZE: f32 = 6.0;
 const ASCII_LINE_HEIGHT: f32 = 8.0;
@@ -17,10 +17,46 @@ struct BackgroundLuminance {
     width: u32,
     height: u32,
     pixels: Box<[u8]>,
+    colors: Box<[[u8; 4]]>,
+    dither: std::sync::OnceLock<Option<std::sync::Arc<gpui::Image>>>,
 }
 
 impl BackgroundLuminance {
+    fn dither_image(&self) -> Option<std::sync::Arc<gpui::Image>> {
+        self.dither
+            .get_or_init(|| {
+                const BAYER: [[u8; 4]; 4] =
+                    [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+                let pixels = image::RgbaImage::from_fn(self.width, self.height, |x, y| {
+                    let [r, g, b, a] = self.colors[(y * self.width + x) as usize];
+                    let threshold = BAYER[y as usize % 4][x as usize % 4];
+                    image::Rgba([
+                        quantize(r, threshold),
+                        quantize(g, threshold),
+                        quantize(b, threshold),
+                        a,
+                    ])
+                });
+                let mut bytes = std::io::Cursor::new(Vec::new());
+                pixels.write_to(&mut bytes, image::ImageFormat::Png).ok()?;
+                Some(std::sync::Arc::new(gpui::Image::from_bytes(
+                    gpui::ImageFormat::Png,
+                    bytes.into_inner(),
+                )))
+            })
+            .clone()
+    }
+
     fn sample_cover(&self, bounds: gpui::Size<Pixels>, x: f32, y: f32) -> u8 {
+        self.pixels[self.cover_index(bounds, x, y)]
+    }
+
+    fn color_cover(&self, bounds: gpui::Size<Pixels>, x: f32, y: f32) -> gpui::Hsla {
+        let [r, g, b, a] = self.colors[self.cover_index(bounds, x, y)];
+        gpui::rgba(u32::from_be_bytes([r, g, b, a])).into()
+    }
+
+    fn cover_index(&self, bounds: gpui::Size<Pixels>, x: f32, y: f32) -> usize {
         let width = f32::from(bounds.width).max(1.0);
         let height = f32::from(bounds.height).max(1.0);
         let source_width = self.width as f32;
@@ -32,7 +68,7 @@ impl BackgroundLuminance {
             .clamp(0.0, source_width - 1.0) as u32;
         let source_y = ((source_height - visible_height) * 0.5 + y / scale)
             .clamp(0.0, source_height - 1.0) as u32;
-        self.pixels[(source_y * self.width + source_x) as usize]
+        (source_y * self.width + source_x) as usize
     }
 }
 
@@ -58,14 +94,16 @@ fn background_luminance(path: &Path) -> Option<std::sync::Arc<BackgroundLuminanc
         return Some(sample);
     }
 
-    // The hero never exceeds 440px high. Keeping a 2048px luminance proxy
-    // preserves more than enough detail while bounding retained memory.
+    // Bound the retained color/luminance proxy independently of window size.
     let decoded = image::ImageReader::open(path).ok()?.decode().ok()?;
-    let gray = decoded.thumbnail(2048, 2048).to_luma8();
+    let proxy = decoded.thumbnail(2048, 2048);
+    let gray = proxy.to_luma8();
     let sample = std::sync::Arc::new(BackgroundLuminance {
         width: gray.width(),
         height: gray.height(),
         pixels: gray.into_raw().into_boxed_slice(),
+        colors: proxy.to_rgba8().pixels().map(|pixel| pixel.0).collect(),
+        dither: Default::default(),
     });
     let mut cache = cache.lock().ok()?;
     cache.push((path.to_path_buf(), sample.clone()));
@@ -94,23 +132,33 @@ pub(super) fn treatment(
     let image_opacity = base_opacity
         * match effect {
             NewThreadBackgroundEffect::None => 1.0,
-            NewThreadBackgroundEffect::Dither => 1.0,
-            NewThreadBackgroundEffect::Ascii => 0.96,
-            NewThreadBackgroundEffect::Halftone => 1.0,
+            NewThreadBackgroundEffect::Dither => 0.0,
+            NewThreadBackgroundEffect::Ascii => 0.0,
+            NewThreadBackgroundEffect::Halftone => 0.0,
             NewThreadBackgroundEffect::Scanlines => 1.0,
         };
     if effect == NewThreadBackgroundEffect::None {
         return (image_opacity, Empty.into_any_element());
     }
+    // Transform once, not hundreds of thousands of canvas quads on every
+    // animation frame. The processed raster follows the original cover crop.
+    if effect == NewThreadBackgroundEffect::Dither {
+        return match luminance.as_ref().and_then(|source| source.dither_image()) {
+            Some(image) => (
+                0.0,
+                gpui::img(image)
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Cover)
+                    .opacity(base_opacity)
+                    .into_any_element(),
+            ),
+            None => (base_opacity, Empty.into_any_element()),
+        };
+    }
 
-    let color = theme.text.opacity(match effect {
-        NewThreadBackgroundEffect::Dither => 0.10,
-        NewThreadBackgroundEffect::Ascii => 0.22,
-        NewThreadBackgroundEffect::Halftone => 0.12,
-        NewThreadBackgroundEffect::Scanlines => 0.08,
-        NewThreadBackgroundEffect::None => 0.0,
-    });
-    let light = matches!(theme.appearance, Appearance::Light);
+    let color = gpui::white();
     let ascii_font = theme.font_mono.clone();
     let prepaint_luminance = luminance.clone();
     let texture = gpui::canvas(
@@ -132,66 +180,39 @@ pub(super) fn treatment(
             (0..rows)
                 .map(|row| {
                     let mut text = String::with_capacity(columns);
+                    let mut runs = Vec::with_capacity(columns);
                     for column in 0..columns {
                         let luma = luminance.sample_cover(
                             bounds.size,
                             (column as f32 + 0.5) * cell_width,
                             (row as f32 + 0.5) * ASCII_LINE_HEIGHT,
                         );
-                        let ink = if light { 255 - luma } else { luma };
-                        let index = ink as usize * (ramp.len() - 1) / 255;
+                        let index =
+                            ((luma as f32 / 255.0).sqrt() * (ramp.len() - 1) as f32) as usize;
                         text.push(ramp[index] as char);
+                        runs.push(TextRun {
+                            len: 1,
+                            font: font.clone(),
+                            color: luminance.color_cover(
+                                bounds.size,
+                                (column as f32 + 0.5) * cell_width,
+                                (row as f32 + 0.5) * ASCII_LINE_HEIGHT,
+                            ),
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        });
                     }
                     let text: SharedString = text.into();
-                    let run = TextRun {
-                        len: text.len(),
-                        font: font.clone(),
-                        color,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    };
                     window
                         .text_system()
-                        .shape_line(text, px(ASCII_FONT_SIZE), &[run], None)
+                        .shape_line(text, px(ASCII_FONT_SIZE), &runs, None)
                 })
                 .collect::<Vec<_>>()
         },
         move |bounds, ascii_lines, window, cx| match effect {
             NewThreadBackgroundEffect::None => {}
-            NewThreadBackgroundEffect::Dither => {
-                const BAYER: [[u8; 4]; 4] =
-                    [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-                let step = 3.0;
-                let columns = (f32::from(bounds.size.width) / step).ceil() as usize;
-                let rows = (f32::from(bounds.size.height) / step).ceil() as usize;
-                for row in 0..rows {
-                    for column in 0..columns {
-                        let threshold = BAYER[row % 4][column % 4];
-                        let Some(luminance) = luminance.as_ref() else {
-                            continue;
-                        };
-                        let luma = luminance.sample_cover(
-                            bounds.size,
-                            column as f32 * step,
-                            row as f32 * step,
-                        );
-                        let ink = if light { 255 - luma } else { luma };
-                        if ink / 16 <= threshold {
-                            continue;
-                        }
-                        let dot = if threshold < 3 { 1.0 } else { 0.7 };
-                        paint_dot(
-                            window,
-                            bounds,
-                            column as f32 * step,
-                            row as f32 * step,
-                            dot,
-                            color,
-                        );
-                    }
-                }
-            }
+            NewThreadBackgroundEffect::Dither => {}
             NewThreadBackgroundEffect::Ascii => {
                 let line_height = px(ASCII_LINE_HEIGHT);
                 for (row, line) in ascii_lines.iter().enumerate() {
@@ -206,7 +227,7 @@ pub(super) fn treatment(
                 }
             }
             NewThreadBackgroundEffect::Halftone => {
-                let step = 6.0;
+                let step = 4.0;
                 let columns = (f32::from(bounds.size.width) / step).ceil() as usize;
                 let rows = (f32::from(bounds.size.height) / step).ceil() as usize;
                 for row in 0..rows {
@@ -219,13 +240,17 @@ pub(super) fn treatment(
                             column as f32 * step,
                             row as f32 * step,
                         );
-                        let ink = if light { 255 - luma } else { luma };
-                        let dot = 0.5 + ink as f32 / 255.0 * 2.0;
+                        let dot = step * (0.3 + 0.7 * (luma as f32 / 255.0).sqrt());
+                        let color = luminance.color_cover(
+                            bounds.size,
+                            (column as f32 + 0.5) * step,
+                            (row as f32 + 0.5) * step,
+                        );
                         paint_dot(
                             window,
                             bounds,
-                            column as f32 * step,
-                            row as f32 * step,
+                            column as f32 * step + (step - dot) * 0.5,
+                            row as f32 * step + (step - dot) * 0.5,
                             dot,
                             color,
                         );
@@ -238,10 +263,10 @@ pub(super) fn treatment(
                     window.paint_quad(gpui::quad(
                         gpui::Bounds::new(
                             gpui::point(bounds.left(), bounds.top() + px(row as f32 * 3.0)),
-                            gpui::size(bounds.size.width, px(0.5)),
+                            gpui::size(bounds.size.width, px(1.0)),
                         ),
                         px(0.0),
-                        color,
+                        gpui::black().opacity(0.48),
                         px(0.0),
                         gpui::transparent_black(),
                         BorderStyle::default(),
@@ -257,9 +282,25 @@ pub(super) fn treatment(
         .absolute()
         .inset_0()
         .opacity(base_opacity)
+        .when(
+            matches!(
+                effect,
+                NewThreadBackgroundEffect::Ascii | NewThreadBackgroundEffect::Halftone
+            ),
+            |layer| layer.bg(gpui::black()),
+        )
         .child(texture)
         .into_any_element();
     (image_opacity, layer)
+}
+
+// Four levels per channel, with a centered ordered threshold: actual color
+// quantization rather than a disconnected stipple over the original photograph.
+fn quantize(value: u8, threshold: u8) -> u8 {
+    let level = (value as f32 / 85.0 + (threshold as f32 + 0.5) / 16.0 - 0.5)
+        .round()
+        .clamp(0.0, 3.0);
+    (level * 85.0) as u8
 }
 
 fn ascii_cell_width(window: &gpui::Window, font: &gpui::Font, color: gpui::Hsla) -> f32 {
@@ -301,6 +342,38 @@ fn paint_dot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordered_palette_preserves_endpoints_and_distributes_midtones() {
+        for threshold in 0..16 {
+            assert_eq!(quantize(0, threshold), 0);
+            assert_eq!(quantize(255, threshold), 255);
+            for value in 0..=255 {
+                assert_eq!(quantize(value, threshold) % 85, 0);
+            }
+        }
+        let levels: Vec<_> = (0..16).map(|threshold| quantize(128, threshold)).collect();
+        assert!(levels.contains(&85));
+        assert!(levels.contains(&170));
+        let average = levels.iter().map(|&v| v as f32).sum::<f32>() / 16.0;
+        assert!((average - 128.0).abs() < 6.0);
+    }
+
+    #[test]
+    fn processed_artwork_is_reused_across_frames() {
+        let sample = BackgroundLuminance {
+            width: 4,
+            height: 4,
+            pixels: vec![128; 16].into_boxed_slice(),
+            colors: vec![[180, 100, 220, 255]; 16].into_boxed_slice(),
+            dither: Default::default(),
+        };
+        let first = sample.dither_image().unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            &first,
+            &sample.dither_image().unwrap()
+        ));
+    }
 
     #[gpui::test]
     fn ascii_advance_covers_narrow_and_fullscreen_artwork(cx: &mut gpui::TestAppContext) {
@@ -349,6 +422,8 @@ mod tests {
             width: 4,
             height: 2,
             pixels: vec![0, 1, 2, 3, 10, 11, 12, 13].into_boxed_slice(),
+            colors: vec![[0, 0, 0, 255]; 8].into_boxed_slice(),
+            dither: Default::default(),
         };
         let square = gpui::size(px(100.0), px(100.0));
         assert_eq!(sample.sample_cover(square, 0.0, 0.0), 1);
