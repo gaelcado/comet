@@ -1430,9 +1430,6 @@ impl Pickers {
     ) {
         let harness_locked = self.harness_locked(cx);
         if !harness_locked {
-            if self.config.harness != Some(harness) {
-                self.config.model_options.clear();
-            }
             self.config.harness = Some(harness);
             self.config.model = model.clone();
             self.config.reasoning = reasoning;
