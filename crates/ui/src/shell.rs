@@ -694,11 +694,8 @@ const NEW_THREAD_BACKGROUND_FROSTED_OPACITY: f32 = 0.84;
 const NEW_THREAD_BACKGROUND_VIEWPORT_RATIO: f32 = 0.46;
 const NEW_THREAD_BACKGROUND_MAX_HEIGHT: f32 = 440.0;
 // Keep the upper artwork clear, with a quiet tail over the lower 56%.
-// The hero meets the panel edges directly; side feathering belongs only to
-// the contracting dock mask, never the resting composition.
+// The artwork meets the panel edges directly in every animation frame.
 const NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO: f32 = 0.56;
-const NEW_THREAD_BACKGROUND_SIDE_FADE: f32 = 72.0;
-const NEW_THREAD_BACKGROUND_SIDE_FADE_RATIO: f32 = 0.18;
 
 /// Drag marker for the sidebar resize handle.
 struct SidebarResize;
@@ -824,20 +821,12 @@ fn new_thread_background_height(viewport_height: f32) -> f32 {
         .min(NEW_THREAD_BACKGROUND_MAX_HEIGHT)
 }
 
-fn new_thread_background_side_fade(viewport_width: f32, dissolve: f32) -> f32 {
-    (viewport_width.max(0.0) * NEW_THREAD_BACKGROUND_SIDE_FADE_RATIO)
-        .min(NEW_THREAD_BACKGROUND_SIDE_FADE)
-        * dissolve.clamp(0.0, 1.0)
-}
-
 fn new_thread_background(
     background: Option<&settings::NewThreadComposerBackground>,
     effect: settings::NewThreadBackgroundEffect,
     theme: &Theme,
-    viewport_width: f32,
     viewport_height: f32,
     dissolve: f32,
-    composer_top: f32,
 ) -> AnyElement {
     let Some(background) = background else {
         return Empty.into_any_element();
@@ -848,40 +837,30 @@ fn new_thread_background(
     }
     let hero_height = new_thread_background_height(viewport_height);
     let dissolve = dissolve.clamp(0.0, 1.0);
-    let side_fade = new_thread_background_side_fade(viewport_width, dissolve);
-    let grain_strength = (std::f32::consts::PI * dissolve).sin().max(0.0);
+
     let (image_opacity, effect_layer) = crate::new_thread_background_effects::treatment(
         effect,
         theme,
         &path,
         new_thread_background_opacity(theme.is_frost()),
     );
-    // Dither emerges only inside the shrinking alpha mask. Keep the original
-    // cover geometry fixed so the artwork never zooms or re-crops as it leaves.
-    let dissolve_layer = (grain_strength > 0.001).then(|| {
-        let grain = crate::new_thread_background_effects::dissolve_grain(theme, dissolve);
-        div()
-            .absolute()
-            .inset_0()
-            .opacity(grain_strength)
-            .child(grain)
-    });
+    // Image and treatment share a fixed crop and fade together in place.
     div()
         .absolute()
-        .top(px((composer_top - hero_height * 0.88).max(0.0) * dissolve))
+        .top_0()
         .left_0()
         .right_0()
         .h(px(hero_height))
         .overflow_hidden()
-        .opacity(1.0 - crate::composer_dock::stage(dissolve, 0.82, 1.0))
+        .opacity(1.0 - dissolve)
         // Fade the image primitive itself instead of painting a theme-colored
         // gradient above it. That creates a real alpha mask, so the tail
         // resolves into the exact canvas beneath it on both opaque and glass
         // themes without a horizontal color seam.
         .child(
             crate::edge_fade::edge_faded(
-                side_fade,
-                dissolve > 0.0,
+                0.0,
+                false,
                 true,
                 // Give the mask a definite relayout box. A percentage-sized
                 // image as the custom element's direct child could briefly
@@ -896,18 +875,11 @@ fn new_thread_background(
                             .inset_0()
                             .size_full()
                             .object_fit(ObjectFit::Cover)
-                            .opacity(image_opacity * (1.0 - 0.65 * dissolve)),
+                            .opacity(image_opacity),
                     )
-                    .child(effect_layer)
-                    .children(dissolve_layer),
+                    .child(effect_layer),
             )
-            .band_bottom(hero_height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO)
-            .inset_top(hero_height * 0.82 * dissolve)
-            .band_top(hero_height * 0.16 * dissolve)
-            .outset_bottom(-hero_height * 0.06 * dissolve)
-            .inset_x(viewport_width * 0.38 * dissolve)
-            .fade_left(dissolve > 0.0)
-            .fade_right(dissolve > 0.0),
+            .band_bottom(hero_height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO),
         )
         .into_any_element()
 }
@@ -6924,10 +6896,8 @@ impl Shell {
                 new_thread_background_setting.as_ref(),
                 new_thread_background_effect,
                 theme,
-                main_content_width,
                 self.viewport_height,
                 dock_frame.dissolve(),
-                self.composer_dock.borrow().painted_top().unwrap_or(0.0),
             )
         });
 
@@ -9532,14 +9502,6 @@ mod tests {
         assert_eq!(new_thread_background_height(600.0), 276.0);
         assert_eq!(new_thread_background_height(1_000.0), 440.0);
         assert!(new_thread_background_height(848.0) < 848.0 / 2.0);
-        // Full bleed at rest, including fullscreen; the feather grows from
-        // zero on departure rather than switching on a visible side band.
-        assert_eq!(new_thread_background_side_fade(160.0, 0.0), 0.0);
-        assert_eq!(new_thread_background_side_fade(2_560.0, 0.0), 0.0);
-        assert!((new_thread_background_side_fade(160.0, 1.0) - 28.8).abs() < 0.001);
-        assert_eq!(new_thread_background_side_fade(1_000.0, 0.5), 36.0);
-        assert_eq!(new_thread_background_side_fade(1_000.0, 1.0), 72.0);
-        assert!(new_thread_background_side_fade(160.0, 1.0) * 2.0 < 160.0);
     }
 
     #[test]

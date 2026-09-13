@@ -158,10 +158,6 @@ impl Default for DockState {
 }
 
 impl DockState {
-    pub fn painted_top(&self) -> Option<f32> {
-        self.position.map(|(_, y)| y.value)
-    }
-
     pub fn layout_width(&mut self, target: f32, reduced: bool, now: Instant) -> f32 {
         let dt = if self.route_changed {
             0.0

@@ -9,6 +9,9 @@ use gpui::{
 use crate::settings::NewThreadBackgroundEffect;
 use crate::theme::{Appearance, Theme};
 
+const ASCII_FONT_SIZE: f32 = 6.0;
+const ASCII_LINE_HEIGHT: f32 = 8.0;
+
 #[derive(Debug)]
 struct BackgroundLuminance {
     width: u32,
@@ -91,20 +94,20 @@ pub(super) fn treatment(
     let image_opacity = base_opacity
         * match effect {
             NewThreadBackgroundEffect::None => 1.0,
-            NewThreadBackgroundEffect::Dither => 0.94,
-            NewThreadBackgroundEffect::Ascii => 0.78,
-            NewThreadBackgroundEffect::Halftone => 0.90,
-            NewThreadBackgroundEffect::Scanlines => 0.96,
+            NewThreadBackgroundEffect::Dither => 1.0,
+            NewThreadBackgroundEffect::Ascii => 0.96,
+            NewThreadBackgroundEffect::Halftone => 1.0,
+            NewThreadBackgroundEffect::Scanlines => 1.0,
         };
     if effect == NewThreadBackgroundEffect::None {
         return (image_opacity, Empty.into_any_element());
     }
 
     let color = theme.text.opacity(match effect {
-        NewThreadBackgroundEffect::Dither => 0.13,
-        NewThreadBackgroundEffect::Ascii => 0.26,
-        NewThreadBackgroundEffect::Halftone => 0.15,
-        NewThreadBackgroundEffect::Scanlines => 0.11,
+        NewThreadBackgroundEffect::Dither => 0.10,
+        NewThreadBackgroundEffect::Ascii => 0.22,
+        NewThreadBackgroundEffect::Halftone => 0.12,
+        NewThreadBackgroundEffect::Scanlines => 0.08,
         NewThreadBackgroundEffect::None => 0.0,
     });
     let light = matches!(theme.appearance, Appearance::Light);
@@ -118,8 +121,13 @@ pub(super) fn treatment(
             let Some(luminance) = prepaint_luminance.as_ref() else {
                 return Vec::new();
             };
-            let columns = (f32::from(bounds.size.width) / 7.0).ceil() as usize + 1;
-            let rows = (f32::from(bounds.size.height) / 9.0).ceil() as usize;
+            let font = gpui::font(ascii_font.clone());
+            // Font size is not glyph advance. Using it as cell width made
+            // the rendered ASCII field stop halfway across the artwork and
+            // compressed its source sampling into the wrong horizontal span.
+            let cell_width = ascii_cell_width(window, &font, color);
+            let columns = (f32::from(bounds.size.width) / cell_width).ceil() as usize + 1;
+            let rows = (f32::from(bounds.size.height) / ASCII_LINE_HEIGHT).ceil() as usize + 1;
             let ramp = b" .:-=+*#%@";
             (0..rows)
                 .map(|row| {
@@ -127,8 +135,8 @@ pub(super) fn treatment(
                     for column in 0..columns {
                         let luma = luminance.sample_cover(
                             bounds.size,
-                            column as f32 * 7.0,
-                            row as f32 * 9.0,
+                            (column as f32 + 0.5) * cell_width,
+                            (row as f32 + 0.5) * ASCII_LINE_HEIGHT,
                         );
                         let ink = if light { 255 - luma } else { luma };
                         let index = ink as usize * (ramp.len() - 1) / 255;
@@ -137,13 +145,15 @@ pub(super) fn treatment(
                     let text: SharedString = text.into();
                     let run = TextRun {
                         len: text.len(),
-                        font: gpui::font(ascii_font.clone()),
+                        font: font.clone(),
                         color,
                         background_color: None,
                         underline: None,
                         strikethrough: None,
                     };
-                    window.text_system().shape_line(text, px(7.0), &[run], None)
+                    window
+                        .text_system()
+                        .shape_line(text, px(ASCII_FONT_SIZE), &[run], None)
                 })
                 .collect::<Vec<_>>()
         },
@@ -152,7 +162,7 @@ pub(super) fn treatment(
             NewThreadBackgroundEffect::Dither => {
                 const BAYER: [[u8; 4]; 4] =
                     [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-                let step = 7.0;
+                let step = 3.0;
                 let columns = (f32::from(bounds.size.width) / step).ceil() as usize;
                 let rows = (f32::from(bounds.size.height) / step).ceil() as usize;
                 for row in 0..rows {
@@ -170,7 +180,7 @@ pub(super) fn treatment(
                         if ink / 16 <= threshold {
                             continue;
                         }
-                        let dot = if threshold < 3 { 1.8 } else { 1.0 };
+                        let dot = if threshold < 3 { 1.0 } else { 0.7 };
                         paint_dot(
                             window,
                             bounds,
@@ -183,7 +193,7 @@ pub(super) fn treatment(
                 }
             }
             NewThreadBackgroundEffect::Ascii => {
-                let line_height = px(9.0);
+                let line_height = px(ASCII_LINE_HEIGHT);
                 for (row, line) in ascii_lines.iter().enumerate() {
                     let _ = line.paint(
                         gpui::point(bounds.left(), bounds.top() + line_height * row as f32),
@@ -196,7 +206,7 @@ pub(super) fn treatment(
                 }
             }
             NewThreadBackgroundEffect::Halftone => {
-                let step = 12.0;
+                let step = 6.0;
                 let columns = (f32::from(bounds.size.width) / step).ceil() as usize;
                 let rows = (f32::from(bounds.size.height) / step).ceil() as usize;
                 for row in 0..rows {
@@ -210,7 +220,7 @@ pub(super) fn treatment(
                             row as f32 * step,
                         );
                         let ink = if light { 255 - luma } else { luma };
-                        let dot = 0.8 + ink as f32 / 255.0 * 4.2;
+                        let dot = 0.5 + ink as f32 / 255.0 * 2.0;
                         paint_dot(
                             window,
                             bounds,
@@ -223,12 +233,12 @@ pub(super) fn treatment(
                 }
             }
             NewThreadBackgroundEffect::Scanlines => {
-                let rows = (f32::from(bounds.size.height) / 5.0).ceil() as usize;
+                let rows = (f32::from(bounds.size.height) / 3.0).ceil() as usize;
                 for row in 0..rows {
                     window.paint_quad(gpui::quad(
                         gpui::Bounds::new(
-                            gpui::point(bounds.left(), bounds.top() + px(row as f32 * 5.0)),
-                            gpui::size(bounds.size.width, px(1.0)),
+                            gpui::point(bounds.left(), bounds.top() + px(row as f32 * 3.0)),
+                            gpui::size(bounds.size.width, px(0.5)),
                         ),
                         px(0.0),
                         color,
@@ -246,18 +256,25 @@ pub(super) fn treatment(
     let layer = div()
         .absolute()
         .inset_0()
-        .when(
-            matches!(
-                effect,
-                NewThreadBackgroundEffect::Dither
-                    | NewThreadBackgroundEffect::Ascii
-                    | NewThreadBackgroundEffect::Halftone
-            ),
-            |layer| layer.bg(theme.bg.opacity(0.18)),
-        )
+        .opacity(base_opacity)
         .child(texture)
         .into_any_element();
     (image_opacity, layer)
+}
+
+fn ascii_cell_width(window: &gpui::Window, font: &gpui::Font, color: gpui::Hsla) -> f32 {
+    let run = TextRun {
+        len: 1,
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let probe = window
+        .text_system()
+        .shape_line("M".into(), px(ASCII_FONT_SIZE), &[run], None);
+    f32::from(probe.width).max(1.0)
 }
 
 fn paint_dot(
@@ -281,55 +298,50 @@ fn paint_dot(
     ));
 }
 
-/// Deterministic dissolve grain. It requires no image decode on the first
-/// navigation frame, and its cells evaporate instead of re-randomizing each
-/// frame. The caller scopes this texture to the artwork's contracting mask.
-pub(super) fn dissolve_grain(theme: &Theme, progress: f32) -> AnyElement {
-    let color = theme.text;
-    gpui::canvas(
-        |_, _, _| (),
-        move |bounds, _, window, _| {
-            const BAYER: [[u8; 4]; 4] =
-                [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-            let width = f32::from(bounds.size.width);
-            let height = f32::from(bounds.size.height);
-            let step = 6.0;
-            let left = (width * 0.38 * progress / step).floor() as usize;
-            let right = ((width - width * 0.38 * progress) / step).ceil() as usize;
-            let top = (height * 0.82 * progress / step).floor() as usize;
-            let bottom = (height / step).ceil() as usize;
-            for row in top..bottom {
-                for column in left..right {
-                    let threshold = (BAYER[row % 4][column % 4] as f32 + 1.0) / 17.0;
-                    let alpha = 1.0
-                        - crate::composer_dock::stage(
-                            progress,
-                            threshold * 0.5,
-                            0.5 + threshold * 0.5,
-                        );
-                    if alpha < 0.01 {
-                        continue;
-                    }
-                    paint_dot(
-                        window,
-                        bounds,
-                        column as f32 * step,
-                        row as f32 * step,
-                        1.0 + alpha,
-                        color.opacity(0.3 * alpha),
-                    );
-                }
-            }
-        },
-    )
-    .absolute()
-    .inset_0()
-    .into_any_element()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn ascii_advance_covers_narrow_and_fullscreen_artwork(cx: &mut gpui::TestAppContext) {
+        struct Fixture;
+        impl gpui::Render for Fixture {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                div()
+            }
+        }
+        let handle = cx.add_window(|_, _| Fixture);
+        cx.update_window(handle.into(), |_, window, _| {
+            let font = gpui::font("Menlo");
+            let color = gpui::white();
+            let advance = ascii_cell_width(window, &font, color);
+            for width in [320.0, 768.0, 2560.0] {
+                let columns = (width / advance).ceil() as usize + 1;
+                let run = TextRun {
+                    len: columns,
+                    font: font.clone(),
+                    color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let line = window.text_system().shape_line(
+                    "M".repeat(columns).into(),
+                    px(ASCII_FONT_SIZE),
+                    &[run],
+                    None,
+                );
+                let painted_width = f32::from(line.width);
+                assert!(painted_width >= width, "pattern stopped before {width}px");
+                assert!(painted_width < width + 2.0 * advance + 0.1);
+            }
+        })
+        .unwrap();
+    }
 
     #[test]
     fn cover_sampling_crops_the_long_axis_from_the_center() {

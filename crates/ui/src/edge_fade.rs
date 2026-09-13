@@ -21,7 +21,6 @@ pub fn edge_faded(band: f32, top: bool, bottom: bool, child: impl IntoElement) -
         band_bottom: None,
         inset_top: 0.0,
         outset_bottom: 0.0,
-        inset_x: 0.0,
         top,
         bottom,
         left: false,
@@ -39,7 +38,6 @@ pub struct EdgeFaded {
     band_bottom: Option<f32>,
     inset_top: f32,
     outset_bottom: f32,
-    inset_x: f32,
     top: bool,
     bottom: bool,
     left: bool,
@@ -118,12 +116,6 @@ impl EdgeFaded {
         self.outset_bottom = px;
         self
     }
-
-    /// Inset the alpha mask without relaying out or cropping the artwork.
-    pub fn inset_x(mut self, px: f32) -> Self {
-        self.inset_x = px.max(0.0);
-        self
-    }
 }
 
 impl Element for EdgeFaded {
@@ -196,9 +188,6 @@ impl Element for EdgeFaded {
             bounds.size.height -= inset;
             bounds.size.height += px(self.outset_bottom);
             bounds.size.height = bounds.size.height.max(px(0.0));
-            let inset_x = px(self.inset_x).min(bounds.size.width * 0.5);
-            bounds.origin.x += inset_x;
-            bounds.size.width -= inset_x * 2.0;
             EdgeFade {
                 bounds,
                 band: px(self.band),
