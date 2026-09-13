@@ -13422,6 +13422,284 @@ mod exit_regressions {
             .unwrap();
     }
 
+    fn onboarding_test_window(
+        cx: &mut TestAppContext,
+        dir: &std::path::Path,
+        fixture: OnboardingFixture,
+    ) -> gpui::WindowHandle<Shell> {
+        cx.update(|cx| {
+            settings::init(settings::UiSettings::default(), dir, cx);
+            crate::history::init(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                cx,
+            );
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+        });
+        let handle = cx.add_window(|window, cx| {
+            let state = cx.new(|_| AppState::new());
+            let mut shell = Shell::new(
+                state,
+                EngineBootConfig {
+                    data_dir: dir.into(),
+                    ipc_port: 0,
+                    edge_url: "http://127.0.0.1:1".into(),
+                    edge_token: None,
+                    org_id: None,
+                    workos_client_id: None,
+                    default_harness: zeron_proto::HarnessId::Mock,
+                },
+                cx,
+            );
+            shell.debug_gate = Some(GatePhase::Loading);
+            shell.splash = SplashPhase::Gone;
+            shell.onboarding = OnboardingUi::new(
+                crate::onboarding::OnboardingState::fresh(),
+                Default::default(),
+                Some(fixture),
+                cx,
+            );
+            shell.onboarding.state.step = shell.onboarding.step();
+            shell.onboarding.fixture = None;
+            window.focus(&shell.shortcut_focus, cx);
+            shell
+        });
+        handle
+            .update(cx, |shell, window, cx| {
+                shell.debug_gate = Some(GatePhase::Ready);
+                // The gate has focus before the first onboarding frame mounts.
+                window.focus(&shell.onboarding.focus, cx);
+                cx.notify();
+            })
+            .unwrap();
+        handle
+    }
+
+    fn onboarding_frame(cx: &mut TestAppContext, window: gpui::WindowHandle<Shell>) {
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.run_until_parked();
+    }
+
+    fn onboarding_press(cx: &mut TestAppContext, handle: gpui::WindowHandle<Shell>, keys: &str) {
+        for key in keys.split(' ') {
+            let keystroke = gpui::Keystroke::parse(key).unwrap();
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.dispatch_event(
+                    gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                        keystroke: keystroke.clone(),
+                        is_held: false,
+                        prefer_character_input: false,
+                    }),
+                    cx,
+                );
+                // GPUI synthesizes button clicks on release, not key-down.
+                window.dispatch_event(
+                    gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
+                    cx,
+                );
+            })
+            .unwrap();
+            onboarding_frame(cx, handle);
+        }
+    }
+
+    #[gpui::test]
+    fn onboarding_boot_focus_and_immediate_arrow_space(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let window = onboarding_test_window(cx, dir.path(), OnboardingFixture::Welcome);
+        window
+            .update(cx, |shell, window, _| {
+                assert!(shell.onboarding.focus.is_focused(window))
+            })
+            .unwrap();
+        onboarding_frame(cx, window);
+        window
+            .update(cx, |shell, window, _| {
+                assert!(shell.onboarding.control(0).is_focused(window))
+            })
+            .unwrap();
+        onboarding_press(cx, window, "right space");
+        onboarding_frame(cx, window);
+        window
+            .update(cx, |shell, window, _| {
+                assert!(shell.onboarding.control(1).is_focused(window));
+                assert_eq!(
+                    shell.onboarding.state.workspace_mode,
+                    Some(WorkspaceMode::Synced)
+                );
+            })
+            .unwrap();
+        onboarding_frame(cx, window);
+        window
+            .update(cx, |shell, window, _| {
+                assert!(shell.onboarding.control(1).is_focused(window))
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn onboarding_modal_mount_tab_trap_and_exact_cancel_focus(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let window = onboarding_test_window(cx, dir.path(), OnboardingFixture::Appearance);
+        for (step, control) in [
+            (OnboardingStep::Appearance, 1),
+            (OnboardingStep::Appearance, 25),
+            (OnboardingStep::Project, 2),
+        ] {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.onboarding.state.step = step;
+                    shell.settings.appearance = crate::appearance::AppearanceMode::Dark;
+                    cx.notify();
+                })
+                .unwrap();
+            onboarding_frame(cx, window);
+            window
+                .update(cx, |shell, window, cx| {
+                    window.focus(shell.onboarding.control(control), cx)
+                })
+                .unwrap();
+            onboarding_press(cx, window, "escape");
+            onboarding_frame(cx, window);
+            window
+                .update(cx, |shell, window, _| {
+                    assert!(shell.onboarding.close_confirm);
+                    assert!(shell.onboarding.control(26).is_focused(window));
+                })
+                .unwrap();
+            for (key, target) in [
+                ("tab", 27),
+                ("tab", 26),
+                ("shift-tab", 27),
+                ("shift-tab", 26),
+            ] {
+                onboarding_press(cx, window, key);
+                onboarding_frame(cx, window);
+                window
+                    .update(cx, |shell, window, _| {
+                        assert!(shell.onboarding.control(target).is_focused(window))
+                    })
+                    .unwrap();
+            }
+            onboarding_press(cx, window, "space");
+            onboarding_frame(cx, window);
+            window
+                .update(cx, |shell, window, _| {
+                    assert!(!shell.onboarding.close_confirm);
+                    assert_eq!(shell.onboarding.step(), step);
+                    assert!(shell.onboarding.control(control).is_focused(window));
+                })
+                .unwrap();
+            onboarding_press(cx, window, "escape");
+            onboarding_frame(cx, window);
+            onboarding_press(cx, window, "escape");
+            onboarding_frame(cx, window);
+            window
+                .update(cx, |shell, window, _| {
+                    assert!(!shell.onboarding.close_confirm);
+                    assert!(shell.onboarding.control(control).is_focused(window));
+                })
+                .unwrap();
+        }
+    }
+
+    #[gpui::test]
+    fn onboarding_modal_consumes_activation_with_stale_background_focus(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let window = onboarding_test_window(cx, dir.path(), OnboardingFixture::Appearance);
+        for (step, control) in [
+            (OnboardingStep::Appearance, 0),
+            (OnboardingStep::Appearance, 25),
+            (OnboardingStep::Project, 2),
+        ] {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.onboarding.state.step = step;
+                    shell.settings.appearance = crate::appearance::AppearanceMode::Dark;
+                    cx.notify();
+                })
+                .unwrap();
+            onboarding_frame(cx, window);
+            window
+                .update(cx, |shell, window, cx| {
+                    shell.onboarding_request_close(window, cx)
+                })
+                .unwrap();
+            onboarding_frame(cx, window);
+            for key in ["space", "enter"] {
+                window
+                    .update(cx, |shell, window, cx| {
+                        window.focus(shell.onboarding.control(control), cx);
+                        let event = gpui::KeyDownEvent {
+                            keystroke: gpui::Keystroke::parse(key).unwrap(),
+                            is_held: false,
+                            prefer_character_input: false,
+                        };
+                        assert!(
+                            shell.onboarding_key_down(&event, window, cx),
+                            "modal must consume {key} on {control}"
+                        );
+                    })
+                    .unwrap();
+                onboarding_press(cx, window, key);
+                onboarding_frame(cx, window);
+                window
+                    .update(cx, |shell, _, _| {
+                        assert!(shell.onboarding.close_confirm);
+                        assert_eq!(shell.onboarding.step(), step);
+                        assert_eq!(
+                            shell.onboarding.state.disposition,
+                            OnboardingDisposition::InProgress
+                        );
+                        assert!(shell.onboarding.error.is_none());
+                        assert_eq!(
+                            shell.settings.appearance,
+                            crate::appearance::AppearanceMode::Dark
+                        );
+                    })
+                    .unwrap();
+            }
+            window
+                .update(cx, |shell, window, cx| {
+                    shell.onboarding_cancel_close(window, cx)
+                })
+                .unwrap();
+        }
+    }
+
+    #[gpui::test]
+    fn onboarding_modal_continue_later_persists(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let window = onboarding_test_window(cx, dir.path(), OnboardingFixture::Appearance);
+        onboarding_frame(cx, window);
+        onboarding_press(cx, window, "escape");
+        onboarding_frame(cx, window);
+        onboarding_press(cx, window, "tab");
+        onboarding_frame(cx, window);
+        onboarding_press(cx, window, "space");
+        onboarding_frame(cx, window);
+        window
+            .update(cx, |shell, _, _| {
+                assert!(!shell.onboarding.close_confirm);
+                assert_eq!(
+                    shell.onboarding.state.disposition,
+                    OnboardingDisposition::Deferred
+                );
+                assert_eq!(
+                    settings::UiSettings::load(dir.path())
+                        .onboarding
+                        .disposition,
+                    OnboardingDisposition::Deferred
+                );
+            })
+            .unwrap();
+    }
+
     #[gpui::test]
     fn onboarding_keyboard_yields_to_project_palette_and_reaches_full_model_catalog(
         cx: &mut TestAppContext,
@@ -13526,7 +13804,6 @@ mod exit_regressions {
             })
             .unwrap();
     }
-
 
     #[gpui::test]
     fn pane_geometry_uses_one_animation_time_per_frame(cx: &mut TestAppContext) {
