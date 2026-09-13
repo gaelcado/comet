@@ -803,8 +803,8 @@ impl WidthTween {
 
 fn titlebar_island_vertical_geometry(progress: f32) -> (f32, f32) {
     // Match the padded flex row's center, not the raw titlebar center.
-    // Keep the native 24px controls untouched and give them 2px of air.
-    let height = 24.0 + 4.0 * progress.clamp(0.0, 1.0);
+    // Keep the native 24px controls untouched and give them 4px of air.
+    let height = 28.0 + 4.0 * progress.clamp(0.0, 1.0);
     let center = (Theme::TITLEBAR_HEIGHT + Theme::TITLEBAR_TOP_PAD) * 0.5;
     (center - height * 0.5, height)
 }
@@ -4703,8 +4703,8 @@ impl Shell {
             .child(
                 div()
                     .absolute()
-                    .left(px(8.0))
-                    .right(px(4.0))
+                    .left(px(6.0))
+                    .right_0()
                     .top(px(island_top))
                     .h(px(island_height))
                     .opacity(island)
@@ -9561,11 +9561,12 @@ mod tests {
         for step in 0..=20 {
             let (top, height) = titlebar_island_vertical_geometry(step as f32 / 20.0);
             assert_eq!(top + height * 0.5, center);
-            assert!((24.0..=28.0).contains(&height));
+            assert!((28.0..=32.0).contains(&height));
         }
         let (top, height) = titlebar_island_vertical_geometry(1.0);
-        assert_eq!(center - 12.0 - top, 2.0);
-        assert_eq!(top + height - (center + 12.0), 2.0);
+        assert_eq!(center, 21.0);
+        assert_eq!(center - 12.0 - top, 4.0);
+        assert_eq!(top + height - (center + 12.0), 4.0);
     }
 
     #[test]

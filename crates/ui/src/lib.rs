@@ -289,8 +289,8 @@ fn open_main_window(
                 titlebar: Some(TitlebarOptions {
                     title: None,
                     appears_transparent: true,
-                    // Centered on the titlebar's content line (40px bar, content
-                    // shifted 4px down, lights ~12px tall → center 22).
+                    // Native lights are 14px tall: top 14 → center 21, matching
+                    // the 38px titlebar row with 4px top-only content padding.
                     traffic_light_position: Some(gpui::point(px(14.), px(14.))),
                 }),
                 // Our own titlebar strip drags the window (WindowControlArea::
