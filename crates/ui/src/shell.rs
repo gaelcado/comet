@@ -821,20 +821,12 @@ fn new_thread_background_height(viewport_height: f32) -> f32 {
         .min(NEW_THREAD_BACKGROUND_MAX_HEIGHT)
 }
 
-fn new_thread_background_fade(
-    appearance: crate::theme::Appearance,
-    height: f32,
-) -> (f32, f32, f32) {
-    let top = Theme::TITLEBAR_HEIGHT + 16.0;
+fn new_thread_background_bottom_band(appearance: crate::theme::Appearance, height: f32) -> f32 {
     match appearance {
-        // Light canvas against saturated artwork needs a longer feather. Start
-        // above the window so the top retains a trace of artwork, rather than
-        // reading as a solid white strip. This changes only the native mask:
-        // image crop, effect cache, and docking geometry remain untouched.
-        crate::theme::Appearance::Light => (top * 2.0, -24.0, height * 0.72),
-        crate::theme::Appearance::Dark => {
-            (top, 0.0, height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO)
-        }
+        // Only the lower feather remains; toolbar contrast belongs to the
+        // floating island, not a window-wide strip over the artwork.
+        crate::theme::Appearance::Light => height * 0.72,
+        crate::theme::Appearance::Dark => height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO,
     }
 }
 
@@ -854,8 +846,7 @@ fn new_thread_background(
         return Empty.into_any_element();
     }
     let hero_height = new_thread_background_height(viewport_height);
-    let (top_band, top_inset, bottom_band) =
-        new_thread_background_fade(theme.appearance, hero_height);
+    let bottom_band = new_thread_background_bottom_band(theme.appearance, hero_height);
     let dissolve = dissolve.clamp(0.0, 1.0);
 
     let (image_opacity, effect_layer) = crate::new_thread_background_effects::treatment(
@@ -881,7 +872,7 @@ fn new_thread_background(
         .child(
             crate::edge_fade::edge_faded(
                 0.0,
-                true,
+                false,
                 true,
                 // Give the mask a definite relayout box. A percentage-sized
                 // image as the custom element's direct child could briefly
@@ -900,10 +891,6 @@ fn new_thread_background(
                     )
                     .child(effect_layer),
             )
-            // A shallow native alpha fade restores the theme surface under
-            // window controls without a hard toolbar band or another overlay.
-            .band_top(top_band)
-            .inset_top(top_inset)
             .band_bottom(bottom_band),
         )
         .into_any_element()
@@ -1487,6 +1474,7 @@ pub struct Shell {
     fullscreen: Option<bool>,
     /// 200ms ease-out tween of the cluster start on fullscreen toggles.
     titlebar_tween: Option<WidthTween>,
+    titlebar_island: Option<WidthTween>,
     /// Armed by mouse-down on a titlebar strip; the next mouse-move hands the
     /// drag to the compositor (zed's platform-titlebar pattern).
     titlebar_should_move: bool,
@@ -1790,6 +1778,7 @@ impl Shell {
             terminal_tween: None,
             fullscreen: None,
             titlebar_tween: None,
+            titlebar_island: None,
             titlebar_should_move: false,
             linux_captions: None,
             button_layout_sub: None,
@@ -4669,6 +4658,29 @@ impl Shell {
         // leave two competing + placements across the responsive variants.
         let plus_alpha = self.titlebar_plus_alpha(cx);
         let show_plus = plus_alpha > 0.01;
+        let island_target = if matches!(self.route, Route::Chat)
+            && self.state.read(cx).selected_chat.is_none()
+            && self.settings.sidebar_collapsed
+            && settings::current(cx)
+                .new_thread_composer_background
+                .as_ref()
+                .is_some_and(|background| std::path::Path::new(&background.path).is_file())
+        {
+            1.0
+        } else {
+            0.0
+        };
+        // Persistent manual tween: reversals start from the painted value,
+        // initial presentation is settled, and reduced motion snaps.
+        match self.titlebar_island {
+            None => self.titlebar_island = Some(WidthTween::new(island_target, island_target)),
+            Some(previous) if previous.to != island_target => {
+                let from = self.eval_tween(Some(previous), previous.to);
+                self.titlebar_island = Some(WidthTween::new(from, island_target));
+            }
+            _ => {}
+        }
+        let island = self.eval_tween(self.titlebar_island, island_target);
         div()
             .absolute()
             .top_0()
@@ -4679,6 +4691,26 @@ impl Shell {
             .items_center()
             .pt(px(Theme::TITLEBAR_TOP_PAD))
             .px(px(TITLEBAR_CLUSTER_PAD))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(6.0))
+                    .right(px(2.0))
+                    .top(px(4.0 + 2.0 * (1.0 - island)))
+                    .h(px(30.0 - 4.0 * (1.0 - island)))
+                    .opacity(island)
+                    .children((island > 0.001).then(|| {
+                        crate::frost::frosted(
+                            12.0,
+                            20.0,
+                            div()
+                                .size_full()
+                                .rounded(px(12.0))
+                                .bg(theme.glass_overlay())
+                                .shadow_sm(),
+                        )
+                    })),
+            )
             .children(self.titlebar_spacer(TITLEBAR_CLUSTER_PAD))
             // Left-side Linux captions (GNOME `close:…` layouts): the
             // root-level caption overlay owns the buttons; the cluster row
@@ -9515,27 +9547,18 @@ mod tests {
     }
 
     #[test]
-    fn light_hero_feather_is_gradual_without_changing_dark_mode() {
+    fn lower_hero_feather_preserves_appearance_specific_spacing() {
         for viewport in [400.0, 600.0, 1000.0, 2000.0] {
             let height = new_thread_background_height(viewport);
-            let (dark_top, dark_inset, dark_bottom) =
-                new_thread_background_fade(crate::theme::Appearance::Dark, height);
-            assert_eq!(dark_top, Theme::TITLEBAR_HEIGHT + 16.0);
-            assert_eq!(dark_inset, 0.0);
+            let dark_bottom =
+                new_thread_background_bottom_band(crate::theme::Appearance::Dark, height);
             assert_eq!(
                 dark_bottom,
                 height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO
             );
-            let (top, inset, bottom) =
-                new_thread_background_fade(crate::theme::Appearance::Light, height);
-            assert!(top > dark_top && bottom > dark_bottom);
+            let bottom = new_thread_background_bottom_band(crate::theme::Appearance::Light, height);
+            assert!(bottom > dark_bottom);
             assert!(bottom < height);
-            // Native edge fade uses a squared ramp: retain a little artwork
-            // at the edge but keep most of the theme surface under controls.
-            let alpha = |y: f32| ((y - inset) / top).clamp(0.0, 1.0).powi(2);
-            assert!(alpha(0.0) > 0.0 && alpha(0.0) < 0.1);
-            assert!(alpha(Theme::TITLEBAR_HEIGHT * 0.5) < 0.2);
-            assert_eq!(alpha(top + inset), 1.0);
         }
     }
 
