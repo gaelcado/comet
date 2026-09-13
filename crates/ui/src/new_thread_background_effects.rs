@@ -111,11 +111,12 @@ impl BackgroundLuminance {
             let [cr, cg, cb, _] = self.colors[sample];
             let mix = |base: u8, glyph: u8| {
                 let paper = if light { 255.0 } else { 0.0 };
-                (base as f32 * 0.28
+                // Keep a colored image beneath the glyph texture in both themes.
+                (base as f32 * 0.60
                     + if ink {
-                        glyph as f32 * 0.72
+                        glyph as f32 * 0.40
                     } else {
-                        paper * 0.72
+                        paper * 0.40
                     }) as u8
             };
             image::Rgba([mix(b, cb), mix(g, cg), mix(r, cr), a])
@@ -138,15 +139,16 @@ impl BackgroundLuminance {
                         let distance =
                             ((dx as f32 - 1.5).powi(2) + (dy as f32 - 1.5).powi(2)).sqrt();
                         let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0) * a as f32 / 255.0;
+                        let [sr, sg, sb, sa] = self.colors[((y + dy) * width + x + dx) as usize];
+                        let blend = |source: u8, dot: u8| {
+                            (source as f32 * 0.60
+                                + (dot as f32 * coverage + paper as f32 * (1.0 - coverage)) * 0.40)
+                                as u8
+                        };
                         pixels.put_pixel(
                             x + dx,
                             y + dy,
-                            image::Rgba([
-                                (b as f32 * coverage + paper as f32 * (1.0 - coverage)) as u8,
-                                (g as f32 * coverage + paper as f32 * (1.0 - coverage)) as u8,
-                                (r as f32 * coverage + paper as f32 * (1.0 - coverage)) as u8,
-                                255,
-                            ]),
+                            image::Rgba([blend(sb, b), blend(sg, g), blend(sr, r), sa]),
                         );
                     }
                 }
