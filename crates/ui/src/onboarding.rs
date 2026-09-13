@@ -1548,11 +1548,7 @@ fn render_model_choices(
     } else {
         "onboarding-default-model"
     };
-    let automatic = if titles {
-        "Automatic · cheapest suitable"
-    } else {
-        "Automatic"
-    };
+    let automatic = if titles { "Cheapest" } else { "Automatic" };
     let choices = std::iter::once((None, automatic.to_string())).chain(
         models
             .iter()
