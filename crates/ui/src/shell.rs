@@ -8043,7 +8043,8 @@ impl Shell {
             // (exactly as wide as the trigger row — sidebar minus its p-2
             // gutters), `flex-col gap-0.5`, then: one small muted email line
             // (`px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground/70`),
-            // the action selected by the runtime scope, then "Settings".
+            // the action selected by the runtime scope, "Show onboarding",
+            // then "Settings".
             let menu = popover::popover_card(theme)
                 .w(px(self.settings.sidebar_width - 2.0 * Theme::SPACE_SM))
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -8116,6 +8117,17 @@ impl Shell {
                     menu.child(row).child(popover::menu_separator())
                 })
                 .child(
+                    popover::menu_row(theme, false, "user-menu-onboarding")
+                        .id("user-menu-onboarding")
+                        .on_click(cx.listener(|this, _, _, cx| this.restart_onboarding(cx)))
+                        .child(
+                            icon(icons::CHECKLIST)
+                                .size(px(16.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .child(SharedString::from("Show onboarding")),
+                )
+                .child(
                     popover::menu_row(theme, false, "user-menu-settings")
                         .id("user-menu-settings")
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -8127,17 +8139,6 @@ impl Shell {
                                 .text_color(theme.text_muted),
                         )
                         .child(SharedString::from("Settings")),
-                )
-                .child(
-                    popover::menu_row(theme, false, "user-menu-onboarding")
-                        .id("user-menu-onboarding")
-                        .on_click(cx.listener(|this, _, _, cx| this.restart_onboarding(cx)))
-                        .child(
-                            icon(icons::CHECKLIST)
-                                .size(px(16.0))
-                                .text_color(theme.text_muted),
-                        )
-                        .child(SharedString::from("Show onboarding")),
                 )
                 .into_any_element();
             trigger = trigger.child(popover::anchored_menu_above(
