@@ -215,6 +215,8 @@ pub struct OnboardingUi {
     pub theme_scroll: ScrollHandle,
     pub harness_scroll: ScrollHandle,
     pub step_scroll: ScrollHandle,
+    pub model_scroll: ScrollHandle,
+    model_scroll_selection: Option<(OnboardingStep, Option<String>, usize)>,
     pub harness_task: Option<Task<()>>,
     pub model_task: Option<Task<()>>,
     pub accounts_task: Option<Task<()>>,
@@ -227,7 +229,7 @@ impl OnboardingUi {
         mut state: OnboardingState,
         defaults: ComposerDefaults,
         fixture: Option<OnboardingFixture>,
-        cx: &mut Context<Shell>,
+        cx: &mut gpui::App,
     ) -> Self {
         // The former sixth step only waited for a composer submit. Treat an
         // in-progress snapshot already parked there as completed instead of
@@ -266,6 +268,8 @@ impl OnboardingUi {
             theme_scroll: ScrollHandle::new(),
             harness_scroll: ScrollHandle::new(),
             step_scroll: ScrollHandle::new(),
+            model_scroll: ScrollHandle::new(),
+            model_scroll_selection: None,
             harness_task: None,
             model_task: None,
             accounts_task: None,
@@ -302,14 +306,58 @@ impl OnboardingUi {
     /// registry order. Usability deliberately does not depend on OAuth account
     /// discovery: API-key-backed CLIs are valid even without an account row.
     pub(crate) fn resolve_default_harness(&mut self) {
-        let selected = self
-            .harnesses
-            .ready()
-            .and_then(|rows| preferred_harness(rows, &self.accounts, self.selected_harness));
+        let Some(rows) = self.harnesses.ready() else {
+            return;
+        };
+        let selected = preferred_harness(rows, &self.accounts, self.selected_harness);
         if self.selected_harness != selected {
             self.selected_harness = selected;
             self.selected_model = None;
             self.selected_reasoning = None;
+            self.models = Loadable::Idle;
+            self.model_task = None;
+        }
+    }
+
+    /// Resume loading only after discovery has validated the saved harness.
+    pub(crate) fn models_to_load(&self) -> Option<HarnessId> {
+        if self.active()
+            && self.step().index() >= OnboardingStep::Defaults.index()
+            && self.harnesses.ready().is_some()
+            && matches!(self.models, Loadable::Idle)
+        {
+            self.selected_harness
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn prepare_model_controls(&mut self, cx: &mut gpui::App) {
+        let count = self
+            .models
+            .ready()
+            .map_or(0, Vec::len)
+            .max(self.title_models.ready().map_or(0, Vec::len));
+        while self.controls.len() < 32 + count {
+            self.controls.push(cx.focus_handle().tab_stop(true));
+        }
+        let (models, selected) = match self.step() {
+            OnboardingStep::Defaults => (self.models.ready(), self.selected_model.as_ref()),
+            OnboardingStep::Titles => (
+                self.title_models.ready(),
+                self.title_settings.ready().and_then(|s| s.model.as_ref()),
+            ),
+            _ => return,
+        };
+        if let Some(models) = models {
+            let selection = (self.step(), selected.cloned(), models.len());
+            if self.model_scroll_selection.as_ref() != Some(&selection) {
+                let index = selected
+                    .and_then(|id| models.iter().position(|m| &m.id == id))
+                    .map_or(0, |index| index + 1);
+                self.model_scroll.scroll_to_item(index);
+                self.model_scroll_selection = Some(selection);
+            }
         }
     }
 
@@ -1473,6 +1521,82 @@ fn chip(
         .child(label)
 }
 
+/// Model rows use a separate focus range, so a complete catalog never collides
+/// with reasoning, navigation, or dialog controls.
+pub(crate) fn model_control(index: usize) -> usize {
+    if index == 0 { 8 } else { 31 + index }
+}
+
+pub(crate) fn model_choice(control: usize) -> Option<usize> {
+    match control {
+        8 => Some(0),
+        32.. => Some(control - 31),
+        _ => None,
+    }
+}
+
+fn render_model_choices(
+    ui: &OnboardingUi,
+    theme: &Theme,
+    models: &[Model],
+    selected: Option<&str>,
+    titles: bool,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let prefix = if titles {
+        "onboarding-title-model"
+    } else {
+        "onboarding-default-model"
+    };
+    let automatic = if titles {
+        "Automatic · cheapest suitable"
+    } else {
+        "Automatic"
+    };
+    let choices = std::iter::once((None, automatic.to_string())).chain(
+        models
+            .iter()
+            .map(|model| (Some(model.id.clone()), model.label.clone())),
+    );
+    div()
+        .id(prefix)
+        .w_full()
+        .h(px(((models.len() + 1) as f32 * 34.0).min(153.0)))
+        .overflow_y_scroll()
+        .track_scroll(&ui.model_scroll)
+        .role(gpui::Role::RadioGroup)
+        .aria_label(if titles {
+            "Title model"
+        } else {
+            "Default model"
+        })
+        .children(choices.enumerate().map(|(index, (id, label))| {
+            let selected = selected == id.as_deref();
+            popover::menu_row(theme, selected, format!("{prefix}-{index}"))
+                .id((prefix, index))
+                .h(px(34.0))
+                .w_full()
+                .role(gpui::Role::RadioButton)
+                .aria_toggled(toggled(selected))
+                .track_focus(ui.control(model_control(index)))
+                .focus_visible(|style| style.border_1().border_color(theme.text))
+                .child(div().flex_1().min_w_0().text_ellipsis().child(label))
+                .child(
+                    icon(crate::icons::CHECK)
+                        .size(px(14.0))
+                        .opacity(if selected { 1.0 } else { 0.0 }),
+                )
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    if titles {
+                        shell.onboarding_pick_title_model(id.clone(), cx);
+                    } else {
+                        shell.onboarding_pick_default_model(id.clone(), cx);
+                    }
+                }))
+        }))
+        .into_any_element()
+}
+
 fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let harnesses: Vec<HarnessDescriptor> = ui
         .harnesses
@@ -1530,62 +1654,26 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                     }))
                 }),
         );
-    let model_content: AnyElement =
-        match &ui.models {
-            Loadable::Idle | Loadable::Loading => div()
-                .id("onboarding-model-loading")
-                .role(gpui::Role::ProgressIndicator)
-                .aria_label("Loading models")
-                .h(px(38.0))
-                .rounded(px(9.0))
-                .bg(ink(0.045))
-                .into_any_element(),
-            Loadable::Error(error) => div()
-                .id("onboarding-model-load-error")
-                .role(gpui::Role::Alert)
-                .text_size(crate::typography::ui_rems(12.0))
-                .text_color(theme.danger_muted)
-                .child(error.clone())
-                .into_any_element(),
-            Loadable::Ready(_) => div()
-                .id("onboarding-default-models")
-                .flex()
-                .flex_wrap()
-                .gap(px(8.0))
-                .role(gpui::Role::RadioGroup)
-                .aria_label("Default model")
-                .child(
-                    chip(theme, "Automatic".into(), ui.selected_model.is_none(), None)
-                        .id("onboarding-default-model-auto")
-                        .flex_none()
-                        .role(gpui::Role::RadioButton)
-                        .aria_toggled(toggled(ui.selected_model.is_none()))
-                        .track_focus(ui.control(8))
-                        .on_click(cx.listener(|shell, _, _, cx| {
-                            shell.onboarding_pick_default_model(None, cx)
-                        })),
-                )
-                .children(
-                    models
-                        .into_iter()
-                        .take(4)
-                        .enumerate()
-                        .map(|(index, model)| {
-                            let selected = ui.selected_model.as_deref() == Some(model.id.as_str());
-                            let id = model.id;
-                            chip(theme, model.label.into(), selected, ui.selected_harness)
-                                .id(("onboarding-default-model", index))
-                                .flex_none()
-                                .role(gpui::Role::RadioButton)
-                                .aria_toggled(toggled(selected))
-                                .track_focus(ui.control(9 + index))
-                                .on_click(cx.listener(move |shell, _, _, cx| {
-                                    shell.onboarding_pick_default_model(Some(id.clone()), cx)
-                                }))
-                        }),
-                )
-                .into_any_element(),
-        };
+    let model_content: AnyElement = match &ui.models {
+        Loadable::Idle | Loadable::Loading => div()
+            .id("onboarding-model-loading")
+            .role(gpui::Role::ProgressIndicator)
+            .aria_label("Loading models")
+            .h(px(38.0))
+            .rounded(px(9.0))
+            .bg(ink(0.045))
+            .into_any_element(),
+        Loadable::Error(error) => div()
+            .id("onboarding-model-load-error")
+            .role(gpui::Role::Alert)
+            .text_size(crate::typography::ui_rems(12.0))
+            .text_color(theme.danger_muted)
+            .child(error.clone())
+            .into_any_element(),
+        Loadable::Ready(_) => {
+            render_model_choices(ui, theme, &models, ui.selected_model.as_deref(), false, cx)
+        }
+    };
     let reasoning_chips =
         div()
             .id("onboarding-default-reasoning-levels")
@@ -1801,44 +1889,14 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                         .text_color(theme.text_muted)
                         .child("Title model"),
                 )
-                .child(
-                    div()
-                        .id("onboarding-title-models")
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(8.0))
-                        .role(gpui::Role::RadioGroup)
-                        .aria_label("Title model")
-                        .child(
-                            chip(
-                                theme,
-                                "Automatic · cheapest suitable".into(),
-                                current.model.is_none(),
-                                None,
-                            )
-                            .id("onboarding-title-model-auto")
-                            .flex_none()
-                            .role(gpui::Role::RadioButton)
-                            .aria_toggled(toggled(current.model.is_none()))
-                            .track_focus(ui.control(8))
-                            .on_click(cx.listener(
-                                |shell, _, _, cx| shell.onboarding_pick_title_model(None, cx),
-                            )),
-                        )
-                        .children(models.iter().take(4).enumerate().map(|(index, model)| {
-                            let selected = current.model.as_deref() == Some(model.id.as_str());
-                            let id = model.id.clone();
-                            chip(theme, model.label.clone().into(), selected, current.harness)
-                                .id(("onboarding-title-model", index))
-                                .flex_none()
-                                .role(gpui::Role::RadioButton)
-                                .aria_toggled(toggled(selected))
-                                .track_focus(ui.control(9 + index))
-                                .on_click(cx.listener(move |shell, _, _, cx| {
-                                    shell.onboarding_pick_title_model(Some(id.clone()), cx)
-                                }))
-                        })),
-                )
+                .child(render_model_choices(
+                    ui,
+                    theme,
+                    models,
+                    current.model.as_deref(),
+                    true,
+                    cx,
+                ))
                 .into_any_element(),
         }
     };
@@ -2215,7 +2273,7 @@ pub fn render(
         (32.0
             + STEP_GROUP_GAP
             + rows as f32 * 86.0
-            + if has_models { 132.0 } else { 0.0 }
+            + if has_models { 196.0 } else { 0.0 }
             + Theme::SPACE_MD
             + 40.0)
             .min(journey_max_height(step))
@@ -2520,6 +2578,105 @@ mod tests {
             preferred_harness(&rows, &no_accounts, Some(HarnessId::Codex)),
             Some(HarnessId::Codex)
         );
+    }
+
+    #[gpui::test]
+    fn discovery_preserves_saved_choices_until_harnesses_are_ready(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut defaults = ComposerDefaults::default();
+            defaults.harness = Some(HarnessId::Codex);
+            defaults.remember_model(HarnessId::Codex, "saved-model".into(), "Saved model".into());
+            defaults.reasoning = Some(ReasoningLevel::High);
+            for accounts_first in [true, false] {
+                let mut ui =
+                    OnboardingUi::new(OnboardingState::fresh(), defaults.clone(), None, cx);
+                ui.harnesses = Loadable::Loading;
+                ui.accounts = Loadable::Loading;
+                if !accounts_first {
+                    ui.harnesses = Loadable::Ready(fixture_harnesses());
+                }
+                ui.resolve_default_harness();
+                ui.accounts = Loadable::Error("account discovery failed".into());
+                ui.resolve_default_harness();
+                assert_eq!(ui.selected_harness, Some(HarnessId::Codex));
+                assert_eq!(ui.selected_model.as_deref(), Some("saved-model"));
+                assert_eq!(ui.selected_reasoning, Some(ReasoningLevel::High));
+                ui.harnesses = Loadable::Ready(fixture_harnesses());
+                ui.resolve_default_harness();
+                assert_eq!(ui.selected_model.as_deref(), Some("saved-model"));
+                ui.harnesses = Loadable::Error("catalog unavailable".into());
+                ui.resolve_default_harness();
+                assert_eq!(ui.selected_harness, Some(HarnessId::Codex));
+                assert_eq!(ui.selected_reasoning, Some(ReasoningLevel::High));
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn resumed_defaults_load_once_after_discovery_without_resetting_selection(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            for step in [
+                OnboardingStep::Defaults,
+                OnboardingStep::Titles,
+                OnboardingStep::Project,
+            ] {
+                let mut state = OnboardingState::fresh();
+                state.step = step;
+                let mut ui = OnboardingUi::new(state, ComposerDefaults::default(), None, cx);
+                ui.selected_harness = Some(HarnessId::Codex);
+                ui.selected_model = Some("saved-model".into());
+                assert_eq!(ui.models_to_load(), None);
+                ui.harnesses = Loadable::Ready(fixture_harnesses());
+                ui.resolve_default_harness();
+                assert_eq!(ui.models_to_load(), Some(HarnessId::Codex));
+                assert_eq!(ui.selected_model.as_deref(), Some("saved-model"));
+                ui.models = Loadable::Loading;
+                assert_eq!(ui.models_to_load(), None);
+                ui.models = Loadable::Ready(fixture_models());
+                ui.state.step = OnboardingStep::Defaults;
+                assert_eq!(ui.models_to_load(), None);
+                ui.models = Loadable::Error("offline".into());
+                assert_eq!(
+                    ui.models_to_load(),
+                    None,
+                    "do not retry failures every render"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn full_catalog_has_unique_focus_handles_outside_navigation(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut ui = OnboardingUi::new(
+                OnboardingState::fresh(),
+                ComposerDefaults::default(),
+                None,
+                cx,
+            );
+            let template = fixture_models().remove(0);
+            let models: Vec<_> = (0..100)
+                .map(|index| {
+                    let mut model = template.clone();
+                    model.id = format!("model-{index}");
+                    model
+                })
+                .collect();
+            ui.models = Loadable::Ready(models.clone());
+            ui.title_models = Loadable::Ready(models);
+            ui.prepare_model_controls(cx);
+            for index in 0..=100 {
+                let control = model_control(index);
+                assert_eq!(model_choice(control), Some(index));
+                assert!(control == 8 || control >= 32);
+                assert!(control < ui.controls.len());
+                if index > 0 {
+                    assert_ne!(ui.control(control), ui.control(model_control(index - 1)));
+                }
+            }
+        });
     }
 
     #[test]
