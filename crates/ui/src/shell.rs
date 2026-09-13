@@ -821,6 +821,23 @@ fn new_thread_background_height(viewport_height: f32) -> f32 {
         .min(NEW_THREAD_BACKGROUND_MAX_HEIGHT)
 }
 
+fn new_thread_background_fade(
+    appearance: crate::theme::Appearance,
+    height: f32,
+) -> (f32, f32, f32) {
+    let top = Theme::TITLEBAR_HEIGHT + 16.0;
+    match appearance {
+        // Light canvas against saturated artwork needs a longer feather. Start
+        // above the window so the top retains a trace of artwork, rather than
+        // reading as a solid white strip. This changes only the native mask:
+        // image crop, effect cache, and docking geometry remain untouched.
+        crate::theme::Appearance::Light => (top * 2.0, -24.0, height * 0.72),
+        crate::theme::Appearance::Dark => {
+            (top, 0.0, height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO)
+        }
+    }
+}
+
 fn new_thread_background(
     background: Option<&settings::NewThreadComposerBackground>,
     effect: settings::NewThreadBackgroundEffect,
@@ -837,6 +854,8 @@ fn new_thread_background(
         return Empty.into_any_element();
     }
     let hero_height = new_thread_background_height(viewport_height);
+    let (top_band, top_inset, bottom_band) =
+        new_thread_background_fade(theme.appearance, hero_height);
     let dissolve = dissolve.clamp(0.0, 1.0);
 
     let (image_opacity, effect_layer) = crate::new_thread_background_effects::treatment(
@@ -883,8 +902,9 @@ fn new_thread_background(
             )
             // A shallow native alpha fade restores the theme surface under
             // window controls without a hard toolbar band or another overlay.
-            .band_top(Theme::TITLEBAR_HEIGHT + 16.0)
-            .band_bottom(hero_height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO),
+            .band_top(top_band)
+            .inset_top(top_inset)
+            .band_bottom(bottom_band),
         )
         .into_any_element()
 }
@@ -9491,6 +9511,31 @@ mod tests {
                 "{} default {combo:?} does not parse",
                 id.label()
             );
+        }
+    }
+
+    #[test]
+    fn light_hero_feather_is_gradual_without_changing_dark_mode() {
+        for viewport in [400.0, 600.0, 1000.0, 2000.0] {
+            let height = new_thread_background_height(viewport);
+            let (dark_top, dark_inset, dark_bottom) =
+                new_thread_background_fade(crate::theme::Appearance::Dark, height);
+            assert_eq!(dark_top, Theme::TITLEBAR_HEIGHT + 16.0);
+            assert_eq!(dark_inset, 0.0);
+            assert_eq!(
+                dark_bottom,
+                height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO
+            );
+            let (top, inset, bottom) =
+                new_thread_background_fade(crate::theme::Appearance::Light, height);
+            assert!(top > dark_top && bottom > dark_bottom);
+            assert!(bottom < height);
+            // Native edge fade uses a squared ramp: retain a little artwork
+            // at the edge but keep most of the theme surface under controls.
+            let alpha = |y: f32| ((y - inset) / top).clamp(0.0, 1.0).powi(2);
+            assert!(alpha(0.0) > 0.0 && alpha(0.0) < 0.1);
+            assert!(alpha(Theme::TITLEBAR_HEIGHT * 0.5) < 0.2);
+            assert_eq!(alpha(top + inset), 1.0);
         }
     }
 
