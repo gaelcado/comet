@@ -801,6 +801,14 @@ impl WidthTween {
     }
 }
 
+fn titlebar_island_vertical_geometry(progress: f32) -> (f32, f32) {
+    // Match the padded flex row's center, not the raw titlebar center.
+    // Keep the native 24px controls untouched and give them 2px of air.
+    let height = 24.0 + 4.0 * progress.clamp(0.0, 1.0);
+    let center = (Theme::TITLEBAR_HEIGHT + Theme::TITLEBAR_TOP_PAD) * 0.5;
+    (center - height * 0.5, height)
+}
+
 fn bottom_stack_measurement_matches(
     measured_has_composer: bool,
     expected_has_composer: bool,
@@ -4681,6 +4689,7 @@ impl Shell {
             _ => {}
         }
         let island = self.eval_tween(self.titlebar_island, island_target);
+        let (island_top, island_height) = titlebar_island_vertical_geometry(island);
         div()
             .absolute()
             .top_0()
@@ -4694,10 +4703,10 @@ impl Shell {
             .child(
                 div()
                     .absolute()
-                    .left(px(6.0))
-                    .right(px(2.0))
-                    .top(px(4.0 + 2.0 * (1.0 - island)))
-                    .h(px(30.0 - 4.0 * (1.0 - island)))
+                    .left(px(8.0))
+                    .right(px(4.0))
+                    .top(px(island_top))
+                    .h(px(island_height))
                     .opacity(island)
                     .children((island > 0.001).then(|| {
                         crate::frost::frosted(
@@ -9544,6 +9553,19 @@ mod tests {
                 id.label()
             );
         }
+    }
+
+    #[test]
+    fn island_stays_centered_on_controls_while_expanding() {
+        let center = (Theme::TITLEBAR_HEIGHT + Theme::TITLEBAR_TOP_PAD) * 0.5;
+        for step in 0..=20 {
+            let (top, height) = titlebar_island_vertical_geometry(step as f32 / 20.0);
+            assert_eq!(top + height * 0.5, center);
+            assert!((24.0..=28.0).contains(&height));
+        }
+        let (top, height) = titlebar_island_vertical_geometry(1.0);
+        assert_eq!(center - 12.0 - top, 2.0);
+        assert_eq!(top + height - (center + 12.0), 2.0);
     }
 
     #[test]
