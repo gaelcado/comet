@@ -7560,7 +7560,10 @@ impl Render for Composer {
         }
         self.last_rendered_height = pill_height;
         self.dock_clearance_correction = self.dock_frame.map_or(0.0, |frame| {
-            dock_height(if frame.docked { 1.0 } else { 0.0 }) + strip_h + appshot_strip_height(appshot_count) + comment_strip_h
+            dock_height(if frame.docked { 1.0 } else { 0.0 })
+                + strip_h
+                + appshot_strip_height(appshot_count)
+                + comment_strip_h
                 - pill_height
         });
         let text_pt = if self.dock_frame.is_some() {
@@ -7569,8 +7572,13 @@ impl Render for Composer {
             morph_text_pad(morph_t)
         };
         let surface_radius = COMPOSER_RADIUS - 4.0 * dock_amount;
-        let textarea_height =
-            (pill_height - strip_h - appshot_strip_height(appshot_count) - comment_strip_h - PILL_BORDER_V - ACTIONS_ROW_HEIGHT).max(0.0);
+        let textarea_height = (pill_height
+            - strip_h
+            - appshot_strip_height(appshot_count)
+            - comment_strip_h
+            - PILL_BORDER_V
+            - ACTIONS_ROW_HEIGHT)
+            .max(0.0);
         self.input.update(cx, |input, cx| {
             let height = if expanded {
                 (textarea_height - text_pt - 4.0).max(0.0)

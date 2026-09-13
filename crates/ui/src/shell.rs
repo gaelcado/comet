@@ -7182,7 +7182,7 @@ impl Shell {
             .child({
                 let measured = self.bottom_stack.clone();
                 let measured_has_composer = self.bottom_stack_has_composer.clone();
-                let contains_composer = (has_spaces || no_project) && has_selection;
+                let contains_composer = (has_spaces || no_project || has_appshots) && has_selection;
                 let composer = self.composer.clone();
                 div()
                     .flex_none()
