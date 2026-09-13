@@ -7168,6 +7168,13 @@ impl Shell {
     ) {
         if event.keystroke.key == "escape" && self.capture_escape_surface(window, cx) {
             cx.stop_propagation();
+        } else if self.onboarding.close_confirm
+            && crate::onboarding::activates(event)
+            && self.onboarding_key_down(event, window, cx)
+        {
+            // Consume before the focused div can arm a synthesized click on
+            // key-up, including when focus still belongs to the journey.
+            cx.stop_propagation();
         }
     }
 
@@ -7178,9 +7185,10 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.onboarding.active()
-            || self.overlay_owns_keyboard(cx)
-            || self.onboarding.agent_settings_open
-            || self.sync_flow.has_visible_overlay()
+            || (!self.onboarding.close_confirm
+                && (self.overlay_owns_keyboard(cx)
+                    || self.onboarding.agent_settings_open
+                    || self.sync_flow.has_visible_overlay()))
         {
             return false;
         }
@@ -7257,6 +7265,18 @@ impl Shell {
             .controls
             .iter()
             .position(|handle| handle.is_focused(window));
+        if self.onboarding.close_confirm {
+            if crate::onboarding::activates(event) {
+                match focused {
+                    Some(26) => self.onboarding_cancel_close(window, cx),
+                    Some(27) => self.onboarding_defer(cx),
+                    _ => {}
+                }
+            }
+            // The modal owns keyboard input even if focus was lost or a
+            // background control retained it while the dialog was mounting.
+            return true;
+        }
         let Some(focused) = focused else {
             return false;
         };
@@ -7390,14 +7410,6 @@ impl Shell {
         if !crate::onboarding::activates(event) {
             return false;
         }
-        if self.onboarding.close_confirm {
-            match focused {
-                26 => self.onboarding_cancel_close(window, cx),
-                27 => self.onboarding_defer(cx),
-                _ => return false,
-            }
-            return true;
-        }
         match focused {
             28 if self.onboarding.step() != OnboardingStep::Workspace => self.onboarding_back(cx),
             29 => self.onboarding_skip(cx),
@@ -7484,7 +7496,7 @@ impl Shell {
                     }
                 }
                 OnboardingStep::Defaults => {
-                    if focused == 26 {
+                    if focused == 31 {
                         self.onboarding_continue(cx);
                     } else if focused == 16 {
                         self.onboarding_pick_reasoning(None, cx);
@@ -10107,18 +10119,34 @@ impl Render for Shell {
             && self.onboarding.active()
             && self.onboarding.step() != OnboardingStep::FirstSession
             && !self.onboarding.focus_initialized;
-        if onboarding_needs_initial_focus {
-            self.onboarding.focus_initialized = true;
-        }
-        let preferred_focus =
-            if self.onboarding.active() && self.onboarding.step() != OnboardingStep::FirstSession {
-                self.onboarding.control(0).clone()
+        cx.defer_in(window, move |this, window, cx| {
+            if this.onboarding.active() && this.onboarding.close_confirm {
+                // Reconcile against the completed frame. Keep Tab's second
+                // action focused, but never restore a control behind the scrim.
+                let cancel = this.onboarding.control(26);
+                let confirm = this.onboarding.control(27);
+                if shortcut_focus.contains(cancel, window) {
+                    if !cancel.is_focused(window) && !confirm.is_focused(window) {
+                        window.focus(cancel, cx);
+                    }
+                    this.onboarding.focus_initialized = true;
+                }
+                return;
+            }
+            let preferred_focus = if this.onboarding.active()
+                && this.onboarding.step() != OnboardingStep::FirstSession
+            {
+                this.onboarding.control(0).clone()
             } else {
-                self.composer.focus_handle(cx)
+                this.composer.focus_handle(cx)
             };
-        window.defer(cx, move |window, cx| {
-            if onboarding_needs_initial_focus && window.focused(cx).is_none() {
-                window.focus(&preferred_focus, cx);
+            if onboarding_needs_initial_focus && !this.onboarding.focus_initialized {
+                // Root/gate focus does not initialize the onboarding scope.
+                // Retry on later frames if its first control is not mounted yet.
+                if shortcut_focus.contains(&preferred_focus, window) {
+                    window.focus(&preferred_focus, cx);
+                    this.onboarding.focus_initialized = true;
+                }
             } else {
                 restore_mounted_focus(&shortcut_focus, &preferred_focus, &unfocused, window, cx);
             }
@@ -11539,7 +11567,10 @@ mod exit_regressions {
             .update(cx, |shell, window, cx| {
                 shell.debug_gate = Some(GatePhase::Ready);
                 // The gate has focus before the first onboarding frame mounts.
+                assert!(!shell.onboarding.focus_initialized);
                 window.focus(&shell.onboarding.focus, cx);
+                assert!(shell.onboarding.focus.is_focused(window));
+                assert!(window.focused(cx).is_some());
                 cx.notify();
             })
             .unwrap();
@@ -11552,23 +11583,27 @@ mod exit_regressions {
         cx.run_until_parked();
     }
 
+    fn onboarding_dispatch_key(window: &mut Window, cx: &mut App, key: &str) {
+        let keystroke = gpui::Keystroke::parse(key).unwrap();
+        window.dispatch_event(
+            gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        // GPUI synthesizes button clicks on release, not key-down.
+        window.dispatch_event(
+            gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
+            cx,
+        );
+    }
+
     fn onboarding_press(cx: &mut TestAppContext, handle: gpui::WindowHandle<Shell>, keys: &str) {
         for key in keys.split(' ') {
-            let keystroke = gpui::Keystroke::parse(key).unwrap();
             cx.update_window(handle.into(), |_, window, cx| {
-                window.dispatch_event(
-                    gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
-                        keystroke: keystroke.clone(),
-                        is_held: false,
-                        prefer_character_input: false,
-                    }),
-                    cx,
-                );
-                // GPUI synthesizes button clicks on release, not key-down.
-                window.dispatch_event(
-                    gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
-                    cx,
-                );
+                onboarding_dispatch_key(window, cx, key)
             })
             .unwrap();
             onboarding_frame(cx, handle);
@@ -11579,11 +11614,6 @@ mod exit_regressions {
     fn onboarding_boot_focus_and_immediate_arrow_space(cx: &mut TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
         let window = onboarding_test_window(cx, dir.path(), OnboardingFixture::Welcome);
-        window
-            .update(cx, |shell, window, _| {
-                assert!(shell.onboarding.focus.is_focused(window))
-            })
-            .unwrap();
         onboarding_frame(cx, window);
         window
             .update(cx, |shell, window, _| {
@@ -11616,12 +11646,12 @@ mod exit_regressions {
         for (step, control) in [
             (OnboardingStep::Appearance, 1),
             (OnboardingStep::Appearance, 25),
+            (OnboardingStep::Defaults, 31),
             (OnboardingStep::Project, 2),
         ] {
             window
                 .update(cx, |shell, _, cx| {
                     shell.onboarding.state.step = step;
-                    shell.settings.appearance = crate::appearance::AppearanceMode::Dark;
                     cx.notify();
                 })
                 .unwrap();
@@ -11680,14 +11710,14 @@ mod exit_regressions {
         let dir = tempfile::tempdir().unwrap();
         let window = onboarding_test_window(cx, dir.path(), OnboardingFixture::Appearance);
         for (step, control) in [
-            (OnboardingStep::Appearance, 0),
+            (OnboardingStep::Appearance, 1),
             (OnboardingStep::Appearance, 25),
+            (OnboardingStep::Defaults, 31),
             (OnboardingStep::Project, 2),
         ] {
             window
                 .update(cx, |shell, _, cx| {
                     shell.onboarding.state.step = step;
-                    shell.settings.appearance = crate::appearance::AppearanceMode::Dark;
                     cx.notify();
                 })
                 .unwrap();
@@ -11699,9 +11729,17 @@ mod exit_regressions {
                 .unwrap();
             onboarding_frame(cx, window);
             for key in ["space", "enter"] {
-                window
-                    .update(cx, |shell, window, cx| {
+                cx.update_window(window.into(), |_, window, cx| {
+                    let shell = window.root::<Shell>().flatten().unwrap();
+                    shell.update(cx, |shell, cx| {
                         window.focus(shell.onboarding.control(control), cx);
+                        cx.notify();
+                    });
+                    // Render the retained background focus, then dispatch before
+                    // the deferred reconciliation can move it into the dialog.
+                    window.draw(cx).clear();
+                    shell.update(cx, |shell, cx| {
+                        assert!(shell.onboarding.control(control).is_focused(window));
                         let event = gpui::KeyDownEvent {
                             keystroke: gpui::Keystroke::parse(key).unwrap(),
                             is_held: false,
@@ -11711,13 +11749,15 @@ mod exit_regressions {
                             shell.onboarding_key_down(&event, window, cx),
                             "modal must consume {key} on {control}"
                         );
-                    })
-                    .unwrap();
-                onboarding_press(cx, window, key);
+                    });
+                    onboarding_dispatch_key(window, cx, key);
+                })
+                .unwrap();
                 onboarding_frame(cx, window);
                 window
-                    .update(cx, |shell, _, _| {
+                    .update(cx, |shell, window, _| {
                         assert!(shell.onboarding.close_confirm);
+                        assert!(shell.onboarding.control(26).is_focused(window));
                         assert_eq!(shell.onboarding.step(), step);
                         assert_eq!(
                             shell.onboarding.state.disposition,
@@ -11726,7 +11766,7 @@ mod exit_regressions {
                         assert!(shell.onboarding.error.is_none());
                         assert_eq!(
                             shell.settings.appearance,
-                            crate::appearance::AppearanceMode::Dark
+                            crate::appearance::AppearanceMode::System
                         );
                     })
                     .unwrap();
