@@ -11,6 +11,9 @@ use crate::theme::Theme;
 
 const ASCII_FONT_SIZE: f32 = 6.0;
 const ASCII_LINE_HEIGHT: f32 = 8.0;
+const ASCII_STRENGTH: f32 = 0.72;
+
+type DitherCache = Option<((u32, u32), std::sync::Arc<gpui::RenderImage>)>;
 
 #[derive(Debug)]
 struct BackgroundLuminance {
@@ -18,33 +21,50 @@ struct BackgroundLuminance {
     height: u32,
     pixels: Box<[u8]>,
     colors: Box<[[u8; 4]]>,
-    dither: std::sync::OnceLock<Option<std::sync::Arc<gpui::Image>>>,
+    dither: std::sync::Mutex<DitherCache>,
 }
 
 impl BackgroundLuminance {
-    fn dither_image(&self) -> Option<std::sync::Arc<gpui::Image>> {
-        self.dither
-            .get_or_init(|| {
-                const BAYER: [[u8; 4]; 4] =
-                    [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-                let pixels = image::RgbaImage::from_fn(self.width, self.height, |x, y| {
-                    let [r, g, b, a] = self.colors[(y * self.width + x) as usize];
-                    let threshold = BAYER[y as usize % 4][x as usize % 4];
-                    image::Rgba([
-                        quantize(r, threshold),
-                        quantize(g, threshold),
-                        quantize(b, threshold),
-                        a,
-                    ])
-                });
-                let mut bytes = std::io::Cursor::new(Vec::new());
-                pixels.write_to(&mut bytes, image::ImageFormat::Png).ok()?;
-                Some(std::sync::Arc::new(gpui::Image::from_bytes(
-                    gpui::ImageFormat::Png,
-                    bytes.into_inner(),
-                )))
-            })
-            .clone()
+    fn dither_image(
+        &self,
+        width: u32,
+        height: u32,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> std::sync::Arc<gpui::RenderImage> {
+        let mut cached = self
+            .dither
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some((size, image)) = cached.as_ref() {
+            if *size == (width, height) {
+                return image.clone();
+            }
+        }
+        let pixels = self.dither_pixels(width, height);
+        let image = std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(pixels)]));
+        if let Some((_, previous)) = cached.replace(((width, height), image.clone())) {
+            gpui::ImageSource::Render(previous).evict(Some(window), cx);
+        }
+        image
+    }
+
+    fn dither_pixels(&self, width: u32, height: u32) -> image::RgbaImage {
+        const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+        let bounds = gpui::size(px(width as f32), px(height as f32));
+        image::RgbaImage::from_fn(width, height, |x, y| {
+            // Two logical pixels per dot: screen-space, not source-space.
+            // Sampling once per cell keeps the stipple intact on detailed art.
+            let column = x / 2;
+            let row = y / 2;
+            let index = self.cover_index(bounds, (column * 2 + 1) as f32, (row * 2 + 1) as f32);
+            let [r, g, b, a] = dither_color(
+                self.colors[index],
+                BAYER[row as usize % 4][column as usize % 4],
+            );
+            // RenderImage consumes BGRA, unlike image::Image's encoded decoder.
+            image::Rgba([b, g, r, a])
+        })
     }
 
     fn sample_cover(&self, bounds: gpui::Size<Pixels>, x: f32, y: f32) -> u8 {
@@ -140,22 +160,31 @@ pub(super) fn treatment(
     if effect == NewThreadBackgroundEffect::None {
         return (image_opacity, Empty.into_any_element());
     }
-    // Transform once, not hundreds of thousands of canvas quads on every
-    // animation frame. The processed raster follows the original cover crop.
+    // Cache one screen-sized raster. Resizes regenerate the crop and retire
+    // the previous GPU image; docking reuses it without resampling the dots.
     if effect == NewThreadBackgroundEffect::Dither {
-        return match luminance.as_ref().and_then(|source| source.dither_image()) {
-            Some(image) => (
-                0.0,
-                gpui::img(image)
-                    .absolute()
-                    .inset_0()
-                    .size_full()
-                    .object_fit(gpui::ObjectFit::Cover)
-                    .opacity(base_opacity)
-                    .into_any_element(),
-            ),
-            None => (base_opacity, Empty.into_any_element()),
-        };
+        let source = luminance.expect("decoded dither source");
+        let texture = gpui::canvas(
+            move |bounds, window, cx| {
+                let width = f32::from(bounds.size.width).ceil().clamp(1.0, 8192.0) as u32;
+                let height = f32::from(bounds.size.height).ceil().clamp(1.0, 440.0) as u32;
+                source.dither_image(width, height, window, cx)
+            },
+            |bounds, image, window, _| {
+                let _ = window.paint_image(bounds, gpui::Corners::default(), image, 0, false);
+            },
+        )
+        .absolute()
+        .inset_0();
+        return (
+            0.0,
+            div()
+                .absolute()
+                .inset_0()
+                .opacity(base_opacity)
+                .child(texture)
+                .into_any_element(),
+        );
     }
 
     let color = gpui::white();
@@ -278,10 +307,12 @@ pub(super) fn treatment(
     .absolute()
     .inset_0();
 
-    let layer = div()
+    let surface = div()
         .absolute()
         .inset_0()
-        .opacity(base_opacity)
+        .when(effect == NewThreadBackgroundEffect::Ascii, |surface| {
+            surface.opacity(ASCII_STRENGTH)
+        })
         .when(
             matches!(
                 effect,
@@ -289,18 +320,39 @@ pub(super) fn treatment(
             ),
             |layer| layer.bg(gpui::black()),
         )
-        .child(texture)
+        .child(texture);
+    // Mix the artwork and glyph treatment before applying glass transparency.
+    let layer = div()
+        .absolute()
+        .inset_0()
+        .opacity(base_opacity)
+        .when(effect == NewThreadBackgroundEffect::Ascii, |layer| {
+            layer.child(
+                gpui::img(path.to_path_buf())
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Cover),
+            )
+        })
+        .child(surface)
         .into_any_element();
     (image_opacity, layer)
 }
 
-// Four levels per channel, with a centered ordered threshold: actual color
-// quantization rather than a disconnected stipple over the original photograph.
-fn quantize(value: u8, threshold: u8) -> u8 {
-    let level = (value as f32 / 85.0 + (threshold as f32 + 0.5) / 16.0 - 0.5)
-        .round()
-        .clamp(0.0, 3.0);
-    (level * 85.0) as u8
+// Dither between a dark ink and a bright, hue-preserving source color.
+// RGB-channel quantization mostly posterized the artwork and its fine Bayer
+// pattern vanished when the source raster was downsampled.
+fn dither_color([r, g, b, a]: [u8; 4], threshold: u8) -> [u8; 4] {
+    let peak = r.max(g).max(b) as f32;
+    let bright = peak / 255.0 > (threshold as f32 + 0.5) / 16.0;
+    let gain = if bright { 255.0 / peak.max(1.0) } else { 0.08 };
+    [
+        (r as f32 * gain).round() as u8,
+        (g as f32 * gain).round() as u8,
+        (b as f32 * gain).round() as u8,
+        a,
+    ]
 }
 
 fn ascii_cell_width(window: &gpui::Window, font: &gpui::Font, color: gpui::Hsla) -> f32 {
@@ -343,36 +395,43 @@ fn paint_dot(
 mod tests {
     use super::*;
 
-    #[test]
-    fn ordered_palette_preserves_endpoints_and_distributes_midtones() {
-        for threshold in 0..16 {
-            assert_eq!(quantize(0, threshold), 0);
-            assert_eq!(quantize(255, threshold), 255);
-            for value in 0..=255 {
-                assert_eq!(quantize(value, threshold) % 85, 0);
-            }
-        }
-        let levels: Vec<_> = (0..16).map(|threshold| quantize(128, threshold)).collect();
-        assert!(levels.contains(&85));
-        assert!(levels.contains(&170));
-        let average = levels.iter().map(|&v| v as f32).sum::<f32>() / 16.0;
-        assert!((average - 128.0).abs() < 6.0);
-    }
-
-    #[test]
-    fn processed_artwork_is_reused_across_frames() {
-        let sample = BackgroundLuminance {
+    fn dither_fixture() -> BackgroundLuminance {
+        BackgroundLuminance {
             width: 4,
             height: 4,
             pixels: vec![128; 16].into_boxed_slice(),
-            colors: vec![[180, 100, 220, 255]; 16].into_boxed_slice(),
+            colors: vec![[128, 64, 32, 200]; 16].into_boxed_slice(),
             dither: Default::default(),
-        };
-        let first = sample.dither_image().unwrap();
-        assert!(std::sync::Arc::ptr_eq(
-            &first,
-            &sample.dither_image().unwrap()
-        ));
+        }
+    }
+
+    #[test]
+    fn dither_has_visible_contrast_without_changing_hue_or_alpha() {
+        let dark = dither_color([128, 64, 32, 200], 15);
+        let bright = dither_color([128, 64, 32, 200], 0);
+        assert!(bright[0] - dark[0] > 200);
+        assert_eq!(bright, [255, 128, 64, 200]);
+        assert_eq!(dark[3], 200);
+        for threshold in 0..16 {
+            assert_eq!(dither_color([0, 0, 0, 0], threshold), [0, 0, 0, 0]);
+            assert_eq!(dither_color([255, 255, 255, 255], threshold), [255; 4]);
+        }
+    }
+
+    #[test]
+    fn dither_cells_remain_two_pixels_across_window_sizes() {
+        let source = dither_fixture();
+        for width in [320, 768, 2560] {
+            let pixels = source.dither_pixels(width, 8);
+            assert_eq!(pixels.dimensions(), (width, 8));
+            for x in (0..width).step_by(2) {
+                assert_eq!(pixels.get_pixel(x, 0), pixels.get_pixel(x + 1, 0));
+                assert_eq!(pixels.get_pixel(x, 0), pixels.get_pixel(x, 1));
+            }
+            assert_ne!(pixels.get_pixel(0, 0), pixels.get_pixel(2, 0));
+            // Direct GPU uploads are BGRA, including the original alpha.
+            assert_eq!(pixels.get_pixel(0, 0).0, [64, 128, 255, 200]);
+        }
     }
 
     #[gpui::test]
@@ -388,7 +447,15 @@ mod tests {
             }
         }
         let handle = cx.add_window(|_, _| Fixture);
-        cx.update_window(handle.into(), |_, window, _| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            let source = dither_fixture();
+            let first = source.dither_image(320, 8, window, cx);
+            assert!(std::sync::Arc::ptr_eq(
+                &first,
+                &source.dither_image(320, 8, window, cx)
+            ));
+            let resized = source.dither_image(768, 8, window, cx);
+            assert!(!std::sync::Arc::ptr_eq(&first, &resized));
             let font = gpui::font("Menlo");
             let color = gpui::white();
             let advance = ascii_cell_width(window, &font, color);
