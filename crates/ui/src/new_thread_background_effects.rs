@@ -1,111 +1,108 @@
-//! Non-destructive treatments for the optional new-thread hero artwork.
-
-use std::path::{Path, PathBuf};
-
-use gpui::{
-    AnyElement, BorderStyle, Empty, IntoElement, Pixels, SharedString, TextRun, div, prelude::*, px,
-};
-
+//! Effects are source-space images. Resizing only changes ObjectFit::Cover.
 use crate::settings::NewThreadBackgroundEffect;
 use crate::theme::Theme;
-
-const ASCII_FONT_SIZE: f32 = 6.0;
-const ASCII_LINE_HEIGHT: f32 = 8.0;
-const ASCII_STRENGTH: f32 = 0.72;
-
-type RasterKey = (u32, u32, NewThreadBackgroundEffect);
-
-#[derive(Debug, Default)]
-struct RasterCache {
-    requested: Option<RasterKey>,
-    running: bool,
-    ready: Option<(RasterKey, std::sync::Arc<gpui::RenderImage>)>,
-    // A few recent sizes also prevent different windows from continuously
-    // invalidating each other's sole cached result when refreshed together.
-    older: Vec<(RasterKey, std::sync::Arc<gpui::RenderImage>)>,
-}
-
-type AsciiCache = Option<(
-    (u32, u32, gpui::Font),
-    std::sync::Arc<Vec<gpui::ShapedLine>>,
-)>;
-
+use gpui::{AnyElement, Empty, IntoElement, Pixels, prelude::*, px};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+type EffectEntry = (NewThreadBackgroundEffect, Option<Arc<gpui::RenderImage>>);
 #[derive(Debug)]
 struct BackgroundLuminance {
     width: u32,
     height: u32,
     pixels: Box<[u8]>,
     colors: Box<[[u8; 4]]>,
-    dither: std::sync::Mutex<RasterCache>,
-    ascii: std::sync::Mutex<AsciiCache>,
+    effects: Mutex<Vec<EffectEntry>>,
 }
-
 impl BackgroundLuminance {
     fn raster_image(
-        self: &std::sync::Arc<Self>,
-        key: RasterKey,
+        self: &Arc<Self>,
+        effect: NewThreadBackgroundEffect,
         cx: &mut gpui::App,
-    ) -> Option<std::sync::Arc<gpui::RenderImage>> {
-        let mut cache = self.dither.lock().unwrap_or_else(|e| e.into_inner());
-        cache.requested = Some(key);
-        if let Some((_, image)) = cache.older.iter().find(|(old, _)| *old == key) {
-            return Some(image.clone());
+    ) -> Option<Arc<gpui::RenderImage>> {
+        let mut effects = self.effects.lock().unwrap();
+        if let Some((_, image)) = effects.iter().find(|(key, _)| *key == effect) {
+            return image.clone();
         }
-        let image = cache
-            .ready
-            .as_ref()
-            .filter(|(ready, _)| ready.2 == key.2)
-            .map(|(_, image)| image.clone());
-        if cache.running || cache.ready.as_ref().is_some_and(|(ready, _)| *ready == key) {
-            return image;
-        }
-        cache.running = true;
-        drop(cache);
+        // None marks the single pending job for this source/effect, not a viewport.
+        effects.push((effect, None));
+        drop(effects);
         let source = self.clone();
         cx.spawn(async move |cx| {
-            loop {
-                let key = source.dither.lock().unwrap().requested.unwrap();
-                let worker = source.clone();
-                let pixels = cx
-                    .background_executor()
-                    .spawn(async move {
-                        match key.2 {
-                            NewThreadBackgroundEffect::Halftone => {
-                                worker.halftone_pixels(key.0, key.1)
-                            }
-                            _ => worker.dither_pixels(key.0, key.1),
+            let worker = source.clone();
+            let image = cx
+                .background_executor()
+                .spawn(async move {
+                    let pixels = match effect {
+                        NewThreadBackgroundEffect::Dither => {
+                            worker.dither_pixels(worker.width, worker.height)
                         }
-                    })
-                    .await;
-                let next = std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(pixels)]));
-                let done = cx.update(|cx| {
-                    let mut cache = source.dither.lock().unwrap();
-                    let current = cache.requested == Some(key);
-                    // Never replace a visible result with an obsolete resize.
-                    if current || cache.ready.is_none() {
-                        if let Some(previous) = cache.ready.replace((key, next)) {
-                            cache.older.push(previous);
-                            if cache.older.len() > 3 {
-                                let (_, expired) = cache.older.remove(0);
-                                gpui::ImageSource::Render(expired).evict(None, cx);
-                            }
+                        NewThreadBackgroundEffect::Halftone => {
+                            worker.halftone_pixels(worker.width, worker.height)
                         }
-                        cx.refresh_windows();
-                    }
-                    if current {
-                        cache.running = false;
-                    }
-                    current
-                });
-                if done {
-                    break;
+                        NewThreadBackgroundEffect::Ascii => worker.ascii_pixels(),
+                        _ => worker.scanline_pixels(),
+                    };
+                    Arc::new(gpui::RenderImage::new([image::Frame::new(pixels)]))
+                })
+                .await;
+            cx.update(|cx| {
+                if let Some((_, ready)) = source
+                    .effects
+                    .lock()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|(key, _)| *key == effect)
+                {
+                    *ready = Some(image);
                 }
-            }
+                cx.refresh_windows();
+            });
         })
         .detach();
-        image
+        None
     }
-
+    fn scanline_pixels(&self) -> image::RgbaImage {
+        image::RgbaImage::from_fn(self.width, self.height, |x, y| {
+            let [r, g, b, a] = self.colors[(y * self.width + x) as usize];
+            let gain = if y % 3 == 0 { 0.52 } else { 1.0 };
+            image::Rgba([
+                (b as f32 * gain) as u8,
+                (g as f32 * gain) as u8,
+                (r as f32 * gain) as u8,
+                a,
+            ])
+        })
+    }
+    fn ascii_pixels(&self) -> image::RgbaImage {
+        // Five-column bitmap glyphs, one column/row of spacing. These are
+        // artwork pixels rather than thousands of shaped UI text runs.
+        const GLYPHS: [[u8; 7]; 10] = [
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 4, 0],
+            [0, 4, 0, 0, 4, 0, 0],
+            [0, 0, 0, 14, 0, 0, 0],
+            [0, 0, 14, 0, 14, 0, 0],
+            [0, 4, 4, 31, 4, 4, 0],
+            [0, 21, 14, 31, 14, 21, 0],
+            [10, 10, 31, 10, 31, 10, 10],
+            [17, 2, 4, 4, 8, 16, 17],
+            [14, 17, 23, 21, 23, 16, 14],
+        ];
+        image::RgbaImage::from_fn(self.width, self.height, |x, y| {
+            let sx = (x / 6 * 6 + 3).min(self.width - 1);
+            let sy = (y / 8 * 8 + 4).min(self.height - 1);
+            let sample = (sy * self.width + sx) as usize;
+            let index = ((self.pixels[sample] as f32 / 255.0).sqrt() * 9.0) as usize;
+            let ink =
+                x % 6 < 5 && y % 8 < 7 && GLYPHS[index][y as usize % 8] & (1 << (4 - x % 6)) != 0;
+            let [r, g, b, a] = self.colors[(y * self.width + x) as usize];
+            let [cr, cg, cb, _] = self.colors[sample];
+            let mix = |base: u8, glyph: u8| {
+                (base as f32 * 0.28 + if ink { glyph as f32 * 0.72 } else { 0.0 }) as u8
+            };
+            image::Rgba([mix(b, cb), mix(g, cg), mix(r, cr), a])
+        })
+    }
     fn halftone_pixels(&self, width: u32, height: u32) -> image::RgbaImage {
         let bounds = gpui::size(px(width as f32), px(height as f32));
         let mut pixels = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255]));
@@ -164,11 +161,6 @@ impl BackgroundLuminance {
         self.pixels[self.cover_index(bounds, x, y)]
     }
 
-    fn color_cover(&self, bounds: gpui::Size<Pixels>, x: f32, y: f32) -> gpui::Hsla {
-        let [r, g, b, a] = self.colors[self.cover_index(bounds, x, y)];
-        gpui::rgba(u32::from_be_bytes([r, g, b, a])).into()
-    }
-
     fn cover_index(&self, bounds: gpui::Size<Pixels>, x: f32, y: f32) -> usize {
         let width = f32::from(bounds.width).max(1.0);
         let height = f32::from(bounds.height).max(1.0);
@@ -185,254 +177,62 @@ impl BackgroundLuminance {
     }
 }
 
-fn needs_luminance(effect: NewThreadBackgroundEffect) -> bool {
-    matches!(
-        effect,
-        NewThreadBackgroundEffect::Dither
-            | NewThreadBackgroundEffect::Ascii
-            | NewThreadBackgroundEffect::Halftone
-    )
-}
-
-fn background_luminance(path: &Path) -> Option<std::sync::Arc<BackgroundLuminance>> {
-    type Cache = Vec<(PathBuf, std::sync::Arc<BackgroundLuminance>)>;
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<Cache>> = std::sync::OnceLock::new();
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(Vec::new()));
-    if let Some(sample) = cache
+fn background_luminance(path: &Path) -> Option<Arc<BackgroundLuminance>> {
+    type Cache = Vec<(PathBuf, Arc<BackgroundLuminance>)>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+    if let Some(source) = cache
         .lock()
         .ok()?
         .iter()
-        .find_map(|(cached, sample)| (cached == path).then(|| sample.clone()))
+        .find_map(|(key, source)| (key == path).then(|| source.clone()))
     {
-        return Some(sample);
+        return Some(source);
     }
-
-    // Bound the retained color/luminance proxy independently of window size.
-    let decoded = image::ImageReader::open(path).ok()?.decode().ok()?;
-    let proxy = decoded.thumbnail(2048, 2048);
+    let proxy = image::ImageReader::open(path)
+        .ok()?
+        .decode()
+        .ok()?
+        .thumbnail(2048, 2048);
     let gray = proxy.to_luma8();
-    let sample = std::sync::Arc::new(BackgroundLuminance {
+    let source = Arc::new(BackgroundLuminance {
         width: gray.width(),
         height: gray.height(),
         pixels: gray.into_raw().into_boxed_slice(),
         colors: proxy.to_rgba8().pixels().map(|pixel| pixel.0).collect(),
-        dither: Default::default(),
-        ascii: Default::default(),
+        effects: Mutex::new(Vec::new()),
     });
     let mut cache = cache.lock().ok()?;
-    cache.push((path.to_path_buf(), sample.clone()));
+    cache.push((path.to_path_buf(), source.clone()));
     if cache.len() > 4 {
         cache.remove(0);
     }
-    Some(sample)
+    Some(source)
 }
-
-/// Returns the image opacity and optional texture layer as one resolved
-/// treatment. Unsupported raster decoding falls back to the original image.
 pub(super) fn treatment(
-    requested: NewThreadBackgroundEffect,
-    theme: &Theme,
+    effect: NewThreadBackgroundEffect,
+    _theme: &Theme,
     path: &Path,
     base_opacity: f32,
+    cx: &mut gpui::App,
 ) -> (f32, AnyElement) {
-    let luminance = needs_luminance(requested)
-        .then(|| background_luminance(path))
-        .flatten();
-    let effect = if needs_luminance(requested) && luminance.is_none() {
-        NewThreadBackgroundEffect::None
-    } else {
-        requested
-    };
-    let image_opacity = base_opacity
-        * match effect {
-            NewThreadBackgroundEffect::None => 1.0,
-            NewThreadBackgroundEffect::Dither => 0.0,
-            NewThreadBackgroundEffect::Ascii => 0.0,
-            NewThreadBackgroundEffect::Halftone => 0.0,
-            NewThreadBackgroundEffect::Scanlines => 1.0,
-        };
     if effect == NewThreadBackgroundEffect::None {
-        return (image_opacity, Empty.into_any_element());
+        return (base_opacity, Empty.into_any_element());
     }
-    // Cache one screen-sized raster. Resizes regenerate the crop and retire
-    // the previous GPU image; docking reuses it without resampling the dots.
-    if matches!(
-        effect,
-        NewThreadBackgroundEffect::Dither | NewThreadBackgroundEffect::Halftone
-    ) {
-        let source = luminance.expect("decoded dither source");
-        let texture = gpui::canvas(
-            move |bounds, _, cx| {
-                let width = f32::from(bounds.size.width).ceil().clamp(1.0, 8192.0) as u32;
-                let height = f32::from(bounds.size.height).ceil().clamp(1.0, 440.0) as u32;
-                source.raster_image((width, height, effect), cx)
-            },
-            |bounds, image, window, _| {
-                if let Some(image) = image {
-                    let _ = window.paint_image(bounds, gpui::Corners::default(), image, 0, false);
-                }
-            },
-        )
-        .absolute()
-        .inset_0();
-        return (
+    match background_luminance(path).and_then(|source| source.raster_image(effect, cx)) {
+        Some(image) => (
             0.0,
-            div()
+            gpui::img(image)
                 .absolute()
                 .inset_0()
+                .size_full()
+                .object_fit(gpui::ObjectFit::Cover)
                 .opacity(base_opacity)
-                .child(
-                    gpui::img(path.to_path_buf())
-                        .absolute()
-                        .inset_0()
-                        .size_full()
-                        .object_fit(gpui::ObjectFit::Cover),
-                )
-                .child(texture)
                 .into_any_element(),
-        );
+        ),
+        None => (base_opacity, Empty.into_any_element()),
     }
-
-    let color = gpui::white();
-    let ascii_font = theme.font_mono.clone();
-    let prepaint_luminance = luminance.clone();
-    let texture = gpui::canvas(
-        move |bounds, window, _| {
-            if effect != NewThreadBackgroundEffect::Ascii {
-                return std::sync::Arc::new(Vec::new());
-            }
-            let Some(luminance) = prepaint_luminance.as_ref() else {
-                return std::sync::Arc::new(Vec::new());
-            };
-            let font = gpui::font(ascii_font.clone());
-            // Small overscan buckets avoid reshaping for every one-pixel drag.
-            // Paint remains clipped to the real bounds, including when shrinking.
-            let (width, height) = ascii_bucket(bounds.size);
-            let key = (width, height, font.clone());
-            let mut cached = luminance.ascii.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((previous, lines)) = cached.as_ref() {
-                if previous == &key {
-                    return lines.clone();
-                }
-            }
-            let sample_size = gpui::size(px(width as f32), px(height as f32));
-            // Font size is not glyph advance. Using it as cell width made
-            // the rendered ASCII field stop halfway across the artwork and
-            // compressed its source sampling into the wrong horizontal span.
-            let cell_width = ascii_cell_width(window, &font, color);
-            let columns = (width as f32 / cell_width).ceil() as usize + 1;
-            let rows = (height as f32 / ASCII_LINE_HEIGHT).ceil() as usize + 1;
-            let ramp = b" .:-=+*#%@";
-            let lines = (0..rows)
-                .map(|row| {
-                    let mut text = String::with_capacity(columns);
-                    let mut runs = Vec::with_capacity(columns);
-                    for column in 0..columns {
-                        let luma = luminance.sample_cover(
-                            sample_size,
-                            (column as f32 + 0.5) * cell_width,
-                            (row as f32 + 0.5) * ASCII_LINE_HEIGHT,
-                        );
-                        let index =
-                            ((luma as f32 / 255.0).sqrt() * (ramp.len() - 1) as f32) as usize;
-                        text.push(ramp[index] as char);
-                        runs.push(TextRun {
-                            len: 1,
-                            font: font.clone(),
-                            color: luminance.color_cover(
-                                sample_size,
-                                (column as f32 + 0.5) * cell_width,
-                                (row as f32 + 0.5) * ASCII_LINE_HEIGHT,
-                            ),
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        });
-                    }
-                    let text: SharedString = text.into();
-                    window
-                        .text_system()
-                        .shape_line(text, px(ASCII_FONT_SIZE), &runs, None)
-                })
-                .collect::<Vec<_>>();
-            let lines = std::sync::Arc::new(lines);
-            *cached = Some((key, lines.clone()));
-            lines
-        },
-        move |bounds, ascii_lines, window, cx| match effect {
-            NewThreadBackgroundEffect::None => {}
-            NewThreadBackgroundEffect::Dither => {}
-            NewThreadBackgroundEffect::Ascii => {
-                let line_height = px(ASCII_LINE_HEIGHT);
-                for (row, line) in ascii_lines.iter().enumerate() {
-                    let _ = line.paint(
-                        gpui::point(bounds.left(), bounds.top() + line_height * row as f32),
-                        line_height,
-                        gpui::TextAlign::Left,
-                        Some(bounds.size.width),
-                        window,
-                        cx,
-                    );
-                }
-            }
-            NewThreadBackgroundEffect::Halftone => {}
-            NewThreadBackgroundEffect::Scanlines => {
-                let rows = (f32::from(bounds.size.height) / 3.0).ceil() as usize;
-                for row in 0..rows {
-                    window.paint_quad(gpui::quad(
-                        gpui::Bounds::new(
-                            gpui::point(bounds.left(), bounds.top() + px(row as f32 * 3.0)),
-                            gpui::size(bounds.size.width, px(1.0)),
-                        ),
-                        px(0.0),
-                        gpui::black().opacity(0.48),
-                        px(0.0),
-                        gpui::transparent_black(),
-                        BorderStyle::default(),
-                    ));
-                }
-            }
-        },
-    )
-    .absolute()
-    .inset_0();
-
-    let surface = div()
-        .absolute()
-        .inset_0()
-        .when(effect == NewThreadBackgroundEffect::Ascii, |surface| {
-            surface.opacity(ASCII_STRENGTH)
-        })
-        .when(
-            matches!(
-                effect,
-                NewThreadBackgroundEffect::Ascii | NewThreadBackgroundEffect::Halftone
-            ),
-            |layer| layer.bg(gpui::black()),
-        )
-        .child(texture);
-    // Mix the artwork and glyph treatment before applying glass transparency.
-    let layer = div()
-        .absolute()
-        .inset_0()
-        .opacity(base_opacity)
-        .when(effect == NewThreadBackgroundEffect::Ascii, |layer| {
-            layer.child(
-                gpui::img(path.to_path_buf())
-                    .absolute()
-                    .inset_0()
-                    .size_full()
-                    .object_fit(gpui::ObjectFit::Cover),
-            )
-        })
-        .child(surface)
-        .into_any_element();
-    (image_opacity, layer)
 }
-
-// Dither between a dark ink and a bright, hue-preserving source color.
-// RGB-channel quantization mostly posterized the artwork and its fine Bayer
-// pattern vanished when the source raster was downsampled.
 fn dither_color([r, g, b, a]: [u8; 4], threshold: u8) -> [u8; 4] {
     let peak = r.max(g).max(b) as f32;
     let bright = peak / 255.0 > (threshold as f32 + 0.5) / 16.0;
@@ -445,187 +245,67 @@ fn dither_color([r, g, b, a]: [u8; 4], threshold: u8) -> [u8; 4] {
     ]
 }
 
-fn ascii_cell_width(window: &gpui::Window, font: &gpui::Font, color: gpui::Hsla) -> f32 {
-    let run = TextRun {
-        len: 1,
-        font: font.clone(),
-        color,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let probe = window
-        .text_system()
-        .shape_line("M".into(), px(ASCII_FONT_SIZE), &[run], None);
-    f32::from(probe.width).max(1.0)
-}
-
-fn ascii_bucket(size: gpui::Size<Pixels>) -> (u32, u32) {
-    (
-        ((f32::from(size.width).max(1.0) / 32.0).ceil() as u32) * 32,
-        ((f32::from(size.height).max(1.0) / 8.0).ceil() as u32) * 8,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    fn fixture() -> Arc<BackgroundLuminance> {
+        Arc::new(BackgroundLuminance {
+            width: 60,
+            height: 32,
+            pixels: vec![128; 1920].into_boxed_slice(),
+            colors: vec![[128, 64, 32, 200]; 1920].into_boxed_slice(),
+            effects: Mutex::new(Vec::new()),
+        })
+    }
     #[gpui::test]
-    fn raster_requests_coalesce_and_keep_last_frame_until_ready(cx: &mut gpui::TestAppContext) {
-        let source = std::sync::Arc::new(dither_fixture());
+    fn every_effect_is_generated_once_independently_of_viewport(cx: &mut gpui::TestAppContext) {
+        let source = fixture();
         for effect in [
             NewThreadBackgroundEffect::Dither,
+            NewThreadBackgroundEffect::Ascii,
             NewThreadBackgroundEffect::Halftone,
+            NewThreadBackgroundEffect::Scanlines,
         ] {
             cx.update(|cx| {
-                for width in 320..420 {
-                    let _ = source.raster_image((width, 16, effect), cx);
+                for _ in 0..100 {
+                    assert!(source.raster_image(effect, cx).is_none());
                 }
-                let cache = source.dither.lock().unwrap();
-                assert!(cache.running);
-                assert_eq!(cache.requested, Some((419, 16, effect)));
-            });
-            cx.run_until_parked();
-            let first = {
-                let cache = source.dither.lock().unwrap();
-                assert!(!cache.running);
-                assert_eq!(cache.ready.as_ref().unwrap().0, (419, 16, effect));
-                cache.ready.as_ref().unwrap().1.clone()
-            };
-            cx.update(|cx| {
-                let resized = source.raster_image((500, 16, effect), cx).unwrap();
-                assert!(std::sync::Arc::ptr_eq(&first, &resized));
-            });
-            cx.run_until_parked();
-            cx.update(|cx| {
-                let latest = source.raster_image((500, 16, effect), cx).unwrap();
-                assert!(!std::sync::Arc::ptr_eq(&first, &latest));
-                assert!(!source.dither.lock().unwrap().running);
-                let previous_size = source.raster_image((419, 16, effect), cx).unwrap();
-                assert!(std::sync::Arc::ptr_eq(&first, &previous_size));
-                assert!(!source.dither.lock().unwrap().running);
-            });
-        }
-    }
-
-    #[test]
-    fn ascii_resize_buckets_bound_rebuilds_and_cover_the_viewport() {
-        let mut buckets = std::collections::BTreeSet::new();
-        for width in 800..1120 {
-            let bucket = ascii_bucket(gpui::size(px(width as f32), px(437.0)));
-            assert!(bucket.0 >= width && bucket.0 < width + 32);
-            assert_eq!(bucket.1, 440);
-            buckets.insert(bucket);
-        }
-        assert!(
-            buckets.len() <= 11,
-            "one-pixel resize frames should reuse shaped lines"
-        );
-    }
-
-    fn dither_fixture() -> BackgroundLuminance {
-        BackgroundLuminance {
-            width: 4,
-            height: 4,
-            pixels: vec![128; 16].into_boxed_slice(),
-            colors: vec![[128, 64, 32, 200]; 16].into_boxed_slice(),
-            dither: Default::default(),
-            ascii: Default::default(),
-        }
-    }
-
-    #[test]
-    fn dither_has_visible_contrast_without_changing_hue_or_alpha() {
-        let dark = dither_color([128, 64, 32, 200], 15);
-        let bright = dither_color([128, 64, 32, 200], 0);
-        assert!(bright[0] - dark[0] > 200);
-        assert_eq!(bright, [255, 128, 64, 200]);
-        assert_eq!(dark[3], 200);
-        for threshold in 0..16 {
-            assert_eq!(dither_color([0, 0, 0, 0], threshold), [0, 0, 0, 0]);
-            assert_eq!(dither_color([255, 255, 255, 255], threshold), [255; 4]);
-        }
-    }
-
-    #[test]
-    fn dither_cells_remain_two_pixels_across_window_sizes() {
-        let source = dither_fixture();
-        for width in [320, 768, 2560] {
-            let pixels = source.dither_pixels(width, 8);
-            assert_eq!(pixels.dimensions(), (width, 8));
-            for x in (0..width).step_by(2) {
-                assert_eq!(pixels.get_pixel(x, 0), pixels.get_pixel(x + 1, 0));
-                assert_eq!(pixels.get_pixel(x, 0), pixels.get_pixel(x, 1));
-            }
-            assert_ne!(pixels.get_pixel(0, 0), pixels.get_pixel(2, 0));
-            // Direct GPU uploads are BGRA, including the original alpha.
-            assert_eq!(pixels.get_pixel(0, 0).0, [64, 128, 255, 200]);
-        }
-    }
-
-    #[gpui::test]
-    fn ascii_advance_covers_narrow_and_fullscreen_artwork(cx: &mut gpui::TestAppContext) {
-        struct Fixture;
-        impl gpui::Render for Fixture {
-            fn render(
-                &mut self,
-                _: &mut gpui::Window,
-                _: &mut gpui::Context<Self>,
-            ) -> impl IntoElement {
-                div()
-            }
-        }
-        let handle = cx.add_window(|_, _| Fixture);
-        cx.update_window(handle.into(), |_, window, _| {
-            let font = gpui::font("Menlo");
-            let color = gpui::white();
-            let advance = ascii_cell_width(window, &font, color);
-            for width in [320.0, 768.0, 2560.0] {
-                let columns = (width / advance).ceil() as usize + 1;
-                let run = TextRun {
-                    len: columns,
-                    font: font.clone(),
-                    color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                let line = window.text_system().shape_line(
-                    "M".repeat(columns).into(),
-                    px(ASCII_FONT_SIZE),
-                    &[run],
-                    None,
+                assert_eq!(
+                    source
+                        .effects
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|(key, _)| *key == effect)
+                        .count(),
+                    1
                 );
-                let painted_width = f32::from(line.width);
-                assert!(painted_width >= width, "pattern stopped before {width}px");
-                assert!(painted_width < width + 2.0 * advance + 0.1);
-            }
-        })
-        .unwrap();
+            });
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let first = source.raster_image(effect, cx).unwrap();
+                assert_eq!(first.size(0).width.0, 60);
+                assert_eq!(first.size(0).height.0, 32);
+                for _ in 0..100 {
+                    assert!(Arc::ptr_eq(
+                        &first,
+                        &source.raster_image(effect, cx).unwrap()
+                    ));
+                }
+            });
+        }
     }
-
     #[test]
-    fn cover_sampling_crops_the_long_axis_from_the_center() {
-        let sample = BackgroundLuminance {
-            width: 4,
-            height: 2,
-            pixels: vec![0, 1, 2, 3, 10, 11, 12, 13].into_boxed_slice(),
-            colors: vec![[0, 0, 0, 255]; 8].into_boxed_slice(),
-            dither: Default::default(),
-            ascii: Default::default(),
-        };
-        let square = gpui::size(px(100.0), px(100.0));
-        assert_eq!(sample.sample_cover(square, 0.0, 0.0), 1);
-        assert_eq!(sample.sample_cover(square, 99.0, 99.0), 12);
-    }
-
-    #[test]
-    fn adaptive_effects_are_the_only_ones_that_need_pixels() {
-        assert!(!needs_luminance(NewThreadBackgroundEffect::None));
-        assert!(needs_luminance(NewThreadBackgroundEffect::Dither));
-        assert!(needs_luminance(NewThreadBackgroundEffect::Ascii));
-        assert!(needs_luminance(NewThreadBackgroundEffect::Halftone));
-        assert!(!needs_luminance(NewThreadBackgroundEffect::Scanlines));
+    fn raster_treatments_preserve_source_dimensions_and_alpha() {
+        let source = fixture();
+        for image in [
+            source.dither_pixels(60, 32),
+            source.ascii_pixels(),
+            source.scanline_pixels(),
+        ] {
+            assert_eq!(image.dimensions(), (60, 32));
+            assert!(image.pixels().all(|pixel| pixel.0[3] == 200));
+        }
+        assert_eq!(source.halftone_pixels(60, 32).dimensions(), (60, 32));
     }
 }

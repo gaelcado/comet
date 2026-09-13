@@ -827,6 +827,7 @@ fn new_thread_background(
     theme: &Theme,
     viewport_height: f32,
     dissolve: f32,
+    cx: &mut App,
 ) -> AnyElement {
     let Some(background) = background else {
         return Empty.into_any_element();
@@ -843,6 +844,7 @@ fn new_thread_background(
         theme,
         &path,
         new_thread_background_opacity(theme.is_frost()),
+        cx,
     );
     // Image and treatment share a fixed crop and fade together in place.
     div()
@@ -6905,6 +6907,7 @@ impl Shell {
                 theme,
                 self.viewport_height,
                 dock_frame.dissolve(),
+                cx,
             )
         });
 
@@ -7089,25 +7092,20 @@ impl Shell {
                     // status strip above it is empty air), zero at the
                     // underlay's bottom edge.
                     let bottom_band = (stack_h - Theme::STATUS_STRIP_HEIGHT).max(1.0);
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .bottom(px(term_h))
-                        .child(
-                            crate::edge_fade::edge_faded(
-                                Theme::TRANSCRIPT_FADE_BAND,
-                                true,
-                                true,
-                                div().size_full().child(outlet),
-                            )
-                            // Fully faded BY the titlebar's bottom edge (the
-                            // title text is opaque — overlap read as collision),
-                            // ramping in the band just below it.
-                            .inset_top(Theme::TITLEBAR_HEIGHT)
-                            .band_top(Theme::TRANSCRIPT_FADE_BAND)
-                            .band_bottom(bottom_band),
+                    div().absolute().inset_0().bottom(px(term_h)).child(
+                        crate::edge_fade::edge_faded(
+                            Theme::TRANSCRIPT_FADE_BAND,
+                            true,
+                            true,
+                            div().size_full().child(outlet),
                         )
-                        .children(self.render_jump_to_bottom(stack_h, cx))
+                        // Fully faded BY the titlebar's bottom edge (the
+                        // title text is opaque — overlap read as collision),
+                        // ramping in the band just below it.
+                        .inset_top(Theme::TITLEBAR_HEIGHT)
+                        .band_top(Theme::TRANSCRIPT_FADE_BAND)
+                        .band_bottom(bottom_band),
+                    )
                 },
             )
             // The glass chrome stack, floating over the transcript's bottom:
@@ -7151,9 +7149,15 @@ impl Shell {
                         el.child(crate::composer_dock::docked_composer(
                             div()
                                 .id("persistent-composer")
+                                .relative()
                                 .w(px(composer_width))
                                 .mx_auto()
-                                .child(self.composer.clone()),
+                                .child(self.composer.clone())
+                                .children(if has_selection {
+                                    self.render_jump_to_bottom(cx)
+                                } else {
+                                    None
+                                }),
                             self.composer_dock.clone(),
                             self.viewport_height,
                             self.reduced_motion,
@@ -7182,25 +7186,19 @@ impl Shell {
     /// The "↓ Scroll to bottom" pill (round-9 §3): a LABELED rounded-full
     /// chip — down-arrow glyph + 13px label on a near-opaque raised surface
     /// with a hairline — horizontally centered over the transcript column and
-    /// floating a small gap above the composer. It hangs 14px below the
-    /// conversation region (through the reserved h-6 status strip, whose
-    /// content is left-aligned) so its bottom edge sits ~10px above the pill.
-    /// Shown past the transcript's 320px threshold; 180ms fade + 2px rise in.
-    /// `stack_h` is the measured bottom chrome stack the full-height
-    /// transcript scrolls under — the pill anchors just above it (the -14
-    /// carries the old status-strip overlap).
-    fn render_jump_to_bottom(
-        &mut self,
-        stack_h: f32,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    /// floating six pixels above the composer. It shares the composer's
+    /// measured dock transform and paints after it, outside the transcript fade.
+    fn render_jump_to_bottom(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.transcript.read(cx).jump_button_shown() {
             return None;
         }
         Some(
             div()
                 .absolute()
-                .bottom(px(stack_h - 14.0))
+                // Share the composer's measured translation, not its final
+                // bottom-stack target. Paint after the composer so it cannot
+                // pass over this control during docking.
+                .top(px(-36.0))
                 .left_0()
                 .right(px(10.0))
                 .flex()

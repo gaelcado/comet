@@ -63,6 +63,17 @@ pub const STICK_THRESHOLD_PX: f32 = 70.0;
 pub const OVERDRAW_PX: f32 = 320.0;
 /// Show the scroll-to-bottom button beyond this distance from the end.
 pub const SCROLL_BUTTON_THRESHOLD_PX: f32 = 320.0;
+
+fn jump_visibility(was_shown: bool, distance: f32) -> bool {
+    // Once offered, keep the control until close to the end. A single 320px
+    // threshold made it disappear halfway through a downward scroll gesture.
+    distance
+        > if was_shown {
+            AT_BOTTOM_PX
+        } else {
+            SCROLL_BUTTON_THRESHOLD_PX
+        }
+}
 /// Bound session-local viewport memory independently of total chat history.
 const MAX_SAVED_VIEWPORTS: usize = 256;
 /// Bound locally-authored queue ids waiting to become transcript prompts.
@@ -2908,7 +2919,7 @@ impl Transcript {
                     if this.pinned {
                         this.wake_spring();
                     }
-                    this.show_jump_button = distance > SCROLL_BUTTON_THRESHOLD_PX
+                    this.show_jump_button = jump_visibility(this.show_jump_button, distance)
                         && !this.own_turn.as_ref().is_some_and(|a| a.held);
                     cx.notify();
                     return;
@@ -2932,7 +2943,7 @@ impl Transcript {
                         this.wake_spring();
                     }
                 }
-                let show = distance > SCROLL_BUTTON_THRESHOLD_PX && !this.pinned;
+                let show = jump_visibility(this.show_jump_button, distance) && !this.pinned;
                 if show != this.show_jump_button {
                     this.show_jump_button = show;
                 }
@@ -2995,7 +3006,8 @@ impl Transcript {
         }
         if was_selecting {
             self.last_scroll_distance = self.distance_from_bottom();
-            self.show_jump_button = self.last_scroll_distance > SCROLL_BUTTON_THRESHOLD_PX;
+            self.show_jump_button =
+                jump_visibility(self.show_jump_button, self.last_scroll_distance);
             cx.notify();
         }
     }
@@ -3046,7 +3058,7 @@ impl Transcript {
         self.begin_scroll_navigation();
         self.list.scroll_by(px(step));
         self.last_scroll_distance = self.distance_from_bottom();
-        self.show_jump_button = self.last_scroll_distance > SCROLL_BUTTON_THRESHOLD_PX;
+        self.show_jump_button = jump_visibility(self.show_jump_button, self.last_scroll_distance);
         cx.notify();
         self.schedule_selection_scroll(cx);
     }
@@ -3212,7 +3224,7 @@ impl Transcript {
         self.own_turn_last_tick = None;
         self.remeasure_last_row();
         self.last_scroll_distance = self.distance_from_bottom();
-        self.show_jump_button = self.last_scroll_distance > SCROLL_BUTTON_THRESHOLD_PX;
+        self.show_jump_button = jump_visibility(self.show_jump_button, self.last_scroll_distance);
         self.viewport_finalize_pending = true;
     }
 
@@ -4176,7 +4188,8 @@ impl Transcript {
         if raw >= 1.0 {
             self.user_collapse_scroll = None;
             self.last_scroll_distance = self.distance_from_bottom();
-            self.show_jump_button = self.last_scroll_distance > SCROLL_BUTTON_THRESHOLD_PX;
+            self.show_jump_button =
+                jump_visibility(self.show_jump_button, self.last_scroll_distance);
         }
         cx.notify();
     }
@@ -7004,7 +7017,7 @@ impl Render for Transcript {
                         }
                         let distance = this.distance_from_bottom();
                         this.last_scroll_distance = distance;
-                        this.show_jump_button = distance > SCROLL_BUTTON_THRESHOLD_PX
+                        this.show_jump_button = jump_visibility(this.show_jump_button, distance)
                             && !this.pinned
                             && !this.own_turn.as_ref().is_some_and(|turn| turn.held);
                         if token.layout_settled(this.viewport_layout_revision) {
@@ -7107,6 +7120,18 @@ impl Render for Transcript {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jump_button_stays_available_when_scrolling_down_until_near_bottom() {
+        let mut shown = false;
+        for distance in [500.0, 330.0, 319.0, 200.0, 100.0] {
+            shown = jump_visibility(shown, distance);
+            assert!(shown, "button vanished with {distance}px remaining");
+        }
+        assert!(!jump_visibility(shown, AT_BOTTOM_PX));
+        assert!(!jump_visibility(false, 319.0));
+        assert!(jump_visibility(false, 321.0));
+    }
 
     #[gpui::test]
     fn departing_transcript_is_retained_only_until_hidden(cx: &mut gpui::TestAppContext) {
