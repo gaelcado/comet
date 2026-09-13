@@ -2053,6 +2053,7 @@ impl Shell {
             // instead of editing text or moving focus.
             "tab" => {
                 self.add_space_accept_completion(cx);
+                cx.stop_propagation();
                 return;
             }
             _ => {}

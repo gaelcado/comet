@@ -3283,6 +3283,9 @@ impl Shell {
         {
             self.onboarding_load_titles(cx);
         }
+        if let Some(harness) = self.onboarding.models_to_load() {
+            self.onboarding_load_models(harness, cx);
+        }
     }
 
     pub(crate) fn onboarding_pick_workspace(
@@ -3596,6 +3599,7 @@ impl Shell {
                     Err(error) => Loadable::Error(error.to_string()),
                 };
                 shell.onboarding.resolve_default_harness();
+                shell.ensure_onboarding_data(cx);
                 cx.notify();
             })
             .ok();
@@ -7173,7 +7177,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.onboarding.active() {
+        if !self.onboarding.active()
+            || self.overlay_owns_keyboard(cx)
+            || self.onboarding.agent_settings_open
+            || self.sync_flow.has_visible_overlay()
+        {
             return false;
         }
         if self.onboarding.step() == OnboardingStep::Appearance
@@ -7239,6 +7247,9 @@ impl Shell {
             } else {
                 window.focus_next(cx);
             }
+            if !self.onboarding.close_confirm {
+                self.onboarding_reveal_model_focus(window);
+            }
             return true;
         }
         let focused = self
@@ -7250,6 +7261,52 @@ impl Shell {
             return false;
         };
         let starting_step = self.onboarding.step();
+
+        if !self.onboarding.close_confirm
+            && matches!(
+                starting_step,
+                OnboardingStep::Defaults | OnboardingStep::Titles
+            )
+            && let Some(index) = crate::onboarding::model_choice(focused)
+        {
+            let models = if starting_step == OnboardingStep::Titles {
+                self.onboarding.title_models.ready()
+            } else {
+                self.onboarding.models.ready()
+            };
+            let Some(models) = models else { return false };
+            if index > models.len() {
+                return false;
+            }
+            if matches!(
+                event.keystroke.key.as_str(),
+                "left" | "right" | "up" | "down"
+            ) && !event.keystroke.modifiers.modified()
+            {
+                let count = models.len() + 1;
+                let next = if matches!(event.keystroke.key.as_str(), "right" | "down") {
+                    (index + 1) % count
+                } else {
+                    (index + count - 1) % count
+                };
+                window.focus(
+                    self.onboarding
+                        .control(crate::onboarding::model_control(next)),
+                    cx,
+                );
+                self.onboarding_reveal_model_focus(window);
+                return true;
+            }
+            if crate::onboarding::activates(event) {
+                let model = index.checked_sub(1).map(|index| models[index].id.clone());
+                if starting_step == OnboardingStep::Titles {
+                    self.onboarding_pick_title_model(model, cx);
+                } else {
+                    self.onboarding_pick_default_model(model, cx);
+                }
+                return true;
+            }
+        }
 
         if matches!(
             event.keystroke.key.as_str(),
@@ -7295,11 +7352,6 @@ impl Shell {
                         (0, count.saturating_sub(1))
                     })
                 }
-                OnboardingStep::Defaults if (8..16).contains(&focused) => self
-                    .onboarding
-                    .models
-                    .ready()
-                    .map(|models| (8, 8 + models.len().min(4))),
                 OnboardingStep::Defaults if (16..26).contains(&focused) => {
                     let count = self.onboarding.reasoning_levels().len();
                     Some((16, 16 + count.min(9)))
@@ -7317,11 +7369,6 @@ impl Shell {
                         .unwrap_or(0);
                     Some((0, count.min(7)))
                 }
-                OnboardingStep::Titles if (8..16).contains(&focused) => self
-                    .onboarding
-                    .title_models
-                    .ready()
-                    .map(|models| (8, 8 + models.len().min(4))),
                 _ => None,
             };
             if let Some((start, end)) = group
@@ -7439,14 +7486,6 @@ impl Shell {
                 OnboardingStep::Defaults => {
                     if focused == 26 {
                         self.onboarding_continue(cx);
-                    } else if focused == 8 {
-                        self.onboarding_pick_default_model(None, cx);
-                    } else if (9..16).contains(&focused) {
-                        let model = self.onboarding.models.ready().and_then(|models| {
-                            models.get(focused - 9).map(|model| model.id.clone())
-                        });
-                        let Some(model) = model else { return false };
-                        self.onboarding_pick_default_model(Some(model), cx);
                     } else if focused == 16 {
                         self.onboarding_pick_reasoning(None, cx);
                     } else if (17..26).contains(&focused) {
@@ -7488,14 +7527,6 @@ impl Shell {
                         });
                         let Some(harness) = harness else { return false };
                         self.onboarding_pick_title_harness(Some(harness), cx);
-                    } else if focused == 8 {
-                        self.onboarding_pick_title_model(None, cx);
-                    } else if (9..16).contains(&focused) {
-                        let model = self.onboarding.title_models.ready().and_then(|models| {
-                            models.get(focused - 9).map(|model| model.id.clone())
-                        });
-                        let Some(model) = model else { return false };
-                        self.onboarding_pick_title_model(Some(model), cx);
                     } else {
                         return false;
                     }
@@ -7515,6 +7546,21 @@ impl Shell {
             window.focus(self.onboarding.control(0), cx);
         }
         true
+    }
+
+    fn onboarding_reveal_model_focus(&self, window: &Window) {
+        if matches!(
+            self.onboarding.step(),
+            OnboardingStep::Defaults | OnboardingStep::Titles
+        ) && let Some(index) = self
+            .onboarding
+            .controls
+            .iter()
+            .position(|handle| handle.is_focused(window))
+            .and_then(crate::onboarding::model_choice)
+        {
+            self.onboarding.model_scroll.scroll_to_item(index);
+        }
     }
 
     fn on_key_down(
@@ -10188,6 +10234,7 @@ impl Render for Shell {
         };
         let root = match &render_gate {
             GatePhase::Ready if self.onboarding.active() => {
+                self.onboarding.prepare_model_controls(cx);
                 let viewport = window.viewport_size();
                 let title_bar = self.render_onboarding_title_bar(cx);
                 let page = crate::onboarding::render(
@@ -11440,6 +11487,112 @@ mod exit_regressions {
             })
             .unwrap();
     }
+
+    #[gpui::test]
+    fn onboarding_keyboard_yields_to_project_palette_and_reaches_full_model_catalog(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            Shell::new(
+                state,
+                EngineBootConfig {
+                    data_dir: dir.path().into(),
+                    ipc_port: 0,
+                    edge_url: "http://127.0.0.1:1".into(),
+                    edge_token: None,
+                    org_id: None,
+                    workos_client_id: None,
+                    default_harness: zeron_proto::HarnessId::Mock,
+                },
+                cx,
+            )
+        });
+        window
+            .update(cx, |shell, window, cx| {
+                shell.onboarding = OnboardingUi::new(
+                    crate::onboarding::OnboardingState::fresh(),
+                    Default::default(),
+                    Some(crate::onboarding::OnboardingFixture::Defaults),
+                    cx,
+                );
+                let key = |value: &str| gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse(value).unwrap(),
+                    is_held: false,
+                    prefer_character_input: false,
+                };
+                shell.onboarding.state.step = OnboardingStep::Project;
+                shell.onboarding.fixture = Some(crate::onboarding::OnboardingFixture::Project);
+                window.focus(shell.onboarding.control(2), cx);
+                shell.open_add_space(cx);
+                for value in ["tab", "shift-tab", "enter", "space", "down"] {
+                    assert!(!shell.onboarding_key_down(&key(value), window, cx));
+                    assert_eq!(shell.onboarding.step(), OnboardingStep::Project);
+                    assert!(shell.add_space.is_some());
+                }
+                assert!(shell.capture_escape_surface(window, cx));
+                assert!(shell.add_space.is_none());
+                assert!(!shell.onboarding.close_confirm);
+
+                let template = shell.onboarding.models.ready().unwrap()[0].clone();
+                let models: Vec<_> = (0..12)
+                    .map(|index| {
+                        let mut model = template.clone();
+                        model.id = format!("catalog-{index}");
+                        model
+                    })
+                    .collect();
+                shell.onboarding.models = Loadable::Ready(models.clone());
+                shell.onboarding.title_models = Loadable::Ready(models);
+                shell.onboarding.title_settings =
+                    Loadable::Ready(zeron_engine::registry::TitleSettings {
+                        harness: Some(zeron_proto::HarnessId::Codex),
+                        model: None,
+                    });
+                shell.onboarding.prepare_model_controls(cx);
+                for step in [OnboardingStep::Defaults, OnboardingStep::Titles] {
+                    shell.onboarding.state.step = step;
+                    shell.onboarding.fixture = Some(if step == OnboardingStep::Defaults {
+                        crate::onboarding::OnboardingFixture::Defaults
+                    } else {
+                        crate::onboarding::OnboardingFixture::Titles
+                    });
+                    window.focus(shell.onboarding.control(8), cx);
+                    for _ in 0..12 {
+                        assert!(shell.onboarding_key_down(&key("down"), window, cx));
+                    }
+                    assert!(
+                        shell
+                            .onboarding
+                            .control(crate::onboarding::model_control(12))
+                            .is_focused(window)
+                    );
+                    assert!(shell.onboarding_key_down(&key("enter"), window, cx));
+                    let selected = if step == OnboardingStep::Defaults {
+                        shell.onboarding.selected_model.as_deref()
+                    } else {
+                        shell
+                            .onboarding
+                            .title_settings
+                            .ready()
+                            .unwrap()
+                            .model
+                            .as_deref()
+                    };
+                    assert_eq!(selected, Some("catalog-11"));
+                    assert!(shell.onboarding_key_down(&key("down"), window, cx));
+                    assert!(shell.onboarding.control(8).is_focused(window));
+                }
+            })
+            .unwrap();
+    }
+
 
     #[gpui::test]
     fn pane_geometry_uses_one_animation_time_per_frame(cx: &mut TestAppContext) {
