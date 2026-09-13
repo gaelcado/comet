@@ -3789,18 +3789,9 @@ impl Shell {
         settings::replace(self.settings.clone(), SavePolicy::Immediate, cx);
     }
 
-    fn onboarding_target_params(
-        &self,
-        mut params: serde_json::Value,
-        cx: &App,
-    ) -> serde_json::Value {
-        let state = self.state.read(cx);
-        let target = state.effective_device_id();
-        if target.as_deref() != state.local_device_id.as_deref()
-            && let (Some(target), Some(object)) = (target, params.as_object_mut())
-        {
-            object.insert("targetDeviceId".into(), serde_json::Value::String(target));
-        }
+    fn onboarding_target_params(&self, params: serde_json::Value, _cx: &App) -> serde_json::Value {
+        // Onboarding configures this device, regardless of the selected space.
+        // Omitting targetDeviceId keeps all setup RPCs on the local engine.
         params
     }
 
@@ -4178,37 +4169,14 @@ impl Shell {
 
     pub(crate) fn onboarding_open_agent_settings(&mut self, cx: &mut Context<Self>) {
         self.onboarding.agent_settings_open = true;
-        let target = {
-            let state = self.state.read(cx);
-            state
-                .effective_device_id()
-                .filter(|target| Some(target.as_str()) != state.local_device_id.as_deref())
-        };
         if self.accounts_page.is_none() {
             let state = self.state.clone();
             self.accounts_page = Some(cx.new(|cx| AccountsPage::new(state, cx)));
         }
         if let Some(page) = &self.accounts_page {
-            page.update(cx, |page, cx| page.set_target_device(target, cx));
+            page.update(cx, |page, cx| page.set_local_only(true, cx));
         }
         self.open_settings(SettingsSection::Agents, cx);
-    }
-
-    pub(crate) fn onboarding_pick_device(&mut self, device_id: String, cx: &mut Context<Self>) {
-        self.state
-            .update(cx, |state, cx| state.select_device(device_id, cx));
-        self.onboarding.harnesses = Loadable::Idle;
-        self.onboarding.models = Loadable::Idle;
-        self.onboarding.accounts = Loadable::Idle;
-        self.onboarding.title_settings = Loadable::Idle;
-        self.onboarding.title_models = Loadable::Idle;
-        self.onboarding.selected_harness = None;
-        self.onboarding.selected_model = None;
-        self.onboarding.selected_reasoning = None;
-        self.onboarding_remember_target(cx);
-        self.onboarding_load_harnesses(cx);
-        self.onboarding_load_accounts(cx);
-        cx.notify();
     }
 
     pub(crate) fn onboarding_toggle_harness(
@@ -4604,6 +4572,9 @@ impl Shell {
         self.route = Route::Chat;
         if self.onboarding.agent_settings_open {
             self.onboarding.agent_settings_open = false;
+            if let Some(page) = &self.accounts_page {
+                page.update(cx, |page, cx| page.set_local_only(false, cx));
+            }
             self.onboarding.accounts = Loadable::Idle;
             self.onboarding_load_accounts(cx);
         }
@@ -5946,6 +5917,7 @@ impl Shell {
                     .rounded(px(4.0)),
             )
             .child("Zeron");
+        let skip = crate::onboarding::render_skip(&self.onboarding, &theme, cx);
         self.titlebar_drag_region(
             "onboarding-titlebar-drag",
             div()
@@ -5954,7 +5926,18 @@ impl Shell {
                 .left_0()
                 .right_0()
                 .h(px(Theme::TITLEBAR_HEIGHT))
-                .child(identity),
+                .child(identity)
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right(px(self.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET)))
+                        .h(px(Theme::TITLEBAR_HEIGHT))
+                        .pt(px(Theme::TITLEBAR_TOP_PAD))
+                        .flex()
+                        .items_center()
+                        .child(skip),
+                ),
             cx,
         )
         .into_any_element()
@@ -8929,19 +8912,9 @@ impl Shell {
                         self.onboarding_continue(cx);
                     } else if focused == 11 {
                         self.onboarding_load_harnesses(cx);
+                        self.onboarding_load_accounts(cx);
                     } else if focused == 12 {
                         self.onboarding_open_agent_settings(cx);
-                    } else if (20..25).contains(&focused) {
-                        let device = self
-                            .state
-                            .read(cx)
-                            .devices
-                            .iter()
-                            .take(5)
-                            .nth(focused - 20)
-                            .map(|device| device.id.clone());
-                        let Some(device) = device else { return false };
-                        self.onboarding_pick_device(device, cx);
                     } else {
                         let descriptor = self.onboarding.harnesses.ready().and_then(|rows| {
                             rows.iter()
@@ -13769,6 +13742,15 @@ mod exit_regressions {
         });
         window
             .update(cx, |shell, window, cx| {
+                shell.state.update(cx, |state, _| {
+                    state.local_device_id = Some("local".into());
+                    state.selected_device = Some("remote".into());
+                });
+                assert_eq!(
+                    shell.onboarding_target_params(serde_json::json!({"forceUsage": false}), cx),
+                    serde_json::json!({"forceUsage": false}),
+                    "onboarding must not forward to the selected remote device",
+                );
                 shell.onboarding = OnboardingUi::new(
                     crate::onboarding::OnboardingState::fresh(),
                     Default::default(),

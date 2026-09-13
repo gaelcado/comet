@@ -731,7 +731,7 @@ fn harness_status(
         return ("Not installed", false);
     }
     if !descriptor_enabled(descriptor) {
-        return ("Installed but disabled", false);
+        return ("Installed", false);
     }
     if !matches!(
         descriptor.id,
@@ -1232,73 +1232,9 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
 fn render_harness_step(
     ui: &OnboardingUi,
     theme: &Theme,
-    state: &Entity<AppState>,
+    _state: &Entity<AppState>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let devices = {
-        let state = state.read(cx);
-        let effective = state.effective_device_id();
-        let now = chrono::Utc::now();
-        state
-            .devices
-            .iter()
-            .take(5)
-            .map(|device| {
-                (
-                    device.id.clone(),
-                    device.name.clone(),
-                    state.device_online(&device.id, now),
-                    effective.as_deref() == Some(device.id.as_str()),
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    let multiple_devices = devices.len() > 1;
-    let device_switcher: AnyElement = if multiple_devices {
-        div()
-            .mt(px(18.0))
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(
-                div()
-                    .text_size(crate::typography::ui_rems(11.5))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(theme.text_muted)
-                    .child("Set up agents on"),
-            )
-            .child(
-                div()
-                    .id("onboarding-device-choices")
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .role(gpui::Role::RadioGroup)
-                    .aria_label("Device")
-                    .children(devices.into_iter().enumerate().map(
-                        |(index, (id, name, online, selected))| {
-                            let label: SharedString = if online {
-                                name.into()
-                            } else {
-                                format!("{name} · Offline").into()
-                            };
-                            chip(theme, label, selected, None)
-                                .id(("onboarding-device", index))
-                                .flex_1()
-                                .min_w(px(120.0))
-                                .role(gpui::Role::RadioButton)
-                                .aria_toggled(toggled(selected))
-                                .track_focus(ui.control(20 + index))
-                                .on_click(cx.listener(move |shell, _, _, cx| {
-                                    shell.onboarding_pick_device(id.clone(), cx)
-                                }))
-                        },
-                    )),
-            )
-            .into_any_element()
-    } else {
-        Empty.into_any_element()
-    };
     let list: AnyElement = match &ui.harnesses {
         Loadable::Idle | Loadable::Loading => div()
             .id("onboarding-harness-loading")
@@ -1321,14 +1257,6 @@ fn render_harness_step(
             .line_height(px(18.0))
             .text_color(theme.danger_muted)
             .child(message.clone())
-            .child(
-                quiet_button(theme, "Retry")
-                    .id("onboarding-harness-retry")
-                    .role(gpui::Role::Button)
-                    .track_focus(ui.control(11))
-                    .mt(px(8.0))
-                    .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_load_harnesses(cx))),
-            )
             .into_any_element(),
         Loadable::Ready(harnesses) => div()
             .flex()
@@ -1436,11 +1364,7 @@ fn render_harness_step(
             .into_any_element(),
     };
     let harness_list = div()
-        .mt(px(if multiple_devices {
-            Theme::SPACE_MD
-        } else {
-            STEP_GROUP_GAP
-        }))
+        .mt(px(Theme::SPACE_SM))
         .flex_1()
         .min_h_0()
         .max_h(px(HARNESS_LIST_MAX_HEIGHT))
@@ -1459,7 +1383,39 @@ fn render_harness_step(
             "onboarding-heading-harnesses",
             "Coding agents",
         ))
-        .child(device_switcher)
+        .child(
+            div()
+                .mt(px(STEP_GROUP_GAP))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    quiet_button(theme, "Manage sign-ins")
+                        .id("onboarding-manage-agent-signins")
+                        .role(gpui::Role::Button)
+                        .aria_label("Manage agent sign-ins on this device")
+                        .track_focus(ui.control(12))
+                        .on_click(
+                            cx.listener(|shell, _, _, cx| shell.onboarding_open_agent_settings(cx)),
+                        ),
+                )
+                .child(
+                    widgets::ghost_action(theme)
+                        .id("onboarding-harness-refresh")
+                        .size(px(36.0))
+                        .justify_center()
+                        .hover(|style| widgets::ghost_hover(theme, style))
+                        .focus_visible(|style| style.border_2().border_color(theme.text))
+                        .role(gpui::Role::Button)
+                        .aria_label("Refresh coding agents")
+                        .track_focus(ui.control(11))
+                        .child(crate::icons::icon(crate::icons::REFRESH).size(px(16.0)))
+                        .on_click(cx.listener(|shell, _, _, cx| {
+                            shell.onboarding_load_harnesses(cx);
+                            shell.onboarding_load_accounts(cx);
+                        })),
+                ),
+        )
         .child(harness_list)
         .when_some(ui.error.clone(), |column, error| {
             column.child(
@@ -2138,7 +2094,7 @@ fn render_footer_actions(
         if finishes { "Finish setup" } else { "Continue" },
         compact,
     )
-    .w_full()
+    .flex_1()
     .role(gpui::Role::Button)
     .when(!enabled, |button| {
         button
@@ -2162,51 +2118,25 @@ fn render_footer_actions(
         .flex()
         .flex_col()
         .gap(px(Theme::SPACE_SM))
-        .when(step == OnboardingStep::Harnesses, |column| {
-            column.child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(Theme::SPACE_SM))
-                    .when(matches!(ui.harnesses, Loadable::Ready(_)), |row| {
-                        row.child(
-                            quiet_button(theme, "Retry agent detection")
-                                .id("onboarding-harness-retry-ready")
-                                .h(px(Theme::SPACE_SM * 5.0))
-                                .flex_1()
-                                .role(gpui::Role::Button)
-                                .track_focus(ui.control(11))
-                                .on_click(cx.listener(|shell, _, _, cx| {
-                                    shell.onboarding_load_harnesses(cx);
-                                    shell.onboarding_load_accounts(cx);
-                                })),
-                        )
-                    })
-                    .child(
-                        quiet_button(theme, "Manage agent sign-ins")
-                            .id("onboarding-manage-agent-signins")
-                            .h(px(Theme::SPACE_SM * 5.0))
-                            .flex_1()
-                            .role(gpui::Role::Button)
-                            .track_focus(ui.control(12))
-                            .on_click(cx.listener(|shell, _, _, cx| {
-                                shell.onboarding_open_agent_settings(cx)
-                            })),
-                    ),
-            )
-        })
-        .child(continue_button);
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(px(Theme::SPACE_SM))
+                .child(render_previous(ui, step, theme, cx))
+                .child(continue_button),
+        );
     actions.into_any_element()
 }
 
-fn render_global_navigation(
+fn render_previous(
     ui: &OnboardingUi,
     step: OnboardingStep,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let previous: AnyElement = if step == OnboardingStep::Workspace {
+    if step == OnboardingStep::Workspace {
         Empty.into_any_element()
     } else {
         footer_secondary_button(
@@ -2229,8 +2159,17 @@ fn render_global_navigation(
             shell.onboarding_focus_control(0, window, cx);
         }))
         .into_any_element()
-    };
+    }
+}
+
+pub(super) fn render_skip(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let skip = footer_secondary_button(theme, "onboarding-skip", "Skip", None)
+        .h(px(28.0))
+        .px(px(Theme::SPACE_SM))
+        .occlude()
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+            cx.stop_propagation();
+        })
         .role(gpui::Role::Button)
         .aria_label("Skip setup")
         .cursor_pointer()
@@ -2238,13 +2177,7 @@ fn render_global_navigation(
         .track_focus(ui.control(29))
         .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_skip(cx)));
 
-    div()
-        .w_full()
-        .flex()
-        .items_center()
-        .child(previous)
-        .child(skip.ml_auto())
-        .into_any_element()
+    skip.into_any_element()
 }
 
 pub fn render(
@@ -2346,14 +2279,6 @@ pub fn render(
         .flex()
         .items_center()
         .justify_center()
-        .child(
-            div()
-                .absolute()
-                .top(px(Theme::TITLEBAR_HEIGHT + outer_y))
-                .left(px(outer_x))
-                .right(px(outer_x))
-                .child(render_global_navigation(ui, step, &theme, cx)),
-        )
         .child(journey)
         .child(
             div()
