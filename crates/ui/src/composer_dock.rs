@@ -3,6 +3,8 @@
 
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
+mod panel_handoff;
+
 use gpui::{
     AnyElement, App, Bounds, Element, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
     Pixels, Window, point, px,
@@ -123,9 +125,21 @@ impl Visuals {
             }
         }
     }
+
+    fn return_from_panel(self, time: f32) -> Self {
+        // The short fade-through has its own clock: destination controls must
+        // arrive with the input, not trail the longer vertical-glide schedule.
+        Self {
+            transcript: self.transcript * (1.0 - stage(time, 0.0, 0.18)),
+            footer: self.footer * (1.0 - stage(time, 0.0, 0.18)),
+            selectors: crate::motion::lerp(self.selectors, 1.0, stage(time, 0.26, 0.85)),
+            dissolve: self.dissolve * (1.0 - stage(time, 0.0, 0.80)),
+        }
+    }
 }
 
 pub(crate) struct DockState {
+    pane: panel_handoff::PanelHandoff,
     phase: Glide,
     last_frame: Option<Instant>,
     pub frame: DockFrame,
@@ -137,11 +151,15 @@ pub(crate) struct DockState {
     last_width_frame: Option<Instant>,
     route_changed: bool,
     choreography: Option<(Instant, Visuals)>,
+    panel_return: bool,
+    column_width: Option<f32>,
+    departing_column_width: Option<f32>,
 }
 
 impl Default for DockState {
     fn default() -> Self {
         Self {
+            pane: Default::default(),
             phase: Glide::new(0.0),
             last_frame: None,
             frame: DockFrame::settled(false),
@@ -153,11 +171,41 @@ impl Default for DockState {
             last_width_frame: None,
             route_changed: false,
             choreography: None,
+            panel_return: false,
+            column_width: None,
+            departing_column_width: None,
         }
     }
 }
 
 impl DockState {
+    /// Retained transcript pixels belong to the source column. Letting them
+    /// reflow into the hero's wider layout before fading creates an exit flash.
+    pub fn transcript_width(&mut self, target: f32, docked: bool, panel_handoff: bool) -> f32 {
+        if !docked && self.frame.docked && panel_handoff {
+            self.departing_column_width = self.column_width;
+        }
+        if docked || !panel_handoff {
+            self.departing_column_width = None;
+        }
+        self.column_width = Some(target);
+        self.departing_column_width.unwrap_or(target)
+    }
+
+    pub fn observe_pane(&mut self, docked: bool, target: f32, enabled: bool, now: Instant) -> bool {
+        self.pane.sample(
+            docked,
+            target,
+            enabled,
+            now,
+            0.320 * crate::motion::speed_scale(),
+        )
+    }
+
+    pub fn opacity(&self) -> f32 {
+        self.pane.opacity()
+    }
+
     pub fn layout_width(&mut self, target: f32, reduced: bool, now: Instant) -> f32 {
         let dt = if self.route_changed {
             0.0
@@ -168,7 +216,12 @@ impl DockState {
         };
         self.last_width_frame = Some(now);
         let width = self.width.get_or_insert(Glide::new(target));
-        if reduced || (!self.frame.active && !self.moving) {
+        if let Some(progress) = self.pane.progress {
+            // Change horizontal geometry only inside the invisible interval.
+            if progress >= 0.22 {
+                *width = Glide::new(target);
+            }
+        } else if reduced || (!self.frame.active && !self.moving) {
             *width = Glide::new(target);
         } else {
             width.advance(target, dt, duration(self.frame.docked));
@@ -178,6 +231,9 @@ impl DockState {
 
     pub fn tick(&mut self, docked: bool, reduced: bool, now: Instant) -> DockFrame {
         self.route_changed = docked != self.frame.docked;
+        if self.route_changed || reduced {
+            self.panel_return = !reduced && !docked && self.pane.progress.is_some();
+        }
         let target = if docked { 1.0 } else { 0.0 };
         if reduced || self.last_frame.is_none() || self.position.is_none() {
             self.phase = Glide::new(target);
@@ -199,14 +255,33 @@ impl DockState {
         }
         self.last_frame = Some(now);
         let visuals = if let Some((started, from)) = self.choreography {
-            let time = now.saturating_duration_since(started).as_secs_f32() / duration(docked);
+            let total = if self.panel_return {
+                0.320 * crate::motion::speed_scale()
+            } else {
+                duration(docked)
+            };
+            let time = now.saturating_duration_since(started).as_secs_f32() / total;
             if time >= 1.0 {
                 self.choreography = None;
             }
-            from.advance(docked, time)
+            if self.panel_return {
+                from.return_from_panel(time)
+            } else {
+                from.advance(docked, time)
+            }
         } else {
             Visuals::settled(docked)
         };
+        if self.panel_return {
+            let amount = if self.pane.progress.is_some_and(|p| p < 0.22) {
+                self.frame.amount
+            } else {
+                0.0
+            };
+            // Keep the retargetable state aligned with what was painted so a
+            // reversal cannot revive the old, longer height animation.
+            self.phase = Glide::new(amount);
+        }
         self.frame = DockFrame {
             amount: self.phase.value.clamp(0.0, 1.0),
             docked,
@@ -296,8 +371,17 @@ impl Element for DockedComposer {
         state.moving |= state.last_docked != docked || state.frame.active;
         state.last_docked = docked;
         let moving = state.moving;
+        let handoff = state.pane.progress;
         let position = state.position.get_or_insert((Glide::new(x), Glide::new(y)));
-        if self.reduced || !moving {
+        if let Some(progress) = handoff {
+            if progress >= 0.22 {
+                let travel = if docked { 12.0 } else { 8.0 };
+                *position = (
+                    Glide::new(x),
+                    Glide::new(y + travel * (1.0 - stage(progress, 0.22, 1.0))),
+                );
+            }
+        } else if self.reduced || !moving {
             *position = (Glide::new(x), Glide::new(y));
         } else {
             position.0.advance(x, dt, duration(docked));
@@ -344,6 +428,45 @@ impl IntoElement for DockedComposer {
 mod tests {
     use super::*;
     use gpui::{Context, Render, canvas, div, prelude::*};
+
+    #[test]
+    fn panel_exit_retains_source_transcript_width_only_until_handoff_ends() {
+        let mut state = DockState::default();
+        assert_eq!(state.transcript_width(540.0, true, false), 540.0);
+        state.frame = DockFrame::settled(true);
+        assert_eq!(state.transcript_width(1040.0, false, true), 540.0);
+        state.frame = DockFrame::settled(false);
+        assert_eq!(state.transcript_width(1040.0, false, true), 540.0);
+        assert_eq!(state.transcript_width(1040.0, false, false), 1040.0);
+        assert_eq!(state.transcript_width(540.0, true, true), 540.0);
+        state.frame = DockFrame::settled(true);
+        assert_eq!(state.transcript_width(1040.0, false, false), 1040.0);
+    }
+
+    #[test]
+    fn panel_return_sizes_while_hidden_and_finishes_controls_with_input() {
+        let now = Instant::now();
+        let mut state = DockState::default();
+        state.observe_pane(true, 480.0, true, now);
+        state.tick(true, false, now);
+        state.position = Some((Glide::new(100.0), Glide::new(700.0)));
+        state.observe_pane(false, 0.0, true, now);
+        assert_eq!(state.tick(false, false, now).amount, 1.0);
+        let hidden = now + std::time::Duration::from_secs_f32(0.075 * crate::motion::speed_scale());
+        state.observe_pane(false, 0.0, true, hidden);
+        let frame = state.tick(false, false, hidden);
+        assert_eq!(state.opacity(), 0.0);
+        assert_eq!(frame.amount, 0.0);
+        for seconds in [0.321, 0.400, 0.500] {
+            let at =
+                now + std::time::Duration::from_secs_f32(seconds * crate::motion::speed_scale());
+            state.observe_pane(false, 0.0, true, at);
+            let frame = state.tick(false, false, at);
+            assert_eq!(frame.selectors(), 1.0);
+            assert_eq!(frame.dissolve(), 0.0);
+            assert_eq!(frame.amount, 0.0);
+        }
+    }
 
     #[gpui::test]
     fn measured_dock_retargets_without_a_first_frame_jump(cx: &mut gpui::TestAppContext) {

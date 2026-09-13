@@ -7034,6 +7034,7 @@ impl Shell {
         &mut self,
         window: &mut Window,
         main_content_width: f32,
+        transcript_width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme_owned = Theme::of(cx).clone();
@@ -7124,6 +7125,7 @@ impl Shell {
                         .relative()
                         .top(px(8.0 * (1.0 - dock_frame.transcript())))
                         .size_full()
+                        .when(departing_transcript, |el| el.w(px(transcript_width)))
                         .opacity(if transcript_geometry_ready || departing_transcript {
                             dock_frame.transcript()
                         } else {
@@ -7341,11 +7343,13 @@ impl Shell {
                     )
                     .child(status)
                     .when(has_spaces || no_project || has_appshots, |el| {
+                        let composer_opacity = self.composer_dock.borrow().opacity();
                         el.child(crate::composer_dock::docked_composer(
                             div()
                                 .id("persistent-composer")
                                 .relative()
                                 .w(px(composer_width))
+                                .opacity(composer_opacity)
                                 .mx_auto()
                                 .child(self.composer.clone())
                                 .children(if has_selection {
@@ -9475,12 +9479,28 @@ impl Render for Shell {
                 // Stamped for `right_target` — the expanded changes panel
                 // sizes itself to the viewport.
                 self.viewport_width = viewport;
+                let on_chat = matches!(self.route, Route::Chat);
+                let right_target_width = if on_chat { self.right_now(cx) } else { 0.0 };
+                let panel_handoff = self.composer_dock.borrow_mut().observe_pane(
+                    self.state.read(cx).selected_chat.is_some(),
+                    right_target_width,
+                    on_chat && !self.reduced_motion,
+                    self.render_time.unwrap_or_else(std::time::Instant::now),
+                );
+                if panel_handoff {
+                    self.motion_active.set(true);
+                }
                 let main_target_width =
-                    conversation_width(viewport, self.sidebar_target(), self.right_now(cx));
+                    conversation_width(viewport, self.sidebar_target(), right_target_width);
                 let main_transition = self.active_tween_endpoints(self.main_takeover_tween);
                 let main_content_width =
                     stable_panel_content_width(main_target_width, main_transition);
-                let main_width = (main_content_width - 10.0).max(0.0);
+                let transcript_width = self.composer_dock.borrow_mut().transcript_width(
+                    main_content_width,
+                    self.state.read(cx).selected_chat.is_some(),
+                    panel_handoff,
+                );
+                let main_width = (transcript_width - 10.0).max(0.0);
                 // Clearance excludes the terminal dock: the transcript
                 // viewport ends at the dock's top (see the underlay in
                 // `render_main`), so only the chrome above it overlaps.
@@ -9512,16 +9532,16 @@ impl Render for Shell {
                     },
                     cx,
                 );
-                let main = self.render_main(window, main_content_width, cx);
+                let main = self.render_main(window, main_content_width, transcript_width, cx);
                 // The Changes pane is chat-scoped chrome: the Settings route
                 // never renders it (zeron __root.tsx `!isSettings && activeChat`
                 // around the diff column) — the per-session open flags stay
                 // intact for the return trip.
-                let on_chat = matches!(self.route, Route::Chat);
                 let right_open = on_chat && self.right_pane_open(cx);
                 // Takeover mode derives its width from the viewport, so a
                 // manual drag handle would fight the expanded target.
                 let right_handle = (right_open
+                    && !panel_handoff
                     && !self.right_pane_expanded
                     && !self.tween_active(self.right_tween))
                 .then(|| {
