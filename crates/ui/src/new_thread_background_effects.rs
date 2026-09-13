@@ -1,4 +1,4 @@
-//! Effects are source-space images. Resizing only changes ObjectFit::Cover.
+//! Effects remain cached source-space images; a separate alpha mask follows layout.
 use crate::settings::NewThreadBackgroundEffect;
 use crate::theme::Theme;
 use gpui::{AnyElement, Empty, IntoElement, Pixels, prelude::*, px};
@@ -24,7 +24,14 @@ impl BackgroundLuminance {
         cx: &mut gpui::App,
     ) -> Option<Arc<gpui::RenderImage>> {
         let mut effects = self.effects.lock().unwrap();
-        let key = (effect, light && effect != NewThreadBackgroundEffect::Dither);
+        let key = (
+            effect,
+            light
+                && !matches!(
+                    effect,
+                    NewThreadBackgroundEffect::Dither | NewThreadBackgroundEffect::None
+                ),
+        );
         if let Some((_, image)) = effects.iter().find(|(cached, _)| *cached == key) {
             return image.clone();
         }
@@ -38,6 +45,12 @@ impl BackgroundLuminance {
                 .background_executor()
                 .spawn(async move {
                     let pixels = match effect {
+                        NewThreadBackgroundEffect::None => {
+                            image::RgbaImage::from_fn(worker.width, worker.height, |x, y| {
+                                let [r, g, b, a] = worker.colors[(y * worker.width + x) as usize];
+                                image::Rgba([b, g, r, a])
+                            })
+                        }
                         NewThreadBackgroundEffect::Dither => {
                             worker.dither_pixels(worker.width, worker.height)
                         }
@@ -237,24 +250,22 @@ pub(super) fn treatment(
     theme: &Theme,
     path: &Path,
     base_opacity: f32,
+    mask: crate::new_thread_background_mask::Mask,
     cx: &mut gpui::App,
-) -> (f32, AnyElement) {
-    if effect == NewThreadBackgroundEffect::None {
-        return (base_opacity, Empty.into_any_element());
-    }
+) -> AnyElement {
     let light = matches!(theme.appearance, crate::theme::Appearance::Light);
-    match background_luminance(path).and_then(|source| source.raster_image(effect, light, cx)) {
-        Some(image) => (
-            0.0,
-            gpui::img(image)
-                .absolute()
-                .inset_0()
-                .size_full()
-                .object_fit(gpui::ObjectFit::Cover)
-                .opacity(base_opacity)
-                .into_any_element(),
-        ),
-        None => (base_opacity, Empty.into_any_element()),
+    match background_luminance(path)
+        .and_then(|source| source.raster_image(effect, light, cx))
+        .and_then(|source| crate::new_thread_background_mask::image(source, mask, cx))
+    {
+        Some(image) => gpui::img(image)
+            .absolute()
+            .inset_0()
+            .size_full()
+            .object_fit(gpui::ObjectFit::Cover)
+            .opacity(base_opacity)
+            .into_any_element(),
+        None => Empty.into_any_element(),
     }
 }
 fn dither_color([r, g, b, a]: [u8; 4], threshold: u8) -> [u8; 4] {

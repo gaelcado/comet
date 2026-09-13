@@ -4118,6 +4118,7 @@ pub struct Composer {
     last_rendered_height: f32,
     dock_frame: Option<crate::composer_dock::DockFrame>,
     dock_clearance_correction: f32,
+    hero_surface_bounds: Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     last_target_height: f32,
     height_morph: Option<FlipMorph>,
     /// Monotonic clock anchor for the morph timeline.
@@ -4152,6 +4153,10 @@ impl Composer {
 
     pub(crate) fn dock_clearance_correction(&self) -> f32 {
         self.dock_clearance_correction
+    }
+
+    pub(crate) fn hero_surface_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.hero_surface_bounds.get()
     }
 
     /// The picker entity, for the shell's canvas target selectors.
@@ -4306,6 +4311,7 @@ impl Composer {
             last_rendered_height: 0.0,
             dock_frame: None,
             dock_clearance_correction: 0.0,
+            hero_surface_bounds: Default::default(),
             last_target_height: 0.0,
             height_morph: None,
             morph_clock: Instant::now(),
@@ -7830,6 +7836,26 @@ impl Render for Composer {
             .relative()
             .id("composer-surface")
             .child(crate::frost::frosted(surface_radius, 16.0, body))
+            .when(
+                self.dock_frame
+                    .is_some_and(|frame| !frame.docked && frame.amount == 0.0),
+                |el| {
+                    let measured = self.hero_surface_bounds.clone();
+                    el.child(
+                        gpui::canvas(
+                            move |bounds, window, _| {
+                                if measured.get() != Some(bounds) {
+                                    measured.set(Some(bounds));
+                                    window.request_animation_frame();
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                },
+            )
             // Both completion popups span the full pill width above it —
             // the file-mention and slash tokens are mutually exclusive.
             .children(self.render_file_mention_popup(&theme, cx))

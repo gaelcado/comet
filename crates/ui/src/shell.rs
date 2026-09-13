@@ -695,9 +695,6 @@ const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
 const NEW_THREAD_BACKGROUND_FROSTED_OPACITY: f32 = 0.84;
 const NEW_THREAD_BACKGROUND_VIEWPORT_RATIO: f32 = 0.46;
 const NEW_THREAD_BACKGROUND_MAX_HEIGHT: f32 = 440.0;
-// Keep the upper artwork clear, with a quiet tail over the lower 56%.
-// The artwork meets the panel edges directly in every animation frame.
-const NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO: f32 = 0.56;
 
 /// Drag marker for the sidebar resize handle.
 struct SidebarResize;
@@ -855,20 +852,13 @@ fn new_thread_background_height(viewport_height: f32) -> f32 {
         .min(NEW_THREAD_BACKGROUND_MAX_HEIGHT)
 }
 
-fn new_thread_background_bottom_band(appearance: crate::theme::Appearance, height: f32) -> f32 {
-    match appearance {
-        // Only the lower feather remains; toolbar contrast belongs to the
-        // floating island, not a window-wide strip over the artwork.
-        crate::theme::Appearance::Light => height * 0.72,
-        crate::theme::Appearance::Dark => height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO,
-    }
-}
-
 fn new_thread_background(
     background: Option<&settings::NewThreadComposerBackground>,
     effect: settings::NewThreadBackgroundEffect,
     theme: &Theme,
     viewport_height: f32,
+    hero_width: f32,
+    composer_bounds: Option<gpui::Bounds<Pixels>>,
     dissolve: f32,
     cx: &mut App,
 ) -> AnyElement {
@@ -880,53 +870,41 @@ fn new_thread_background(
         return Empty.into_any_element();
     }
     let hero_height = new_thread_background_height(viewport_height);
-    let bottom_band = new_thread_background_bottom_band(theme.appearance, hero_height);
+    let Some(composer_bounds) = composer_bounds else {
+        return Empty.into_any_element();
+    };
     let dissolve = dissolve.clamp(0.0, 1.0);
 
-    let (image_opacity, effect_layer) = crate::new_thread_background_effects::treatment(
+    let artwork = crate::new_thread_background_effects::treatment(
         effect,
         theme,
         &path,
         new_thread_background_opacity(theme.is_frost()),
+        crate::new_thread_background_mask::Mask {
+            width: hero_width.round().max(1.0),
+            height: hero_height.round().max(1.0),
+            left: f32::from(composer_bounds.left()).round(),
+            top: f32::from(composer_bounds.top()).round(),
+            right: f32::from(composer_bounds.right()).round(),
+            bottom: f32::from(composer_bounds.bottom()).round(),
+            radius: crate::composer::COMPOSER_RADIUS,
+        },
         cx,
     );
     // Image and treatment share a fixed crop and fade together in place.
+    // The hero uses the full conversation canvas even while the destination
+    // right pane clips it. Navigation must never rescale the artwork.
     div()
         .absolute()
         .top_0()
         .left_0()
-        .right_0()
+        .w(px(hero_width))
         .h(px(hero_height))
         .overflow_hidden()
         .opacity(1.0 - dissolve)
-        // Fade the image primitive itself instead of painting a theme-colored
-        // gradient above it. That creates a real alpha mask, so the tail
-        // resolves into the exact canvas beneath it on both opaque and glass
-        // themes without a horizontal color seam.
-        .child(
-            crate::edge_fade::edge_faded(
-                0.0,
-                false,
-                true,
-                // Give the mask a definite relayout box. A percentage-sized
-                // image as the custom element's direct child could briefly
-                // resolve to zero during live window resize.
-                div()
-                    .relative()
-                    .w_full()
-                    .h(px(hero_height))
-                    .child(
-                        img(path)
-                            .absolute()
-                            .inset_0()
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                            .opacity(image_opacity),
-                    )
-                    .child(effect_layer),
-            )
-            .band_bottom(bottom_band),
-        )
+        // Alpha resolves into the real canvas, including translucent themes;
+        // no theme-colored overlay bleaches or darkens the source pixels.
+        .child(artwork)
         .into_any_element()
 }
 
@@ -7115,6 +7093,14 @@ impl Shell {
                 new_thread_background_effect,
                 theme,
                 self.viewport_height,
+                (self.viewport_width - self.sidebar_now()).max(0.0),
+                self.composer
+                    .read(cx)
+                    .hero_surface_bounds()
+                    .map(|mut bounds| {
+                        bounds.origin.x -= px(self.sidebar_now());
+                        bounds
+                    }),
                 dock_frame.dissolve(),
                 cx,
             )
@@ -9867,22 +9853,6 @@ mod tests {
         assert_eq!(center, 21.0);
         assert_eq!(center - 12.0 - top, 4.0);
         assert_eq!(top + height - (center + 12.0), 4.0);
-    }
-
-    #[test]
-    fn lower_hero_feather_preserves_appearance_specific_spacing() {
-        for viewport in [400.0, 600.0, 1000.0, 2000.0] {
-            let height = new_thread_background_height(viewport);
-            let dark_bottom =
-                new_thread_background_bottom_band(crate::theme::Appearance::Dark, height);
-            assert_eq!(
-                dark_bottom,
-                height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO
-            );
-            let bottom = new_thread_background_bottom_band(crate::theme::Appearance::Light, height);
-            assert!(bottom > dark_bottom);
-            assert!(bottom < height);
-        }
     }
 
     #[test]
