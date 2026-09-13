@@ -1,7 +1,7 @@
 //! The app shell (zeron `__root.tsx`): sidebar column + main panel + optional
 //! right "Changes" pane, plus the boot splash and the connection gate.
 //!
-//! Layout is zeron's: collapsible drag-resizable sidebar (208–400px, default
+//! Layout is zeron's: collapsible drag-resizable sidebar (224–400px, default
 //! 256) with a 200ms ease-out width transition; main panel with an h-11 header,
 //! content outlet, and a reserved h-6 status strip so later content never
 //! shifts; right pane scaffold (360px floor, default 520), hidden by default.
@@ -46,8 +46,9 @@ use crate::settings::shortcuts::{ShortcutsEvent, ShortcutsPage};
 use crate::settings::{
     self, CHAT_PANEL_MIN, ComposerSendBehavior, JUMP_SLOTS, KeymapConfig, RIGHT_PANE_DEFAULT,
     RIGHT_PANE_MIN, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN, SavePolicy, ShortcutId,
-    SidebarOrganization, SidebarSort, TERMINAL_DEFAULT_HEIGHT, UiSettings, badge_combo,
-    jump_hints_visible, modifier_send_hint_visible, platform_combo,
+    SidebarOrganization, SidebarSort, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_VH,
+    TERMINAL_MIN_HEIGHT, UiSettings, badge_combo, jump_hints_visible, modifier_send_hint_visible,
+    platform_combo,
 };
 use crate::state::{
     AppState, ConnectionStatus, EngineBootConfig, EngineMode, GatePhase, Indicator, OrgRow,
@@ -170,8 +171,9 @@ impl SidebarDisclosureMotion {
 /// Vertical pane resize hitboxes yield the global titlebar. Keeping this in
 /// the shared constructor makes left/right seams mirror each other and avoids
 /// relying on paint order when chrome crosses an animated pane boundary.
-const PANE_RESIZE_HITBOX_HALF_WIDTH: f32 = 6.0;
+const PANE_RESIZE_HITBOX_HALF_WIDTH: f32 = 10.0;
 const PANE_RESIZE_HITBOX_TOP: f32 = Theme::TITLEBAR_HEIGHT;
+const TERMINAL_RESIZE_HITBOX_HEIGHT: f32 = 10.0;
 
 fn stable_panel_content_width(target: f32, transition: Option<(f32, f32)>) -> f32 {
     transition.map(|(from, to)| from.max(to)).unwrap_or(target)
@@ -701,6 +703,30 @@ const NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO: f32 = 0.56;
 struct SidebarResize;
 /// Drag marker for the right-pane resize handle.
 struct RightPaneResize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaneResizeKind {
+    Sidebar,
+    Right,
+    Terminal,
+}
+
+/// Resolve one pointer sample while keeping the persisted width legal. The
+/// edge is latched by the caller, so a held pointer produces one nudge rather
+/// than restarting the animation for every drag event.
+fn sidebar_drag_sample(
+    pointer_x: f32,
+    latched_edge: Option<motion::ResizeEdge>,
+    reduced_motion: bool,
+) -> motion::ResizeDragSample {
+    motion::resize_drag_sample(
+        pointer_x,
+        SIDEBAR_MIN,
+        SIDEBAR_MAX,
+        latched_edge,
+        reduced_motion,
+    )
+}
 
 /// The dragged surface-tab payload (strip reorder).
 struct RightTabDrag {
@@ -1460,7 +1486,18 @@ pub struct Shell {
     debug_gate: Option<GatePhase>,
     debug_upload: Option<String>,
     sidebar_tween: Option<WidthTween>,
+    sidebar_edge_bounce: Option<motion::ResizeEdgeBounce>,
+    /// Boundary currently held during a sidebar drag. Cleared on re-entry or
+    /// release so the next genuine edge crossing can acknowledge the limit.
+    sidebar_resize_edge: Option<motion::ResizeEdge>,
+    /// Gesture-owned resize feedback. Unlike hover, this stays active while
+    /// the seam moves away from the pointer and clears only on release or when
+    /// a constrained edge takes over with its bounce cue.
+    pane_resize_active: Option<PaneResizeKind>,
+    pane_resize_dragging: Option<PaneResizeKind>,
     right_tween: Option<WidthTween>,
+    right_edge_bounce: Option<motion::ResizeEdgeBounce>,
+    right_resize_edge: Option<motion::ResizeEdge>,
     /// Mirrors `right_tween` only for takeover entry/exit, allowing the visible
     /// right-panel contents to resize with their outer frame in that mode.
     right_takeover_content_tween: Option<WidthTween>,
@@ -1777,7 +1814,13 @@ impl Shell {
             debug_gate,
             debug_upload,
             sidebar_tween: None,
+            sidebar_edge_bounce: None,
+            sidebar_resize_edge: None,
+            pane_resize_active: None,
+            pane_resize_dragging: None,
             right_tween: None,
+            right_edge_bounce: None,
+            right_resize_edge: None,
             right_takeover_content_tween: None,
             main_takeover_tween: None,
             right_pane_expanded: false,
@@ -2229,7 +2272,7 @@ impl Shell {
             // Manual sizing preserves a usable conversation column. Takeover
             // intentionally consumes it completely. Both ride the sidebar
             // tween so toggling it remains seamless.
-            let sidebar_now = self.eval_tween(self.sidebar_tween, self.sidebar_target());
+            let sidebar_now = self.sidebar_now();
             if self.right_pane_expanded {
                 right_pane_takeover_width(self.viewport_width, sidebar_now)
             } else {
@@ -2241,7 +2284,11 @@ impl Shell {
     }
 
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        let from = self.eval_tween(self.sidebar_tween, self.sidebar_target());
+        let from = self.sidebar_now();
+        self.sidebar_edge_bounce = None;
+        self.sidebar_resize_edge = None;
+        self.pane_resize_active = None;
+        self.pane_resize_dragging = None;
         self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed;
         self.sidebar_tween = Some(WidthTween::new(from, self.sidebar_target()));
         self.schedule_save(cx);
@@ -2251,7 +2298,10 @@ impl Shell {
     fn toggle_right_pane(&mut self, cx: &mut Context<Self>) {
         // Reverse from the visible width when toggled during an animation.
         let from = self.eval_tween(self.right_tween, self.right_target(cx));
-        let sidebar_now = self.eval_tween(self.sidebar_tween, self.sidebar_target());
+        self.right_edge_bounce = None;
+        self.right_resize_edge = None;
+        self.finish_pane_resize(PaneResizeKind::Right);
+        let sidebar_now = self.sidebar_now();
         let from_main = conversation_width(self.viewport_width, sidebar_now, from);
         let was_expanded = self.right_pane_expanded;
         let key = self.panel_key(cx);
@@ -3277,7 +3327,12 @@ impl Shell {
         };
         let dy = anchor_y - f32::from(event.event.position.y);
         let viewport_h = f32::from(window.viewport_size().height);
-        self.settings.terminal_height = clamp_terminal_height(anchor_h + dy, viewport_h);
+        let requested = anchor_h + dy;
+        let max = (viewport_h * TERMINAL_MAX_VH).max(TERMINAL_MIN_HEIGHT);
+        self.settings.terminal_height = clamp_terminal_height(requested, viewport_h);
+        self.pane_resize_dragging = Some(PaneResizeKind::Terminal);
+        self.pane_resize_active = (requested > TERMINAL_MIN_HEIGHT && requested < max)
+            .then_some(PaneResizeKind::Terminal);
         self.terminal_tween = None; // live drag tracks the pointer
         self.schedule_save(cx);
         cx.notify();
@@ -3290,11 +3345,34 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let x = f32::from(event.event.position.x);
-        self.settings.sidebar_width = x.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+        let sample = sidebar_drag_sample(x, self.sidebar_resize_edge, self.reduced_motion);
+        self.settings.sidebar_width = sample.width;
         self.settings.sidebar_collapsed = false;
+        self.pane_resize_dragging = Some(PaneResizeKind::Sidebar);
         self.sidebar_tween = None; // live drag tracks the pointer directly
+        if sample.starts_bounce {
+            self.sidebar_edge_bounce = sample.edge.map(motion::ResizeEdgeBounce::new);
+        } else if sample.edge.is_none() {
+            self.sidebar_edge_bounce = None;
+        }
+        self.pane_resize_active = sample.edge.is_none().then_some(PaneResizeKind::Sidebar);
+        self.sidebar_resize_edge = sample.edge;
         self.schedule_save(cx);
         cx.notify();
+    }
+
+    fn finish_pane_resize(&mut self, kind: PaneResizeKind) {
+        if self.pane_resize_active == Some(kind) {
+            self.pane_resize_active = None;
+        }
+        if self.pane_resize_dragging == Some(kind) {
+            self.pane_resize_dragging = None;
+        }
+        match kind {
+            PaneResizeKind::Sidebar => self.sidebar_resize_edge = None,
+            PaneResizeKind::Terminal => self.terminal_drag_anchor = None,
+            PaneResizeKind::Right => self.right_resize_edge = None,
+        }
     }
 
     fn on_right_pane_drag(
@@ -3308,11 +3386,30 @@ impl Shell {
         // No arbitrary percentage ceiling, but retain the chat's usable 300px
         // floor instead of allowing the conversation to collapse to zero.
         let max = right_pane_max_width(viewport, self.sidebar_target());
-        self.settings.right_pane_width = if max >= RIGHT_PANE_MIN {
-            width.clamp(RIGHT_PANE_MIN, max)
+        let sample = if max >= RIGHT_PANE_MIN {
+            motion::resize_drag_sample(
+                width,
+                RIGHT_PANE_MIN,
+                max,
+                self.right_resize_edge,
+                self.reduced_motion,
+            )
         } else {
-            max
+            motion::ResizeDragSample {
+                width: max,
+                edge: None,
+                starts_bounce: false,
+            }
         };
+        self.settings.right_pane_width = sample.width;
+        self.pane_resize_dragging = Some(PaneResizeKind::Right);
+        if sample.starts_bounce {
+            self.right_edge_bounce = sample.edge.map(motion::ResizeEdgeBounce::new);
+        } else if sample.edge.is_none() {
+            self.right_edge_bounce = None;
+        }
+        self.pane_resize_active = sample.edge.is_none().then_some(PaneResizeKind::Right);
+        self.right_resize_edge = sample.edge;
         self.right_tween = None;
         self.right_takeover_content_tween = None;
         self.main_takeover_tween = None;
@@ -4472,6 +4569,41 @@ impl Shell {
         motion::lerp(from, to, RESIZE.progress(raw))
     }
 
+    fn eval_resize_edge_bounce(
+        &self,
+        bounce: Option<motion::ResizeEdgeBounce>,
+        enabled: bool,
+    ) -> f32 {
+        let Some(bounce) = bounce else {
+            return 0.0;
+        };
+        if self.reduced_motion || !enabled {
+            return 0.0;
+        }
+        let total =
+            Duration::from_millis(motion::RESIZE_EDGE_BOUNCE_MS).mul_f32(motion::speed_scale());
+        let raw = self.tween_elapsed(bounce.started).as_secs_f32() / total.as_secs_f32();
+        if raw >= 1.0 {
+            return 0.0;
+        }
+        self.motion_active.set(true);
+        motion::resize_bounce_offset(bounce.edge, raw)
+    }
+
+    pub(super) fn sidebar_now(&self) -> f32 {
+        self.eval_tween(self.sidebar_tween, self.sidebar_target())
+            + self
+                .eval_resize_edge_bounce(self.sidebar_edge_bounce, !self.settings.sidebar_collapsed)
+    }
+
+    fn right_now(&self, cx: &App) -> f32 {
+        self.eval_tween(self.right_tween, self.right_target(cx))
+            + self.eval_resize_edge_bounce(
+                self.right_edge_bounce,
+                self.right_pane_open(cx) && !self.right_pane_expanded,
+            )
+    }
+
     fn tween_active(&self, tween: Option<WidthTween>) -> bool {
         tween.is_some_and(|tween| {
             !self.reduced_motion
@@ -4489,23 +4621,6 @@ impl Shell {
             .map(|transition| (transition.from, transition.to))
     }
 
-    /// Animated width container: tweens 200ms ease-out on collapse/expand, and
-    /// clips a fixed-width inner so content never reflows mid-transition.
-    fn pane_container(
-        &self,
-        tween: Option<WidthTween>,
-        target: f32,
-        inner: AnyElement,
-    ) -> AnyElement {
-        div()
-            .h_full()
-            .flex_none()
-            .overflow_hidden()
-            .w(px(self.eval_tween(tween, target)))
-            .child(inner)
-            .into_any_element()
-    }
-
     /// Right-anchored variant for the changes pane. The outer width follows the
     /// existing shell tween, while descendants retain the larger endpoint's
     /// geometry for that 200ms transition. This mirrors the sidebar's stable
@@ -4515,19 +4630,21 @@ impl Shell {
         &self,
         tween: Option<WidthTween>,
         target: f32,
+        edge_offset: f32,
         inner: AnyElement,
     ) -> AnyElement {
         let takeover_width = self
             .active_tween_endpoints(self.right_takeover_content_tween)
             .map(|_| self.eval_tween(self.right_takeover_content_tween, target));
         let content_width =
-            right_panel_content_width(target, self.active_tween_endpoints(tween), takeover_width);
+            right_panel_content_width(target, self.active_tween_endpoints(tween), takeover_width)
+                + edge_offset;
         div()
             .h_full()
             .flex_none()
             .relative()
             .overflow_hidden()
-            .w(px(self.eval_tween(tween, target)))
+            .w(px(self.eval_tween(tween, target) + edge_offset))
             .child(
                 div()
                     .absolute()
@@ -4976,20 +5093,17 @@ impl Shell {
                 .h_full()
                 .flex_none(),
         );
-        let target = self.sidebar_target();
         // Transparent — the sidebar sits directly on the frost shell; the main
         // card's own border provides the separation. The content row spans the
         // full window height (the titlebar overlays it), so the column pads
         // itself below the chrome.
-        self.pane_container(
-            self.sidebar_tween,
-            target,
-            div()
-                .h_full()
-                .pt(px(Theme::TITLEBAR_HEIGHT))
-                .child(inner)
-                .into_any_element(),
-        )
+        div()
+            .h_full()
+            .flex_none()
+            .overflow_hidden()
+            .w(px(self.sidebar_now()))
+            .child(div().h_full().pt(px(Theme::TITLEBAR_HEIGHT)).child(inner))
+            .into_any_element()
     }
 
     /// Settings-mode sidebar (zeron settings-sidebar.tsx): window-control
@@ -6843,6 +6957,7 @@ impl Shell {
     fn resize_handle<T>(
         &self,
         id: &'static str,
+        kind: PaneResizeKind,
         marker: fn() -> T,
         reset: fn(&mut Shell, &mut Context<Shell>),
         cx: &mut Context<Self>,
@@ -6852,12 +6967,23 @@ impl Shell {
     {
         let theme = Theme::of(cx);
         let fade_key = format!("pane-resize-{id}");
-        let highlight = motion::hover_blend(
+        let hover_highlight = motion::hover_blend(
             &fade_key,
             theme.border_strong.opacity(0.0),
             theme.border_strong,
         );
+        let active = self.pane_resize_active == Some(kind);
+        let constrained = self.pane_resize_dragging == Some(kind) && !active;
+        let highlight = if constrained {
+            theme.border_strong.opacity(0.0)
+        } else if active {
+            theme.border_strong
+        } else {
+            hover_highlight
+        };
         let clear = highlight.opacity(0.0);
+        let release_key = fade_key.clone();
+        let release_out_key = fade_key.clone();
         div()
             .id(id)
             .absolute()
@@ -6876,7 +7002,7 @@ impl Shell {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .left(px(6.0))
+                    .left(px(PANE_RESIZE_HITBOX_HALF_WIDTH))
                     .w(px(1.0))
                     .flex()
                     .flex_col()
@@ -6891,18 +7017,37 @@ impl Shell {
                         gpui::linear_color_stop(clear, 1.0),
                     ))),
             )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.pane_resize_dragging = Some(kind);
+                    this.pane_resize_active = Some(kind);
+                    cx.notify();
+                }),
+            )
             .on_drag(marker(), |_, _point: Point<gpui::Pixels>, _, cx| {
                 cx.stop_propagation();
                 cx.new(|_| DragGhost)
             })
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(move |this, event: &MouseUpEvent, _, cx| {
+                cx.listener(move |this, event: &MouseUpEvent, window, cx| {
                     if event.click_count == 2 {
                         reset(this, cx);
                         this.schedule_save(cx);
                         cx.notify();
                     }
+                    this.finish_pane_resize(kind);
+                    motion::set_hover(&release_key, false, this.reduced_motion);
+                    window.refresh();
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, _| {
+                    this.finish_pane_resize(kind);
+                    motion::set_hover(&release_out_key, false, this.reduced_motion);
+                    window.refresh();
                 }),
             )
     }
@@ -7366,21 +7511,48 @@ impl Shell {
             return gpui::Empty.into_any_element();
         };
         let border = Theme::of(cx).border;
-        let handle_hover = Theme::of(cx).border_strong;
+        let handle_key = "pane-resize-terminal-resize";
+        let handle_hover = motion::hover_blend(
+            handle_key,
+            Theme::of(cx).border_strong.opacity(0.0),
+            Theme::of(cx).border_strong,
+        );
+        let terminal_active = self.pane_resize_active == Some(PaneResizeKind::Terminal);
+        let terminal_constrained =
+            self.pane_resize_dragging == Some(PaneResizeKind::Terminal) && !terminal_active;
+        let handle_highlight = if terminal_constrained {
+            Theme::of(cx).border_strong.opacity(0.0)
+        } else if terminal_active {
+            Theme::of(cx).border_strong
+        } else {
+            handle_hover
+        };
         let height = self.settings.terminal_height;
 
         let handle = div()
             .id("terminal-resize")
-            .h(px(5.0))
+            .h(px(TERMINAL_RESIZE_HITBOX_HEIGHT))
             .w_full()
             .flex_none()
             .cursor_row_resize()
-            .hover(move |s| s.bg(handle_hover))
+            .on_hover(motion::hover_listener(handle_key))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(1.0))
+                    .bg(handle_highlight),
+            )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
+                cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
                     this.terminal_drag_anchor =
                         Some((f32::from(event.position.y), this.settings.terminal_height));
+                    this.pane_resize_dragging = Some(PaneResizeKind::Terminal);
+                    this.pane_resize_active = Some(PaneResizeKind::Terminal);
+                    cx.notify();
                 }),
             )
             .on_drag(TerminalResize, |_, _point: Point<gpui::Pixels>, _, cx| {
@@ -7389,19 +7561,30 @@ impl Shell {
             })
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                cx.listener(|this, event: &MouseUpEvent, window, cx| {
                     if event.click_count == 2 {
                         this.settings.terminal_height = TERMINAL_DEFAULT_HEIGHT;
                         this.schedule_save(cx);
                         cx.notify();
                     }
+                    this.finish_pane_resize(PaneResizeKind::Terminal);
+                    motion::set_hover(handle_key, false, this.reduced_motion);
+                    window.refresh();
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, window, _| {
+                    this.finish_pane_resize(PaneResizeKind::Terminal);
+                    motion::set_hover(handle_key, false, this.reduced_motion);
+                    window.refresh();
                 }),
             );
 
         // Fixed-height inner clipped by the animated container: content never
         // reflows mid-transition (same trick as the side panes). The handle
         // FLOATS over the panel's top edge (painted after, so it wins hit
-        // testing) instead of stacking above it — stacked, its 5px read as
+        // testing) instead of stacking above it — stacked, its hitbox would read as
         // dead air between the seam and the tab bar (user report).
         let inner = div()
             .h(px(height))
@@ -7632,9 +7815,14 @@ impl Shell {
             .pt(px(Theme::TITLEBAR_HEIGHT))
             .child(content);
         let target = self.right_target(cx);
+        let edge_offset = self.eval_resize_edge_bounce(
+            self.right_edge_bounce,
+            self.right_pane_open(cx) && !self.right_pane_expanded,
+        );
         self.right_pane_container(
             self.right_tween,
             target,
+            edge_offset,
             div().h_full().relative().child(panel).into_any_element(),
         )
     }
@@ -8312,7 +8500,10 @@ impl Shell {
     /// width. Rides the same width tween as open/close so the jump glides.
     fn toggle_right_pane_expand(&mut self, cx: &mut Context<Self>) {
         let from = self.right_target(cx);
-        let sidebar_now = self.eval_tween(self.sidebar_tween, self.sidebar_target());
+        self.right_edge_bounce = None;
+        self.right_resize_edge = None;
+        self.finish_pane_resize(PaneResizeKind::Right);
+        let sidebar_now = self.sidebar_now();
         let from_main = conversation_width(self.viewport_width, sidebar_now, from);
         self.right_pane_expanded = !self.right_pane_expanded;
         let to = self.right_target(cx);
@@ -9299,7 +9490,7 @@ impl Render for Shell {
                 // sizes itself to the viewport.
                 self.viewport_width = viewport;
                 let main_target_width =
-                    conversation_width(viewport, self.sidebar_target(), self.right_target(cx));
+                    conversation_width(viewport, self.sidebar_target(), self.right_now(cx));
                 let main_transition = self.active_tween_endpoints(self.main_takeover_tween);
                 let main_content_width =
                     stable_panel_content_width(main_target_width, main_transition);
@@ -9327,8 +9518,12 @@ impl Render for Shell {
                 let sidebar = self.render_sidebar(cx);
                 let sidebar_handle = self.resize_handle(
                     "sidebar-resize",
+                    PaneResizeKind::Sidebar,
                     || SidebarResize,
-                    |shell, _| shell.settings.sidebar_width = SIDEBAR_DEFAULT,
+                    |shell, _| {
+                        shell.settings.sidebar_width = SIDEBAR_DEFAULT;
+                        shell.sidebar_edge_bounce = None;
+                    },
                     cx,
                 );
                 let main = self.render_main(window, main_content_width, cx);
@@ -9346,8 +9541,12 @@ impl Render for Shell {
                 .then(|| {
                     self.resize_handle(
                         "right-pane-resize",
+                        PaneResizeKind::Right,
                         || RightPaneResize,
-                        |shell, _| shell.settings.right_pane_width = RIGHT_PANE_DEFAULT,
+                        |shell, _| {
+                            shell.settings.right_pane_width = RIGHT_PANE_DEFAULT;
+                            shell.right_edge_bounce = None;
+                        },
                         cx,
                     )
                     // A forgiving transparent hit target centered on the
@@ -9398,7 +9597,7 @@ impl Render for Shell {
                     .h_full()
                     .flex_none()
                     .relative()
-                    .child(sidebar_handle.left(px(-6.0)));
+                    .child(sidebar_handle.left(px(-PANE_RESIZE_HITBOX_HALF_WIDTH)));
                 // Keep the right resize target outside the pane's
                 // overflow-hidden width container. This mirrors the sidebar
                 // seam and lets the target straddle both adjacent panes.
@@ -9423,7 +9622,7 @@ impl Render for Shell {
                 // through the titlebar, down to the bottom edge). Its width
                 // rides the same tween as the sidebar, so the tone melts away
                 // with the collapse instead of vanishing in a frame.
-                let sidebar_now = self.eval_tween(self.sidebar_tween, self.sidebar_target());
+                let sidebar_now = self.sidebar_now();
                 // Hairline on its right edge — full height like the tone,
                 // so the sidebar column reads as its own surface.
                 let sidebar_tone = div()
@@ -9540,6 +9739,107 @@ impl Render for Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_drag_nudges_each_edge_once_until_rearmed() {
+        let min = sidebar_drag_sample(SIDEBAR_MIN, None, false);
+        assert_eq!(min.width, SIDEBAR_MIN);
+        assert_eq!(min.edge, Some(motion::ResizeEdge::Min));
+        assert!(min.starts_bounce);
+
+        let held_min = sidebar_drag_sample(SIDEBAR_MIN - 80.0, min.edge, false);
+        assert_eq!(held_min.width, SIDEBAR_MIN);
+        assert_eq!(held_min.edge, min.edge);
+        assert!(!held_min.starts_bounce);
+
+        let inside = sidebar_drag_sample(SIDEBAR_MIN + 1.0, held_min.edge, false);
+        assert_eq!(inside.edge, None);
+        assert!(!inside.starts_bounce);
+
+        let rearmed_min = sidebar_drag_sample(SIDEBAR_MIN - 1.0, inside.edge, false);
+        assert!(rearmed_min.starts_bounce);
+
+        let max = sidebar_drag_sample(SIDEBAR_MAX, rearmed_min.edge, false);
+        assert_eq!(max.width, SIDEBAR_MAX);
+        assert_eq!(max.edge, Some(motion::ResizeEdge::Max));
+        assert!(max.starts_bounce);
+
+        let held_max = sidebar_drag_sample(SIDEBAR_MAX + 80.0, max.edge, false);
+        assert_eq!(held_max.width, SIDEBAR_MAX);
+        assert!(!held_max.starts_bounce);
+    }
+
+    #[test]
+    fn sidebar_drag_stays_exact_in_range_and_reduced_motion_never_nudges() {
+        let middle = sidebar_drag_sample(312.0, None, false);
+        assert_eq!(middle.width, 312.0);
+        assert_eq!(middle.edge, None);
+        assert!(!middle.starts_bounce);
+
+        for pointer_x in [
+            SIDEBAR_MIN - 100.0,
+            SIDEBAR_MIN,
+            SIDEBAR_MAX,
+            SIDEBAR_MAX + 100.0,
+        ] {
+            let sample = sidebar_drag_sample(pointer_x, None, true);
+            assert!((SIDEBAR_MIN..=SIDEBAR_MAX).contains(&sample.width));
+            assert!(!sample.starts_bounce);
+        }
+    }
+
+    #[test]
+    fn right_pane_uses_the_shared_clamp_and_edge_latch() {
+        let min =
+            motion::resize_drag_sample(RIGHT_PANE_MIN - 40.0, RIGHT_PANE_MIN, 820.0, None, false);
+        assert_eq!(min.width, RIGHT_PANE_MIN);
+        assert_eq!(min.edge, Some(motion::ResizeEdge::Min));
+        assert!(min.starts_bounce);
+
+        let held = motion::resize_drag_sample(
+            RIGHT_PANE_MIN - 80.0,
+            RIGHT_PANE_MIN,
+            820.0,
+            min.edge,
+            false,
+        );
+        assert!(!held.starts_bounce);
+
+        let max = motion::resize_drag_sample(900.0, RIGHT_PANE_MIN, 820.0, None, false);
+        assert_eq!(max.width, 820.0);
+        assert_eq!(max.edge, Some(motion::ResizeEdge::Max));
+        assert!(max.starts_bounce);
+    }
+
+    #[test]
+    fn sidebar_bounce_has_rounded_out_and_return_phases() {
+        assert_eq!(
+            motion::resize_bounce_offset(motion::ResizeEdge::Max, 0.0),
+            0.0
+        );
+        assert_eq!(
+            motion::resize_bounce_offset(
+                motion::ResizeEdge::Max,
+                motion::RESIZE_EDGE_BOUNCE_OUT_FRACTION
+            ),
+            motion::RESIZE_EDGE_NUDGE
+        );
+        assert_eq!(
+            motion::resize_bounce_offset(motion::ResizeEdge::Max, 1.0),
+            0.0
+        );
+
+        let gentle_start = motion::resize_bounce_offset(motion::ResizeEdge::Max, 0.01);
+        let outbound = motion::resize_bounce_offset(motion::ResizeEdge::Max, 0.2);
+        let returning = motion::resize_bounce_offset(motion::ResizeEdge::Max, 0.7);
+        assert!(gentle_start > 0.0 && gentle_start < 0.1);
+        assert!(outbound > gentle_start && outbound < motion::RESIZE_EDGE_NUDGE);
+        assert!(returning > 0.0 && returning < motion::RESIZE_EDGE_NUDGE);
+        assert_eq!(
+            motion::resize_bounce_offset(motion::ResizeEdge::Min, 0.2),
+            -outbound
+        );
+    }
 
     #[test]
     fn every_default_shortcut_binds_on_this_platform() {
@@ -9732,6 +10032,8 @@ mod tests {
     #[test]
     fn pane_resize_hitboxes_yield_the_titlebar_chrome() {
         assert_eq!(PANE_RESIZE_HITBOX_TOP, Theme::TITLEBAR_HEIGHT);
+        assert_eq!(PANE_RESIZE_HITBOX_HALF_WIDTH * 2.0, 20.0);
+        assert_eq!(TERMINAL_RESIZE_HITBOX_HEIGHT, 10.0);
     }
 
     #[test]

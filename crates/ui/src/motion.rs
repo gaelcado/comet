@@ -383,6 +383,91 @@ pub const ZERON_PULSE: MotionSpec = MotionSpec::new(2400, EASE);
 pub const GRADIENT_SPIN: MotionSpec = MotionSpec::new(750, EASE);
 
 // ---------------------------------------------------------------------------
+// Resize-edge feedback
+// ---------------------------------------------------------------------------
+
+/// Pane resize limits acknowledge a held pointer without persisting an
+/// out-of-range size. The small displacement is shared by the shell panes and
+/// nested surface splits so every seam has the same physical response.
+pub const RESIZE_EDGE_NUDGE: f32 = 5.0;
+pub const RESIZE_EDGE_BOUNCE_MS: u64 = 220;
+pub const RESIZE_EDGE_BOUNCE_OUT_FRACTION: f32 = 0.32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeEdge {
+    Min,
+    Max,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResizeDragSample {
+    pub width: f32,
+    pub edge: Option<ResizeEdge>,
+    pub starts_bounce: bool,
+}
+
+/// Clamp a resize sample while latching its constrained edge. A held pointer
+/// starts one bounce rather than restarting it for every drag event.
+pub fn resize_drag_sample(
+    requested: f32,
+    min: f32,
+    max: f32,
+    latched_edge: Option<ResizeEdge>,
+    reduced_motion: bool,
+) -> ResizeDragSample {
+    debug_assert!(min <= max);
+    let edge = if requested <= min {
+        Some(ResizeEdge::Min)
+    } else if requested >= max {
+        Some(ResizeEdge::Max)
+    } else {
+        None
+    };
+    ResizeDragSample {
+        width: requested.clamp(min, max),
+        starts_bounce: !reduced_motion && edge.is_some() && edge != latched_edge,
+        edge,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ResizeEdgeBounce {
+    pub edge: ResizeEdge,
+    pub started: Instant,
+}
+
+impl ResizeEdgeBounce {
+    pub fn new(edge: ResizeEdge) -> Self {
+        Self {
+            edge,
+            started: Instant::now(),
+        }
+    }
+}
+
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Rounded two-phase pulse: ease out to the overshoot, then take a little
+/// longer to ease home. Both joins have zero velocity.
+pub fn resize_bounce_offset(edge: ResizeEdge, raw: f32) -> f32 {
+    let raw = raw.clamp(0.0, 1.0);
+    let magnitude = if raw < RESIZE_EDGE_BOUNCE_OUT_FRACTION {
+        smoothstep(raw / RESIZE_EDGE_BOUNCE_OUT_FRACTION)
+    } else {
+        1.0 - smoothstep(
+            (raw - RESIZE_EDGE_BOUNCE_OUT_FRACTION) / (1.0 - RESIZE_EDGE_BOUNCE_OUT_FRACTION),
+        )
+    } * RESIZE_EDGE_NUDGE;
+    match edge {
+        ResizeEdge::Min => -magnitude,
+        ResizeEdge::Max => magnitude,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Element helpers (paint-layer entrances/exits)
 // ---------------------------------------------------------------------------
 

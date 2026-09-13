@@ -26,7 +26,7 @@ pub mod shortcuts;
 pub mod widgets;
 
 /// Sidebar drag-resize bounds (px).
-pub const SIDEBAR_MIN: f32 = 208.0;
+pub const SIDEBAR_MIN: f32 = 224.0;
 pub const SIDEBAR_MAX: f32 = 400.0;
 pub const SIDEBAR_DEFAULT: f32 = 256.0;
 
@@ -1756,6 +1756,15 @@ mod tests {
         assert_eq!(loaded.sidebar_width, SIDEBAR_MAX);
         assert_eq!(loaded.right_pane_width, RIGHT_PANE_MIN);
         assert!(!loaded.code_fences_fit_content);
+        assert_eq!(
+            UiSettings {
+                sidebar_width: 1.0,
+                ..Default::default()
+            }
+            .clamped()
+            .sidebar_width,
+            SIDEBAR_MIN
+        );
         assert_eq!(
             UiSettings {
                 files_autosave_delay_ms: 1,
