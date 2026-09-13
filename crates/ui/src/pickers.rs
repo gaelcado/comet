@@ -33,6 +33,18 @@ const MAX_REF_ROWS: usize = 300;
 
 const FOOTER_CHIP_RADIUS: f32 = 6.0;
 
+/// Both sides of the composer handoff share one leading-aligned workspace
+/// cluster. Available width belongs after the pair, never between its labels.
+fn workspace_footer_row() -> gpui::Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(4.0))
+}
+
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::motion;
 use crate::popover::{self, Loadable, MenuKey};
@@ -2537,12 +2549,7 @@ impl Pickers {
             cx,
         );
         Some(
-            div()
-                .flex_none()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.0))
+            workspace_footer_row()
                 .child(attach_overlay_below(
                     checkout_chip,
                     &mut overlay,
@@ -2591,14 +2598,7 @@ impl Pickers {
             // the row to CONTENT, and the left cluster's flex_1 (basis 0)
             // collapsed to zero width — both clusters painted from the same
             // origin, chips overlapping (user report).
-            div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(8.0))
-                .px(px(10.0))
+            workspace_footer_row().px(px(10.0))
         };
 
         if let Some(chat) = &session {
@@ -2614,8 +2614,7 @@ impl Pickers {
             } else {
                 (crate::icons::FOLDER, "Local checkout")
             };
-            // Mirrors the draft chips: checkout hugs the left edge, ref the
-            // right.
+            // Keep the same reading order and leading edge as the draft.
             let left = div()
                 .flex()
                 .flex_row()
@@ -2632,14 +2631,6 @@ impl Pickers {
                 .items_center()
                 .gap(px(4.0))
                 .min_w_0()
-                .when_some(change_request, |el, summary| {
-                    el.child(crate::change_requests::pull_request_badge(
-                        "composer-pull-request".into(),
-                        summary,
-                        crate::change_requests::ChangeRequestBadgeSurface::Composer,
-                        &theme,
-                    ))
-                })
                 .child(Self::footer_label(
                     crate::icons::GIT_BRANCH,
                     chat.branch
@@ -2647,7 +2638,15 @@ impl Pickers {
                         .map(SharedString::from)
                         .unwrap_or_else(|| SharedString::from("No ref")),
                     &theme,
-                ));
+                ))
+                .when_some(change_request, |el, summary| {
+                    el.child(crate::change_requests::pull_request_badge(
+                        "composer-pull-request".into(),
+                        summary,
+                        crate::change_requests::ChangeRequestBadgeSurface::Composer,
+                        &theme,
+                    ))
+                });
             // The context indicator follows this footer in the composer;
             // its own padding supplies the spacing after the branch label.
             return Some(row().pr_0().child(left).child(right).into_any_element());
@@ -2696,8 +2695,8 @@ impl Pickers {
             &theme,
             cx,
         );
-        // Checkout on the left edge, ref on the right — the row's
-        // justify_between splits them.
+        // Match the floating draft's adjacent checkout/ref pair, including
+        // while the newly created session is waiting for its workspace row.
         let left = div()
             .flex()
             .flex_row()
@@ -2715,7 +2714,7 @@ impl Pickers {
             .flex_row()
             .items_center()
             .min_w_0()
-            .child(attach_overlay_end(
+            .child(attach_overlay(
                 ref_chip,
                 &mut overlay,
                 PickerKind::Branch,
@@ -4330,6 +4329,56 @@ impl Render for Pickers {
 mod tests {
     use super::*;
     use zeron_proto::{FolderEntry, Model, ModelOption, ModelOptionChoice};
+
+    #[gpui::test]
+    fn workspace_footer_pair_keeps_its_leading_edge_and_gap(cx: &mut gpui::TestAppContext) {
+        struct Fixture {
+            width: f32,
+            bounds: std::rc::Rc<std::cell::RefCell<Vec<gpui::Bounds<gpui::Pixels>>>>,
+        }
+        impl gpui::Render for Fixture {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let chip = |width| {
+                    let measured = self.bounds.clone();
+                    gpui::canvas(
+                        move |bounds, _, _| measured.borrow_mut().push(bounds),
+                        |_, _, _, _| {},
+                    )
+                    .w(px(width))
+                    .h(px(20.0))
+                    .flex_none()
+                };
+                div().w(px(self.width)).child(
+                    workspace_footer_row()
+                        .px(px(10.0))
+                        .child(chip(120.0))
+                        .child(chip(90.0)),
+                )
+            }
+        }
+        let bounds = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let handle = cx.add_window(|_, _| Fixture {
+            width: 320.0,
+            bounds: bounds.clone(),
+        });
+        let mut first_left = None;
+        for width in [320.0, 680.0, 1000.0, 320.0] {
+            handle
+                .update(cx, |fixture, _, cx| {
+                    fixture.width = width;
+                    cx.notify();
+                })
+                .unwrap();
+            bounds.borrow_mut().clear();
+            cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            let measured = bounds.borrow();
+            let pair = &measured[measured.len() - 2..];
+            assert_eq!(pair[0].left(), *first_left.get_or_insert(pair[0].left()));
+            assert!((f32::from(pair[1].left() - pair[0].right()) - 4.0).abs() < 0.1);
+            assert_eq!(pair[0].top(), pair[1].top());
+        }
+    }
 
     #[gpui::test]
     fn picker_completion_and_dismissal_have_distinct_focus_behavior(cx: &mut gpui::TestAppContext) {
