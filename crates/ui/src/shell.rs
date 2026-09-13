@@ -3309,11 +3309,18 @@ impl Shell {
         self.settings.theme_selection = crate::appearance::themes(cx);
         self.settings.accent = crate::appearance::accent(cx);
         self.settings.surface = crate::appearance::surface(cx);
-        self.settings.new_thread_composer_background =
-            settings::current(cx).new_thread_composer_background;
+        self.sync_background_settings(cx);
         self.settings.ui_font_family = crate::typography::requested(cx);
         self.settings.ui_font_size = crate::typography::font_size(cx);
         settings::replace(self.settings.clone(), SavePolicy::Debounced, cx);
+    }
+
+    /// Appearance owns these choices. A geometry save must never publish the
+    /// shell's older effect value over a selection made since its last render.
+    fn sync_background_settings(&mut self, cx: &App) {
+        let current = settings::current(cx);
+        self.settings.new_thread_composer_background = current.new_thread_composer_background;
+        self.settings.new_thread_background_effect = current.new_thread_background_effect;
     }
 
     fn retry_engine(&mut self, cx: &mut Context<Self>) {
@@ -8949,8 +8956,7 @@ impl Render for Shell {
         self.settings.theme_selection = crate::appearance::themes(cx);
         self.settings.accent = crate::appearance::accent(cx);
         self.settings.surface = crate::appearance::surface(cx);
-        self.settings.new_thread_composer_background =
-            settings::current(cx).new_thread_composer_background;
+        self.sync_background_settings(cx);
         let theme = Theme::of(cx);
         // The shell tone (zeron `.frost`): the surface the sidebar sits on and
         // the main panel floats over as an inset rounded card. On macOS the
@@ -10546,6 +10552,66 @@ mod exit_regressions {
                 assert_eq!(shell.eval_tween(tween, 0.), 0.);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn panel_saves_preserve_background_effect_selected_after_shell_creation(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            crate::history::init(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                cx,
+            );
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            Shell::new(
+                state,
+                EngineBootConfig {
+                    data_dir: dir.path().into(),
+                    ipc_port: 0,
+                    edge_url: "http://127.0.0.1:1".into(),
+                    edge_token: None,
+                    org_id: None,
+                    workos_client_id: None,
+                    default_harness: zeron_proto::HarnessId::Mock,
+                },
+                cx,
+            )
+        });
+        for effect in settings::NewThreadBackgroundEffect::ALL {
+            window
+                .update(cx, |shell, _, cx| {
+                    // Selection changes in Appearance, independently of the shell's
+                    // cached snapshot. Include a previously queued geometry save.
+                    shell.settings.sidebar_width = 280.0;
+                    shell.schedule_save(cx);
+                    settings::set_new_thread_background_effect(effect, cx);
+                    for step in 0..3 {
+                        shell.settings.sidebar_width = 290.0 + step as f32;
+                        shell.settings.right_pane_width = 540.0 + step as f32;
+                        shell.settings.terminal_height = 300.0 + step as f32;
+                        shell.schedule_save(cx);
+                        assert_eq!(settings::current(cx).new_thread_background_effect, effect);
+                    }
+                    settings::flush(cx);
+                    let loaded = settings::UiSettings::load(dir.path());
+                    assert_eq!(loaded.new_thread_background_effect, effect);
+                    assert_eq!(loaded.sidebar_width, 292.0);
+                    assert_eq!(loaded.right_pane_width, 542.0);
+                    assert_eq!(loaded.terminal_height, 302.0);
+                })
+                .unwrap();
+        }
     }
 
     #[gpui::test]
