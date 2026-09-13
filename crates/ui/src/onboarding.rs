@@ -2088,7 +2088,8 @@ fn continue_control(step: OnboardingStep) -> usize {
         OnboardingStep::Workspace | OnboardingStep::Project | OnboardingStep::FirstSession => 2,
         OnboardingStep::Appearance | OnboardingStep::Titles => 25,
         OnboardingStep::Harnesses => 10,
-        OnboardingStep::Defaults => 26,
+        // Keep 26/27 exclusive to the mounted leave dialog.
+        OnboardingStep::Defaults => 31,
     }
 }
 
