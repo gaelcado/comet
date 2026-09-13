@@ -78,7 +78,9 @@ pub(crate) const QUEUE_COMPOSER_OVERLAP: f32 = 18.0;
 /// The original floating selector rows use the same 20px chip height as the
 /// established-thread footer. Their surrounding rows own no plate or border.
 const NEW_THREAD_SELECTOR_ROW_HEIGHT: f32 = 20.0;
-const SESSION_FOOTER_HEIGHT: f32 = 20.0;
+// Accommodate the 24px usage indicator and PR badge without overflowing the
+// row's equal 8px top/bottom gutters.
+const SESSION_FOOTER_HEIGHT: f32 = 24.0;
 
 /// Route chrome dissolves around the middle of the shared-element move. The
 /// two ramps never overlap, which avoids duplicate picker ids/popovers while
@@ -7879,7 +7881,7 @@ impl Render for Composer {
             container.child(
                 div()
                     .w_full()
-                    .h(px(NEW_THREAD_SELECTOR_ROW_HEIGHT * bottom_slot))
+                    .h(px(SESSION_FOOTER_HEIGHT * bottom_slot))
                     .mt(px(-Theme::SPACE_SM * (1.0 - bottom_slot)))
                     .mb(px(-Theme::SPACE_SM * bottom_slot))
                     .relative()
@@ -9255,8 +9257,8 @@ mod tests {
 
     #[test]
     fn new_thread_selectors_restore_the_compact_floating_row() {
-        assert_eq!(NEW_THREAD_SELECTOR_ROW_HEIGHT, SESSION_FOOTER_HEIGHT);
         assert_eq!(NEW_THREAD_SELECTOR_ROW_HEIGHT, 20.0);
+        assert_eq!(SESSION_FOOTER_HEIGHT, 24.0);
     }
 
     #[test]

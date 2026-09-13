@@ -283,7 +283,7 @@ impl Element for DockedComposer {
         let y = if docked {
             f32::from(bounds.top())
         } else {
-            (self.viewport_height - f32::from(bounds.size.height)) * 0.5 - 16.0
+            (self.viewport_height - f32::from(bounds.size.height)) * 0.5 + 8.0
         };
         let dt = if state.last_docked != docked {
             0.0

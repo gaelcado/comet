@@ -862,7 +862,7 @@ fn new_thread_background(
         .child(
             crate::edge_fade::edge_faded(
                 0.0,
-                false,
+                true,
                 true,
                 // Give the mask a definite relayout box. A percentage-sized
                 // image as the custom element's direct child could briefly
@@ -881,6 +881,9 @@ fn new_thread_background(
                     )
                     .child(effect_layer),
             )
+            // A shallow native alpha fade restores the theme surface under
+            // window controls without a hard toolbar band or another overlay.
+            .band_top(Theme::TITLEBAR_HEIGHT + 16.0)
             .band_bottom(hero_height * NEW_THREAD_BACKGROUND_BOTTOM_FADE_RATIO),
         )
         .into_any_element()

@@ -2638,18 +2638,27 @@ impl Pickers {
                         .map(SharedString::from)
                         .unwrap_or_else(|| SharedString::from("No ref")),
                     &theme,
-                ))
-                .when_some(change_request, |el, summary| {
-                    el.child(crate::change_requests::pull_request_badge(
-                        "composer-pull-request".into(),
-                        summary,
-                        crate::change_requests::ChangeRequestBadgeSurface::Composer,
-                        &theme,
-                    ))
-                });
-            // The context indicator follows this footer in the composer;
-            // its own padding supplies the spacing after the branch label.
-            return Some(row().pr_0().child(left).child(right).into_any_element());
+                ));
+            // Checkout + branch stay together. PR and usage form the trailing
+            // status group, independently of the branch label's length.
+            return Some(
+                row()
+                    .pr_0()
+                    .child(left)
+                    .child(right)
+                    .child(div().flex_1().min_w_0())
+                    .when_some(change_request, |el, summary| {
+                        el.child(div().flex_none().child(
+                            crate::change_requests::pull_request_badge(
+                                "composer-pull-request".into(),
+                                summary,
+                                crate::change_requests::ChangeRequestBadgeSurface::Composer,
+                                &theme,
+                            ),
+                        ))
+                    })
+                    .into_any_element(),
+            );
         }
 
         // New-session draft: checkout + ref only, LEFT-aligned (device +
@@ -4352,7 +4361,9 @@ mod tests {
                     workspace_footer_row()
                         .px(px(10.0))
                         .child(chip(120.0))
-                        .child(chip(90.0)),
+                        .child(chip(90.0))
+                        .child(div().flex_1().min_w_0())
+                        .child(chip(60.0)),
                 )
             }
         }
@@ -4373,10 +4384,11 @@ mod tests {
             cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
                 .unwrap();
             let measured = bounds.borrow();
-            let pair = &measured[measured.len() - 2..];
+            let pair = &measured[measured.len() - 3..];
             assert_eq!(pair[0].left(), *first_left.get_or_insert(pair[0].left()));
             assert!((f32::from(pair[1].left() - pair[0].right()) - 4.0).abs() < 0.1);
             assert_eq!(pair[0].top(), pair[1].top());
+            assert!((f32::from(pair[2].right() - pair[0].left()) - (width - 20.0)).abs() < 0.1);
         }
     }
 

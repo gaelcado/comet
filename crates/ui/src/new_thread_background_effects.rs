@@ -4,7 +4,10 @@ use crate::theme::Theme;
 use gpui::{AnyElement, Empty, IntoElement, Pixels, prelude::*, px};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-type EffectEntry = (NewThreadBackgroundEffect, Option<Arc<gpui::RenderImage>>);
+type EffectEntry = (
+    (NewThreadBackgroundEffect, bool),
+    Option<Arc<gpui::RenderImage>>,
+);
 #[derive(Debug)]
 struct BackgroundLuminance {
     width: u32,
@@ -17,14 +20,16 @@ impl BackgroundLuminance {
     fn raster_image(
         self: &Arc<Self>,
         effect: NewThreadBackgroundEffect,
+        light: bool,
         cx: &mut gpui::App,
     ) -> Option<Arc<gpui::RenderImage>> {
         let mut effects = self.effects.lock().unwrap();
-        if let Some((_, image)) = effects.iter().find(|(key, _)| *key == effect) {
+        let key = (effect, light && effect != NewThreadBackgroundEffect::Dither);
+        if let Some((_, image)) = effects.iter().find(|(cached, _)| *cached == key) {
             return image.clone();
         }
         // None marks the single pending job for this source/effect, not a viewport.
-        effects.push((effect, None));
+        effects.push((key, None));
         drop(effects);
         let source = self.clone();
         cx.spawn(async move |cx| {
@@ -37,10 +42,10 @@ impl BackgroundLuminance {
                             worker.dither_pixels(worker.width, worker.height)
                         }
                         NewThreadBackgroundEffect::Halftone => {
-                            worker.halftone_pixels(worker.width, worker.height)
+                            worker.halftone_pixels(worker.width, worker.height, light)
                         }
-                        NewThreadBackgroundEffect::Ascii => worker.ascii_pixels(),
-                        _ => worker.scanline_pixels(),
+                        NewThreadBackgroundEffect::Ascii => worker.ascii_pixels(light),
+                        _ => worker.scanline_pixels(light),
                     };
                     Arc::new(gpui::RenderImage::new([image::Frame::new(pixels)]))
                 })
@@ -51,7 +56,7 @@ impl BackgroundLuminance {
                     .lock()
                     .unwrap()
                     .iter_mut()
-                    .find(|(key, _)| *key == effect)
+                    .find(|(cached, _)| *cached == key)
                 {
                     *ready = Some(image);
                 }
@@ -61,19 +66,21 @@ impl BackgroundLuminance {
         .detach();
         None
     }
-    fn scanline_pixels(&self) -> image::RgbaImage {
+    fn scanline_pixels(&self, light: bool) -> image::RgbaImage {
         image::RgbaImage::from_fn(self.width, self.height, |x, y| {
             let [r, g, b, a] = self.colors[(y * self.width + x) as usize];
             let gain = if y % 3 == 0 { 0.52 } else { 1.0 };
-            image::Rgba([
-                (b as f32 * gain) as u8,
-                (g as f32 * gain) as u8,
-                (r as f32 * gain) as u8,
-                a,
-            ])
+            let channel = |value: u8| {
+                if light {
+                    (value as f32 + (255.0 - value as f32) * (1.0 - gain)) as u8
+                } else {
+                    (value as f32 * gain) as u8
+                }
+            };
+            image::Rgba([channel(b), channel(g), channel(r), a])
         })
     }
-    fn ascii_pixels(&self) -> image::RgbaImage {
+    fn ascii_pixels(&self, light: bool) -> image::RgbaImage {
         // Five-column bitmap glyphs, one column/row of spacing. These are
         // artwork pixels rather than thousands of shaped UI text runs.
         const GLYPHS: [[u8; 7]; 10] = [
@@ -92,23 +99,37 @@ impl BackgroundLuminance {
             let sx = (x / 6 * 6 + 3).min(self.width - 1);
             let sy = (y / 8 * 8 + 4).min(self.height - 1);
             let sample = (sy * self.width + sx) as usize;
-            let index = ((self.pixels[sample] as f32 / 255.0).sqrt() * 9.0) as usize;
+            let ink_density = if light {
+                255 - self.pixels[sample]
+            } else {
+                self.pixels[sample]
+            };
+            let index = ((ink_density as f32 / 255.0).sqrt() * 9.0) as usize;
             let ink =
                 x % 6 < 5 && y % 8 < 7 && GLYPHS[index][y as usize % 8] & (1 << (4 - x % 6)) != 0;
             let [r, g, b, a] = self.colors[(y * self.width + x) as usize];
             let [cr, cg, cb, _] = self.colors[sample];
             let mix = |base: u8, glyph: u8| {
-                (base as f32 * 0.28 + if ink { glyph as f32 * 0.72 } else { 0.0 }) as u8
+                let paper = if light { 255.0 } else { 0.0 };
+                (base as f32 * 0.28
+                    + if ink {
+                        glyph as f32 * 0.72
+                    } else {
+                        paper * 0.72
+                    }) as u8
             };
             image::Rgba([mix(b, cb), mix(g, cg), mix(r, cr), a])
         })
     }
-    fn halftone_pixels(&self, width: u32, height: u32) -> image::RgbaImage {
+    fn halftone_pixels(&self, width: u32, height: u32, light: bool) -> image::RgbaImage {
         let bounds = gpui::size(px(width as f32), px(height as f32));
-        let mut pixels = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255]));
+        let paper = if light { 255 } else { 0 };
+        let mut pixels =
+            image::RgbaImage::from_pixel(width, height, image::Rgba([paper, paper, paper, 255]));
         for y in (0..height).step_by(4) {
             for x in (0..width).step_by(4) {
                 let luma = self.sample_cover(bounds, x as f32, y as f32);
+                let luma = if light { 255 - luma } else { luma };
                 let radius = 2.0 * (0.3 + 0.7 * (luma as f32 / 255.0).sqrt());
                 let [r, g, b, a] =
                     self.colors[self.cover_index(bounds, x as f32 + 2.0, y as f32 + 2.0)];
@@ -121,9 +142,9 @@ impl BackgroundLuminance {
                             x + dx,
                             y + dy,
                             image::Rgba([
-                                (b as f32 * coverage) as u8,
-                                (g as f32 * coverage) as u8,
-                                (r as f32 * coverage) as u8,
+                                (b as f32 * coverage + paper as f32 * (1.0 - coverage)) as u8,
+                                (g as f32 * coverage + paper as f32 * (1.0 - coverage)) as u8,
+                                (r as f32 * coverage + paper as f32 * (1.0 - coverage)) as u8,
                                 255,
                             ]),
                         );
@@ -211,7 +232,7 @@ fn background_luminance(path: &Path) -> Option<Arc<BackgroundLuminance>> {
 }
 pub(super) fn treatment(
     effect: NewThreadBackgroundEffect,
-    _theme: &Theme,
+    theme: &Theme,
     path: &Path,
     base_opacity: f32,
     cx: &mut gpui::App,
@@ -219,7 +240,8 @@ pub(super) fn treatment(
     if effect == NewThreadBackgroundEffect::None {
         return (base_opacity, Empty.into_any_element());
     }
-    match background_luminance(path).and_then(|source| source.raster_image(effect, cx)) {
+    let light = matches!(theme.appearance, crate::theme::Appearance::Light);
+    match background_luminance(path).and_then(|source| source.raster_image(effect, light, cx)) {
         Some(image) => (
             0.0,
             gpui::img(image)
@@ -268,7 +290,7 @@ mod tests {
         ] {
             cx.update(|cx| {
                 for _ in 0..100 {
-                    assert!(source.raster_image(effect, cx).is_none());
+                    assert!(source.raster_image(effect, false, cx).is_none());
                 }
                 assert_eq!(
                     source
@@ -276,36 +298,100 @@ mod tests {
                         .lock()
                         .unwrap()
                         .iter()
-                        .filter(|(key, _)| *key == effect)
+                        .filter(|(key, _)| *key == (effect, false))
                         .count(),
                     1
                 );
             });
             cx.run_until_parked();
             cx.update(|cx| {
-                let first = source.raster_image(effect, cx).unwrap();
+                let first = source.raster_image(effect, false, cx).unwrap();
                 assert_eq!(first.size(0).width.0, 60);
                 assert_eq!(first.size(0).height.0, 32);
                 for _ in 0..100 {
                     assert!(Arc::ptr_eq(
                         &first,
-                        &source.raster_image(effect, cx).unwrap()
+                        &source.raster_image(effect, false, cx).unwrap()
                     ));
                 }
             });
         }
     }
     #[test]
+    fn light_treatments_use_light_paper_without_inverting_source_hues() {
+        let source = fixture();
+        for (light, dark) in [
+            (source.ascii_pixels(true), source.ascii_pixels(false)),
+            (source.scanline_pixels(true), source.scanline_pixels(false)),
+            (
+                source.halftone_pixels(60, 32, true),
+                source.halftone_pixels(60, 32, false),
+            ),
+        ] {
+            let brightness = |image: &image::RgbaImage| -> u64 {
+                image
+                    .pixels()
+                    .map(|p| p.0[..3].iter().map(|c| u64::from(*c)).sum::<u64>())
+                    .sum()
+            };
+            assert!(brightness(&light) > brightness(&dark));
+            assert_eq!(light.dimensions(), dark.dimensions());
+            // Raster output is BGRA; the warm source remains warm on light paper.
+            assert!(light.pixels().all(|p| p.0[2] >= p.0[1] && p.0[1] >= p.0[0]));
+        }
+    }
+
+    #[gpui::test]
+    fn appearance_changes_cache_both_variants_and_share_unchanged_dither(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let source = fixture();
+        for effect in [
+            NewThreadBackgroundEffect::Ascii,
+            NewThreadBackgroundEffect::Halftone,
+            NewThreadBackgroundEffect::Scanlines,
+            NewThreadBackgroundEffect::Dither,
+        ] {
+            cx.update(|cx| {
+                source.raster_image(effect, false, cx);
+                source.raster_image(effect, true, cx);
+            });
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let dark = source.raster_image(effect, false, cx).unwrap();
+                let light = source.raster_image(effect, true, cx).unwrap();
+                assert_eq!(
+                    Arc::ptr_eq(&dark, &light),
+                    effect == NewThreadBackgroundEffect::Dither
+                );
+                for _ in 0..100 {
+                    assert!(Arc::ptr_eq(
+                        &dark,
+                        &source.raster_image(effect, false, cx).unwrap()
+                    ));
+                    assert!(Arc::ptr_eq(
+                        &light,
+                        &source.raster_image(effect, true, cx).unwrap()
+                    ));
+                }
+            });
+        }
+        assert_eq!(source.effects.lock().unwrap().len(), 7);
+    }
+
+    #[test]
     fn raster_treatments_preserve_source_dimensions_and_alpha() {
         let source = fixture();
         for image in [
             source.dither_pixels(60, 32),
-            source.ascii_pixels(),
-            source.scanline_pixels(),
+            source.ascii_pixels(false),
+            source.scanline_pixels(false),
+            source.ascii_pixels(true),
+            source.scanline_pixels(true),
         ] {
             assert_eq!(image.dimensions(), (60, 32));
             assert!(image.pixels().all(|pixel| pixel.0[3] == 200));
         }
-        assert_eq!(source.halftone_pixels(60, 32).dimensions(), (60, 32));
+        assert_eq!(source.halftone_pixels(60, 32, false).dimensions(), (60, 32));
     }
 }
