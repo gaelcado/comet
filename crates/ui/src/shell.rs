@@ -5793,7 +5793,7 @@ impl Shell {
         let height = (f32::from(window.viewport_size().height) - 80.0).clamp(240.0, 760.0);
         let nav = self.render_settings_nav(section, &theme, cx);
         let outlet = self.settings_outlet(section, window, cx);
-        let card = div()
+        let card = popover::popover_card_flush(&theme)
             .id("settings-modal")
             .role(gpui::Role::Dialog)
             .aria_label("Settings")
@@ -5803,10 +5803,6 @@ impl Shell {
             .w(px(width))
             .h(px(height))
             .rounded(px(16.0))
-            .bg(theme.bg)
-            .border_1()
-            .border_color(theme.border)
-            .shadow_lg()
             .flex()
             .flex_col()
             .overflow_hidden()
@@ -5829,7 +5825,7 @@ impl Shell {
             .child(
                 div()
                     .flex_none()
-                    .h(px(56.0))
+                    .h(px(48.0))
                     .px(px(20.0))
                     .flex()
                     .items_center()
@@ -7536,7 +7532,11 @@ impl Shell {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open_settings(SettingsSection::Appearance, cx)
                     }))
-                    .child(icon(icons::SETTINGS_MINIMALISTIC).size(px(18.0))),
+                    .child(
+                        icon(icons::SETTINGS_MINIMALISTIC)
+                            .size(px(18.0))
+                            .text_color(theme.text_muted),
+                    ),
             )
             .into_any_element()
     }
