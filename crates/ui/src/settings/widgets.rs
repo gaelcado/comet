@@ -155,7 +155,7 @@ pub const ROW_DESCRIPTION_SIZE: f32 = 12.0;
 pub fn page_column() -> gpui::Div {
     div()
         .w_full()
-        .max_w(px(768.0))
+        .max_w(px(720.0))
         .mx_auto()
         .px(px(24.0))
         .pt(px(20.0))
@@ -174,7 +174,7 @@ pub fn page_header(theme: &Theme, title: &str, count: Option<usize>) -> gpui::Di
         .gap(px(10.0))
         .child(
             div()
-                .text_size(crate::typography::ui_rems(20.0))
+                .text_size(crate::typography::ui_rems(16.0))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(theme.text)
                 .child(SharedString::from(title.to_string())),
@@ -284,45 +284,31 @@ pub fn option_card(
         )
 }
 
-/// Section card: `mt-6 overflow-hidden rounded-xl border border-border bg-card`
-/// — the card tone, thinned to a translucent tint over glass so the card
-/// reads as frost instead of a solid slab ([`Theme::card_glass_bg`]).
-pub fn section_card(theme: &Theme) -> gpui::Div {
-    div()
-        .mt(px(24.0))
-        .rounded(px(12.0))
-        .border_1()
-        .border_color(theme.border.opacity(0.65))
-        .bg(theme.card_glass_bg())
-        .overflow_hidden()
-        .flex()
-        .flex_col()
+/// Shared settings groups remain transparent over the modal's single glass
+/// layer. Quiet separators mark rows without nesting another opaque card.
+pub fn section_card(_theme: &Theme) -> gpui::Div {
+    div().mt(px(24.0)).flex().flex_col()
 }
 
-/// One card row: `border-t border-border px-5 py-3.5 first:border-t-0` with the
-/// quiet hover wash.
 pub fn card_row(theme: &Theme, first: bool) -> gpui::Div {
     div()
-        .px(px(20.0))
-        .py(px(14.0))
-        .when(!first, |el| el.border_t_1().border_color(theme.border))
+        .py(px(16.0))
+        .when(!first, |el| {
+            el.border_t_1().border_color(theme.border.opacity(0.55))
+        })
         .flex()
         .flex_row()
         .flex_wrap()
         .items_center()
-        .gap(px(14.0))
+        .gap(px(12.0))
 }
 
-/// The identity tile on a row: `size-9 rounded-[10px] border bg-white/[0.03]`
-/// around a 16px icon.
+/// Bare leading glyphs use the same weight and tint as Zeron's picker rows.
 pub fn row_tile(theme: &Theme, icon_path: &'static str) -> gpui::Div {
     div()
         .flex_none()
-        .size(px(36.0))
-        .rounded(px(10.0))
-        .border_1()
-        .border_color(theme.border)
-        .bg(ink(0.03))
+        .w(px(24.0))
+        .h(px(32.0))
         .flex()
         .items_center()
         .justify_center()
@@ -406,42 +392,95 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
 /// semantics and activation; this visual can also be used inside a full row.
 /// Position and the I/O glyph provide redundant state cues in every theme.
 pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
+    use gpui::{BoxShadow, linear_color_stop, linear_gradient, point};
+    let dark = theme.appearance.is_dark();
+    let shadow = |y: f32, blur: f32, alpha: f32, inset: bool| BoxShadow {
+        color: gpui::black().opacity(alpha),
+        offset: point(px(0.0), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(0.0),
+        inset,
+    };
+    let track_top = if on {
+        theme.accent.opacity(0.70)
+    } else if dark {
+        crate::theme::grey(0x35)
+    } else {
+        crate::theme::grey(0xd9)
+    };
+    let track_bottom = if on {
+        theme.accent.opacity(0.46)
+    } else if dark {
+        crate::theme::grey(0x49)
+    } else {
+        crate::theme::grey(0xe7)
+    };
+    let mark = if on { theme.text } else { theme.text_muted };
     div()
         .flex_none()
         .w(px(40.0))
-        .h(px(24.0))
-        .rounded_full()
-        .border_1()
-        .border_color(theme.border)
-        .bg(if on {
-            theme.accent.opacity(0.24)
-        } else {
-            theme.surface_raised
-        })
+        .h(px(32.0))
         .relative()
         .child(
             div()
                 .absolute()
                 .top(px(5.0))
-                .left(px(if on { 7.0 } else { 27.0 }))
-                .w(px(if on { 2.0 } else { 7.0 }))
-                .h(px(if on { 9.0 } else { 7.0 }))
+                .left_0()
+                .w(px(40.0))
+                .h(px(22.0))
                 .rounded_full()
-                .when(on, |el| el.bg(theme.accent))
-                .when(!on, |el| el.border_2().border_color(theme.text_muted)),
+                .bg(linear_gradient(
+                    180.0,
+                    linear_color_stop(track_top, 0.0),
+                    linear_color_stop(track_bottom, 1.0),
+                ))
+                .shadow(vec![shadow(1.0, 2.0, 0.24, true)])
+                .border_1()
+                .border_color(crate::theme::hairline(0.12)),
         )
         .child(
             div()
                 .absolute()
-                .top(px(1.0))
-                .left(px(if on { 17.0 } else { 1.0 }))
-                .size(px(20.0))
+                .top(px(11.0))
+                .left(px(if on { 8.0 } else { 28.0 }))
+                .w(px(if on { 2.0 } else { 7.0 }))
+                .h(px(if on { 10.0 } else { 7.0 }))
                 .rounded_full()
-                .bg(theme.text)
-                .border_1()
-                .border_color(theme.border)
-                .shadow_sm(),
+                .when(on, |el| el.bg(mark))
+                .when(!on, |el| el.border_2().border_color(mark)),
         )
+        .child(
+            div()
+                .absolute()
+                .top(px(4.0))
+                .left(px(if on { 17.0 } else { -1.0 }))
+                .size(px(24.0))
+                .rounded_full()
+                .bg(linear_gradient(
+                    180.0,
+                    linear_color_stop(crate::theme::grey(0xfa), 0.0),
+                    linear_color_stop(crate::theme::grey(if dark { 0xd3 } else { 0xe7 }), 1.0),
+                ))
+                .border_1()
+                .border_color(gpui::white().opacity(0.65))
+                .shadow(vec![
+                    shadow(1.0, 2.0, 0.18, false),
+                    shadow(3.0, 5.0, 0.16, false),
+                    shadow(7.0, 12.0, 0.09, false),
+                ]),
+        )
+}
+
+/// Small choices reuse the selected/hover treatment of the app's picker rows.
+pub fn choice(theme: &Theme, selected: bool, key: impl Into<SharedString>) -> gpui::Div {
+    crate::popover::menu_row(theme, selected, key)
+        .min_h(px(32.0))
+        .px(px(10.0))
+        .font_weight(if selected {
+            gpui::FontWeight::MEDIUM
+        } else {
+            gpui::FontWeight::NORMAL
+        })
 }
 
 /// A small quiet ghost action (`rounded-lg px-2.5 py-1.5 text-[12px]

@@ -1263,38 +1263,14 @@ fn surface_choice(
     surface: SurfacePreference,
     selected: bool,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(SharedString::from(format!(
-            "appearance-surface-{}",
-            surface_label(surface).to_lowercase().replace(' ', "-")
-        )))
-        .h(px(30.0))
-        .px(px(10.0))
-        .rounded(px(7.0))
-        .border_1()
-        .border_color(if selected { theme.accent } else { theme.border })
-        .bg(if selected {
-            theme.accent_wash
-        } else {
-            theme.surface_raised.opacity(0.28)
-        })
-        .text_size(crate::typography::ui_rems(11.5))
-        .font_weight(if selected {
-            gpui::FontWeight::MEDIUM
-        } else {
-            gpui::FontWeight::NORMAL
-        })
-        .text_color(if selected {
-            theme.accent
-        } else {
-            theme.text_muted
-        })
-        .flex()
-        .items_center()
-        .cursor_pointer()
-        .when(!selected, |control| {
-            control.hover(|style| style.bg(theme.surface_raised_hover))
-        })
+    let id: SharedString = format!(
+        "appearance-surface-{}",
+        surface_label(surface).to_lowercase().replace(' ', "-")
+    )
+    .into();
+    widgets::choice(theme, selected, id.clone())
+        .id(id)
+        .aria_selected(selected)
         .child(surface_label(surface))
 }
 
@@ -1303,38 +1279,14 @@ fn background_effect_choice(
     effect: crate::settings::NewThreadBackgroundEffect,
     selected: bool,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(SharedString::from(format!(
-            "new-thread-background-effect-{}",
-            effect.label().to_lowercase()
-        )))
-        .h(px(28.0))
-        .px(px(9.0))
-        .rounded(px(7.0))
-        .border_1()
-        .border_color(if selected { theme.accent } else { theme.border })
-        .bg(if selected {
-            theme.accent_wash
-        } else {
-            theme.surface_raised.opacity(0.28)
-        })
-        .text_size(crate::typography::ui_rems(11.0))
-        .font_weight(if selected {
-            gpui::FontWeight::MEDIUM
-        } else {
-            gpui::FontWeight::NORMAL
-        })
-        .text_color(if selected {
-            theme.accent
-        } else {
-            theme.text_muted
-        })
-        .flex()
-        .items_center()
-        .cursor_pointer()
-        .when(!selected, |control| {
-            control.hover(|style| style.bg(theme.surface_raised_hover))
-        })
+    let id: SharedString = format!(
+        "new-thread-background-effect-{}",
+        effect.label().to_lowercase()
+    )
+    .into();
+    widgets::choice(theme, selected, id.clone())
+        .id(id)
+        .aria_selected(selected)
         .child(effect.label())
 }
 
@@ -1471,16 +1423,9 @@ fn compact_action(
     let id = id.into();
     popover::btn_ghost(theme, label, id.clone())
         .id(id)
-        .h(px(28.0))
-        .px(px(9.0))
-        .py(px(0.0))
-        .rounded(px(7.0))
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.surface_raised.opacity(0.34))
+        .min_h(px(32.0))
         .flex()
         .items_center()
-        .text_size(crate::typography::ui_rems(11.5))
 }
 
 fn import_scene_preview(variant: &zeron_theme::ThemeVariant) -> AnyElement {
@@ -3158,7 +3103,7 @@ impl Render for AppearancePage {
                 .child(
                     div()
                         .w_full()
-                        .pl(px(50.0))
+                        .pl(px(36.0))
                         .flex()
                         .flex_wrap()
                         .items_center()
@@ -3190,7 +3135,7 @@ impl Render for AppearancePage {
                 .child(
                     div()
                         .w_full()
-                        .pl(px(50.0))
+                        .pl(px(36.0))
                         .flex()
                         .flex_wrap()
                         .items_center()
@@ -3256,7 +3201,7 @@ impl Render for AppearancePage {
                 .child(
                     div()
                         .w_full()
-                        .pl(px(50.0))
+                        .pl(px(36.0))
                         .flex()
                         .flex_wrap()
                         .items_center()

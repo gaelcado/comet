@@ -85,28 +85,10 @@ impl Render for FilesSettingsPage {
         let show_all_files = self.show_all_files;
         let options = DELAY_OPTIONS.into_iter().map(|delay| {
             let active = delay == selected;
-            div()
-                .id(SharedString::from(format!("files-autosave-{delay}")))
-                .h(px(28.0))
-                .px(px(10.0))
-                .rounded(px(7.0))
-                .border_1()
-                .border_color(if active {
-                    theme.accent.opacity(0.7)
-                } else {
-                    theme.border
-                })
-                .bg(if active {
-                    theme.accent.opacity(0.11)
-                } else {
-                    crate::theme::wash(0.025)
-                })
-                .text_size(px(11.5))
-                .text_color(if active { theme.text } else { theme.text_muted })
-                .flex()
-                .items_center()
-                .cursor_pointer()
-                .hover(|style| style.bg(crate::theme::wash(0.08)))
+            let id: SharedString = format!("files-autosave-{delay}").into();
+            widgets::choice(&theme, active, id.clone())
+                .id(id)
+                .aria_selected(active)
                 .tab_index(0)
                 .role(gpui::Role::Button)
                 .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
