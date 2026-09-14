@@ -158,8 +158,8 @@ pub fn page_column() -> gpui::Div {
         .max_w(px(768.0))
         .mx_auto()
         .px(px(24.0))
-        .pt(px(32.0))
-        .pb(px(64.0))
+        .pt(px(20.0))
+        .pb(px(32.0))
         .flex()
         .flex_col()
 }
@@ -174,7 +174,7 @@ pub fn page_header(theme: &Theme, title: &str, count: Option<usize>) -> gpui::Di
         .gap(px(10.0))
         .child(
             div()
-                .text_size(crate::typography::ui_rems(16.0))
+                .text_size(crate::typography::ui_rems(20.0))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(theme.text)
                 .child(SharedString::from(title.to_string())),
@@ -215,11 +215,11 @@ pub fn field_label(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div {
 /// control works for a density picker, a layout picker or anything else where
 /// the choice is easier to show than to describe. Pair with [`option_card`].
 pub fn option_card_row() -> gpui::Div {
-    div().flex().flex_row().items_start().gap(px(16.0)).w_full()
+    div().flex().flex_row().items_start().gap(px(12.0)).w_full()
 }
 
 /// Default height of an [`option_card`] preview frame.
-pub const OPTION_CARD_HEIGHT: f32 = 148.0;
+pub const OPTION_CARD_HEIGHT: f32 = 112.0;
 /// Corner radius of the preview frame.
 ///
 /// Public because the preview has to round *itself* to this. gpui content masks
@@ -292,7 +292,7 @@ pub fn section_card(theme: &Theme) -> gpui::Div {
         .mt(px(24.0))
         .rounded(px(12.0))
         .border_1()
-        .border_color(theme.border)
+        .border_color(theme.border.opacity(0.65))
         .bg(theme.card_glass_bg())
         .overflow_hidden()
         .flex()
@@ -306,9 +306,9 @@ pub fn card_row(theme: &Theme, first: bool) -> gpui::Div {
         .px(px(20.0))
         .py(px(14.0))
         .when(!first, |el| el.border_t_1().border_color(theme.border))
-        .hover(|s| s.bg(ink(0.015)))
         .flex()
         .flex_row()
+        .flex_wrap()
         .items_center()
         .gap(px(14.0))
 }
@@ -338,7 +338,6 @@ pub fn row_tile(theme: &Theme, icon_path: &'static str) -> gpui::Div {
 pub fn row_title(theme: &Theme, title: impl Into<SharedString>) -> gpui::Div {
     div()
         .min_w_0()
-        .truncate()
         .text_size(crate::typography::ui_rems(ROW_TITLE_SIZE))
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(theme.text)
@@ -357,7 +356,7 @@ pub fn meta_line(theme: &Theme, fragments: Vec<AnyElement>) -> gpui::Div {
         .gap_x(px(8.0))
         .gap_y(px(2.0))
         .text_size(crate::typography::ui_rems(ROW_DESCRIPTION_SIZE))
-        .text_color(theme.text_muted.opacity(0.65));
+        .text_color(theme.text_muted.opacity(0.9));
     let mut first = true;
     for fragment in fragments {
         if !first {
@@ -403,25 +402,45 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
         .child(label.into())
 }
 
-/// Display-only toggle switch (zeron branch-picker.tsx `Toggle`): an 18×32
-/// pill whose knob slides right and track flips white when on. State is owned
-/// by the parent row — the caller adds `.id(..)` and `.on_click(..)`.
+/// Display-only I/O switch. The surrounding labelled control owns focus,
+/// semantics and activation; this visual can also be used inside a full row.
+/// Position and the I/O glyph provide redundant state cues in every theme.
 pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
     div()
         .flex_none()
-        .w(px(32.0))
-        .h(px(18.0))
+        .w(px(40.0))
+        .h(px(24.0))
         .rounded_full()
-        .bg(if on { theme.text } else { ink(0.15) })
+        .border_1()
+        .border_color(theme.border)
+        .bg(if on {
+            theme.accent.opacity(0.24)
+        } else {
+            theme.surface_raised
+        })
         .relative()
         .child(
             div()
                 .absolute()
-                .top(px(2.0))
-                .left(px(if on { 16.0 } else { 2.0 }))
-                .size(px(14.0))
+                .top(px(5.0))
+                .left(px(if on { 7.0 } else { 27.0 }))
+                .w(px(if on { 2.0 } else { 7.0 }))
+                .h(px(if on { 9.0 } else { 7.0 }))
                 .rounded_full()
-                .bg(if on { theme.on_solid } else { ink(0.7) }),
+                .when(on, |el| el.bg(theme.accent))
+                .when(!on, |el| el.border_2().border_color(theme.text_muted)),
+        )
+        .child(
+            div()
+                .absolute()
+                .top(px(1.0))
+                .left(px(if on { 17.0 } else { 1.0 }))
+                .size(px(20.0))
+                .rounded_full()
+                .bg(theme.text)
+                .border_1()
+                .border_color(theme.border)
+                .shadow_sm(),
         )
 }
 

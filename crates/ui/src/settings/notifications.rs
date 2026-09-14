@@ -175,7 +175,7 @@ impl Render for NotificationsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Session sounds"))
@@ -206,7 +206,7 @@ impl Render for NotificationsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Task completed"))
@@ -243,7 +243,7 @@ impl Render for NotificationsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Input required"))
@@ -280,7 +280,7 @@ impl Render for NotificationsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Errors and disconnections"))
@@ -316,7 +316,7 @@ impl Render for NotificationsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Desktop notifications"))
@@ -355,7 +355,7 @@ impl Render for NotificationsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Only when in the background"))
