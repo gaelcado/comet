@@ -5790,11 +5790,12 @@ impl Shell {
                             .border_r_1()
                             .border_color(theme.border)
                             .bg(crate::theme::wash(0.025))
-                            .pt(px(12.0))
+                            .pt(px(6.0))
                             .child(div().flex_1().min_h_0().child(nav))
                             .child(
                                 div().p(px(6.0)).child(
                                     settings::widgets::ghost_action(&theme)
+                                        .rounded(px(10.0))
                                         .hover(|s| settings::widgets::ghost_hover(&theme, s))
                                         .px(px(6.0))
                                         .flex()
@@ -5826,43 +5827,33 @@ impl Shell {
                             .h_full()
                             .flex()
                             .flex_col()
+                            .relative()
+                            .child(div().size_full().child(outlet))
                             .child(
-                                div()
-                                    .flex_none()
-                                    .h(px(44.0))
-                                    .pr(px(12.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_end()
-                                    .child(
-                                        div()
-                                            .id("settings-close")
-                                            .role(gpui::Role::Button)
-                                            .aria_label("Close settings")
-                                            .tab_index(0)
-                                            .size(px(32.0))
-                                            .rounded(px(8.0))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .cursor_pointer()
-                                            .hover(|s| s.bg(theme.glass_hover()))
-                                            .focus_visible(|s| {
-                                                s.border_2().border_color(theme.accent)
-                                            })
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.close_settings(cx)
-                                                }),
-                                            )
-                                            .child(
-                                                icon(icons::CLOSE)
-                                                    .size(px(16.0))
-                                                    .text_color(theme.text_muted),
-                                            ),
-                                    ),
-                            )
-                            .child(div().flex_1().min_h_0().child(outlet)),
+                                div().absolute().top(px(10.0)).right(px(10.0)).child(
+                                    div()
+                                        .id("settings-close")
+                                        .role(gpui::Role::Button)
+                                        .aria_label("Close settings")
+                                        .tab_index(0)
+                                        .size(px(32.0))
+                                        .rounded(px(8.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme.glass_hover()))
+                                        .focus_visible(|s| s.border_2().border_color(theme.accent))
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.close_settings(cx)),
+                                        )
+                                        .child(
+                                            icon(icons::CLOSE)
+                                                .size(px(16.0))
+                                                .text_color(theme.text_muted),
+                                        ),
+                                ),
+                            ),
                     ),
             )
             .child(
@@ -5913,7 +5904,7 @@ impl Shell {
                 .id("settings-sections")
                 .role(gpui::Role::TabList)
                 .aria_label("Settings sections")
-                .w(px(if compact { 56.0 } else { 184.0 }))
+                .w(px(if compact { 56.0 } else { 208.0 }))
                 .overflow_y_scroll()
                 .flex_none()
                 .h_full()
@@ -5939,19 +5930,11 @@ impl Shell {
                                             "settings-nav-{}",
                                             item.label()
                                         )))
-                                        .when(
-                                            matches!(
-                                                item,
-                                                SettingsSection::Harnesses
-                                                    | SettingsSection::Archived
-                                            ),
-                                            |el| el.mt(px(8.0)),
-                                        )
                                         .flex()
                                         .flex_row()
                                         .items_center()
                                         .gap(px(8.0))
-                                        .rounded(px(8.0))
+                                        .rounded(px(10.0))
                                         .px(px(6.0))
                                         .py(px(6.0))
                                         .text_size(crate::typography::ui_rems(13.0))

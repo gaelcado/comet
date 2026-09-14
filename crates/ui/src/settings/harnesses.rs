@@ -1106,7 +1106,7 @@ impl Render for HarnessesPage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                div()
+                crate::edge_fade::edge_faded(16.0, true, true, div()
                     .id("harnesses-page")
                     .size_full()
                     .overflow_y_scroll()
@@ -1135,7 +1135,7 @@ impl Render for HarnessesPage {
                             .children(error)
                             .child(body)
                             .child(titles),
-                    ),
+                    )).fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
     }

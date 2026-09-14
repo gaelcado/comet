@@ -128,6 +128,9 @@ impl ShortcutsPage {
             // One scroll state serves both pages — rewind it so each opens
             // at the top instead of where the other was left.
             self.scroll.reset();
+            if appshots {
+                self.appshot_capabilities = crate::appshots::capabilities();
+            }
         }
     }
 
@@ -521,7 +524,6 @@ fn description(id: ShortcutId) -> &'static str {
 
 impl Render for ShortcutsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.appshot_capabilities = crate::appshots::capabilities();
         if self.appshots_page {
             if std::mem::take(&mut self.appshots_focus_pending) {
                 window.focus(&self.focus, cx);
@@ -718,7 +720,7 @@ impl Render for ShortcutsPage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                div()
+                crate::edge_fade::edge_faded(16.0, true, true, div()
                     .id("shortcuts-page")
                     .size_full()
                     .overflow_y_scroll()
@@ -811,7 +813,7 @@ impl Render for ShortcutsPage {
                                     .child(helper),
                             )
                             .child(escape_behavior_row),
-                    ),
+                    )).fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
             .into_any_element()

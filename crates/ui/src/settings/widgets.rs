@@ -158,7 +158,7 @@ pub fn page_column() -> gpui::Div {
         .max_w(px(720.0))
         .mx_auto()
         .px(px(24.0))
-        .pt(px(20.0))
+        .pt(px(32.0))
         .pb(px(32.0))
         .flex()
         .flex_col()
@@ -219,7 +219,7 @@ pub fn option_card_row() -> gpui::Div {
 }
 
 /// Default height of an [`option_card`] preview frame.
-pub const OPTION_CARD_HEIGHT: f32 = 112.0;
+pub const OPTION_CARD_HEIGHT: f32 = 88.0;
 /// Corner radius of the preview frame.
 ///
 /// Public because the preview has to round *itself* to this. gpui content masks
@@ -463,8 +463,8 @@ impl RenderOnce for SwitchVisual {
         let gradient = |top, bottom| {
             linear_gradient(
                 180.0,
-                linear_color_stop(crate::theme::grey(top), 0.0),
-                linear_color_stop(crate::theme::grey(bottom), 1.0),
+                linear_color_stop(gpui::white().opacity(top), 0.0),
+                linear_color_stop(gpui::white().opacity(bottom), 1.0),
             )
         };
         let track = if self.on {
@@ -489,7 +489,7 @@ impl RenderOnce for SwitchVisual {
                     .h(px(40.0 * scale))
                     .rounded_full()
                     .bg(track)
-                    .shadow(vec![shadow(1.0, 2.0, 0.0, 0.25, true)])
+                    .shadow(vec![shadow(1.0, 2.0, 0.0, 0.12, true)])
                     .child(
                         div()
                             .absolute()
@@ -520,14 +520,10 @@ impl RenderOnce for SwitchVisual {
                     .left(px((3.0 + 39.0 * position) * scale))
                     .size(px(34.0 * scale))
                     .rounded_full()
-                    .bg(gradient(0xff, 0xd1))
+                    .bg(gradient(0.85, 0.25))
                     .shadow(vec![
-                        shadow(0.824, 1.154, -0.625, 0.26, false),
-                        shadow(2.108, 2.951, -1.25, 0.25, false),
-                        shadow(4.225, 5.916, -1.875, 0.24, false),
-                        shadow(8.01, 11.214, -2.5, 0.22, false),
-                        shadow(15.921, 22.29, -3.125, 0.18, false),
-                        shadow(35.0, 49.0, -3.75, 0.09, false),
+                        shadow(1.0, 2.0, -0.5, 0.18, false),
+                        shadow(3.0, 7.0, -1.0, 0.12, false),
                     ])
                     .child(
                         div()
@@ -536,7 +532,7 @@ impl RenderOnce for SwitchVisual {
                             .left(px(scale))
                             .size(px(32.0 * scale))
                             .rounded_full()
-                            .bg(gradient(0xf2, 0xe8)),
+                            .bg(gradient(0.55, 0.12)),
                     ),
             )
     }

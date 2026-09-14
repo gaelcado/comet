@@ -3048,7 +3048,7 @@ impl Render for AppearancePage {
                                 vec![
                                     div()
                                         .child(SharedString::from(
-                                            "Used whenever this appearance is active.",
+                                            "Applied when this color scheme is active.",
                                         ))
                                         .into_any_element(),
                                 ],
@@ -3439,7 +3439,7 @@ impl Render for AppearancePage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                div()
+                crate::edge_fade::edge_faded(16.0, true, true, div()
                     .id("appearance-page")
                     .size_full()
                     .overflow_y_scroll()
@@ -3461,7 +3461,7 @@ impl Render for AppearancePage {
                                     .flex()
                                     .flex_col()
                                     .gap(px(12.0))
-                                    .child(widgets::field_label(&theme, "Appearance"))
+                                    .child(widgets::field_label(&theme, "Color scheme"))
                                     .child(widgets::option_card_row().children(cards)),
                             )
                             .child(widgets::section_card(&theme).children(settings_rows))
@@ -3475,7 +3475,7 @@ impl Render for AppearancePage {
                                         .child(warning),
                                 )
                             }),
-                    ),
+                    )).fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
             .children(modal)
