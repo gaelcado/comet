@@ -280,6 +280,11 @@ pub fn current(cx: &App) -> UiSettings {
 /// caches when the background is replaced.
 pub fn install_new_thread_composer_background(source: &Path, cx: &mut App) -> Result<(), String> {
     let staged = crate::attachments::stage_file(source)?;
+    // Do not persist the candidate or retire the old managed file until the
+    // renderer's decoder has accepted the exact bytes we are about to save.
+    crate::new_thread_background_image::decode(staged.bytes()).map_err(|_| {
+        "This background image is unsupported or damaged. Choose a valid image such as PNG or JPEG.".to_string()
+    })?;
     let data_dir = cx
         .try_global::<SettingsStore>()
         .map(|store| store.data_dir.clone())
@@ -1406,6 +1411,102 @@ mod tests {
             &backgrounds,
         );
         assert!(!managed.exists());
+    }
+
+    #[gpui::test]
+    fn invalid_background_replacement_preserves_previous_image_and_settings(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("original.png");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([20, 100, 200, 255]))
+            .save(&original)
+            .unwrap();
+        cx.update(|cx| {
+            init(UiSettings::default(), dir.path(), cx);
+            install_new_thread_composer_background(&original, cx).unwrap();
+            let before = current(cx);
+            let previous = PathBuf::from(&before.new_thread_composer_background.as_ref().unwrap().path);
+            let saved = std::fs::read(UiSettings::path(dir.path())).unwrap();
+            let previous_bytes = std::fs::read(&previous).unwrap();
+            for (name, bytes) in [
+                ("replacement.svg", br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>"#.as_slice()),
+                ("corrupt.png", b"not a PNG".as_slice()),
+                ("truncated.png", &previous_bytes[..previous_bytes.len() / 2]),
+            ] {
+                let candidate = dir.path().join(name);
+                std::fs::write(&candidate, bytes).unwrap();
+                let result = install_new_thread_composer_background(&candidate, cx);
+                assert!(result.is_err(), "accepted invalid replacement: {name}");
+                assert_eq!(current(cx), before);
+                assert_eq!(std::fs::read(UiSettings::path(dir.path())).unwrap(), saved);
+                assert_eq!(std::fs::read(&previous).unwrap(), previous_bytes);
+                assert_eq!(std::fs::read_dir(dir.path().join(NEW_THREAD_BACKGROUND_DIR)).unwrap().count(), 1);
+                assert!(candidate.exists(), "source files must never be deleted");
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn valid_background_replacement_persists_renderable_image_before_retiring_previous(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.png");
+        let second = dir.path().join("second.jpg");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([20, 100, 200, 255]))
+            .save(&first)
+            .unwrap();
+        image::RgbImage::from_pixel(12, 10, image::Rgb([200, 100, 20]))
+            .save(&second)
+            .unwrap();
+        cx.update(|cx| {
+            let initial = UiSettings {
+                new_thread_background_effect: NewThreadBackgroundEffect::Ascii,
+                ..Default::default()
+            };
+            init(initial, dir.path(), cx);
+            install_new_thread_composer_background(&first, cx).unwrap();
+            let old_path = current(cx).new_thread_composer_background.unwrap().path;
+            install_new_thread_composer_background(&second, cx).unwrap();
+            let settings = current(cx);
+            let replacement = settings.new_thread_composer_background.as_ref().unwrap();
+            assert_ne!(replacement.path, old_path);
+            let saved_image = std::fs::read(&replacement.path).unwrap();
+            assert_eq!(saved_image, std::fs::read(&second).unwrap());
+            let decoded = crate::new_thread_background_image::decode(&saved_image).unwrap();
+            assert_eq!((decoded.width(), decoded.height()), (12, 10));
+            assert_eq!(UiSettings::load(dir.path()), settings);
+            assert_eq!(
+                settings.new_thread_background_effect,
+                NewThreadBackgroundEffect::Ascii
+            );
+            assert!(!Path::new(&old_path).exists());
+            assert!(first.exists() && second.exists());
+            assert_eq!(
+                std::fs::read_dir(dir.path().join(NEW_THREAD_BACKGROUND_DIR))
+                    .unwrap()
+                    .count(),
+                1
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn invalid_initial_background_import_does_not_create_managed_files_or_settings(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let candidate = dir.path().join("corrupt.png");
+        std::fs::write(&candidate, b"not a PNG").unwrap();
+        cx.update(|cx| {
+            init(UiSettings::default(), dir.path(), cx);
+            assert!(install_new_thread_composer_background(&candidate, cx).is_err());
+            assert!(current(cx).new_thread_composer_background.is_none());
+            assert!(!dir.path().join(NEW_THREAD_BACKGROUND_DIR).exists());
+            assert!(!UiSettings::path(dir.path()).exists());
+            assert!(candidate.exists());
+        });
     }
 
     #[test]
