@@ -107,6 +107,9 @@ impl Render for FilesSettingsPage {
                 .items_center()
                 .cursor_pointer()
                 .hover(|style| style.bg(crate::theme::wash(0.08)))
+                .tab_index(0)
+                .role(gpui::Role::Button)
+                .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.autosave_delay_ms = delay;
                     cx.emit(FilesSettingsEvent::AutosaveDelayChanged(delay));
@@ -125,7 +128,7 @@ impl Render for FilesSettingsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Autosave"))
@@ -142,6 +145,15 @@ impl Render for FilesSettingsPage {
                         widgets::toggle_switch(&theme, autosave_enabled)
                             .id("files-autosave-toggle")
                             .cursor_pointer()
+                            .tab_index(0)
+                            .role(gpui::Role::Switch)
+                            .aria_label("Autosave")
+                            .aria_toggled(if autosave_enabled {
+                                gpui::Toggled::True
+                            } else {
+                                gpui::Toggled::False
+                            })
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.autosave_enabled = !this.autosave_enabled;
                                 cx.emit(FilesSettingsEvent::AutosaveChanged(this.autosave_enabled));
@@ -157,7 +169,7 @@ impl Render for FilesSettingsPage {
                         .child(
                             div()
                                 .flex_1()
-                                .min_w_0()
+                                .min_w(px(160.0))
                                 .flex()
                                 .flex_col()
                                 .child(widgets::row_title(&theme, "Autosave delay"))
@@ -186,7 +198,7 @@ impl Render for FilesSettingsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Word wrap"))
@@ -203,6 +215,15 @@ impl Render for FilesSettingsPage {
                         widgets::toggle_switch(&theme, word_wrap)
                             .id("files-word-wrap-toggle")
                             .cursor_pointer()
+                            .tab_index(0)
+                            .role(gpui::Role::Switch)
+                            .aria_label("Word wrap")
+                            .aria_toggled(if word_wrap {
+                                gpui::Toggled::True
+                            } else {
+                                gpui::Toggled::False
+                            })
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.word_wrap = !this.word_wrap;
                                 cx.emit(FilesSettingsEvent::WordWrapChanged(this.word_wrap));
@@ -216,7 +237,7 @@ impl Render for FilesSettingsPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, "Show all files"))
@@ -235,6 +256,15 @@ impl Render for FilesSettingsPage {
                         widgets::toggle_switch(&theme, show_all_files)
                             .id("files-show-all-toggle")
                             .cursor_pointer()
+                            .tab_index(0)
+                            .role(gpui::Role::Switch)
+                            .aria_label("Show hidden files")
+                            .aria_toggled(if show_all_files {
+                                gpui::Toggled::True
+                            } else {
+                                gpui::Toggled::False
+                            })
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.show_all_files = !this.show_all_files;
                                 cx.emit(FilesSettingsEvent::ShowAllFilesChanged(

@@ -159,6 +159,16 @@ impl DevicesPage {
         let dialog = self.rename.as_ref()?;
         let input = dialog.input.clone();
         let card = popover::dialog_card(&theme)
+            .id("rename-device-card")
+            .role(gpui::Role::Dialog)
+            .aria_label("Rename device")
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    this.rename = None;
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }))
             .child(popover::dialog_title(&theme, "Rename device"))
             .child(
                 div()
@@ -175,6 +185,9 @@ impl DevicesPage {
                     .child(
                         popover::btn_ghost(&theme, "Cancel", "rename-cancel")
                             .id("rename-cancel")
+                            .tab_index(0)
+                            .role(gpui::Role::Button)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.rename = None;
                                 cx.notify();
@@ -183,6 +196,9 @@ impl DevicesPage {
                     .child(
                         popover::btn_primary(&theme, "Rename")
                             .id("rename-save")
+                            .tab_index(0)
+                            .role(gpui::Role::Button)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                             .on_click(cx.listener(|this, _, _, cx| this.submit_rename(cx))),
                     ),
             )
@@ -338,6 +354,7 @@ impl Render for DevicesPage {
                 meta.push(
                     div()
                         .id(("device-id", ix))
+                        .aria_label(format!("Copy device ID {}", device.id))
                         .font_family(theme.font_mono.clone())
                         .text_size(crate::typography::ui_rems(10.5))
                         .text_color(if id_copied {
@@ -347,6 +364,9 @@ impl Render for DevicesPage {
                         })
                         .cursor_pointer()
                         .hover(|s| s.text_color(theme.text_muted))
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.copy_id(copy_id.clone(), cx);
                         }))
@@ -363,7 +383,7 @@ impl Render for DevicesPage {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, device.name.clone()))
@@ -394,6 +414,9 @@ impl Render for DevicesPage {
                                     .bg(crate::theme::ink(0.06))
                                     .text_color(theme.text)
                             })
+                            .tab_index(0)
+                            .role(gpui::Role::Button)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_rename(rename_id.clone(), rename_name.clone(), cx);
                             }))
@@ -451,6 +474,11 @@ impl Render for DevicesPage {
                                     widgets::error_strip(&theme, message)
                                         .id("devices-error")
                                         .cursor_pointer()
+                                        .tab_index(0)
+                                        .role(gpui::Role::Button)
+                                        .focus_visible(|s| {
+                                            s.border_2().border_color(theme.accent).opacity(1.0)
+                                        })
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.error = None;
                                             cx.notify();

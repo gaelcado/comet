@@ -334,6 +334,9 @@ impl AccountsPage {
                     gpui::MouseButton::Left,
                     cx.listener(|this, _, _, _| this.device_menu.note_trigger_press()),
                 )
+                .tab_index(0)
+                .role(gpui::Role::Button)
+                .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                 .on_click(cx.listener(|this, _, _, cx| {
                     // A press that found the menu open closes it (the card's
                     // mouse-down-out already began the close) — never reopen.
@@ -393,6 +396,9 @@ impl AccountsPage {
                     let pick_id = d.id.clone();
                     popover::menu_row(theme, is_active, format!("accounts-device-row-{ix}"))
                         .id(("accounts-device-row", ix))
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             // Local device = no passthrough (calls stay direct).
                             let target = (!pick_local).then(|| pick_id.clone());
@@ -826,6 +832,9 @@ impl AccountsPage {
                         .cursor_pointer()
                         .when(is_busy, |el| el.opacity(0.5))
                         .hover(|s| s.bg(crate::theme::ink(0.06)).text_color(theme.text))
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.account_action(methods::FORGET_AGENT_ACCOUNT, &forget_account, cx);
                         }))
@@ -847,6 +856,9 @@ impl AccountsPage {
                         .rounded(px(6.0))
                         .text_size(crate::typography::ui_rems(11.5))
                         .when(is_busy, |el| el.opacity(0.5))
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.account_action(
                                 methods::ACTIVATE_AGENT_ACCOUNT,
@@ -887,7 +899,7 @@ impl AccountsPage {
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(160.0))
                     .flex()
                     .flex_col()
                     .child(widgets::row_title(theme, email))
@@ -955,6 +967,9 @@ impl AccountsPage {
                     .truncate()
                     .cursor_pointer()
                     .hover(|s| s.text_color(theme.text))
+                    .tab_index(0)
+                    .role(gpui::Role::Button)
+                    .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.open_url(&open_url);
                     }))
@@ -1019,6 +1034,11 @@ impl AccountsPage {
                             .child(
                                 popover::btn_ghost(&theme, "Cancel", "login-cancel")
                                     .id("login-cancel")
+                                    .tab_index(0)
+                                    .role(gpui::Role::Button)
+                                    .focus_visible(|s| {
+                                        s.border_2().border_color(theme.accent).opacity(1.0)
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| this.cancel_login(cx))),
                             )
                             .child(
@@ -1032,6 +1052,11 @@ impl AccountsPage {
                                 )
                                 .id("login-submit-code")
                                 .when(submitting, |el| el.opacity(0.5))
+                                .tab_index(0)
+                                .role(gpui::Role::Button)
+                                .focus_visible(|s| {
+                                    s.border_2().border_color(theme.accent).opacity(1.0)
+                                })
                                 .on_click(cx.listener(|this, _, _, cx| this.submit_code(cx))),
                             ),
                     )
@@ -1108,6 +1133,9 @@ impl AccountsPage {
                                 "login-cancel",
                             )
                             .id("login-cancel")
+                            .tab_index(0)
+                            .role(gpui::Role::Button)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_login(cx))),
                         ),
                     )
@@ -1115,6 +1143,15 @@ impl AccountsPage {
             }
         };
         let card = popover::dialog_card(&theme)
+            .id("add-account-card")
+            .role(gpui::Role::Dialog)
+            .aria_label(title)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    this.cancel_login(cx);
+                    cx.stop_propagation();
+                }
+            }))
             .child(popover::dialog_title(&theme, title))
             .child(body)
             .into_any_element();
@@ -1318,6 +1355,9 @@ impl Render for AccountsPage {
                     widgets::error_strip(&theme, message)
                         .id("accounts-load-error")
                         .cursor_pointer()
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                         .on_click(cx.listener(|this, _, _, cx| {
                             // Retry IS the visit's first successful list — force usage.
                             this.load(force_usage_for(LoadTrigger::Retry), cx)
@@ -1403,6 +1443,11 @@ impl Render for AccountsPage {
                                         widgets::ghost_action(&theme)
                                             .id(add_id)
                                             .hover(|s| widgets::ghost_hover(&theme, s))
+                                            .tab_index(0)
+                                            .role(gpui::Role::Button)
+                                            .focus_visible(|s| {
+                                                s.border_2().border_color(theme.accent).opacity(1.0)
+                                            })
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.start_login(harness, cx);
                                             }))
@@ -1458,7 +1503,10 @@ impl Render for AccountsPage {
                                             .text_size(crate::typography::ui_rems(12.5))
                                             .hover(|s| widgets::ghost_hover(&theme, s))
                                             .when(refreshing, |el| el.opacity(0.5))
-                                            .on_click(cx.listener(|this, _, _, cx| {
+                                            .tab_index(0)
+.role(gpui::Role::Button)
+.focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
+.on_click(cx.listener(|this, _, _, cx| {
                                                 this.load(
                                                     force_usage_for(LoadTrigger::Refresh),
                                                     cx,
@@ -1484,7 +1532,10 @@ impl Render for AccountsPage {
                                     widgets::error_strip(&theme, message)
                                         .id("accounts-action-error")
                                         .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, _, cx| {
+                                        .tab_index(0)
+.role(gpui::Role::Button)
+.focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
+.on_click(cx.listener(|this, _, _, cx| {
                                             this.error = None;
                                             cx.notify();
                                         })),

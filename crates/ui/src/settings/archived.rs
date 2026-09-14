@@ -239,6 +239,9 @@ impl Render for ArchivedPage {
                             .when(is_busy, |el| el.opacity(0.4))
                             .cursor_pointer()
                             .hover(|s| s.bg(theme.surface_raised).text_color(theme.text))
+                            .tab_index(0)
+                            .role(gpui::Role::Button)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.unarchive(chat_id.clone(), cx);
                             }))
@@ -327,7 +330,10 @@ impl Render for ArchivedPage {
                                     widgets::error_strip(&theme, message)
                                         .id("archived-error")
                                         .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, _, cx| {
+                                        .tab_index(0)
+.role(gpui::Role::Button)
+.focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
+.on_click(cx.listener(|this, _, _, cx| {
                                             this.error = None;
                                             cx.notify();
                                         })),
