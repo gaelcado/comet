@@ -388,87 +388,183 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
         .child(label.into())
 }
 
-/// Display-only I/O switch. The surrounding labelled control owns focus,
-/// semantics and activation; this visual can also be used inside a full row.
-/// Position and the I/O glyph provide redundant state cues in every theme.
+/// I/O geometry measured from drams.framer.website/drams/001, scaled to 60%:
+/// 79×40 track, 34px bevel, 32px face, 3px inset, 39px travel.
+/// The caller owns activation and accessibility; only the thumb interpolates.
 pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
-    use gpui::{BoxShadow, linear_color_stop, linear_gradient, point};
-    let dark = theme.appearance.is_dark();
-    let shadow = |y: f32, blur: f32, alpha: f32, inset: bool| BoxShadow {
-        color: gpui::black().opacity(alpha),
-        offset: point(px(0.0), px(y)),
-        blur_radius: px(blur),
-        spread_radius: px(0.0),
-        inset,
-    };
-    let track_top = if on {
-        theme.accent.opacity(0.70)
-    } else if dark {
-        crate::theme::grey(0x35)
-    } else {
-        crate::theme::grey(0xd9)
-    };
-    let track_bottom = if on {
-        theme.accent.opacity(0.46)
-    } else if dark {
-        crate::theme::grey(0x49)
-    } else {
-        crate::theme::grey(0xe7)
-    };
-    let mark = if on { theme.text } else { theme.text_muted };
     div()
         .flex_none()
         .w(px(48.0))
         .h(px(36.0))
-        .relative()
-        .child(
-            div()
-                .absolute()
-                .top(px(5.0))
-                .left_0()
-                .w(px(48.0))
-                .h(px(26.0))
-                .rounded_full()
-                .bg(linear_gradient(
-                    180.0,
-                    linear_color_stop(track_top, 0.0),
-                    linear_color_stop(track_bottom, 1.0),
-                ))
-                .shadow(vec![shadow(1.0, 3.0, 0.32, true)])
-                .border_1()
-                .border_color(crate::theme::hairline(0.12)),
-        )
-        .child(
-            div()
-                .absolute()
-                .top(px(if on { 12.0 } else { 13.0 }))
-                .left(px(if on { 10.0 } else { 33.0 }))
-                .w(px(if on { 2.0 } else { 10.0 }))
-                .h(px(if on { 12.0 } else { 10.0 }))
-                .rounded_full()
-                .when(on, |el| el.bg(mark))
-                .when(!on, |el| el.border_2().border_color(mark)),
-        )
-        .child(
-            div()
-                .absolute()
-                .top(px(5.0))
-                .left(px(if on { 22.0 } else { 0.0 }))
-                .size(px(26.0))
-                .rounded_full()
-                .bg(linear_gradient(
-                    180.0,
-                    linear_color_stop(crate::theme::grey(0xfa), 0.0),
-                    linear_color_stop(crate::theme::grey(if dark { 0xd3 } else { 0xe7 }), 1.0),
-                ))
-                .border_1()
-                .border_color(gpui::white().opacity(0.65))
-                .shadow(vec![
-                    shadow(1.0, 2.0, 0.18, false),
-                    shadow(3.0, 5.0, 0.24, false),
-                    shadow(8.0, 14.0, 0.16, false),
-                ]),
-        )
+        .child(SwitchVisual {
+            theme: theme.clone(),
+            on,
+        })
+}
+
+#[derive(IntoElement)]
+struct SwitchVisual {
+    theme: Theme,
+    on: bool,
+}
+
+struct SwitchTravel {
+    from: f32,
+    target: f32,
+    started: std::time::Instant,
+}
+
+impl SwitchTravel {
+    fn value(&self, now: std::time::Instant) -> f32 {
+        let t = (now.duration_since(self.started).as_secs_f32() / 0.18).min(1.0);
+        self.from + (self.target - self.from) * (1.0 - (1.0 - t).powi(3))
+    }
+}
+
+impl RenderOnce for SwitchVisual {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        use gpui::{BoxShadow, linear_color_stop, linear_gradient, point};
+        let now = std::time::Instant::now();
+        let target = if self.on { 1.0 } else { 0.0 };
+        let reduced = crate::motion::reduced_motion(cx);
+        let position = window.with_global_id("io-switch-travel".into(), |id, window| {
+            window.with_element_state(id, |previous: Option<SwitchTravel>, _| {
+                let mut travel = previous.unwrap_or(SwitchTravel {
+                    from: target,
+                    target,
+                    started: now,
+                });
+                let current = travel.value(now);
+                if travel.target != target {
+                    travel = SwitchTravel {
+                        from: current,
+                        target,
+                        started: now,
+                    };
+                }
+                if reduced {
+                    travel.from = target;
+                    travel.target = target;
+                }
+                (travel.value(now), travel)
+            })
+        });
+        if (position - target).abs() > 0.001 {
+            window.request_animation_frame();
+        }
+        let scale = 0.6;
+        let shadow = |y: f32, blur: f32, spread: f32, alpha: f32, inset: bool| BoxShadow {
+            color: gpui::black().opacity(alpha),
+            offset: point(px(0.0), px(y * scale)),
+            blur_radius: px(blur * scale),
+            spread_radius: px(spread * scale),
+            inset,
+        };
+        let gradient = |top, bottom| {
+            linear_gradient(
+                180.0,
+                linear_color_stop(crate::theme::grey(top), 0.0),
+                linear_color_stop(crate::theme::grey(bottom), 1.0),
+            )
+        };
+        let track = if self.on {
+            self.theme.accent
+        } else {
+            crate::theme::grey(if self.theme.appearance.is_dark() {
+                0x58
+            } else {
+                0xe3
+            })
+        };
+        div()
+            .relative()
+            .w(px(48.0))
+            .h(px(36.0))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(6.0))
+                    .left_0()
+                    .w(px(79.0 * scale))
+                    .h(px(40.0 * scale))
+                    .rounded_full()
+                    .bg(track)
+                    .shadow(vec![shadow(1.0, 2.0, 0.0, 0.25, true)])
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(12.0 * scale))
+                            .left(px(20.0 * scale))
+                            .w(px(2.0 * scale))
+                            .h(px(16.0 * scale))
+                            .rounded_full()
+                            .bg(gpui::white())
+                            .opacity(position),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(12.0 * scale))
+                            .left(px(52.0 * scale))
+                            .size(px(16.0 * scale))
+                            .rounded_full()
+                            .border(px(3.0 * scale))
+                            .border_color(gpui::white())
+                            .opacity(1.0 - position),
+                    ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(6.0 + 3.0 * scale))
+                    .left(px((3.0 + 39.0 * position) * scale))
+                    .size(px(34.0 * scale))
+                    .rounded_full()
+                    .bg(gradient(0xff, 0xd1))
+                    .shadow(vec![
+                        shadow(0.824, 1.154, -0.625, 0.26, false),
+                        shadow(2.108, 2.951, -1.25, 0.25, false),
+                        shadow(4.225, 5.916, -1.875, 0.24, false),
+                        shadow(8.01, 11.214, -2.5, 0.22, false),
+                        shadow(15.921, 22.29, -3.125, 0.18, false),
+                        shadow(35.0, 49.0, -3.75, 0.09, false),
+                    ])
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(scale))
+                            .left(px(scale))
+                            .size(px(32.0 * scale))
+                            .rounded_full()
+                            .bg(gradient(0xf2, 0xe8)),
+                    ),
+            )
+    }
+}
+
+#[cfg(test)]
+mod switch_tests {
+    use super::*;
+    #[test]
+    fn switch_reversal_keeps_current_position_and_settles() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let forward = SwitchTravel {
+            from: 0.0,
+            target: 1.0,
+            started: now,
+        };
+        let halfway = now + Duration::from_millis(90);
+        let current = forward.value(halfway);
+        let reverse = SwitchTravel {
+            from: current,
+            target: 0.0,
+            started: halfway,
+        };
+        assert_eq!(reverse.value(halfway), current);
+        assert_eq!(reverse.value(halfway + Duration::from_millis(180)), 0.0);
+        assert_eq!(forward.value(now + Duration::from_millis(180)), 1.0);
+    }
 }
 
 /// Small choices reuse the selected/hover treatment of the app's picker rows.
