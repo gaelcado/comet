@@ -5790,34 +5790,80 @@ impl Shell {
                             .border_r_1()
                             .border_color(theme.border)
                             .bg(crate::theme::wash(0.025))
+                            .pt(px(12.0))
+                            .child(div().flex_1().min_h_0().child(nav))
                             .child(
-                                div().px(px(12.0)).py(px(12.0)).child(
-                                    div()
-                                        .id("settings-close")
-                                        .role(gpui::Role::Button)
-                                        .aria_label("Close settings")
-                                        .tab_index(0)
-                                        .size(px(32.0))
-                                        .rounded(px(8.0))
+                                div().p(px(6.0)).child(
+                                    settings::widgets::ghost_action(&theme)
+                                        .hover(|s| settings::widgets::ghost_hover(&theme, s))
+                                        .px(px(6.0))
                                         .flex()
                                         .items_center()
-                                        .justify_center()
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(theme.glass_hover()))
+                                        .gap(px(6.0))
+                                        .id("settings-back")
+                                        .role(gpui::Role::Button)
+                                        .aria_label("Back to workspace")
+                                        .tab_index(0)
+                                        .w_full()
+                                        .min_h(px(30.0))
                                         .focus_visible(|s| s.border_2().border_color(theme.accent))
                                         .on_click(
                                             cx.listener(|this, _, _, cx| this.close_settings(cx)),
                                         )
                                         .child(
-                                            icon(icons::CLOSE)
-                                                .size(px(16.0))
+                                            icon(icons::ALT_ARROW_LEFT)
+                                                .size(px(14.0))
                                                 .text_color(theme.text_muted),
-                                        ),
+                                        )
+                                        .when(self.viewport_width >= 680.0, |el| el.child("Back")),
                                 ),
-                            )
-                            .child(div().flex_1().min_h_0().child(nav)),
+                            ),
                     )
-                    .child(div().flex_1().min_w_0().h_full().pt(px(12.0)).child(outlet)),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .h(px(44.0))
+                                    .pr(px(12.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_end()
+                                    .child(
+                                        div()
+                                            .id("settings-close")
+                                            .role(gpui::Role::Button)
+                                            .aria_label("Close settings")
+                                            .tab_index(0)
+                                            .size(px(32.0))
+                                            .rounded(px(8.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(theme.glass_hover()))
+                                            .focus_visible(|s| {
+                                                s.border_2().border_color(theme.accent)
+                                            })
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.close_settings(cx)
+                                                }),
+                                            )
+                                            .child(
+                                                icon(icons::CLOSE)
+                                                    .size(px(16.0))
+                                                    .text_color(theme.text_muted),
+                                            ),
+                                    ),
+                            )
+                            .child(div().flex_1().min_h_0().child(outlet)),
+                    ),
             )
             .child(
                 div()
@@ -5861,23 +5907,20 @@ impl Shell {
             SettingsSection::Archived => icons::ARCHIVE_MINIMALISTIC,
         };
         let compact = self.viewport_width < 680.0;
-        div()
-            .id("settings-sections")
-            .role(gpui::Role::TabList)
-            .aria_label("Settings sections")
-            .w(px(if compact { 56.0 } else { 184.0 }))
-            .overflow_y_scroll()
-            .flex_none()
-            .h_full()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex_1()
-                    .px(px(Theme::SPACE_SM))
-                    .flex()
-                    .flex_col()
-                    .child(
+        settings::widgets::scroll_faded(
+            "settings-nav-scroll",
+            div()
+                .id("settings-sections")
+                .role(gpui::Role::TabList)
+                .aria_label("Settings sections")
+                .w(px(if compact { 56.0 } else { 184.0 }))
+                .overflow_y_scroll()
+                .flex_none()
+                .h_full()
+                .flex()
+                .flex_col()
+                .child(
+                    div().flex_1().px(px(6.0)).flex().flex_col().child(
                         div().flex().flex_col().gap(px(2.0)).children(
                             SettingsSection::ALL
                                 .into_iter()
@@ -5902,15 +5945,15 @@ impl Shell {
                                                 SettingsSection::Harnesses
                                                     | SettingsSection::Archived
                                             ),
-                                            |el| el.mt(px(10.0)),
+                                            |el| el.mt(px(8.0)),
                                         )
                                         .flex()
                                         .flex_row()
                                         .items_center()
                                         .gap(px(8.0))
                                         .rounded(px(8.0))
-                                        .px(px(Theme::SPACE_SM))
-                                        .py(px(9.0))
+                                        .px(px(6.0))
+                                        .py(px(6.0))
                                         .text_size(crate::typography::ui_rems(13.0))
                                         .when(selected, |el| {
                                             // Same tokens as the main sidebar's session
@@ -5982,8 +6025,9 @@ impl Shell {
                                 }),
                         ),
                     ),
-            )
-            .into_any_element()
+                ),
+        )
+        .into_any_element()
     }
 
     /// One session row: context + status on line one, harness + title on line

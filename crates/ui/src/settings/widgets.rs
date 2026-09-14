@@ -662,3 +662,34 @@ pub fn warning_strip(theme: &Theme, message: impl Into<SharedString>) -> gpui::D
         )
         .child(div().min_w_0().child(message.into()))
 }
+
+/// The sidebar's paint-time overflow fade, with a persistent scroll handle per
+/// settings surface. No fade is painted when the content fits or at a reached edge.
+pub fn scroll_faded(
+    key: impl Into<SharedString>,
+    area: gpui::Stateful<gpui::Div>,
+) -> impl IntoElement {
+    SettingsScroll {
+        key: key.into(),
+        area,
+    }
+}
+
+#[derive(IntoElement)]
+struct SettingsScroll {
+    key: SharedString,
+    area: gpui::Stateful<gpui::Div>,
+}
+
+impl RenderOnce for SettingsScroll {
+    fn render(self, window: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
+        let scroll = window.with_global_id(self.key.into(), |id, window| {
+            window.with_element_state(id, |previous: Option<gpui::ScrollHandle>, _| {
+                let scroll = previous.unwrap_or_default();
+                (scroll.clone(), scroll)
+            })
+        });
+        crate::edge_fade::edge_faded(16.0, true, true, self.area.track_scroll(&scroll))
+            .fade_overflow_y(&scroll)
+    }
+}
