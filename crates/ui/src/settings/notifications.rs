@@ -396,7 +396,7 @@ impl Render for NotificationsPage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                div()
+                crate::edge_fade::edge_faded(16.0, true, true, div()
                     .id("notifications-page")
                     .size_full()
                     .overflow_y_scroll()
@@ -414,7 +414,7 @@ impl Render for NotificationsPage {
                                 .line_height(px(20.0)),
                             )
                             .child(card),
-                    ),
+                    )).fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
     }

@@ -368,14 +368,14 @@ impl Render for DevicesPage {
                 );
 
                 div()
-                    .p(px(20.0))
+                    .p(px(16.0))
                     .rounded(px(12.0))
                     .bg(crate::theme::wash(0.035))
                     .border_1()
                     .border_color(theme.border)
                     .flex()
                     .flex_col()
-                    .gap(px(14.0))
+                    .gap(px(12.0))
                     .h_full()
                     .child(
                         div()
@@ -385,7 +385,13 @@ impl Render for DevicesPage {
                             .child(tile)
                             .child(widgets::badge(
                                 &theme,
-                                if online { "Online" } else { "Offline" },
+                                if is_local {
+                                    "This device"
+                                } else if online {
+                                    "Online"
+                                } else {
+                                    "Offline"
+                                },
                             )),
                     )
                     .child(
@@ -394,22 +400,12 @@ impl Render for DevicesPage {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .child(widgets::row_title(&theme, device.name.clone()))
+                            .child(
+                                widgets::row_title(&theme, device.name.clone())
+                                    .text_size(crate::typography::ui_rems(15.0)),
+                            )
                             .child(widgets::meta_line(&theme, meta)),
                     )
-                    .when(is_local, |el| {
-                        el.child(
-                            div()
-                                .flex_none()
-                                .text_size(px(10.5))
-                                .text_color(theme.text_muted)
-                                .child(if workspace_scope == Some(WorkspaceScope::Local) {
-                                    "Local only"
-                                } else {
-                                    "This device"
-                                }),
-                        )
-                    })
                     .child(
                         // `opacity-70 hover:opacity-100` (zeron: also rises on
                         // row hover — gpui has no group-hover, so the button's
@@ -474,40 +470,46 @@ impl Render for DevicesPage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                div()
-                    .id("devices-page")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll.scroll)
-                    .child(
-                        widgets::page_column()
-                            .child(widgets::page_header(
-                                &theme,
-                                "Devices",
-                                (count > 0).then_some(count),
-                            ))
-                            .child(widgets::page_subtitle(
-                                &theme,
-                                devices_subtitle(workspace_scope),
-                            ))
-                            .when_some(self.error.clone(), |el, message| {
-                                el.child(
-                                    widgets::error_strip(&theme, message)
-                                        .id("devices-error")
-                                        .cursor_pointer()
-                                        .tab_index(0)
-                                        .role(gpui::Role::Button)
-                                        .focus_visible(|s| {
-                                            s.border_2().border_color(theme.accent).opacity(1.0)
-                                        })
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.error = None;
-                                            cx.notify();
-                                        })),
-                                )
-                            })
-                            .child(card),
-                    ),
+                crate::edge_fade::edge_faded(
+                    16.0,
+                    true,
+                    true,
+                    div()
+                        .id("devices-page")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll.scroll)
+                        .child(
+                            widgets::page_column()
+                                .child(widgets::page_header(
+                                    &theme,
+                                    "Devices",
+                                    (count > 0).then_some(count),
+                                ))
+                                .child(widgets::page_subtitle(
+                                    &theme,
+                                    devices_subtitle(workspace_scope),
+                                ))
+                                .when_some(self.error.clone(), |el, message| {
+                                    el.child(
+                                        widgets::error_strip(&theme, message)
+                                            .id("devices-error")
+                                            .cursor_pointer()
+                                            .tab_index(0)
+                                            .role(gpui::Role::Button)
+                                            .focus_visible(|s| {
+                                                s.border_2().border_color(theme.accent).opacity(1.0)
+                                            })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.error = None;
+                                                cx.notify();
+                                            })),
+                                    )
+                                })
+                                .child(card),
+                        ),
+                )
+                .fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
             .when_some(dialog, |el, dialog| el.child(dialog))

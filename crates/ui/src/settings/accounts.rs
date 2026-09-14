@@ -1410,10 +1410,10 @@ impl Render for AccountsPage {
                         let card = if rows.is_empty() {
                             card.child(
                                 div()
-                                    .px(px(20.0))
+                                    .px(px(0.0))
                                     .py(px(16.0))
-                                    .text_size(crate::typography::ui_rems(14.0))
-                                    .text_color(theme.text_muted.opacity(0.6))
+                                    .text_size(crate::typography::ui_rems(12.0))
+                                    .text_color(theme.text_muted)
                                     .child(SharedString::from(empty_copy)),
                             )
                         } else {
@@ -1482,7 +1482,7 @@ impl Render for AccountsPage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                div()
+                crate::edge_fade::edge_faded(16.0, true, true, div()
                     .id("accounts-page")
                     .size_full()
                     .overflow_y_scroll()
@@ -1561,7 +1561,7 @@ impl Render for AccountsPage {
                                          login for up to ~30 seconds (Keychain cache).",
                                     )),
                             ),
-                    ),
+                    )).fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
             .when_some(dialog, |el, dialog| el.child(dialog))
