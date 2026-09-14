@@ -460,7 +460,12 @@ impl HarnessesPage {
                     );
                 }
                 row =
-                    row.child(
+                    row.child(widgets::scroll_faded(
+                        if is_model {
+                            "title-model-fade"
+                        } else {
+                            "title-harness-fade"
+                        },
                         div()
                             .id(if is_model {
                                 "title-model-options"
@@ -488,7 +493,7 @@ impl HarnessesPage {
                                     .child(label)
                                 },
                             )),
-                    );
+                    ));
             }
             card = card.child(row);
         }

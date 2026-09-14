@@ -1527,7 +1527,7 @@ fn import_scene_preview(variant: &zeron_theme::ThemeVariant) -> AnyElement {
         .into_any_element()
 }
 
-fn report_panel(theme: &Theme, report: &ImportReport) -> gpui::Stateful<gpui::Div> {
+fn report_panel(theme: &Theme, report: &ImportReport) -> impl IntoElement {
     let summary = format!(
         "{} mapped · {} adjusted · {} inferred/fallback · {} unsupported · {} warnings · {} validation",
         report.mappings.len(),
@@ -1537,57 +1537,63 @@ fn report_panel(theme: &Theme, report: &ImportReport) -> gpui::Stateful<gpui::Di
         report.warnings.len(),
         report.validation.len(),
     );
-    div()
-        .id(SharedString::from(format!(
-            "theme-report-{}",
-            report.source_hash
-        )))
-        .mt(px(8.0))
-        .w_full()
-        .max_h(px(168.0))
-        .overflow_y_scroll()
-        .rounded(px(8.0))
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.surface_raised.opacity(0.35))
-        .p(px(10.0))
-        .text_size(crate::typography::ui_rems(11.0))
-        .line_height(px(16.0))
-        .text_color(theme.text_muted)
-        .child(div().text_color(theme.text).child(summary))
-        .children(report.adjustments.iter().map(|adjustment| {
-            div().mt(px(4.0)).child(SharedString::from(format!(
-                "Adjusted · {} {} → {} · {}",
-                adjustment.zeron_role, adjustment.original, adjustment.resolved, adjustment.reason
+    widgets::scroll_faded(
+        format!("theme-report-{}", report.source_hash),
+        div()
+            .id(SharedString::from(format!(
+                "theme-report-{}",
+                report.source_hash
             )))
-        }))
-        .children(report.fallbacks.iter().map(|message| {
-            div()
-                .mt(px(4.0))
-                .child(SharedString::from(format!("Fallback · {message}")))
-        }))
-        .children(report.warnings.iter().map(|message| {
-            div()
-                .mt(px(4.0))
-                .child(SharedString::from(format!("Warning · {message}")))
-        }))
-        .children(report.validation.iter().map(|issue| {
-            div().mt(px(4.0)).child(SharedString::from(format!(
-                "Validation {:?} {:?} · {}",
-                issue.category, issue.severity, issue.message
-            )))
-        }))
-        .children(report.dropped.iter().map(|message| {
-            div()
-                .mt(px(4.0))
-                .child(SharedString::from(format!("Unsupported · {message}")))
-        }))
-        .children(report.mappings.iter().map(|mapping| {
-            div().mt(px(4.0)).child(SharedString::from(format!(
-                "{} ← {}",
-                mapping.zeron_role, mapping.vscode_key
-            )))
-        }))
+            .mt(px(8.0))
+            .w_full()
+            .max_h(px(168.0))
+            .overflow_y_scroll()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface_raised.opacity(0.35))
+            .p(px(10.0))
+            .text_size(crate::typography::ui_rems(11.0))
+            .line_height(px(16.0))
+            .text_color(theme.text_muted)
+            .child(div().text_color(theme.text).child(summary))
+            .children(report.adjustments.iter().map(|adjustment| {
+                div().mt(px(4.0)).child(SharedString::from(format!(
+                    "Adjusted · {} {} → {} · {}",
+                    adjustment.zeron_role,
+                    adjustment.original,
+                    adjustment.resolved,
+                    adjustment.reason
+                )))
+            }))
+            .children(report.fallbacks.iter().map(|message| {
+                div()
+                    .mt(px(4.0))
+                    .child(SharedString::from(format!("Fallback · {message}")))
+            }))
+            .children(report.warnings.iter().map(|message| {
+                div()
+                    .mt(px(4.0))
+                    .child(SharedString::from(format!("Warning · {message}")))
+            }))
+            .children(report.validation.iter().map(|issue| {
+                div().mt(px(4.0)).child(SharedString::from(format!(
+                    "Validation {:?} {:?} · {}",
+                    issue.category, issue.severity, issue.message
+                )))
+            }))
+            .children(report.dropped.iter().map(|message| {
+                div()
+                    .mt(px(4.0))
+                    .child(SharedString::from(format!("Unsupported · {message}")))
+            }))
+            .children(report.mappings.iter().map(|mapping| {
+                div().mt(px(4.0)).child(SharedString::from(format!(
+                    "{} ← {}",
+                    mapping.zeron_role, mapping.vscode_key
+                )))
+            })),
+    )
 }
 
 fn accent_swatch(
@@ -2679,7 +2685,7 @@ impl AppearancePage {
                 cx.notify();
             }))
             .child(header)
-            .child(main)
+            .child(widgets::scroll_faded("theme-import-main-fade", main))
             .child(footer)
             .into_any_element();
 
@@ -2736,7 +2742,7 @@ impl AppearancePage {
         Some(popover::modal(
             "theme-review-dialog",
             viewport,
-            card.into_any_element(),
+            widgets::scroll_faded("theme-review-fade", card).into_any_element(),
         ))
     }
 
