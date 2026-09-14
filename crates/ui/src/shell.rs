@@ -5743,11 +5743,12 @@ impl Shell {
         }
         let viewport_width = f32::from(window.viewport_size().width);
         let margin = if viewport_width < 680.0 { 16.0 } else { 48.0 };
-        let width = (viewport_width - margin).clamp(240.0, 1200.0);
-        let height = (f32::from(window.viewport_size().height) - 48.0).max(240.0);
+        let width = (viewport_width - margin).clamp(240.0, 1000.0);
+        let height = (f32::from(window.viewport_size().height) - 80.0).clamp(240.0, 760.0);
         let nav = self.render_settings_nav(section, &theme, cx);
         let outlet = self.settings_outlet(section, window, cx);
         let card = popover::popover_card_flush(&theme)
+            .bg(theme.surface_overlay)
             .id("settings-modal")
             .role(gpui::Role::Dialog)
             .aria_label("Settings")
@@ -5778,41 +5779,45 @@ impl Shell {
             }))
             .child(
                 div()
-                    .flex_none()
-                    .h(px(40.0))
-                    .px(px(20.0))
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .child(
-                        div()
-                            .id("settings-close")
-                            .role(gpui::Role::Button)
-                            .aria_label("Close settings")
-                            .tab_index(0)
-                            .size(px(32.0))
-                            .rounded(px(8.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme.glass_hover()))
-                            .focus_visible(|s| s.border_2().border_color(theme.accent))
-                            .on_click(cx.listener(|this, _, _, cx| this.close_settings(cx)))
-                            .child(
-                                icon(icons::CLOSE)
-                                    .size(px(16.0))
-                                    .text_color(theme.text_muted),
-                            ),
-                    ),
-            )
-            .child(
-                div()
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .child(nav)
-                    .child(div().flex_1().min_w_0().h_full().child(outlet)),
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .border_r_1()
+                            .border_color(theme.border)
+                            .bg(crate::theme::wash(0.025))
+                            .child(
+                                div().px(px(12.0)).py(px(12.0)).child(
+                                    div()
+                                        .id("settings-close")
+                                        .role(gpui::Role::Button)
+                                        .aria_label("Close settings")
+                                        .tab_index(0)
+                                        .size(px(32.0))
+                                        .rounded(px(8.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme.glass_hover()))
+                                        .focus_visible(|s| s.border_2().border_color(theme.accent))
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.close_settings(cx)),
+                                        )
+                                        .child(
+                                            icon(icons::CLOSE)
+                                                .size(px(16.0))
+                                                .text_color(theme.text_muted),
+                                        ),
+                                ),
+                            )
+                            .child(div().flex_1().min_h_0().child(nav)),
+                    )
+                    .child(div().flex_1().min_w_0().h_full().pt(px(12.0)).child(outlet)),
             )
             .child(
                 div()
@@ -5822,24 +5827,18 @@ impl Shell {
                     .tab_stop(false),
             )
             .into_any_element();
-        // Match the project selector: blur the existing glass/content once,
-        // without first darkening it with a modal scrim.
-        gpui::deferred(
-            gpui::anchored()
-                .position(gpui::point(px(0.0), px(0.0)))
-                .child(
-                    div()
-                        .occlude()
-                        .w(window.viewport_size().width)
-                        .h(window.viewport_size().height)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(crate::frost::frosted(16.0, crate::frost::MENU_BLUR, card)),
-                ),
-        )
-        .priority(2)
-        .into_any_element()
+        // Keep settings in the normal overlay plane. Deferred pickers (1) and
+        // child dialogs (2) must paint and hit-test above this surface.
+        div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .bg(popover::scrim_alpha(0.25))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(card)
+            .into_any_element()
     }
 
     /// Roving section tabs. At narrow window widths the rail keeps named
@@ -7512,7 +7511,7 @@ impl Shell {
                         .into()
                     })
                     .tab_index(0)
-                    .size(px(36.0))
+                    .size(px(28.0))
                     .flex_none()
                     .rounded(px(8.0))
                     .flex()
@@ -7527,7 +7526,7 @@ impl Shell {
                     }))
                     .child(
                         icon(icons::SETTINGS_MINIMALISTIC)
-                            .size(px(18.0))
+                            .size(px(15.0))
                             .text_color(theme.text_muted),
                     ),
             )
