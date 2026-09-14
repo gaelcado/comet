@@ -64,14 +64,15 @@ loro-protocol = "0.3"
 # stopped vending CABackdropLayer for Selection — window blur went dead);
 # b68970e rasterizes BackdropBlur in the wgpu renderer (frosted floats on
 # Linux — the Metal path's snapshot/blur/composite, ported).
-gpui = { git = "https://github.com/zeronsh/zui", rev = "07fd941ad72e7edc812fed317aab66adb69fa8cc" }
-gpui_platform = { git = "https://github.com/zeronsh/zui", rev = "07fd941ad72e7edc812fed317aab66adb69fa8cc", features = [
+# Pending https://github.com/zeronsh/zui/pull/9: paint-time rounded image masks.
+gpui = { git = "https://github.com/gaelcado/zui", rev = "ce4a177684f1af929eefc6bfba7a44b208c9eec7" }
+gpui_platform = { git = "https://github.com/gaelcado/zui", rev = "ce4a177684f1af929eefc6bfba7a44b208c9eec7", features = [
     "wayland",
     "x11",
     "font-kit",
     "runtime_shaders",
 ] }
-gpui_tokio = { git = "https://github.com/zeronsh/zui", rev = "07fd941ad72e7edc812fed317aab66adb69fa8cc" }
+gpui_tokio = { git = "https://github.com/gaelcado/zui", rev = "ce4a177684f1af929eefc6bfba7a44b208c9eec7" }
 gpui-base = { git = "https://github.com/zeronsh/gpui-component", rev = "8c3af053189209db83b92b64aaa5cbcbedd9b72f" }
 
 # diffs
@@ -124,6 +125,12 @@ ttf-parser = "0.25.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 ignore = "0.4"
 nucleo-matcher = "0.3"
+
+# gpui-base still pins the previous upstream Zui revision. Keep its GPUI types
+# identical to the application while the companion renderer PR is pending.
+[patch."https://github.com/zeronsh/zui"]
+gpui = { git = "https://github.com/gaelcado/zui", rev = "ce4a177684f1af929eefc6bfba7a44b208c9eec7" }
+gpui_macros = { git = "https://github.com/gaelcado/zui", rev = "ce4a177684f1af929eefc6bfba7a44b208c9eec7" }
 
 [profile.release]
 # Distribution profile (scripts/package-linux.sh): thin LTO buys most of fat

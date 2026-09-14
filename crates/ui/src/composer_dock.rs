@@ -133,7 +133,9 @@ impl Visuals {
             transcript: self.transcript * (1.0 - stage(time, 0.0, 0.18)),
             footer: self.footer * (1.0 - stage(time, 0.0, 0.18)),
             selectors: crate::motion::lerp(self.selectors, 1.0, stage(time, 0.26, 0.85)),
-            dissolve: self.dissolve * (1.0 - stage(time, 0.0, 0.80)),
+            // The mask follows the actual surface. Keep it hidden through
+            // the 0.22 horizontal geometry switch, then reveal both together.
+            dissolve: self.dissolve * (1.0 - stage(time, 0.26, 0.80)),
         }
     }
 }
@@ -152,6 +154,7 @@ pub(crate) struct DockState {
     route_changed: bool,
     choreography: Option<(Instant, Visuals)>,
     panel_return: bool,
+    panel_departure: bool,
     column_width: Option<f32>,
     departing_column_width: Option<f32>,
 }
@@ -172,6 +175,7 @@ impl Default for DockState {
             route_changed: false,
             choreography: None,
             panel_return: false,
+            panel_departure: false,
             column_width: None,
             departing_column_width: None,
         }
@@ -233,6 +237,7 @@ impl DockState {
         self.route_changed = docked != self.frame.docked;
         if self.route_changed || reduced {
             self.panel_return = !reduced && !docked && self.pane.progress.is_some();
+            self.panel_departure = !reduced && docked && self.pane.progress.is_some();
         }
         let target = if docked { 1.0 } else { 0.0 };
         if reduced || self.last_frame.is_none() || self.position.is_none() {
@@ -264,11 +269,18 @@ impl DockState {
             if time >= 1.0 {
                 self.choreography = None;
             }
-            if self.panel_return {
+            let mut visuals = if self.panel_return {
                 from.return_from_panel(time)
             } else {
                 from.advance(docked, time)
+            };
+            if self.panel_departure {
+                let panel_time = now.saturating_duration_since(started).as_secs_f32()
+                    / (0.320 * crate::motion::speed_scale());
+                visuals.dissolve =
+                    crate::motion::lerp(from.dissolve, 1.0, stage(panel_time, 0.0, 0.18));
             }
+            visuals
         } else {
             Visuals::settled(docked)
         };
@@ -428,6 +440,38 @@ impl IntoElement for DockedComposer {
 mod tests {
     use super::*;
     use gpui::{Context, Render, canvas, div, prelude::*};
+
+    #[test]
+    fn panel_handoff_hides_background_during_geometry_switch_in_both_sidebar_states() {
+        for sidebar in [0.0, 224.0] {
+            for docked in [false, true] {
+                let mut state = DockState::default();
+                let now = Instant::now();
+                let source_pane = if docked { 0.0 } else { 480.0 };
+                let target_pane = if docked { 480.0 } else { 0.0 };
+                state.observe_pane(!docked, source_pane, true, now);
+                state.tick(!docked, false, now);
+                state.position = Some((Glide::new(sidebar), Glide::new(360.0)));
+                state.observe_pane(docked, target_pane, true, now);
+                state.tick(docked, false, now);
+                for progress in [0.19, 0.22, 0.25] {
+                    let at = now
+                        + std::time::Duration::from_secs_f32(
+                            progress * 0.320 * crate::motion::speed_scale(),
+                        );
+                    state.observe_pane(docked, target_pane, true, at);
+                    assert_eq!(state.tick(docked, false, at).dissolve(), 1.0);
+                }
+                let at =
+                    now + std::time::Duration::from_secs_f32(0.321 * crate::motion::speed_scale());
+                state.observe_pane(docked, target_pane, true, at);
+                assert_eq!(
+                    state.tick(docked, false, at).dissolve(),
+                    if docked { 1.0 } else { 0.0 }
+                );
+            }
+        }
+    }
 
     #[test]
     fn panel_exit_retains_source_transcript_width_only_until_handoff_ends() {

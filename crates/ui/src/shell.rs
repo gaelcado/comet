@@ -18,8 +18,8 @@ use chrono::Utc;
 use gpui::{
     Action, AnyElement, App, ClipboardItem, Context, Empty, Entity, FocusHandle, Focusable as _,
     IntoElement, KeyBinding, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseUpEvent, ObjectFit, Pixels, Point, Render, SharedString, StyledImage as _, Subscription,
-    Task, Window, WindowControlArea, actions, div, img, prelude::*, px,
+    MouseUpEvent, Pixels, Point, Render, SharedString, Subscription, Task, Window,
+    WindowControlArea, actions, div, prelude::*, px,
 };
 
 use gpui_tokio::Tokio;
@@ -853,44 +853,18 @@ fn new_thread_background_height(viewport_height: f32) -> f32 {
 }
 
 fn new_thread_background(
-    background: Option<&settings::NewThreadComposerBackground>,
-    effect: settings::NewThreadBackgroundEffect,
-    theme: &Theme,
+    artwork: Option<std::sync::Arc<gpui::RenderImage>>,
     viewport_height: f32,
     hero_width: f32,
-    composer_bounds: Option<gpui::Bounds<Pixels>>,
+    composer_bounds: crate::new_thread_background_mask::SurfaceBounds,
     dissolve: f32,
-    cx: &mut App,
+    opacity: f32,
 ) -> AnyElement {
-    let Some(background) = background else {
+    let Some(artwork) = artwork else {
         return Empty.into_any_element();
     };
-    let path = PathBuf::from(&background.path);
-    if !path.is_file() {
-        return Empty.into_any_element();
-    }
     let hero_height = new_thread_background_height(viewport_height);
-    let Some(composer_bounds) = composer_bounds else {
-        return Empty.into_any_element();
-    };
     let dissolve = dissolve.clamp(0.0, 1.0);
-
-    let artwork = crate::new_thread_background_effects::treatment(
-        effect,
-        theme,
-        &path,
-        new_thread_background_opacity(theme.is_frost()),
-        crate::new_thread_background_mask::Mask {
-            width: hero_width.round().max(1.0),
-            height: hero_height.round().max(1.0),
-            left: f32::from(composer_bounds.left()).round(),
-            top: f32::from(composer_bounds.top()).round(),
-            right: f32::from(composer_bounds.right()).round(),
-            bottom: f32::from(composer_bounds.bottom()).round(),
-            radius: crate::composer::COMPOSER_RADIUS,
-        },
-        cx,
-    );
     // Image and treatment share a fixed crop and fade together in place.
     // The hero uses the full conversation canvas even while the destination
     // right pane clips it. Navigation must never rescale the artwork.
@@ -901,10 +875,26 @@ fn new_thread_background(
         .w(px(hero_width))
         .h(px(hero_height))
         .overflow_hidden()
-        .opacity(1.0 - dissolve)
+        .opacity((1.0 - dissolve) * opacity)
         // Alpha resolves into the real canvas, including translucent themes;
         // no theme-colored overlay bleaches or darkens the source pixels.
-        .child(artwork)
+        .child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _cx| {
+                    if let Some(composer) = composer_bounds.get() {
+                        crate::new_thread_background_mask::paint(
+                            artwork.clone(),
+                            bounds,
+                            composer,
+                            window,
+                        );
+                    }
+                },
+            )
+            .absolute()
+            .inset_0(),
+        )
         .into_any_element()
 }
 
@@ -1297,6 +1287,7 @@ pub struct Shell {
     bottom_stack_has_composer: std::rc::Rc<std::cell::Cell<bool>>,
     /// Shared route clock and measured prepaint geometry for the persistent composer.
     composer_dock: crate::composer_dock::SharedDock,
+    new_thread_artwork_ready: crate::new_thread_background_effects::Readiness,
     /// The sidebar's archived accordion (t3code Sidebar): OPEN by default
     /// (user request), session-transient. `archived_shown` pages the
     /// expanded list ("Show more" reveals another page).
@@ -1703,6 +1694,7 @@ impl Shell {
             bottom_stack: std::rc::Rc::new(std::cell::Cell::new(120.0)),
             bottom_stack_has_composer: std::rc::Rc::new(std::cell::Cell::new(false)),
             composer_dock: Default::default(),
+            new_thread_artwork_ready: Default::default(),
             archived_open: true,
             archived_shown: 0,
             archived_hover: None,
@@ -7070,6 +7062,23 @@ impl Shell {
         let new_thread_background_setting = ui_settings.new_thread_composer_background;
         let new_thread_background_effect = ui_settings.new_thread_background_effect;
         let frame_time = self.render_time.unwrap_or_else(std::time::Instant::now);
+        // Prewarm even in an established thread. Decode/effect work is not
+        // contingent on a hero measurement or a navigation gesture.
+        let artwork = new_thread_background_setting
+            .as_ref()
+            .and_then(|background| {
+                crate::new_thread_background_effects::prepare(
+                    new_thread_background_effect,
+                    theme,
+                    std::path::Path::new(&background.path),
+                    cx,
+                )
+            });
+        let artwork_opacity = self.new_thread_artwork_ready.opacity(
+            artwork.as_ref().map(|image| image.id),
+            self.reduced_motion,
+            frame_time,
+        );
         let dock_frame =
             self.composer_dock
                 .borrow_mut()
@@ -7089,21 +7098,16 @@ impl Shell {
         });
         let term_h = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
         let new_thread_background_layer = (!has_selection || dock_frame.active).then(|| {
+            if artwork.is_some() && artwork_opacity < 1.0 {
+                window.request_animation_frame();
+            }
             new_thread_background(
-                new_thread_background_setting.as_ref(),
-                new_thread_background_effect,
-                theme,
+                artwork,
                 self.viewport_height,
                 (self.viewport_width - self.sidebar_now()).max(0.0),
-                self.composer
-                    .read(cx)
-                    .hero_surface_bounds()
-                    .map(|mut bounds| {
-                        bounds.origin.x -= px(self.sidebar_now());
-                        bounds
-                    }),
+                self.composer.read(cx).surface_bounds(),
                 dock_frame.dissolve(),
-                cx,
+                artwork_opacity * new_thread_background_opacity(theme.is_frost()),
             )
         });
 
