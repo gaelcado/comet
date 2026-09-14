@@ -418,33 +418,33 @@ pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
     let mark = if on { theme.text } else { theme.text_muted };
     div()
         .flex_none()
-        .w(px(40.0))
-        .h(px(32.0))
+        .w(px(48.0))
+        .h(px(36.0))
         .relative()
         .child(
             div()
                 .absolute()
                 .top(px(5.0))
                 .left_0()
-                .w(px(40.0))
-                .h(px(22.0))
+                .w(px(48.0))
+                .h(px(26.0))
                 .rounded_full()
                 .bg(linear_gradient(
                     180.0,
                     linear_color_stop(track_top, 0.0),
                     linear_color_stop(track_bottom, 1.0),
                 ))
-                .shadow(vec![shadow(1.0, 2.0, 0.24, true)])
+                .shadow(vec![shadow(1.0, 3.0, 0.32, true)])
                 .border_1()
                 .border_color(crate::theme::hairline(0.12)),
         )
         .child(
             div()
                 .absolute()
-                .top(px(11.0))
-                .left(px(if on { 8.0 } else { 28.0 }))
-                .w(px(if on { 2.0 } else { 7.0 }))
-                .h(px(if on { 10.0 } else { 7.0 }))
+                .top(px(if on { 12.0 } else { 13.0 }))
+                .left(px(if on { 10.0 } else { 33.0 }))
+                .w(px(if on { 2.0 } else { 10.0 }))
+                .h(px(if on { 12.0 } else { 10.0 }))
                 .rounded_full()
                 .when(on, |el| el.bg(mark))
                 .when(!on, |el| el.border_2().border_color(mark)),
@@ -452,9 +452,9 @@ pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
         .child(
             div()
                 .absolute()
-                .top(px(4.0))
-                .left(px(if on { 17.0 } else { -1.0 }))
-                .size(px(24.0))
+                .top(px(5.0))
+                .left(px(if on { 22.0 } else { 0.0 }))
+                .size(px(26.0))
                 .rounded_full()
                 .bg(linear_gradient(
                     180.0,
@@ -465,8 +465,8 @@ pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
                 .border_color(gpui::white().opacity(0.65))
                 .shadow(vec![
                     shadow(1.0, 2.0, 0.18, false),
-                    shadow(3.0, 5.0, 0.16, false),
-                    shadow(7.0, 12.0, 0.09, false),
+                    shadow(3.0, 5.0, 0.24, false),
+                    shadow(8.0, 14.0, 0.16, false),
                 ]),
         )
 }
