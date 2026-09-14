@@ -5743,8 +5743,8 @@ impl Shell {
         }
         let viewport_width = f32::from(window.viewport_size().width);
         let margin = if viewport_width < 680.0 { 16.0 } else { 48.0 };
-        let width = (viewport_width - margin).clamp(240.0, 1000.0);
-        let height = (f32::from(window.viewport_size().height) - 80.0).clamp(240.0, 760.0);
+        let width = (viewport_width - margin).clamp(240.0, 1200.0);
+        let height = (f32::from(window.viewport_size().height) - 48.0).max(240.0);
         let nav = self.render_settings_nav(section, &theme, cx);
         let outlet = self.settings_outlet(section, window, cx);
         let card = popover::popover_card_flush(&theme)
@@ -5779,17 +5779,11 @@ impl Shell {
             .child(
                 div()
                     .flex_none()
-                    .h(px(48.0))
+                    .h(px(40.0))
                     .px(px(20.0))
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(15.0))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Settings"),
-                    )
+                    .justify_end()
                     .child(
                         div()
                             .id("settings-close")
@@ -5828,7 +5822,24 @@ impl Shell {
                     .tab_stop(false),
             )
             .into_any_element();
-        popover::modal_glass("settings-dialog", window.viewport_size(), card, 16.0)
+        // Match the project selector: blur the existing glass/content once,
+        // without first darkening it with a modal scrim.
+        gpui::deferred(
+            gpui::anchored()
+                .position(gpui::point(px(0.0), px(0.0)))
+                .child(
+                    div()
+                        .occlude()
+                        .w(window.viewport_size().width)
+                        .h(window.viewport_size().height)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(crate::frost::frosted(16.0, crate::frost::MENU_BLUR, card)),
+                ),
+        )
+        .priority(2)
+        .into_any_element()
     }
 
     /// Roving section tabs. At narrow window widths the rail keeps named

@@ -1411,8 +1411,7 @@ impl Render for AccountsPage {
                             card.child(
                                 div()
                                     .px(px(20.0))
-                                    .py(px(32.0))
-                                    .text_center()
+                                    .py(px(16.0))
                                     .text_size(crate::typography::ui_rems(14.0))
                                     .text_color(theme.text_muted.opacity(0.6))
                                     .child(SharedString::from(empty_copy)),
@@ -1421,7 +1420,12 @@ impl Render for AccountsPage {
                             card.children(rows)
                         };
                         div()
-                            .mt(px(24.0))
+                            .mt(px(16.0))
+                            .p(px(16.0))
+                            .rounded(px(12.0))
+                            .bg(crate::theme::wash(0.035))
+                            .border_1()
+                            .border_color(theme.border)
                             .flex()
                             .flex_col()
                             .child(

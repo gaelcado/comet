@@ -378,12 +378,31 @@ impl Render for DevicesPage {
                         .into_any_element(),
                 );
 
-                widgets::card_row(&theme, ix == 0)
-                    .child(tile)
+                div()
+                    .p(px(20.0))
+                    .rounded(px(12.0))
+                    .bg(crate::theme::wash(0.035))
+                    .border_1()
+                    .border_color(theme.border)
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.0))
+                    .h_full()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(tile)
+                            .child(widgets::badge(
+                                &theme,
+                                if online { "Online" } else { "Offline" },
+                            )),
+                    )
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(160.0))
+                            .min_w_0()
                             .flex()
                             .flex_col()
                             .child(widgets::row_title(&theme, device.name.clone()))
@@ -443,7 +462,20 @@ impl Render for DevicesPage {
                     .child(SharedString::from("No devices registered")),
             )
         } else {
-            card.children(rows)
+            let two_columns = f32::from(window.viewport_size().width) >= 800.0;
+            let mut rows = rows.into_iter();
+            let mut grid = div().flex().flex_col().gap(px(16.0));
+            while let Some(first) = rows.next() {
+                let mut row = div()
+                    .flex()
+                    .gap(px(16.0))
+                    .child(div().flex_1().min_w_0().child(first));
+                if two_columns {
+                    row = row.child(div().flex_1().min_w_0().children(rows.next()));
+                }
+                grid = grid.child(row);
+            }
+            card.child(grid)
         };
 
         let scrollbar = popover::rail(self, "devices-page-scrollbar", &theme, cx);

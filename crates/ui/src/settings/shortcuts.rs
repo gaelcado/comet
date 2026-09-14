@@ -280,8 +280,8 @@ impl ShortcutsPage {
     ) -> gpui::Div {
         // zeron settings.shortcuts.tsx row: min-h-[72px] px-5 gap-5.
         div()
-            .min_h(px(72.0))
-            .px(px(20.0))
+            .min_h(px(56.0))
+            .px(px(0.0))
             .flex()
             .flex_row()
             .items_center()
@@ -684,7 +684,7 @@ impl Render for ShortcutsPage {
             if name == "Appshots" {
                 continue;
             }
-            let mut card = widgets::section_card(&theme).mt(px(0.0));
+            let mut card = widgets::section_card(&theme).mt(px(4.0));
             let ids = ShortcutId::ALL.into_iter().filter(|&id| group(id) == name);
             for (gx, id) in ids.enumerate() {
                 let ix = ShortcutId::ALL.iter().position(|&a| a == id).unwrap_or(0);
@@ -694,7 +694,7 @@ impl Render for ShortcutsPage {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
+                    .gap(px(4.0))
                     .child(widgets::field_label(&theme, name))
                     .child(card)
                     .into_any_element(),
