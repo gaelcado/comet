@@ -202,7 +202,7 @@ impl Shell {
                 .when(ix == 0, |row| row.pt(px(8.0)))
                 .when(ix + 1 == entries.len(), |row| row.pb(px(8.0)));
             if ix == action_count && action_count > 0 {
-                row = row.pt(px(8.0));
+                row = row.child(spaces::sidebar_separator(&theme).mx(px(16.0)).my(px(8.0)));
             }
             let content = if let Some((label, glyph)) = entry.action() {
                 let shortcut = match entry {
@@ -394,7 +394,7 @@ impl Shell {
                     .py(px(8.0))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(px(10.0))
                     .border_b_1()
                     .border_color(crate::theme::hairline(0.06))
                     .child(popover::palette_search_icon(&theme))
