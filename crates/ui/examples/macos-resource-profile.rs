@@ -36,8 +36,7 @@ fn main() -> anyhow::Result<()> {
         "Usage: macos-resource-profile FRAMES_JSON OUTPUT_DIR"
     );
     let frames: Vec<Frame> = serde_json::from_slice(&std::fs::read(&args[1])?)?;
-    let fade_bench = std::env::var_os("ZERON_PROFILE_SIDEBAR_FADE").is_some();
-    anyhow::ensure!(fade_bench || !frames.is_empty(), "Empty replay");
+    anyhow::ensure!(!frames.is_empty(), "Empty replay");
     let output = std::path::PathBuf::from(&args[2]);
     std::fs::create_dir_all(&output)?;
     let native = gpui_platform::current_platform(true);
@@ -52,7 +51,6 @@ fn main() -> anyhow::Result<()> {
     let app = gpui::Application::with_platform(platform).with_assets(icons::Assets)
         .run_embedded(move |cx| {
             gpui_tokio::init(cx);
-            gpui_base::init(cx);
             let settings = settings::UiSettings::default();
             settings::init(settings.clone(), data.clone(), cx);
             let fonts = typography::register_fonts(cx);
@@ -60,11 +58,9 @@ fn main() -> anyhow::Result<()> {
             theme_library::init(data.clone(), cx);
             appearance::init(appearance::AppearanceMode::Dark, settings.theme_selection,
                 settings.accent, settings.surface, cx);
-            history::init(settings.git_history_columns, settings.git_history_column_widths,
-                settings.git_history_column_order.clone(), settings.git_history_author_display, cx);
             composer::init(cx, zeron_ui::settings::ComposerSendBehavior::default());
             terminal::panel::init(cx);
-            // The offscreen bench platform has no NSApplication delegate or menus.
+            app_menus::init(cx);
             let state = cx.new(|_| {
                 let mut state = state::AppState::new();
                 state.connection = zeron_proto::view::ConnectionStatus::Ready;
@@ -130,47 +126,6 @@ fn main() -> anyhow::Result<()> {
     }));
     let dispatcher = executor.dispatcher().as_bench().unwrap();
     let start = Instant::now();
-    if fade_bench {
-        // Deliver the initial ready state so the boot splash can settle.
-        app.update(|cx| state.update(cx, |_, cx| cx.notify()));
-        // Native UI-process CPU, excluding setup, screenshot readback, and the
-        // engine/network. Fixed wall-time pacing makes before/after comparable.
-        fn cpu_seconds() -> f64 {
-            let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
-            assert_eq!(unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) }, 0);
-            let usage = unsafe { usage.assume_init() };
-            (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) as f64
-                + (usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) as f64 / 1_000_000.0
-        }
-        for (phase, count, redraw) in [("warmup", 180, true), ("idle", 600, false), ("redraw", 600, true)] {
-            let begin = Instant::now();
-            let cpu_begin = cpu_seconds();
-            for frame in 0..count {
-                objc::rc::autoreleasepool(|| {
-                    app.update(|cx| window.update(cx, |_, window, cx| {
-                        if redraw { window.refresh(); }
-                        window.simulate_next_frame(cx);
-                    }).unwrap());
-                    dispatcher.run_until_idle();
-                    app.update(|cx| window.update(cx, |_, window, _| window.present_if_needed()).unwrap());
-                });
-                let deadline = begin + Duration::from_secs_f64((frame + 1) as f64 / 60.0);
-                if let Some(wait) = deadline.checked_duration_since(Instant::now()) { std::thread::sleep(wait); }
-            }
-            let cpu = cpu_seconds() - cpu_begin;
-            let wall = begin.elapsed().as_secs_f64();
-            println!("{}", serde_json::json!({"phase": phase, "frames":count,
-                "wall_seconds":wall,"cpu_seconds":cpu,"cpu_percent":100.0*cpu/wall,
-                "cpu_ms_per_frame":1000.0*cpu/count as f64}));
-        }
-        app.update(|cx| window.update(cx, |_, window, _| {
-            window.render_to_image().unwrap().save(output.join("sidebar-fixture.png")).unwrap();
-        }).unwrap());
-        drop(state);
-        app.update(|cx| cx.quit());
-        drop(app);
-        return Ok(());
-    }
     let first_at = frames[0].at;
     let mut frames = frames.into_iter().peekable();
     let mut completed_at = None;
