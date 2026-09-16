@@ -38,7 +38,7 @@ impl Entry {
                     AppearanceMode::Light => "Switch to light theme",
                     AppearanceMode::Dark => "Switch to dark theme",
                 },
-                icons::TUNING,
+                mode.icon(),
             )),
             Self::Chat(_) => None,
         }
