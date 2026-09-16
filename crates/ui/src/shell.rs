@@ -698,8 +698,8 @@ const SIDEBAR_ARCHIVED_HARNESS_ICON_SIZE: f32 = 14.0;
 const SIDEBAR_ARCHIVED_HARNESS_TITLE_GAP: f32 = 10.0;
 
 /// Keep the fade short so only the last few glyphs recede. Tracking clipped
-/// content lets the shared paint-time overflow gate leave fitting titles intact.
-fn sidebar_faded_title(id: SharedString, title: impl IntoElement) -> impl IntoElement {
+/// content lets the shared paint-time overflow gate leave fitting labels intact.
+fn sidebar_faded_label(id: SharedString, fill: bool, label: impl IntoElement) -> impl IntoElement {
     let overflow = gpui::ScrollHandle::new();
     crate::edge_fade::edge_faded(
         12.0,
@@ -707,12 +707,12 @@ fn sidebar_faded_title(id: SharedString, title: impl IntoElement) -> impl IntoEl
         false,
         div()
             .id(id)
-            .flex_1()
+            .when(fill, |el| el.flex_1())
             .min_w_0()
             .overflow_hidden()
             .track_scroll(&overflow)
             .flex()
-            .child(div().flex_none().whitespace_nowrap().child(title)),
+            .child(div().flex_none().whitespace_nowrap().child(label)),
     )
     .fade_right(true)
     .fade_overflow_x(&overflow)
@@ -5791,16 +5791,15 @@ impl Shell {
                     .flex_row()
                     .items_center()
                     .gap(px(Theme::SPACE_SM))
-                    .child(
+                    .child(sidebar_faded_label(
+                        format!("chat-device-{id}").into(),
+                        true,
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
                             .text_size(crate::typography::ui_rems(11.0))
                             .line_height(px(14.0))
                             .text_color(subline)
                             .child(popover::search_highlight(space_name, search_query, theme)),
-                    )
+                    ))
                     .child(div().text_color(subline).child(corner)),
             )
             // Line 2: harness identity belongs directly with the title,
@@ -5823,8 +5822,9 @@ impl Shell {
                             )
                         },
                     )
-                    .child(sidebar_faded_title(
+                    .child(sidebar_faded_label(
                         format!("chat-title-{id}").into(),
+                        true,
                         div()
                             .text_size(crate::typography::ui_rems(13.0))
                             .line_height(px(17.0))
@@ -5848,15 +5848,15 @@ impl Shell {
                                     .flex_none()
                                     .text_color(subline),
                             )
-                            .child(
+                            .child(sidebar_faded_label(
+                                format!("chat-branch-{id}").into(),
+                                false,
                                 div()
-                                    .min_w_0()
-                                    .truncate()
                                     .text_size(crate::typography::ui_rems(11.0))
                                     .line_height(px(14.0))
                                     .text_color(subline)
                                     .child(popover::search_highlight(branch, search_query, theme)),
-                            )
+                            ))
                         })
                         // Stable invisible spring keeps the optional PR badge
                         // pinned right without changing no-PR paint.
