@@ -202,7 +202,7 @@ impl Shell {
                 .when(ix == 0, |row| row.pt(px(8.0)))
                 .when(ix + 1 == entries.len(), |row| row.pb(px(8.0)));
             if ix == action_count && action_count > 0 {
-                row = row.child(spaces::sidebar_separator(&theme).mx(px(16.0)).my(px(8.0)));
+                row = row.child(spaces::sidebar_separator(&theme).w_full().my(px(8.0)));
             }
             let content = if let Some((label, glyph)) = entry.action() {
                 let shortcut = match entry {
