@@ -697,6 +697,27 @@ const SIDEBAR_ACTIVE_HARNESS_TITLE_GAP: f32 = Theme::SPACE_SM;
 const SIDEBAR_ARCHIVED_HARNESS_ICON_SIZE: f32 = 14.0;
 const SIDEBAR_ARCHIVED_HARNESS_TITLE_GAP: f32 = 10.0;
 
+/// Keep the fade short so only the last few glyphs recede. Tracking clipped
+/// content lets the shared paint-time overflow gate leave fitting titles intact.
+fn sidebar_faded_title(id: SharedString, title: impl IntoElement) -> impl IntoElement {
+    let overflow = gpui::ScrollHandle::new();
+    crate::edge_fade::edge_faded(
+        12.0,
+        false,
+        false,
+        div()
+            .id(id)
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .track_scroll(&overflow)
+            .flex()
+            .child(div().flex_none().whitespace_nowrap().child(title)),
+    )
+    .fade_right(true)
+    .fade_overflow_x(&overflow)
+}
+
 /// Ramp height of the sidebar's scroll-edge fade (the gpui
 /// [`gpui::EdgeFade`] scope — per-primitive, so text fades per glyph).
 const SIDEBAR_GLASS_FADE_BAND: f32 = 24.0;
@@ -5802,15 +5823,13 @@ impl Shell {
                             )
                         },
                     )
-                    .child(
+                    .child(sidebar_faded_title(
+                        format!("chat-title-{id}").into(),
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
                             .text_size(crate::typography::ui_rems(13.0))
                             .line_height(px(17.0))
                             .child(popover::search_highlight(title, search_query, theme)),
-                    ),
+                    )),
             )
             // Line 3 is structural, not reserved whitespace: compact states
             // omit it completely when both Branch and Pull request are hidden.

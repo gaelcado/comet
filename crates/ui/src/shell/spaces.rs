@@ -1594,11 +1594,9 @@ impl Shell {
                                     }),
                             )
                         })
-                        .child(
+                        .child(super::sidebar_faded_title(
+                            format!("archived-title-{id}").into(),
                             div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
                                 .text_size(crate::typography::ui_rems(13.0))
                                 .text_color(if hovered || is_selected {
                                     theme.text
@@ -1606,7 +1604,7 @@ impl Shell {
                                     theme.text.opacity(0.55)
                                 })
                                 .child(title),
-                        )
+                        ))
                         .child(right),
                 );
             }
