@@ -715,7 +715,7 @@ fn sidebar_faded_label(id: SharedString, fill: bool, label: impl IntoElement) ->
             .child(div().flex_none().whitespace_nowrap().child(label)),
     )
     .fade_right(true)
-    .fade_overflow_x(&overflow)
+    .fade_label_overflow(&overflow)
 }
 
 /// Ramp height of the sidebar's scroll-edge fade (the gpui

@@ -1,6 +1,6 @@
 //! [`edge_faded`] — wraps a child so its whole subtree paints inside a
 //! [`gpui::EdgeFade`] scope: primitives fade by vertical distance to the
-//! wrapper's own top/bottom edges (per-glyph granularity — a true static
+//! wrapper's own top/bottom edges (per-pixel text opacity — a true static
 //! gradient, unlike whole-row opacity). Built for the GLASS sidebar's scroll
 //! fade: over a see-through blurred backdrop no painted overlay can fade
 //! content out, because "what is behind the window" is not a paintable color.
@@ -28,6 +28,7 @@ pub fn edge_faded(band: f32, top: bool, bottom: bool, child: impl IntoElement) -
         scroll_y: None,
         overflow_y: None,
         scroll_x: None,
+        smooth_overflow_x: false,
         child: child.into_any_element(),
     }
 }
@@ -45,6 +46,7 @@ pub struct EdgeFaded {
     scroll_y: Option<ScrollHandle>,
     overflow_y: Option<Box<dyn Fn(&App) -> (bool, bool)>>,
     scroll_x: Option<ScrollHandle>,
+    smooth_overflow_x: bool,
     child: AnyElement,
 }
 
@@ -100,6 +102,15 @@ impl EdgeFaded {
     /// paint time (the right-pane surface-tab strip).
     pub fn fade_overflow_x(mut self, handle: &ScrollHandle) -> Self {
         self.scroll_x = Some(handle.clone());
+        self
+    }
+
+    /// Ease a right-edge label fade into view as overflow grows from zero to
+    /// one band. Unlike scroll chrome, a label should not suddenly dim its
+    /// final characters as soon as it becomes a fraction too wide.
+    pub fn fade_label_overflow(mut self, handle: &ScrollHandle) -> Self {
+        self.scroll_x = Some(handle.clone());
+        self.smooth_overflow_x = true;
         self
     }
 
@@ -175,14 +186,22 @@ impl Element for EdgeFaded {
             bottom &= overflow_bottom;
         }
         let (mut left, mut right) = (self.left, self.right);
+        let mut outset_right = 0.0;
         if let Some(scroll) = &self.scroll_x {
             let scrolled = -f32::from(scroll.offset().x);
             let max_scroll = f32::from(scroll.max_offset().x);
             left &= scrolled > 1.0;
-            right &= scrolled < max_scroll - 1.0;
+            if self.smooth_overflow_x {
+                let overflow = (max_scroll - scrolled).max(0.0);
+                right &= overflow > 0.0;
+                outset_right = label_fade_outset(overflow, self.band);
+            } else {
+                right &= scrolled < max_scroll - 1.0;
+            }
         }
         let fade = (top || bottom || left || right).then(|| {
             let mut bounds = bounds;
+            bounds.size.width += px(outset_right);
             let inset = px(self.inset_top).min(bounds.size.height);
             bounds.origin.y += inset;
             bounds.size.height -= inset;
@@ -200,6 +219,35 @@ impl Element for EdgeFaded {
             }
         });
         window.with_edge_fade(fade, |window| self.child.paint(window, cx));
+    }
+}
+
+fn label_fade_outset(overflow: f32, band: f32) -> f32 {
+    let band = band.max(1.0);
+    let progress = (overflow / band).clamp(0.0, 1.0);
+    let eased = progress * progress * (3.0 - 2.0 * progress);
+    band * (1.0 - eased)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::label_fade_outset;
+
+    #[test]
+    fn label_fade_enters_continuously_and_settles_at_one_band() {
+        let band = 20.0;
+        assert_eq!(label_fade_outset(0.0, band), band);
+        assert_eq!(label_fade_outset(band, band), 0.0);
+        assert_eq!(label_fade_outset(100.0, band), 0.0);
+        // Simulate resizing in 0.1 px increments across the old 1 px cutoff.
+        let mut previous = 1.0;
+        for step in 0..=400 {
+            let overflow = step as f32 / 10.0;
+            let edge_alpha = (label_fade_outset(overflow, band) / band).powi(2);
+            assert!(edge_alpha <= previous);
+            assert!(previous - edge_alpha < 0.02);
+            previous = edge_alpha;
+        }
     }
 }
 
