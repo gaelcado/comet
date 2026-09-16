@@ -437,6 +437,9 @@ impl Shell {
                             .occlude()
                             .w(viewport.width)
                             .h(viewport.height)
+                            // Match glass modals: quiet the background while
+                            // preserving its color through the frosted palette.
+                            .bg(popover::scrim_alpha(0.35))
                             .flex()
                             .items_center()
                             .justify_center()
