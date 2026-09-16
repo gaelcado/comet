@@ -1,0 +1,283 @@
+{
+  "hardware": "Apple M4",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83",
+  "driver_commit": "6f1a7739",
+  "driver_sha256": "3efff1035faf6f7bce318bc48ac6345cd25f1b69b671262d27cdf3859f5c5834",
+  "binary_sha256": {
+    "ellipsis": "ec3ea3a06d83bae8a376383291792596882246db827b550e6cc966498b38d184",
+    "whole-glyph": "06a92b2355c9e3de4844f63446baf06dce7a66be6990ed5035e7e2a94c4fdd97",
+    "per-pixel": "64eb685216dc6c9159cd51cceae3031ad4348b08615a7ab7c0f58c3a0bc0adaa"
+  },
+  "results": [
+    {
+      "variant": "ellipsis",
+      "trial": 1,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.002567667,
+      "cpu_seconds": 0.766003,
+      "cpu_percent": 25.51159823702984,
+      "cpu_ms_per_frame": 4.255572222222223
+    },
+    {
+      "variant": "ellipsis",
+      "trial": 1,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.002825,
+      "cpu_seconds": 0.032941,
+      "cpu_percent": 0.32931696795655224,
+      "cpu_ms_per_frame": 0.05490166666666666
+    },
+    {
+      "variant": "ellipsis",
+      "trial": 1,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.001730917,
+      "cpu_seconds": 4.002253,
+      "cpu_percent": 40.015603631140955,
+      "cpu_ms_per_frame": 6.670421666666666
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 1,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.002060167,
+      "cpu_seconds": 1.241203,
+      "cpu_percent": 41.34504077046368,
+      "cpu_ms_per_frame": 6.895572222222222
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 1,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.00334925,
+      "cpu_seconds": 0.029833,
+      "cpu_percent": 0.2982301152786403,
+      "cpu_ms_per_frame": 0.049721666666666664
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 1,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.001954375,
+      "cpu_seconds": 4.236681,
+      "cpu_percent": 42.35853155448932,
+      "cpu_ms_per_frame": 7.061134999999999
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 1,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.001094792,
+      "cpu_seconds": 1.179157,
+      "cpu_percent": 39.290894880870525,
+      "cpu_ms_per_frame": 6.550872222222222
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 1,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.003191875,
+      "cpu_seconds": 0.02876399999999979,
+      "cpu_percent": 0.28754821820310017,
+      "cpu_ms_per_frame": 0.04793999999999965
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 1,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.002541041,
+      "cpu_seconds": 3.755167,
+      "cpu_percent": 37.54213039074498,
+      "cpu_ms_per_frame": 6.258611666666667
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 2,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.002435875,
+      "cpu_seconds": 0.834124,
+      "cpu_percent": 27.78157585130773,
+      "cpu_ms_per_frame": 4.634022222222223
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 2,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.003370292,
+      "cpu_seconds": 0.02324499999999996,
+      "cpu_percent": 0.23237168395725286,
+      "cpu_ms_per_frame": 0.038741666666666605
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 2,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.002397042,
+      "cpu_seconds": 2.8246729999999998,
+      "cpu_percent": 28.239960762797317,
+      "cpu_ms_per_frame": 4.707788333333333
+    },
+    {
+      "variant": "ellipsis",
+      "trial": 2,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.002619833,
+      "cpu_seconds": 0.7476820000000001,
+      "cpu_percent": 24.90098785676009,
+      "cpu_ms_per_frame": 4.153788888888889
+    },
+    {
+      "variant": "ellipsis",
+      "trial": 2,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.003291125,
+      "cpu_seconds": 0.02936899999999998,
+      "cpu_percent": 0.2935933747504522,
+      "cpu_ms_per_frame": 0.048948333333333295
+    },
+    {
+      "variant": "ellipsis",
+      "trial": 2,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.00168525,
+      "cpu_seconds": 3.0570649999999997,
+      "cpu_percent": 30.565498949289566,
+      "cpu_ms_per_frame": 5.095108333333332
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 2,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.001901292,
+      "cpu_seconds": 1.140211,
+      "cpu_percent": 37.98296109997477,
+      "cpu_ms_per_frame": 6.334505555555555
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 2,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.003346625,
+      "cpu_seconds": 0.027031000000000027,
+      "cpu_percent": 0.2702195676439436,
+      "cpu_ms_per_frame": 0.04505166666666671
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 2,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.001969958,
+      "cpu_seconds": 3.723713,
+      "cpu_percent": 37.22979588657549,
+      "cpu_ms_per_frame": 6.206188333333333
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 3,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.002108042,
+      "cpu_seconds": 1.2509709999999998,
+      "cpu_percent": 41.66975280365342,
+      "cpu_ms_per_frame": 6.949838888888888
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 3,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.000649917,
+      "cpu_seconds": 0.049112000000000045,
+      "cpu_percent": 0.4910880833506137,
+      "cpu_ms_per_frame": 0.0818533333333334
+    },
+    {
+      "variant": "whole-glyph",
+      "trial": 3,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.002268334,
+      "cpu_seconds": 3.4577300000000006,
+      "cpu_percent": 34.569458492194066,
+      "cpu_ms_per_frame": 5.762883333333334
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 3,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.002103166,
+      "cpu_seconds": 1.108778,
+      "cpu_percent": 36.9333743276163,
+      "cpu_ms_per_frame": 6.159877777777778
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 3,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.003710791,
+      "cpu_seconds": 0.033174999999999955,
+      "cpu_percent": 0.33162694017350425,
+      "cpu_ms_per_frame": 0.05529166666666659
+    },
+    {
+      "variant": "per-pixel",
+      "trial": 3,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.002887541,
+      "cpu_seconds": 3.443128,
+      "cpu_percent": 34.42134069674632,
+      "cpu_ms_per_frame": 5.738546666666667
+    },
+    {
+      "variant": "ellipsis",
+      "trial": 3,
+      "phase": "warmup",
+      "frames": 180,
+      "wall_seconds": 3.00255325,
+      "cpu_seconds": 0.700278,
+      "cpu_percent": 23.322750395850598,
+      "cpu_ms_per_frame": 3.8904333333333327
+    },
+    {
+      "variant": "ellipsis",
+      "trial": 3,
+      "phase": "idle",
+      "frames": 600,
+      "wall_seconds": 10.003357458,
+      "cpu_seconds": 0.019225000000000048,
+      "cpu_percent": 0.19218547453410464,
+      "cpu_ms_per_frame": 0.032041666666666746
+    },
+    {
+      "variant": "ellipsis",
+      "trial": 3,
+      "phase": "redraw",
+      "frames": 600,
+      "wall_seconds": 10.002494125,
+      "cpu_seconds": 2.370686,
+      "cpu_percent": 23.70094868713557,
+      "cpu_ms_per_frame": 3.9511433333333335
+    }
+  ]
+}

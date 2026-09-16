@@ -43,11 +43,16 @@ for trial, order in enumerate([[0, 1, 2], [2, 0, 1], [1, 2, 0]], 1):
         for key in ["ZERON_VERIFY_CACHE", "ZERON_VERIFY_INTERACTIONS", "ZERON_FRAME_STATS", "COMET_GPU_STATS"]:
             env.pop(key, None)
         with (run_dir / "stderr.log").open("w") as err:
-            run = subprocess.run([str(binaries[index]), str(frames), str(run_dir)], env=env, text=True, stdout=subprocess.PIPE, stderr=err)
-        (run_dir / "stdout.log").write_text(run.stdout)
-        run.check_returncode()
-        phases = [json.loads(line) for line in run.stdout.splitlines() if line.startswith('{') and '"cpu_percent"' in line]
-        assert {row["phase"] for row in phases} == {"warmup", "idle", "redraw"}, run.stdout
+            command = [str(binaries[index]), str(frames), str(run_dir)]
+            with subprocess.Popen(command, env=env, text=True, stdout=subprocess.PIPE, stderr=err) as process:
+                (run_dir / "process.json").write_text(json.dumps({"pid": process.pid, "command": command}, indent=2) + "\n")
+                stdout, _ = process.communicate()
+                returncode = process.returncode
+        (run_dir / "stdout.log").write_text(stdout)
+        if returncode:
+            raise subprocess.CalledProcessError(returncode, command, stdout)
+        phases = [json.loads(line) for line in stdout.splitlines() if line.startswith('{') and '"cpu_percent"' in line]
+        assert {row["phase"] for row in phases} == {"warmup", "idle", "redraw"}, stdout
         results.extend(dict(variant=name, trial=trial, **row) for row in phases)
         (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
         print(name, trial, [(row["phase"], round(row["cpu_percent"], 3)) for row in phases], flush=True)
