@@ -74,7 +74,7 @@ impl Shell {
         }
         self.add_space = None;
         let search = cx.new(|cx| {
-            ComposerInput::with_context("Type a command or search chats…", "PaletteSearch", cx)
+            ComposerInput::with_context("Search commands and chats…", "PaletteSearch", cx)
         });
         let events = cx.subscribe(&search, |this, _, event, cx| {
             if matches!(event, ComposerInputEvent::Edited) {
@@ -194,7 +194,13 @@ impl Shell {
         let action_count = entries.iter().take_while(|e| e.action().is_some()).count();
         let mut rows = Vec::new();
         for (ix, entry) in entries.iter().enumerate() {
-            let mut row = div().id(("command-result", ix)).flex_none();
+            // End spacing belongs to the content, so it scrolls out of the
+            // fade instead of leaving a permanent gutter beside the chrome.
+            let mut row = div()
+                .id(("command-result", ix))
+                .flex_none()
+                .when(ix == 0, |row| row.pt(px(8.0)))
+                .when(ix + 1 == entries.len(), |row| row.pb(px(8.0)));
             if ix == action_count && action_count > 0 {
                 row = row.pt(px(8.0));
             }
@@ -221,7 +227,9 @@ impl Shell {
                 popover::menu_row(&theme, ix == active, format!("command-action-{ix}"))
                     .id(("command-action", ix))
                     .rounded(px(popover::PALETTE_ITEM_RADIUS))
-                    .h(px(30.0))
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .min_h(px(30.0))
                     .py(px(4.0))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.activate_command(entry.clone(), window, cx)
@@ -232,12 +240,11 @@ impl Shell {
                             .flex_none()
                             .text_color(theme.text_muted),
                     )
-                    .child(popover::search_highlight(
+                    .child(div().flex_1().min_w_0().child(popover::search_highlight(
                         label.into(),
                         Some(&query),
                         &theme,
-                    ))
-                    .child(div().flex_1())
+                    )))
                     .when_some(shortcut, |row, shortcut| {
                         row.child(popover::kbd_hint(&theme, &shortcut))
                     })
@@ -381,9 +388,10 @@ impl Shell {
             )
             .child(
                 div()
-                    .h(px(44.0))
+                    .min_h(px(44.0))
                     .flex_none()
                     .px(px(16.0))
+                    .py(px(8.0))
                     .flex()
                     .items_center()
                     .gap(px(12.0))
@@ -415,7 +423,7 @@ impl Shell {
                     .items_center()
                     .gap(px(12.0))
                     .child(command_key_hint(&theme, "↑ ↓", "Navigate"))
-                    .child(command_key_hint(&theme, "↵", "Open"))
+                    .child(command_key_hint(&theme, "↵", "Select"))
                     .child(command_key_hint(&theme, "Esc", "Close")),
             );
         // Match the composer's 16px backdrop blur, including its opaque fallback.
