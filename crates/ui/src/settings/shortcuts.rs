@@ -49,6 +49,7 @@ pub enum ShortcutsEvent {
     EscapeStopsActiveAgentChanged(bool),
     /// The composer send behavior changed — persist + re-apply.
     ComposerSendBehaviorChanged(ComposerSendBehavior),
+    SkillsInSlashMenuChanged(bool),
     AppshotsChanged {
         enabled: bool,
         sound_enabled: bool,
@@ -533,9 +534,40 @@ impl Render for ShortcutsPage {
         let escape_stops_active_agent = self.escape_stops_active_agent;
         let send_behavior = self.composer_send_behavior;
         let customized = self.keymap != KeymapConfig::default()
+            || crate::settings::current(cx).skills_in_slash_menu
             || escape_stops_active_agent
             || send_behavior != ComposerSendBehavior::default();
         let modifier_label = modifier_send_label(cfg!(target_os = "macos"));
+
+        let skills_in_slash = crate::settings::current(cx).skills_in_slash_menu;
+        let skills_row = widgets::section_card(&theme).child(
+            widgets::card_row(&theme, true)
+                .min_h(px(84.0))
+                .child(div().flex_1().min_w_0().flex().flex_col()
+                    .child(widgets::row_title(&theme, "Show skills in / menu"))
+                    .child(div().mt(px(4.0)).max_w(px(430.0))
+                        .text_size(crate::typography::ui_rems(11.5)).line_height(px(17.0))
+                        .text_color(theme.text_muted.opacity(0.65))
+                        .child("Include skills alongside commands when you type /. You can always use $ to find skills.")))
+                .child(widgets::toggle_switch(&theme, skills_in_slash)
+                    .id("skills-in-slash-menu-toggle")
+                    .role(gpui::Role::Switch)
+                    .aria_label(if skills_in_slash { "Show skills in / menu, on" } else { "Show skills in / menu, off" })
+                    .tab_index(0)
+                    .cursor_pointer()
+                    .focus_visible(|s| s.border_2().border_color(theme.accent))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(ShortcutsEvent::SkillsInSlashMenuChanged(!skills_in_slash));
+                        cx.notify();
+                    }))
+                    .on_key_down(cx.listener(move |_, event: &gpui::KeyDownEvent, _, cx| {
+                        if !event.is_held && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            cx.stop_propagation();
+                            cx.emit(ShortcutsEvent::SkillsInSlashMenuChanged(!skills_in_slash));
+                            cx.notify();
+                        }
+                    }))),
+        );
 
         let escape_behavior_row = widgets::section_card(&theme).child(
             widgets::card_row(&theme, true)
@@ -775,6 +807,7 @@ impl Render for ShortcutsPage {
                                                         this.set_escape_stops_active_agent(
                                                             false, cx,
                                                         );
+                                                        cx.emit(ShortcutsEvent::SkillsInSlashMenuChanged(false));
                                                         this.set_composer_send_behavior(
                                                             ComposerSendBehavior::Enter,
                                                             cx,
@@ -791,6 +824,7 @@ impl Render for ShortcutsPage {
                                     }),
                             )
                             .child(send_behavior_row.mt(px(32.0)))
+                            .child(skills_row.mt(px(12.0)))
                             .child(
                                 div()
                                     .mt(px(28.0))

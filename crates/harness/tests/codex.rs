@@ -1136,35 +1136,35 @@ async fn live_real_app_server_single_turn() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn commands_come_from_skills_list() {
+async fn skills_are_not_advertised_as_commands() {
     let h = harness();
-    let commands = h.commands().await.expect("discovery succeeds");
-    assert_eq!(
-        commands.len(),
-        2,
-        "same-name skills across cwd groups dedupe: {commands:?}"
-    );
-    assert_eq!(commands[0].name, "imagegen");
-    assert_eq!(
-        commands[0].description, "Generate or edit images",
-        "interface.shortDescription wins over the model-facing paragraph"
-    );
-    assert_eq!(commands[1].name, "bare");
-    assert_eq!(
-        commands[1].description, "No interface block",
-        "top-level description is the fallback"
-    );
-    assert_eq!(h.commands().await.expect("cache hit"), commands);
+    assert!(h.commands().await.unwrap().is_empty());
+    let cwd = tempfile::tempdir().unwrap();
+    let skills = h
+        .skills(cwd.path())
+        .await
+        .unwrap()
+        .expect("skills supported");
+    assert_eq!(skills.len(), 2, "identical skill paths deduplicate");
+    assert_eq!(skills[0].name, "imagegen");
+    assert_eq!(skills[0].path, "/skills/imagegen/SKILL.md");
+    assert_eq!(skills[0].description, "Generate or edit images");
+    assert_eq!(skills[1].description, "No interface block");
+    assert!(h.commands().await.unwrap().is_empty());
 }
 
 /// Live smoke against the real CLI: `cargo test -p zeron-harness --test
-/// codex -- --ignored live_commands`.
+/// codex -- --ignored live_skills`.
 #[tokio::test]
 #[ignore]
-async fn live_commands_discovery() {
+async fn live_skills_discovery() {
     let h = CodexHarness::new();
-    let commands = h.commands().await.expect("live discovery");
-    eprintln!("{} commands, first: {:?}", commands.len(), commands.first());
+    let skills = h
+        .skills(&std::env::current_dir().unwrap())
+        .await
+        .expect("live discovery")
+        .unwrap();
+    eprintln!("{} skills, first: {:?}", skills.len(), skills.first());
 }
 
 #[tokio::test]
