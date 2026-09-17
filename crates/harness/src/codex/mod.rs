@@ -54,7 +54,7 @@ use tokio::sync::mpsc;
 
 use zeron_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ModelOption, ModelOptionChoice, ReasoningLevel,
-    RunRequest, SteeringMode, UserInputAnswer, UserInputQuestion,
+    RunRequest, SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
 };
 
 use crate::jsonrpc::{Incoming, RpcClient};
@@ -573,8 +573,20 @@ impl Harness for CodexHarness {
             .map(|value| Some(parse_skills(&value)))
     }
 
-    // Codex app-server exposes skills/list, but no slash-command catalog.
-    // Use Harness::commands' empty default; skills must retain their identity.
+    async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
+        Ok(vec![
+            SlashCommand {
+                name: "compact".into(),
+                description: "Compact this conversation's context".into(),
+                input_hint: None,
+            },
+            SlashCommand {
+                name: "review".into(),
+                description: "Review uncommitted changes, or supply review instructions".into(),
+                input_hint: Some("optional instructions".into()),
+            },
+        ])
+    }
 
     async fn run(
         &self,
@@ -605,6 +617,16 @@ impl CodexHarness {
         controls: RunControls,
         title_only: bool,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
+        if request.prompt.trim() == "/compact" && request.resume.is_none() {
+            return Err(HarnessError::Protocol(
+                "/compact needs an existing Codex conversation".into(),
+            ));
+        }
+        if command_request(&request.prompt, "")?.is_some() && !request.attachments.is_empty() {
+            return Err(HarnessError::Protocol(
+                "Codex commands cannot include attachments; send them in a separate prompt".into(),
+            ));
+        }
         let exe = self.resolve_executable()?;
         // Yolo mode: danger-full-access + approvalPolicy "never" (set below) —
         // codex's --dangerously-bypass-approvals-and-sandbox equivalent.
@@ -764,9 +786,54 @@ async fn send(tx: &mpsc::Sender<Result<AgentEvent, HarnessError>>, ev: AgentEven
     tx.send(Ok(ev)).await.is_ok()
 }
 
-/// `turn/start` and return the new turn id from the response.
+/// Map supported leading commands to native app-server operations.
+fn command_request(
+    text: &str,
+    thread_id: &str,
+) -> Result<Option<(&'static str, Value)>, HarnessError> {
+    let Some(rest) = text.strip_prefix('/') else {
+        return Ok(None);
+    };
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let name = parts.next().unwrap_or_default();
+    let args = parts.next().unwrap_or_default().trim();
+    match name {
+        "compact" if args.is_empty() => Ok(Some((
+            "thread/compact/start",
+            json!({"threadId": thread_id}),
+        ))),
+        "compact" => Err(HarnessError::Protocol(
+            "/compact takes no arguments; send other text separately".into(),
+        )),
+        "review" => Ok(Some((
+            "review/start",
+            json!({
+                "threadId": thread_id, "delivery": "inline",
+                "target": if args.is_empty() { json!({"type":"uncommittedChanges"}) }
+                    else { json!({"type":"custom", "instructions":args}) },
+            }),
+        ))),
+        // Known client commands need explicit UI mappings. Do not silently
+        // send those to the model; unknown slash tokens and paths stay literal.
+        "model" | "permissions" | "approvals" | "new" | "clear" | "resume" | "fork" | "status"
+        | "diff" | "mention" | "mcp" | "skills" | "plan" | "fast" | "logout" | "quit" | "exit"
+        | "init" | "rename" | "feedback" | "ps" | "stop" | "clean" | "archive" | "delete" => {
+            Err(HarnessError::Protocol(format!(
+                "/{name} is not mapped in Zeron's Codex integration. Available commands: /compact and /review."
+            )))
+        }
+        _ => Ok(None),
+    }
+}
+
 async fn start_turn(client: &RpcClient, params: Value) -> Result<String, HarnessError> {
-    let started = client.request("turn/start", params).await?;
+    let text = params
+        .pointer("/input/0/text")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let thread_id = params["threadId"].as_str().unwrap_or_default();
+    let (method, params) = command_request(text, thread_id)?.unwrap_or(("turn/start", params));
+    let started = client.request(method, params).await?;
     Ok(started["turn"]["id"].as_str().unwrap_or("").to_owned())
 }
 
@@ -892,6 +959,9 @@ async fn run_session(session: Session) {
                 Ok(thread) => thread,
                 // A missing/foreign rollout falls back to a fresh thread.
                 Err(e) => {
+                    if command_request(&request.prompt, resume)?.is_some() {
+                        return Err(e);
+                    }
                     tracing::debug!(
                         target: "zeron_harness::codex",
                         "thread/resume failed (starting fresh): {e}"
@@ -1017,6 +1087,10 @@ async fn run_session(session: Session) {
     let mut interrupt_sent = false;
     // A Done has been emitted for the turn currently/last in flight.
     let mut done_current = false;
+    let mut current_native = command_request(&request.prompt, &thread_id)
+        .ok()
+        .flatten()
+        .is_some();
     let mut done_after_interrupt = false;
     let mut escalation: Option<tokio::task::JoinHandle<()>> = None;
 
@@ -1078,6 +1152,16 @@ async fn run_session(session: Session) {
                             Phase::Completed
                         };
                         let item = params.get("item").unwrap_or(&Value::Null);
+                        if phase == Phase::Completed {
+                            let output = match item_type(item) {
+                                "exitedReviewMode" => item.get("review").and_then(Value::as_str),
+                                "contextCompaction" => Some("Context compacted."),
+                                _ => None,
+                            };
+                            if let Some(text) = output
+                                && !send(&event_tx, AgentEvent::TextDelta { text: text.into() }).await
+                            { break 'main; }
+                        }
                         if matches!(item_type(item), "agentMessage" | "agent_message") {
                             if phase == Phase::Completed {
                                 // Fallback for non-streamed messages only.
@@ -1184,7 +1268,9 @@ async fn run_session(session: Session) {
                         // Persistent session: a steer that lost the race with
                         // this turn's end becomes the next turn now; otherwise
                         // stay alive for the mailbox — the caller owns teardown.
+                        current_native = false;
                         if let Some(text) = queued_steers.pop_front() {
+                            current_native = command_request(&text, &thread_id).ok().flatten().is_some();
                             if !steer_as_new_turn(
                                 &client,
                                 turn_params(&text),
@@ -1290,6 +1376,12 @@ async fn run_session(session: Session) {
             steer = steering.recv(), if steering_open && !interrupted => match steer {
                 Some(msg) => {
                     let text = msg.prompt;
+                    // Native operations run at a turn boundary, never as text
+                    // injected into an already running model turn.
+                    if !done_current && (current_native || !matches!(command_request(&text, &thread_id), Ok(None))) {
+                        queued_steers.push_back(text);
+                        continue 'main;
+                    }
                     if let Some(expected) = router.active.clone() {
                         let steer_params = json!({
                             "threadId": thread_id,
@@ -1326,31 +1418,21 @@ async fn run_session(session: Session) {
                                     && !router.is_completed(&expected)
                                 {
                                     queued_steers.push_back(text);
-                                } else if !steer_as_new_turn(
-                                    &client,
-                                    turn_params(&text),
-                                    &mut router,
-                                    &event_tx,
-                                    &mut assistant_message_id,
-                                    &mut done_current,
-                                )
-                                .await
-                                {
-                                    break 'main;
+                                } else {
+                                    current_native = command_request(&text, &thread_id).ok().flatten().is_some();
+                                    if !steer_as_new_turn(
+                                        &client, turn_params(&text), &mut router, &event_tx,
+                                        &mut assistant_message_id, &mut done_current,
+                                    ).await { break 'main; }
                                 }
                             }
                         }
-                    } else if !steer_as_new_turn(
-                        &client,
-                        turn_params(&text),
-                        &mut router,
-                        &event_tx,
-                        &mut assistant_message_id,
-                        &mut done_current,
-                    )
-                    .await
-                    {
-                        break 'main;
+                    } else {
+                        current_native = command_request(&text, &thread_id).ok().flatten().is_some();
+                        if !steer_as_new_turn(
+                            &client, turn_params(&text), &mut router, &event_tx,
+                            &mut assistant_message_id, &mut done_current,
+                        ).await { break 'main; }
                     }
                 }
                 None => {
@@ -1358,7 +1440,7 @@ async fn run_session(session: Session) {
                     // once nothing is in flight — mirrors codex.ts's steer loop
                     // `finish()` on a null take.
                     steering_open = false;
-                    if router.active.is_none() && queued_steers.is_empty() {
+                    if done_current && router.active.is_none() && queued_steers.is_empty() {
                         break 'main;
                     }
                 }
@@ -1772,6 +1854,28 @@ mod tests {
 #[cfg(test)]
 mod skill_discovery_tests {
     use super::*;
+    #[test]
+    fn commands_map_arguments_and_leave_inline_mentions_literal() {
+        assert!(
+            command_request("please /review this", "t")
+                .unwrap()
+                .is_none()
+        );
+        assert!(command_request("/tmp/file.rs", "t").unwrap().is_none());
+        assert!(command_request("/tmp", "t").unwrap().is_none());
+        assert!(command_request("/compact extra", "t").is_err());
+        assert!(command_request("/model", "t").is_err());
+        let (method, params) = command_request("/review check errors", "t")
+            .unwrap()
+            .unwrap();
+        assert_eq!(method, "review/start");
+        assert_eq!(
+            params["target"],
+            json!({"type":"custom","instructions":"check errors"})
+        );
+        assert_eq!(params["delivery"], "inline");
+    }
+
     #[test]
     fn preserves_paths_enabled_state_and_duplicate_names() {
         let value = json!({"data": [{"skills": [

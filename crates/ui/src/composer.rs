@@ -6157,7 +6157,7 @@ impl Composer {
                         } else if crate::settings::current(cx).skills_in_slash_menu {
                             "No commands or skills available"
                         } else {
-                            "This agent has no slash commands"
+                            "No slash commands available in this integration"
                         }
                     } else {
                         if self.slash.skill {

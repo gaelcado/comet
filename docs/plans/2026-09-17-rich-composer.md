@@ -11,8 +11,9 @@ both use this build.
   `$` always lists skills; opting in includes typed skills alongside `/`
   commands. Skill chips preserve their canonical path regardless of trigger.
 - Removed Codex's legacy skills-to-commands conversion. Codex app-server does
-  not advertise a separate command catalog, so its `/` menu is empty when the
-  toggle is off. Providers' advertised command catalogs remain intact.
+  not advertise a separate command catalog; Zeron now maps `/compact` and
+  `/review` to native operations. Providers' advertised catalogs remain intact.
+  See [the harness command audit](../harness-command-audit.md) for mapping and review gaps.
 - The preference persists locally and invalidates completion caches and
   in-flight requests immediately. Restore defaults turns it off.
 - Passed 1,026 UI and 148 harness library tests, the Codex discovery integration

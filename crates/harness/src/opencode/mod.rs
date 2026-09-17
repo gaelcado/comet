@@ -370,6 +370,20 @@ impl Harness for OpencodeHarness {
             .cloned()
     }
 
+    async fn commands_for(&self, cwd: &std::path::Path) -> Result<Vec<SlashCommand>, HarnessError> {
+        let _guard = self.probe_lock.lock().await;
+        let directory = cwd
+            .to_str()
+            .ok_or_else(|| HarnessError::Protocol("Project path is not UTF-8".into()))?;
+        let mut server = self.server(Some(directory)).await?;
+        let result = server
+            .commands_wire(Some(directory))
+            .await
+            .map(|v| commands_from_wire(&v));
+        server.shutdown(self.kill_grace).await;
+        result
+    }
+
     async fn run(
         &self,
         request: RunRequest,
@@ -385,7 +399,7 @@ impl Harness for OpencodeHarness {
             request,
             interrupt_grace: self.interrupt_grace,
             kill_grace: self.kill_grace,
-            known_commands: self.commands_cache.get().cloned(),
+            known_commands: None, // Resolve the live session directory, never a global probe cache.
         }));
         Ok(futures::stream::unfold(event_rx, |mut rx| async move {
             rx.recv().await.map(|ev| (ev, rx))
@@ -1925,6 +1939,12 @@ async fn post_prompt(
         let name = split.next().unwrap_or_default();
         let arguments = split.next().unwrap_or_default().trim().to_owned();
         if !name.is_empty() && commands.iter().any(|c| c.name == name) {
+            if !attachments.is_empty() {
+                return Err(HarnessError::Protocol(
+                    "OpenCode commands cannot include attachments; send them in a separate prompt"
+                        .into(),
+                ));
+            }
             // 1.x names the args `arguments`; 2.x `text`.
             let (path, cmd_body) = match protocol {
                 Protocol::V1 => (

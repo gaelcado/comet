@@ -1283,3 +1283,25 @@ async fn antigravity_auth_path_subprocess() {
     .expect("sign-in timed out")
     .expect("configured business sign-in");
 }
+
+#[tokio::test]
+async fn all_acp_harnesses_use_project_scoped_session_command_updates() {
+    for h in [
+        AcpHarness::devin(),
+        AcpHarness::grok(),
+        AcpHarness::hermes(),
+        AcpHarness::pi(),
+    ] {
+        let h = h.with_executable(fixture_path());
+        for name in ["project-a", "project-b"] {
+            let cwd = tempfile::tempdir().unwrap();
+            std::fs::write(cwd.path().join(".command-fixture"), name).unwrap();
+            let commands = h
+                .commands_for(&cwd.path().canonicalize().unwrap())
+                .await
+                .unwrap();
+            assert_eq!(commands.len(), 1, "{:?}", h.id());
+            assert_eq!(commands[0].name, name, "{:?}", h.id());
+        }
+    }
+}

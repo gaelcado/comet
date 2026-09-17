@@ -694,3 +694,18 @@ async fn title_run_disables_tools_and_denies_unexpected_permissions() {
         "{events:?}"
     );
 }
+
+#[tokio::test]
+async fn command_discovery_tracks_project_changes() {
+    let h = harness();
+    for name in ["project-a", "project-b"] {
+        let cwd = tempfile::tempdir().unwrap();
+        std::fs::write(cwd.path().join(".command-fixture"), name).unwrap();
+        let commands = h
+            .commands_for(&cwd.path().canonicalize().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].name, name);
+    }
+}

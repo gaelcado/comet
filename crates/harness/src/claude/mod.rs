@@ -228,9 +228,15 @@ impl ClaudeHarness {
     /// control_response. No user message is ever written, so no turn (and no
     /// API call) happens; the child is torn down as soon as the response
     /// lands.
-    async fn discover_commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
+    async fn discover_commands(
+        &self,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Vec<SlashCommand>, HarnessError> {
         let exe = self.resolve_executable()?;
         let mut cmd = Command::new(&exe);
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
+        }
         crate::compose_child_path(&mut cmd, &exe);
         cmd.args([
             "--print",
@@ -385,9 +391,13 @@ impl Harness for ClaudeHarness {
     /// stdout line, well before any API traffic). Cached on success.
     async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
         self.commands
-            .get_or_try_init(|| self.discover_commands())
+            .get_or_try_init(|| self.discover_commands(None))
             .await
             .cloned()
+    }
+
+    async fn commands_for(&self, cwd: &std::path::Path) -> Result<Vec<SlashCommand>, HarnessError> {
+        self.discover_commands(Some(cwd)).await
     }
 
     async fn run(

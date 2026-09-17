@@ -995,3 +995,19 @@ async fn repeated_session_create_failure_stops_after_one_retry() {
         })
     ));
 }
+
+#[tokio::test]
+async fn slash_command_rejects_attachments_instead_of_dropping_them() {
+    let fake = FakeOpencode::start().await;
+    let (controls, _steer, _token) = controls();
+    let mut req = request("/init the repo");
+    req.attachments.push("/tmp/image.png".into());
+    let mut stream = harness(&fake).run(req, controls).await.unwrap();
+    let events = drain_to_done(&mut stream).await;
+    assert!(events.iter().any(|event| matches!(event,
+        AgentEvent::Done { status: DoneStatus::Errored, error: Some(message), .. }
+        if message.contains("attachments")
+    )));
+    assert!(fake.posts_to("/session/ses_test/command").is_empty());
+    assert!(fake.posts_to("/session/ses_test/prompt_async").is_empty());
+}

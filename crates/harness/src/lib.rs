@@ -91,6 +91,13 @@ pub trait Harness: Send + Sync {
     async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
         Ok(Vec::new())
     }
+    /// Discover commands in the same directory as the eventual session.
+    async fn commands_for(
+        &self,
+        _cwd: &std::path::Path,
+    ) -> Result<Vec<SlashCommand>, HarnessError> {
+        self.commands().await
+    }
     /// Project-scoped skills; None means this provider does not advertise skills.
     async fn skills(
         &self,

@@ -73,7 +73,35 @@ fi
 read -r turnline || exit 1
 tid=$(rid "$turnline")
 
+if has "$turnline" '"method":"thread/compact/start"'; then
+  emit "{\"id\":$tid,\"result\":{}}"
+  emit '{"method":"turn/started","params":{"turn":{"id":"native-1"}}}'
+  emit '{"method":"item/completed","params":{"item":{"id":"compact-1","type":"contextCompaction"}}}'
+  emit '{"method":"turn/completed","params":{"turn":{"id":"native-1","status":"completed"}}}'
+  exec sleep 30
+fi
+if has "$turnline" '"method":"review/start"'; then
+  has "$turnline" '"delivery":"inline"' || exit 1
+  emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"native-1\"}}}"
+  emit '{"method":"item/completed","params":{"item":{"id":"review-1","type":"exitedReviewMode","review":"Review fixture result"}}}'
+  emit '{"method":"turn/completed","params":{"turn":{"id":"native-1","status":"completed"}}}'
+  exec sleep 30
+fi
+
 case "$turnline" in
+*scenario:native-queue*)
+  emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
+  emit '{"method":"turn/started","params":{"turn":{"id":"t-1"}}}'
+  emit '{"method":"item/agentMessage/delta","params":{"delta":"working"}}'
+  sleep 0.1
+  emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
+  read -r next || exit 1
+  has "$next" '"method":"review/start"' || { fail_turn "$(rid "$next")" "native command was sent as prompt text"; exit 0; }
+  emit "{\"id\":$(rid "$next"),\"result\":{\"turn\":{\"id\":\"t-2\"}}}"
+  emit '{"method":"item/completed","params":{"item":{"id":"review-2","type":"exitedReviewMode","review":"Queued review result"}}}'
+  emit '{"method":"turn/completed","params":{"turn":{"id":"t-2","status":"completed"}}}'
+  ;;
+
 
 *scenario:image-*)
   emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
