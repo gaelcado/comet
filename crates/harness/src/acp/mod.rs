@@ -1254,8 +1254,13 @@ impl AcpHarness {
     /// briefly for `available_commands_update`. Best-effort — an agent that
     /// refuses sessions before login still surfaces whatever the handshake
     /// advertised.
-    async fn discover_commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
-        let (mut child, _stderr) = self.spawn_agent(None, false, &[]).await?;
+    async fn discover_commands(
+        &self,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Vec<SlashCommand>, HarnessError> {
+        let (mut child, _stderr) = self
+            .spawn_agent(cwd.and_then(|p| p.to_str()), false, &[])
+            .await?;
         let (client, mut incoming) = match (child.stdin.take(), child.stdout.take()) {
             (Some(stdin), Some(stdout)) => RpcClient::new(stdin, stdout),
             _ => {
@@ -1268,8 +1273,10 @@ impl AcpHarness {
                 .request("initialize", initialize_params(self.spec.id))
                 .await?;
             let mut commands = scan_available_commands(&init);
-            if commands.is_empty() {
-                let cwd = crate::executable::home_or_current_dir();
+            {
+                let cwd = cwd
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(crate::executable::home_or_current_dir);
                 let session = client
                     .request("session/new", json!({ "cwd": cwd, "mcpServers": [] }))
                     .await;
@@ -1699,9 +1706,8 @@ impl Harness for AcpHarness {
     /// skills. Skills are read fresh on every call so a newly added one shows
     /// up, and they still list when discovery fails (a signed-out agent).
     async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
-        let discovered = self
-            .commands
-            .get_or_try_init(|| self.discover_commands())
+        let discovered = self.commands
+            .get_or_try_init(|| self.discover_commands(None))
             .await
             .cloned();
         let skills = skill_commands(&(self.spec.skill_dirs)());
@@ -1717,6 +1723,10 @@ impl Harness for AcpHarness {
             }
         }
         Ok(commands)
+    }
+
+    async fn commands_for(&self, cwd: &std::path::Path) -> Result<Vec<SlashCommand>, HarnessError> {
+        self.discover_commands(Some(cwd)).await
     }
 
     async fn run(

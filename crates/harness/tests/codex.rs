@@ -623,8 +623,13 @@ async fn models_discovers_visible_catalog_with_pagination() {
     assert_eq!(tier.choices.len(), 2, "priority and fast dedupe");
 
     // A failed probe stays useful and includes the new model in the fallback.
+    let failed_probe = tempfile::tempdir().unwrap();
+    let failed_exe = failed_probe.path().join("failed-codex");
+    std::fs::write(&failed_exe, "#!/bin/sh\nexit 1\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&failed_exe, std::fs::Permissions::from_mode(0o755)).unwrap();
     let fallback = CodexHarness::new()
-        .with_executable("/bin/false")
+        .with_executable(failed_exe)
         .models()
         .await
         .expect("fallback models");
@@ -1138,7 +1143,15 @@ async fn live_real_app_server_single_turn() {
 #[tokio::test]
 async fn skills_are_not_advertised_as_commands() {
     let h = harness();
-    assert!(h.commands().await.unwrap().is_empty());
+    assert_eq!(
+        h.commands()
+            .await
+            .unwrap()
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["compact", "review"]
+    );
     let cwd = tempfile::tempdir().unwrap();
     let skills = h
         .skills(cwd.path())
@@ -1150,7 +1163,15 @@ async fn skills_are_not_advertised_as_commands() {
     assert_eq!(skills[0].path, "/skills/imagegen/SKILL.md");
     assert_eq!(skills[0].description, "Generate or edit images");
     assert_eq!(skills[1].description, "No interface block");
-    assert!(h.commands().await.unwrap().is_empty());
+    assert_eq!(
+        h.commands()
+            .await
+            .unwrap()
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["compact", "review"]
+    );
 }
 
 /// Live smoke against the real CLI: `cargo test -p zeron-harness --test
@@ -1290,4 +1311,86 @@ async fn real_image_generation_smoke() {
     assert!(std::path::Path::new(path).is_absolute());
     assert!(std::path::Path::new(path).is_file());
     assert!(serde_json::to_vec(&events).unwrap().len() < 64 * 1024);
+}
+
+#[tokio::test]
+async fn native_commands_use_rpc_operations_and_render_results() {
+    for (prompt, expected) in [
+        ("/compact", "Context compacted."),
+        ("/review", "Review fixture result"),
+        ("/review check error handling", "Review fixture result"),
+    ] {
+        let (controls, steer, _token) = controls("Yes");
+        drop(steer);
+        let mut req = request(prompt);
+        req.resume = Some("existing-thread".into());
+        let mut stream = harness().run(req, controls).await.unwrap();
+        let mut text = String::new();
+        let mut complete = false;
+        while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .unwrap()
+        {
+            match event.unwrap() {
+                AgentEvent::TextDelta { text: delta } => text.push_str(&delta),
+                AgentEvent::Done { status, error, .. } => {
+                    assert_eq!(status, DoneStatus::Completed, "{error:?}");
+                    complete = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(complete);
+        assert_eq!(text, expected);
+    }
+}
+
+#[tokio::test]
+async fn compact_requires_existing_session_and_commands_reject_attachments() {
+    let (ctl, _, _) = controls("Yes");
+    assert!(harness().run(request("/compact"), ctl).await.is_err());
+    let (ctl, _, _) = controls("Yes");
+    let mut req = request("/review");
+    req.attachments.push("/tmp/image.png".into());
+    assert!(harness().run(req, ctl).await.is_err());
+}
+
+#[tokio::test]
+async fn native_command_during_a_turn_waits_for_its_boundary() {
+    let (controls, steer, _token) = controls("Yes");
+    let mut stream = harness()
+        .run(request("scenario:native-queue"), controls)
+        .await
+        .unwrap();
+    let mut steer = Some(steer);
+    let mut completions = 0;
+    let mut output = String::new();
+    while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .unwrap()
+    {
+        match event.unwrap() {
+            AgentEvent::TextDelta { text } => {
+                if text == "working" {
+                    steer
+                        .take()
+                        .unwrap()
+                        .send(SteerMessage {
+                            prompt: "/review".into(),
+                            message_id: None,
+                        })
+                        .await
+                        .unwrap();
+                }
+                output.push_str(&text);
+            }
+            AgentEvent::Done { status, error, .. } => {
+                assert_eq!(status, DoneStatus::Completed, "{error:?}");
+                completions += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(completions, 2);
+    assert!(output.contains("Queued review result"));
 }

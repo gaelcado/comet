@@ -1431,19 +1431,35 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&skills)
             }
             methods::LIST_COMMANDS => {
-                // Same shape as ListModels: forces a lazy resolve, then the
-                // harness's own (cached) discovery — ACP agents advertise
-                // availableCommands, claude answers the initialize control
-                // request, codex lists skills; only harnesses whose wire has
-                // no listing (cursor, mock) fall through to the trait's
-                // empty default.
-                let p: ListModelsParams = parse_params(params)?;
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct Params {
+                    harness: HarnessId,
+                    #[serde(default)]
+                    chat_id: Option<String>,
+                    #[serde(default)]
+                    space_id: Option<String>,
+                    #[serde(default)]
+                    path: Option<String>,
+                }
+                let p: Params = parse_params(params)?;
+                let root = if p.chat_id.is_none() && p.space_id.is_none() && p.path.is_none() {
+                    home_dir()
+                } else {
+                    self.file_search_root(&FileSearchParams {
+                        query: String::new(),
+                        chat_id: p.chat_id,
+                        space_id: p.space_id,
+                        path: p.path,
+                    })
+                    .await?
+                };
                 let harness = self
                     .registry
                     .resolve(p.harness)
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 let commands = harness
-                    .commands()
+                    .commands_for(&root)
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&commands)
