@@ -2389,3 +2389,44 @@ mod search_highlight_tests {
         assert_eq!(search_match_ranges("🚀 CAFÉ", "café"), vec![5..10]);
     }
 }
+
+/// Available vertical space at a measured trigger, including the menu's gap
+/// and window margin. Prefer above; flip only when it cannot fit useful chrome.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MenuGeometry {
+    pub height: f32,
+    pub below: bool,
+}
+
+pub fn menu_geometry(top: f32, bottom: f32, viewport_height: f32) -> MenuGeometry {
+    let above = (top - 14.0).max(0.0);
+    let below = (viewport_height - bottom - 14.0).max(0.0);
+    let flip = above < 180.0 && below > above;
+    MenuGeometry {
+        height: (if flip { below } else { above }).min(640.0),
+        below: flip,
+    }
+}
+
+#[cfg(test)]
+mod adaptive_menu_tests {
+    use super::*;
+    #[test]
+    fn budget_tracks_trigger_and_flips_when_needed() {
+        assert_eq!(
+            menu_geometry(300.0, 320.0, 500.0),
+            MenuGeometry {
+                height: 286.0,
+                below: false
+            }
+        );
+        assert_eq!(
+            menu_geometry(80.0, 100.0, 500.0),
+            MenuGeometry {
+                height: 386.0,
+                below: true
+            }
+        );
+        assert_eq!(menu_geometry(900.0, 920.0, 1000.0).height, 640.0);
+    }
+}

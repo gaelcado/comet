@@ -379,7 +379,7 @@ impl SessionsEngine {
                 // Register acceptance before a fast boundary can retire it.
                 let mut pending = lock(&ledger);
                 let message = SteerMessage {
-                    prompt: request.prompt.clone(),
+                    prompt: zeron_proto::invocation::invocation_prompt(&request.prompt),
                     message_id: Some(user_id.clone()),
                 };
                 if steer_tx.try_send(message).is_ok() {
@@ -554,7 +554,7 @@ impl SessionsEngine {
         };
         let user_id = message_id.unwrap_or_else(new_id);
         let message = SteerMessage {
-            prompt: prompt.to_string(),
+            prompt: zeron_proto::invocation::invocation_prompt(prompt),
             message_id: Some(user_id.clone()),
         };
         {
@@ -1517,7 +1517,11 @@ async fn drive_run(
         Ok(())
     };
     let started = match prepared {
-        Ok(()) => harness.run(request, controls).await,
+        Ok(()) => {
+            let mut wire_request = request;
+            wire_request.prompt = zeron_proto::invocation::invocation_prompt(&wire_request.prompt);
+            harness.run(wire_request, controls).await
+        },
         Err(error) => Err(error),
     };
     let mut stream = match started {

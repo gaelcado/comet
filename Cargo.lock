@@ -11853,6 +11853,7 @@ name = "zeron-proto"
 version = "0.2.79"
 dependencies = [
  "chrono",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "uuid",

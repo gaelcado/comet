@@ -33,6 +33,7 @@ use zeron_rpc::{RpcError, methods};
 
 use crate::appshots::{self, CapturedAppshot};
 use crate::attachments::{self, StagedAttachment};
+use crate::composer_markdown::{self, in_code};
 use crate::motion;
 use crate::notice::{NoticeChipIcon, notice_chip};
 use crate::pickers::Pickers;
@@ -234,36 +235,33 @@ fn input_scroll_offset_for_cursor(
     next.clamp(0.0, input_max_scroll(content_height, viewport_height))
 }
 
-/// What a mouse press in a text field asks for.
+/// Pointer selection granularity; multi-click drags retain the initial unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PressIntent {
-    /// Take the whole field.
-    SelectAll,
-    /// Grow the current selection to the pressed position.
+    Word,
+    Line,
     ExtendSelection,
-    /// Put the caret at the pressed position.
     PlaceCaret,
 }
 
-impl PressIntent {
-    /// Whether the press starts a drag selection. A select-all must not, or
-    /// the next mouse move shrinks it back to a drag from the press position.
-    fn arms_drag(self) -> bool {
-        !matches!(self, Self::SelectAll)
-    }
-}
-
-/// Read the intent from the press. Two clicks or more take the whole field,
-/// and every further click keeps it, so holding the button through a third
-/// click does not change what is selected.
 fn press_intent(click_count: usize, shift: bool) -> PressIntent {
-    if click_count >= 2 {
-        PressIntent::SelectAll
+    if click_count >= 3 {
+        PressIntent::Line
+    } else if click_count == 2 {
+        PressIntent::Word
     } else if shift {
         PressIntent::ExtendSelection
     } else {
         PressIntent::PlaceCaret
     }
+}
+
+fn word_range(text: &str, offset: usize) -> Range<usize> {
+    let offset = offset.min(text.len());
+    text.split_word_bound_indices()
+        .find(|(at, word)| *at <= offset && offset < at + word.len())
+        .map(|(at, word)| at..at + word.len())
+        .unwrap_or(offset..offset)
 }
 
 /// Per-frame drag-selection scroll. Distance increases speed, capped at one
@@ -850,6 +848,7 @@ actions!(
         Undo,
         Redo,
         MentionTab,
+        OutdentList,
     ]
 );
 
@@ -866,7 +865,7 @@ const UNDO_LIMIT: usize = 200;
 /// painted into a reserved whitespace slot never sat right at text size
 /// (user report). Chips read as inline code: `@name` in the mono font over
 /// the code wash.
-const MENTION_PREFIX: char = '@';
+
 const MENTION_TOOLTIP_DELAY: Duration = Duration::from_millis(420);
 const MENTION_TOOLTIP_HEIGHT: f32 = 24.0;
 const MENTION_SIDE_PAD: &str = "\u{00A0}";
@@ -892,6 +891,7 @@ struct FileMentionLink {
     basename: String,
     path: String,
     is_dir: bool,
+    prefix: char,
 }
 
 fn percent_encode_path(path: &str) -> String {
@@ -1048,6 +1048,7 @@ fn file_mention_links(text: &str) -> Vec<FileMentionLink> {
                 basename,
                 path,
                 is_dir,
+                prefix: '@',
             });
         }
         search = end;
@@ -1059,6 +1060,7 @@ fn file_mention_links(text: &str) -> Vec<FileMentionLink> {
 struct TextProjection {
     display: String,
     mentions: Vec<(FileMentionLink, Range<usize>)>,
+    mappings: Vec<(Range<usize>, Range<usize>)>,
 }
 
 /// A path alone is not enough: two identical relative paths can appear in a
@@ -1162,31 +1164,70 @@ struct MentionHit {
 
 impl TextProjection {
     fn new(raw: &str) -> Self {
-        let links = file_mention_links(raw);
+        Self::rich(raw, None)
+    }
+
+    fn rich(raw: &str, active: Option<Range<usize>>) -> Self {
+        let mut links = file_mention_links(raw);
+        links.extend(
+            zeron_proto::invocation::invocation_links(raw)
+                .into_iter()
+                .map(|(range, invocation)| FileMentionLink {
+                    range,
+                    basename: invocation.name().to_string(),
+                    path: invocation.detail(),
+                    is_dir: false,
+                    prefix: invocation.prefix(),
+                }),
+        );
+        let code = composer_markdown::faces(raw);
+        links.retain(|link| {
+            !code.iter().any(|(range, face)| {
+                *face == composer_markdown::Face::Code
+                    && range.start <= link.range.start
+                    && link.range.end <= range.end
+            })
+        });
+        links.sort_by_key(|link| link.range.start);
         let labels = mention_display_labels(&links);
         let mut projection = Self::default();
-        let mut raw_at = 0;
-        for (link, label) in links.into_iter().zip(labels) {
-            projection.display.push_str(&raw[raw_at..link.range.start]);
-            let display_start = projection.display.len();
-            // The chip is plain projected text — `@` plus the label between
-            // non-breaking side bearings; the rounded code wash beneath it is
-            // painted by `ComposerTextElement::paint`. Every character here
-            // must exist in Geist (no exotic whitespace — U+2003/U+202F shape
-            // at fallback width and collapsed the chip once already).
-            projection.display.push_str(MENTION_SIDE_PAD);
-            projection.display.push(MENTION_PREFIX);
-            for ch in label.chars() {
-                projection
-                    .display
-                    .push(if ch == ' ' { '\u{00A0}' } else { ch });
+        let mut edits: Vec<(Range<usize>, String, Option<FileMentionLink>)> = links
+            .into_iter()
+            .zip(labels)
+            .map(|(link, label)| {
+                let label = label.replace(' ', "\u{00A0}");
+                (
+                    link.range.clone(),
+                    format!("{MENTION_SIDE_PAD}{}{label}{MENTION_SIDE_PAD}", link.prefix),
+                    Some(link),
+                )
+            })
+            .collect();
+        if let Some(active) = active {
+            for (range, replacement) in composer_markdown::decorations(raw, active) {
+                if !edits
+                    .iter()
+                    .any(|(r, _, _)| r.start < range.end && range.start < r.end)
+                {
+                    edits.push((range, replacement, None));
+                }
             }
-            projection.display.push('\u{00A0}');
-            let display_end = projection.display.len();
-            projection
-                .mentions
-                .push((link.clone(), display_start..display_end));
-            raw_at = link.range.end;
+        }
+        edits.sort_by_key(|(r, _, _)| r.start);
+        let mut raw_at = 0;
+        for (range, replacement, link) in edits {
+            if range.start < raw_at {
+                continue;
+            }
+            projection.display.push_str(&raw[raw_at..range.start]);
+            let start = projection.display.len();
+            projection.display.push_str(&replacement);
+            let display = start..projection.display.len();
+            if let Some(link) = link {
+                projection.mentions.push((link, display.clone()));
+            }
+            raw_at = range.end;
+            projection.mappings.push((range, display));
         }
         projection.display.push_str(&raw[raw_at..]);
         projection
@@ -1195,14 +1236,14 @@ impl TextProjection {
     fn raw_to_display(&self, raw: usize) -> usize {
         let mut raw_at = 0;
         let mut display_at = 0;
-        for (link, display) in &self.mentions {
-            if raw <= link.range.start {
+        for (range, display) in &self.mappings {
+            if raw <= range.start {
                 return display_at + raw.saturating_sub(raw_at);
             }
-            if raw < link.range.end {
+            if raw < range.end {
                 return display.start;
             }
-            raw_at = link.range.end;
+            raw_at = range.end;
             display_at = display.end;
         }
         display_at + raw.saturating_sub(raw_at)
@@ -1211,18 +1252,18 @@ impl TextProjection {
     fn display_to_raw(&self, display_offset: usize) -> usize {
         let mut raw_at = 0;
         let mut display_at = 0;
-        for (link, display) in &self.mentions {
+        for (range, display) in &self.mappings {
             if display_offset <= display.start {
                 return raw_at + display_offset.saturating_sub(display_at);
             }
             if display_offset < display.end {
                 return if display_offset - display.start < display.len() / 2 {
-                    link.range.start
+                    range.start
                 } else {
-                    link.range.end
+                    range.end
                 };
             }
-            raw_at = link.range.end;
+            raw_at = range.end;
             display_at = display.end;
         }
         raw_at + display_offset.saturating_sub(display_at)
@@ -1274,6 +1315,25 @@ fn mention_display_labels(links: &[FileMentionLink]) -> Vec<String> {
         .iter()
         .enumerate()
         .map(|(ix, link)| {
+            if link.prefix != '@' {
+                let duplicates: Vec<_> = links
+                    .iter()
+                    .filter(|other| {
+                        other.prefix == link.prefix
+                            && other.basename == link.basename
+                            && other.path != link.path
+                    })
+                    .collect();
+                if duplicates.is_empty() {
+                    return link.basename.clone();
+                }
+                let parts: Vec<_> = link.path.split('/').collect();
+                let suffix = (1..=parts.len())
+                    .map(|n| parts[parts.len() - n..].join("/"))
+                    .find(|suffix| duplicates.iter().all(|other| !other.path.ends_with(suffix)))
+                    .unwrap_or_else(|| link.path.clone());
+                return format!("{} · {suffix}", link.basename);
+            }
             if links
                 .iter()
                 .filter(|other| other.basename == link.basename)
@@ -1319,7 +1379,9 @@ pub struct SentMentionSpan {
 /// substring probe keeps ordinary prompts on the zero-allocation path, so this
 /// is safe to call for every user row.
 pub fn sent_mention_display(raw: &str) -> Option<(String, Vec<SentMentionSpan>)> {
-    if !raw.contains(FILE_MENTION_SCHEME) {
+    if !raw.contains(FILE_MENTION_SCHEME)
+        && !raw.contains(zeron_proto::invocation::INVOCATION_SCHEME)
+    {
         return None;
     }
     let projection = TextProjection::new(raw);
@@ -1421,6 +1483,7 @@ fn input_bindings(context: &'static str) -> Vec<KeyBinding> {
     let ctx = Some(context);
     let mut bindings = vec![
         KeyBinding::new("tab", MentionTab, ctx),
+        KeyBinding::new("shift-tab", OutdentList, ctx),
         KeyBinding::new("shift-enter", Newline, ctx),
         KeyBinding::new("backspace", Backspace, ctx),
         KeyBinding::new("delete", Delete, ctx),
@@ -1628,6 +1691,7 @@ struct InputLayoutKey {
     marked_range: Option<Range<usize>>,
     placeholder: SharedString,
     mentions_enabled: bool,
+    active_line: Option<Range<usize>>,
 }
 
 /// Multiline input entity: content + selection + IME marked text + measured
@@ -1647,6 +1711,7 @@ pub struct ComposerInput {
     is_selecting: bool,
     drag_position: Option<Point<Pixels>>,
     drag_generation: u64,
+    drag_unit: Option<(PressIntent, Range<usize>)>,
     drag_autoscroll_active: bool,
     /// Vertical scroll inside the input once content exceeds the max height.
     scroll_top: f32,
@@ -1672,6 +1737,7 @@ pub struct ComposerInput {
     // -- measured state (written during layout/paint) --
     last_lines: Vec<WrappedLine>,
     line_starts: Vec<usize>,
+    line_indents: Vec<Pixels>,
     last_bounds: Option<Bounds<Pixels>>,
     line_height: Pixels,
     content_height: f32,
@@ -1745,6 +1811,7 @@ impl ComposerInput {
             is_selecting: false,
             drag_position: None,
             drag_generation: 0,
+            drag_unit: None,
             drag_autoscroll_active: false,
             scroll_top: 0.0,
             viewport_height: None,
@@ -1764,6 +1831,7 @@ impl ComposerInput {
             scroll_left: 0.0,
             last_lines: Vec::new(),
             line_starts: vec![0],
+            line_indents: Vec::new(),
             last_bounds: None,
             line_height: px(INPUT_LINE_HEIGHT),
             content_height: INPUT_LINE_HEIGHT,
@@ -1873,11 +1941,17 @@ impl ComposerInput {
 
     fn refresh_projection(&mut self) {
         self.projection = if self.mentions_enabled {
-            TextProjection::new(&self.content)
+            TextProjection::rich(
+                &self.content,
+                self.marked_range
+                    .is_none()
+                    .then(|| self.line_range_at(self.cursor_offset())),
+            )
         } else {
             TextProjection {
                 display: self.content.clone(),
                 mentions: Vec::new(),
+                mappings: Vec::new(),
             }
         };
     }
@@ -2266,6 +2340,7 @@ impl ComposerInput {
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         let offset = self.projection.normalize_range(offset..offset).start;
         self.selected_range = offset..offset;
+        self.selection_reversed = false;
         self.follow_cursor = true;
         self.reset_blink();
         cx.emit(ComposerInputEvent::CursorMoved);
@@ -2336,6 +2411,10 @@ impl ComposerInput {
 
     /// Byte range of the logical line containing `offset`.
     fn line_range_at(&self, offset: usize) -> Range<usize> {
+        let mut offset = offset.min(self.content.len());
+        while !self.content.is_char_boundary(offset) {
+            offset -= 1;
+        }
         let start = self.content[..offset]
             .rfind('\n')
             .map(|i| i + 1)
@@ -2557,8 +2636,12 @@ impl ComposerInput {
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                self.content[self.selected_range.clone()].to_string(),
+            let raw = self.content[self.projection.normalize_range(self.selected_range.clone())]
+                .to_string();
+            let text = zeron_proto::invocation::invocation_prompt(&raw);
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                text.clone(),
+                serde_json::json!({ "zeronComposerV1": raw, "text": text }),
             ));
         } else if let Some(text) = crate::markdown::selection::selected_text() {
             // The composer keeps focus while the user reads the transcript —
@@ -2572,9 +2655,14 @@ impl ComposerInput {
             return;
         }
         if !self.selected_range.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                self.content[self.selected_range.clone()].to_string(),
+            let raw = self.content[self.projection.normalize_range(self.selected_range.clone())]
+                .to_string();
+            let text = zeron_proto::invocation::invocation_prompt(&raw);
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                text.clone(),
+                serde_json::json!({ "zeronComposerV1": raw, "text": text }),
             ));
+
             self.replace_text_in_range(None, "", window, cx);
         }
     }
@@ -2605,13 +2693,34 @@ impl ComposerInput {
             cx.emit(ComposerInputEvent::PastedPaths(paths));
             return;
         }
-        if let Some(text) = item.text() {
+        if let Some(mut text) = item.text() {
+            if self.mentions_enabled {
+                if let Some(value) = item
+                    .metadata()
+                    .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+                {
+                    if value.get("text").and_then(|v| v.as_str()) == Some(text.as_str()) {
+                        if let Some(raw) = value.get("zeronComposerV1").and_then(|v| v.as_str()) {
+                            text = raw.to_owned();
+                        }
+                    }
+                }
+            }
             // Compact fields normalize newlines in the input handler.
             self.replace_text_in_range(None, &text, window, cx);
         }
     }
 
     fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mentions_enabled && self.selected_range.is_empty() && self.marked_range.is_none() {
+            if let Some((range, inserted)) =
+                composer_markdown::newline_edit(&self.content, self.cursor_offset())
+            {
+                let range = self.range_to_utf16(&range);
+                self.replace_text_in_range(Some(range), &inserted, window, cx);
+                return;
+            }
+        }
         self.replace_text_in_range(None, "\n", window, cx);
     }
 
@@ -2623,7 +2732,7 @@ impl ComposerInput {
     ) {
         match enter_outcome(self.mention_has_selection, EnterOutcome::Newline) {
             EnterOutcome::AcceptCompletion => cx.emit(ComposerInputEvent::MentionAccept),
-            EnterOutcome::Newline => self.replace_text_in_range(None, "\n", window, cx),
+            EnterOutcome::Newline => self.newline(&Newline, window, cx),
             EnterOutcome::Submit => unreachable!("newline action cannot submit"),
         }
     }
@@ -2644,12 +2753,86 @@ impl ComposerInput {
         }
     }
 
-    fn mention_tab(&mut self, _: &MentionTab, _: &mut Window, cx: &mut Context<Self>) {
+    fn mention_tab(&mut self, _: &MentionTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.mention_has_selection {
             cx.emit(ComposerInputEvent::MentionAccept);
-        } else {
+        } else if !self.indent_list(false, window, cx) {
             cx.propagate();
         }
+    }
+
+    fn outdent_list(&mut self, _: &OutdentList, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mention_open || !self.indent_list(true, window, cx) {
+            cx.propagate();
+        }
+    }
+
+    fn indent_list(&mut self, outdent: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.mentions_enabled
+            || self.read_only
+            || self.marked_range.is_some()
+            || self.mention_open
+        {
+            return false;
+        }
+        let selection = self.selected_range.clone();
+        let start = self.line_range_at(selection.start).start;
+        let last = if !selection.is_empty() && self.content[..selection.end].ends_with('\n') {
+            selection.end - 1
+        } else {
+            selection.end
+        };
+        let end = self.line_range_at(last).end;
+        let block = &self.content[start..end];
+        let mut replacement = String::new();
+        let mut changes = Vec::new();
+        let mut at = start;
+        for (ix, line) in block.split('\n').enumerate() {
+            let Some(prefix) = composer_markdown::list_prefix(line) else {
+                return false;
+            };
+            if in_code(&self.content, at) {
+                return false;
+            }
+            if ix > 0 {
+                replacement.push('\n');
+            }
+            let removed = if outdent {
+                line[..prefix.indent]
+                    .chars()
+                    .take(2)
+                    .map(char::len_utf8)
+                    .sum()
+            } else {
+                0
+            };
+            let added = if outdent { 0 } else { 2 };
+            if !outdent {
+                replacement.push_str("  ");
+            }
+            replacement.push_str(&line[removed..]);
+            changes.push((at, removed, added));
+            at += line.len() + 1;
+        }
+        let remap = |offset: usize| -> usize {
+            let mut result = offset as isize;
+            for &(at, removed, added) in &changes {
+                if offset >= at {
+                    result += added as isize - removed.min(offset - at) as isize;
+                }
+            }
+            result.max(0) as usize
+        };
+        let next = remap(selection.start)..remap(selection.end);
+        let reversed = self.selection_reversed;
+        let edit = self.range_to_utf16(&(start..end));
+        self.last_edit = None;
+        self.replace_text_in_range(Some(edit), &replacement, window, cx);
+        self.selected_range = next;
+        self.selection_reversed = reversed;
+        self.last_edit = None;
+        cx.notify();
+        true
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -2684,7 +2867,12 @@ impl ComposerInput {
                     .take(line_ix)
                     .map(|l| f32::from(l.size(self.line_height).height))
                     .sum();
-                return Some(point(local.x, local.y + px(y_offset)));
+                let indent = if local.y > px(0.0) {
+                    self.line_indents.get(line_ix).copied().unwrap_or_default()
+                } else {
+                    px(0.0)
+                };
+                return Some(point(local.x + indent, local.y + px(y_offset)));
             }
         }
         None
@@ -2730,7 +2918,15 @@ impl ComposerInput {
                     && end_point.x > start_x
                 {
                     bounds.push(Bounds::new(
-                        point(start_x, row_y),
+                        point(
+                            start_x
+                                + if row_ix > 0 {
+                                    self.line_indents.get(line_ix).copied().unwrap_or_default()
+                                } else {
+                                    px(0.0)
+                                },
+                            row_y,
+                        ),
                         size(end_point.x - start_x, self.line_height),
                     ));
                 }
@@ -2753,7 +2949,12 @@ impl ComposerInput {
             let height = f32::from(line.size(self.line_height).height);
             let line_start = self.line_starts.get(line_ix).copied().unwrap_or(0);
             if y < height || line_ix + 1 == self.last_lines.len() {
-                let local = point(position.x, px(y.min(height - 1.0).max(0.0)));
+                let indent = if y >= f32::from(self.line_height) {
+                    self.line_indents.get(line_ix).copied().unwrap_or_default()
+                } else {
+                    px(0.0)
+                };
+                let local = point(position.x - indent, px(y.min(height - 1.0).max(0.0)));
                 let ix = line
                     .closest_index_for_position(local, self.line_height)
                     .unwrap_or_else(|ix| ix);
@@ -2786,14 +2987,26 @@ impl ComposerInput {
         self.invalidate_mention_tooltip();
         window.focus(&self.focus_handle, cx);
         let intent = press_intent(event.click_count, event.modifiers.shift);
-        self.is_selecting = intent.arms_drag();
-        self.drag_position = intent.arms_drag().then_some(event.position);
+        self.is_selecting = true;
+        self.drag_position = Some(event.position);
+        self.drag_unit = None;
         self.drag_generation = self.drag_generation.wrapping_add(1);
         self.drag_autoscroll_active = false;
         match intent {
-            PressIntent::SelectAll => {
-                self.move_to(0, cx);
-                self.select_to(self.content.len(), cx);
+            PressIntent::Word | PressIntent::Line => {
+                let index = self.index_for_mouse_position(event.position);
+                let range = if intent == PressIntent::Word {
+                    self.mention_hits
+                        .iter()
+                        .find(|hit| hit.bounds.contains(&event.position))
+                        .map(|hit| hit.target.range.clone())
+                        .unwrap_or_else(|| self.selection_unit(intent, index))
+                } else {
+                    self.selection_unit(intent, index)
+                };
+                self.move_to(range.start, cx);
+                self.select_to(range.end, cx);
+                self.drag_unit = Some((intent, range));
             }
             PressIntent::ExtendSelection => {
                 let index = self.index_for_mouse_position(event.position);
@@ -2803,6 +3016,43 @@ impl ComposerInput {
                 let index = self.index_for_mouse_position(event.position);
                 self.move_to(index, cx);
             }
+        }
+    }
+
+    fn selection_unit(&self, intent: PressIntent, index: usize) -> Range<usize> {
+        let range = if intent == PressIntent::Line {
+            let mut range = self.line_range_at(index);
+            if range.end < self.content.len() {
+                range.end += 1;
+            }
+            range
+        } else {
+            // Hit testing snaps to chip edges; prefer the chip at that edge.
+            if let Some((link, _)) = self
+                .projection
+                .mentions
+                .iter()
+                .find(|(link, _)| link.range.start <= index && index < link.range.end)
+            {
+                return link.range.clone();
+            }
+            word_range(&self.content, index)
+        };
+        self.projection.normalize_range(range)
+    }
+
+    fn drag_select_to(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some((intent, anchor)) = self.drag_unit.clone() {
+            let range = self.selection_unit(intent, index);
+            if range.start < anchor.start {
+                self.move_to(anchor.end, cx);
+                self.select_to(range.start, cx);
+            } else {
+                self.move_to(anchor.start, cx);
+                self.select_to(range.end.max(anchor.end), cx);
+            }
+        } else {
+            self.select_to(index, cx);
         }
     }
 
@@ -2818,7 +3068,7 @@ impl ComposerInput {
         if self.is_selecting {
             self.drag_position = Some(event.position);
             let position = self.drag_selection_position(event.position);
-            self.select_to(self.index_for_mouse_position(position), cx);
+            self.drag_select_to(self.index_for_mouse_position(position), cx);
             if self.drag_scroll_delta(event.position) != 0.0 && !self.drag_autoscroll_active {
                 self.start_drag_autoscroll(cx);
             }
@@ -2893,7 +3143,7 @@ impl ComposerInput {
         }
         self.scroll_top = next;
         let edge_position = self.drag_selection_position(position);
-        self.select_to(self.index_for_mouse_position(edge_position), cx);
+        self.drag_select_to(self.index_for_mouse_position(edge_position), cx);
         // Selection motion normally resumes caret following. During an edge
         // drag the autoscroll loop owns the viewport instead.
         self.follow_cursor = false;
@@ -2993,6 +3243,9 @@ impl ComposerInput {
             marked_range: self.marked_range.clone(),
             placeholder: self.placeholder.clone(),
             mentions_enabled: self.mentions_enabled,
+            active_line: self
+                .mentions_enabled
+                .then(|| self.line_range_at(self.cursor_offset())),
         };
         // Height-only animation, scrolling, selection and caret blinking do
         // not change shaping. Reuse the entity's single retained layout,
@@ -3042,48 +3295,154 @@ impl ComposerInput {
             }),
             strikethrough: None,
         };
-        let runs: Vec<TextRun> = match self.marked_range.as_ref() {
-            Some(marked) if !is_placeholder => {
-                let start = self.projection.raw_to_display(marked.start);
-                let end = self.projection.raw_to_display(marked.end);
-                vec![
-                    run_for(start, false, false),
-                    run_for(end.saturating_sub(start), true, false),
-                    run_for(display.len() - end, false, false),
-                ]
-                .into_iter()
-                .filter(|r| r.len > 0)
-                .collect()
-            }
-            _ if is_placeholder => vec![run_for(display.len(), false, false)],
-            _ => {
-                let mut runs = Vec::new();
-                let mut at = 0;
-                for (_, chip) in &self.projection.mentions {
-                    if at < chip.start {
-                        runs.push(run_for(chip.start - at, false, false));
-                    }
-                    runs.push(run_for(chip.len(), false, true));
-                    at = chip.end;
-                }
-                if at < display.len() {
-                    runs.push(run_for(display.len() - at, false, false));
-                }
-                runs
-            }
+        let raw_faces = if self.mentions_enabled && !is_placeholder {
+            composer_markdown::faces(&self.content)
+        } else {
+            Vec::new()
         };
+        let faces = if self.mentions_enabled && !is_placeholder {
+            raw_faces
+                .iter()
+                .cloned()
+                .map(|(range, face)| {
+                    (
+                        self.projection.raw_to_display(range.start)
+                            ..self.projection.raw_to_display(range.end),
+                        face,
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let marked = self.marked_range.as_ref().map(|r| {
+            self.projection.raw_to_display(r.start)..self.projection.raw_to_display(r.end)
+        });
+        let mut boundaries = vec![0, display.len()];
+        for (range, _) in &faces {
+            boundaries.extend([range.start, range.end]);
+        }
+        for (_, range) in &self.projection.mentions {
+            boundaries.extend([range.start, range.end]);
+        }
+        if let Some(range) = &marked {
+            boundaries.extend([range.start, range.end]);
+        }
+        boundaries.sort_unstable();
+        boundaries.dedup();
+        let runs: Vec<TextRun> = boundaries
+            .windows(2)
+            .filter(|r| r[1] > r[0])
+            .map(|r| {
+                let chip = self
+                    .projection
+                    .mentions
+                    .iter()
+                    .any(|(_, range)| range.contains(&r[0]));
+                let code = faces.iter().any(|(range, face)| {
+                    *face == composer_markdown::Face::Code && range.contains(&r[0])
+                });
+                let mut run = run_for(
+                    r[1] - r[0],
+                    marked.as_ref().is_some_and(|range| range.contains(&r[0])),
+                    chip || code,
+                );
+                for (range, face) in &faces {
+                    if range.contains(&r[0]) && !chip {
+                        match face {
+                            composer_markdown::Face::Bold => {
+                                run.font.weight = gpui::FontWeight::BOLD
+                            }
+                            composer_markdown::Face::Italic => {
+                                run.font.style = gpui::FontStyle::Italic
+                            }
+                            composer_markdown::Face::Code => {
+                                run.background_color = Some(Theme::of(cx).code_wash)
+                            }
+                        }
+                    }
+                }
+                run
+            })
+            .collect();
 
-        let lines = window
-            .text_system()
-            .shape_text(
-                display,
+        // Each logical list line reserves its marker width for continuation
+        // rows. Painting and hit testing apply the same continuation offset.
+        let mut lines = Vec::new();
+        let mut indents = Vec::new();
+        let mut display_at = 0;
+        let mut raw_at = 0;
+        let mut run_at = 0;
+        let run_ranges: Vec<_> = runs
+            .iter()
+            .map(|run| {
+                let range = run_at..run_at + run.len;
+                run_at = range.end;
+                (range, run)
+            })
+            .collect();
+        for text in display.split('\n') {
+            let raw_line = self
+                .content
+                .get(raw_at..)
+                .unwrap_or_default()
+                .split('\n')
+                .next()
+                .unwrap_or_default();
+            let mut indent = px(0.0);
+            if self.mentions_enabled
+                && !is_placeholder
+                && !raw_faces
+                    .iter()
+                    .any(|(r, face)| *face == composer_markdown::Face::Code && r.contains(&raw_at))
+            {
+                if let Some(prefix) = composer_markdown::list_prefix(raw_line) {
+                    let end = self
+                        .projection
+                        .raw_to_display(raw_at + prefix.end)
+                        .saturating_sub(display_at)
+                        .min(text.len());
+                    let marker: SharedString = text[..end].to_string().into();
+                    let marker_run = run_for(marker.len(), false, false);
+                    indent = window
+                        .text_system()
+                        .shape_line(marker, font_size, &[marker_run], None)
+                        .width
+                        .min(width * 0.4);
+                }
+            }
+            let end = display_at + text.len();
+            let first_run = run_ranges.partition_point(|(r, _)| r.end <= display_at);
+            let line_runs: Vec<TextRun> = run_ranges[first_run..]
+                .iter()
+                .take_while(|(r, _)| r.start < end)
+                .filter_map(|(range, run)| {
+                    let len = range
+                        .end
+                        .min(end)
+                        .saturating_sub(range.start.max(display_at));
+                    (len > 0).then(|| TextRun {
+                        len,
+                        ..(*run).clone()
+                    })
+                })
+                .collect();
+            if let Ok(shaped) = window.text_system().shape_text(
+                text.to_string().into(),
                 font_size,
-                &runs,
-                (!self.single_line).then_some(width),
+                &line_runs,
+                (!self.single_line).then_some((width - indent).max(px(20.0))),
                 None,
-            )
-            .map(|small| small.into_vec())
-            .unwrap_or_default();
+            ) {
+                for line in shaped {
+                    lines.push(line);
+                    indents.push(indent);
+                }
+            }
+            display_at = end + 1;
+            raw_at += raw_line.len() + 1;
+        }
+        self.line_indents = indents;
 
         // Logical line byte offsets (each shaped line covers one \n-split line).
         let mut line_starts = Vec::with_capacity(lines.len());
@@ -3265,6 +3624,7 @@ impl EntityInputHandler for ComposerInput {
         self.refresh_projection();
         let cursor = range.start + new_text.len();
         self.selected_range = cursor..cursor;
+        self.selection_reversed = false;
         self.marked_range.take();
         self.follow_cursor = true;
         self.reset_blink();
@@ -3657,14 +4017,16 @@ impl gpui::Element for ComposerTextElement {
 
         // WrappedLine isn't Clone — temporarily take the shaped lines out of the
         // entity for painting, then put them back for mouse mapping.
-        let (lines, line_height, scroll, scroll_left) = self.input.update(cx, |input, _| {
-            (
-                std::mem::take(&mut input.last_lines),
-                input.line_height,
-                input.scroll_top,
-                input.scroll_left,
-            )
-        });
+        let (lines, indents, line_height, scroll, scroll_left) =
+            self.input.update(cx, |input, _| {
+                (
+                    std::mem::take(&mut input.last_lines),
+                    input.line_indents.clone(),
+                    input.line_height,
+                    input.scroll_top,
+                    input.scroll_left,
+                )
+            });
 
         let paint_bounds = self.input.read(cx).paint_bounds(bounds);
         window.with_content_mask(
@@ -3679,16 +4041,43 @@ impl gpui::Element for ComposerTextElement {
                     window.paint_quad(quad);
                 }
                 let mut y = bounds.top() - px(scroll);
-                for line in &lines {
+                for (line_ix, line) in lines.iter().enumerate() {
                     let height = line.size(line_height).height;
-                    let _ = line.paint(
-                        point(bounds.left() - px(scroll_left), y),
-                        line_height,
-                        gpui::TextAlign::Left,
-                        Some(bounds),
-                        window,
-                        cx,
-                    );
+                    let indent = indents.get(line_ix).copied().unwrap_or_default();
+                    if indent > px(0.0) && !line.wrap_boundaries().is_empty() {
+                        for row in 0..=line.wrap_boundaries().len() {
+                            let row_bounds = Bounds::new(
+                                point(bounds.left(), y + line_height * row),
+                                size(bounds.size.width, line_height),
+                            );
+                            window.with_content_mask(
+                                Some(gpui::ContentMask { bounds: row_bounds }),
+                                |window| {
+                                    let _ = line.paint(
+                                        point(
+                                            bounds.left() - px(scroll_left)
+                                                + if row > 0 { indent } else { px(0.0) },
+                                            y,
+                                        ),
+                                        line_height,
+                                        gpui::TextAlign::Left,
+                                        Some(bounds),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            );
+                        }
+                    } else {
+                        let _ = line.paint(
+                            point(bounds.left() - px(scroll_left), y),
+                            line_height,
+                            gpui::TextAlign::Left,
+                            Some(bounds),
+                            window,
+                            cx,
+                        );
+                    }
                     y += height;
                 }
                 if let Some((ghost_origin, ghost)) = prepaint.ghost.take() {
@@ -3779,6 +4168,7 @@ impl Render for ComposerInput {
             .on_action(cx.listener(Self::word_left))
             .on_action(cx.listener(Self::word_right))
             .on_action(cx.listener(Self::mention_tab))
+            .on_action(cx.listener(Self::outdent_list))
             .on_action(cx.listener(Self::select_word_left))
             .on_action(cx.listener(Self::select_word_right))
             .on_action(cx.listener(Self::delete_word_left))
@@ -3880,6 +4270,9 @@ fn mention_token(text: &str, cursor: usize) -> Option<MentionToken> {
     if cursor > text.len() || !text.is_char_boundary(cursor) {
         return None;
     }
+    if in_code(text, cursor) {
+        return None;
+    }
     let token_start = text[..cursor]
         .char_indices()
         .rev()
@@ -3907,34 +4300,55 @@ fn mention_token(text: &str, cursor: usize) -> Option<MentionToken> {
     })
 }
 
-/// The `/` must open the input: slash commands are whole-prompt prefixes
-/// (`/compact`, `/goal ship it`), so only the first token triggers, and a
-/// query containing another `/` (a typed path) never does.
+/// Invocation triggers share file completion's boundary rules, but never
+/// interpret paths, currency amounts or code as invocations.
 fn slash_token(text: &str, cursor: usize) -> Option<MentionToken> {
-    if cursor > text.len() || !text.is_char_boundary(cursor) || !text.starts_with('/') {
+    invocation_token(text, cursor, '/')
+}
+
+fn invocation_token(text: &str, cursor: usize, prefix: char) -> Option<MentionToken> {
+    if cursor > text.len() || !text.is_char_boundary(cursor) || in_code(text, cursor) {
         return None;
     }
-    let end = text
+    let start = text[..cursor]
         .char_indices()
-        .find_map(|(at, ch)| ch.is_whitespace().then_some(at))
-        .unwrap_or(text.len());
-    // Cursor outside the command token (typing the argument): popup closed.
-    if cursor == 0 || cursor > end {
+        .rev()
+        .find(|(_, c)| c.is_whitespace() || matches!(c, '(' | '[' | '{'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    if !text[start..cursor].starts_with(prefix) {
         return None;
     }
-    let query = &text[1..cursor];
-    if query.contains('/') {
+    let query = &text[start + 1..cursor];
+    if query
+        .chars()
+        .any(|c| !(c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.')))
+        || (prefix == '$' && query.starts_with(|c: char| c.is_ascii_digit()))
+    {
+        return None;
+    }
+    let end = text[cursor..]
+        .find(|c: char| !(c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.')))
+        .map_or(text.len(), |i| cursor + i);
+    if text.get(end..end + 1) == Some("/") {
         return None;
     }
     Some(MentionToken {
-        range: 0..end,
+        range: start..end,
         query: query.to_string(),
     })
 }
 
+#[derive(Debug, Clone)]
+struct InvocationCandidate {
+    name: String,
+    description: String,
+    input_hint: Option<String>,
+    invocation: zeron_proto::invocation::Invocation,
+}
+
 /// Slash-command completion state: like [`FileMentionState`] but the
-/// candidate list is fetched once per harness (`ListCommands`) and filtered
-/// locally per keystroke — no RPC, debounce, or skeleton churn while typing.
+/// candidate list is scoped to device, harness and workspace, then filtered
+/// locally per keystroke. Commands and skills share focus and keyboard handling.
 #[derive(Debug, Clone, Default)]
 struct SlashState {
     token: Option<MentionToken>,
@@ -3943,6 +4357,9 @@ struct SlashState {
     active: Option<usize>,
     /// Harness the popup is showing commands for (cache key).
     harness: Option<HarnessId>,
+    context: String,
+    skill: bool,
+    supported: bool,
     request: u64,
     loading: bool,
     error: Option<SharedString>,
@@ -3985,14 +4402,22 @@ fn mention_error_message(err: &RpcError) -> SharedString {
 }
 
 /// A failed command discovery, translated for the popup.
-fn slash_error_message(err: &RpcError) -> SharedString {
+fn slash_error_message(err: &RpcError, skill: bool) -> SharedString {
     match err {
         RpcError::UnknownMethod(_) => {
-            "The session's device runs an older zeron — update it to list commands".into()
+            if skill {
+                "Skills require an updated engine on the selected device. Restart that device’s Zeron after updating.".into()
+            } else {
+                "Commands require an updated engine on the selected device. Restart that device’s Zeron after updating.".into()
+            }
         }
         RpcError::Transport(_) | RpcError::Closed => "The session's device is unreachable".into(),
         RpcError::BadParams(_) | RpcError::Failed(_) => {
-            "Couldn't load this agent's commands".into()
+            if skill {
+                "Couldn't load this agent's skills".into()
+            } else {
+                "Couldn't load this agent's commands".into()
+            }
         }
     }
 }
@@ -4029,9 +4454,9 @@ pub struct Composer {
     mention: FileMentionState,
     slash_task: Option<Task<()>>,
     slash: SlashState,
-    /// Advertised commands per harness (one `ListCommands` per harness per
-    /// composer lifetime; the engine caches discovery on its side too).
-    slash_cache: HashMap<HarnessId, Vec<SlashCommand>>,
+    /// Advertised invocations for the current device/harness/workspace.
+    /// Invalidated on context changes; filtering stays local while typing.
+    slash_cache: HashMap<String, Vec<InvocationCandidate>>,
     /// Slash-popup row scroll — the stack overflows into a wheel/keyboard-
     /// scrollable list once it outgrows the card.
     slash_scroll: gpui::ScrollHandle,
@@ -4215,7 +4640,10 @@ impl Composer {
         // The footer toolbar (checkout kind + ref picker) is rendered INLINE
         // by the composer from picker state — a pickers-side notify (refs
         // loaded, popover toggled, pick made) must repaint the composer too.
-        let pickers_observe = cx.observe(&pickers, |_, _, cx| cx.notify());
+        let pickers_observe = cx.observe(&pickers, |this, _, cx| {
+            this.on_input_edited(cx);
+            cx.notify();
+        });
         let picker_focus = cx.subscribe(
             &pickers,
             |this: &mut Self, _, _: &crate::pickers::ReturnComposerFocus, cx| {
@@ -5030,10 +5458,17 @@ impl Composer {
             }
             return;
         }
-        let (text, cursor) = {
-            let input = self.input.read(cx);
-            (input.text().to_string(), input.cursor_offset())
-        };
+        let input = self.input.read(cx);
+        if !input.selected_range.is_empty() || input.marked_range.is_some() {
+            if self.mention.token.is_some() {
+                self.reset_mention(None, cx);
+            }
+            if self.slash.token.is_some() {
+                self.reset_slash(None, cx);
+            }
+            return;
+        }
+        let (text, cursor) = (input.text().to_string(), input.cursor_offset());
         self.update_slash(&text, cursor, cx);
         let token = mention_token(&text, cursor);
         let still_dismissed = token.as_ref().is_some_and(|token| {
@@ -5356,82 +5791,135 @@ impl Composer {
     /// Track the `/` token on every edit: open/refresh the popup, fetch the
     /// harness's command list on first open, filter locally per keystroke.
     fn update_slash(&mut self, text: &str, cursor: usize, cx: &mut Context<Self>) {
-        let token = slash_token(text, cursor);
-        let still_dismissed = token.as_ref().is_some_and(|token| {
-            self.slash.dismissed.as_ref().is_some_and(|(range, value)| {
-                token.range == *range && text.get(range.clone()) == Some(value.as_str())
+        let skill_token = invocation_token(text, cursor, '$');
+        let skill = skill_token.is_some();
+        let token = skill_token.or_else(|| slash_token(text, cursor));
+        let harness = self.pickers.read(cx).resolved(cx).harness;
+        let selected_worktree = match self.pickers.read(cx).checkout_plan() {
+            crate::pickers::CheckoutPlan::ReuseWorktree { path, .. } => Some(path),
+            _ => None,
+        };
+        let mut params = serde_json::json!({ "harness": harness });
+        {
+            let state = self.state.read(cx);
+            if let Some(chat) = state.selected_chat_row() {
+                params["chatId"] = chat.id.clone().into();
+                params["targetDeviceId"] = chat.device_id.clone().into();
+                // Include the resolved cwd in the cache identity, too.
+                params["cwd"] = chat.cwd.clone().into();
+            } else if let Some(space) = state.selected_space_row() {
+                params["spaceId"] = space.id.clone().into();
+                params["targetDeviceId"] = space.device_id.clone().into();
+                params["cwd"] = space.path.clone().into();
+                if let Some(path) = selected_worktree {
+                    params["path"] = path.into();
+                }
+            } else if let Some(device) = state.effective_device_id() {
+                params["targetDeviceId"] = device.into();
+            }
+        }
+        let context = format!("{}:{params}", if skill { "skill" } else { "command" });
+        let context_changed = self.slash.context != context;
+        if !context_changed
+            && token.as_ref().is_some_and(|token| {
+                self.slash.dismissed.as_ref().is_some_and(|(range, value)| {
+                    token.range == *range && text.get(range.clone()) == Some(value.as_str())
+                })
             })
-        });
-        if still_dismissed {
-            self.slash.token = None;
-            self.sync_mention_controls(cx);
+        {
+            return;
+        }
+        if !context_changed && token == self.slash.token {
             return;
         }
         self.slash.dismissed = None;
-        let harness = self.pickers.read(cx).resolved(cx).harness;
-        let harness_changed = self.slash.harness != harness;
-        if token == self.slash.token && !harness_changed {
-            self.refilter_slash(cx);
-            return;
+        if context_changed {
+            self.slash.request = self.slash.request.wrapping_add(1);
+            self.slash_task = None;
+            self.slash.loading = false;
+            self.slash_cache.clear();
         }
-        self.slash.token = token.clone();
+        self.slash.context = context.clone();
         self.slash.harness = harness;
+        self.slash.skill = skill;
+        if context_changed {
+            self.slash.supported = true;
+        }
+        self.slash.token = token;
         self.slash.error = None;
-        if token.is_none() {
+        if self.slash.token.is_none() {
+            self.slash.request = self.slash.request.wrapping_add(1);
+            self.slash_task = None;
+            self.slash.loading = false;
             self.slash.active = None;
             self.sync_mention_controls(cx);
             return;
         }
-        // No resolved harness (catalog still loading): empty popup, no fetch.
-        let Some(harness) = harness else {
-            self.slash.loading = false;
-            self.refilter_slash(cx);
-            return;
-        };
-        if self.slash_cache.contains_key(&harness) {
-            self.slash.loading = false;
+        if harness.is_none() || self.slash_cache.contains_key(&context) || self.slash.loading {
             self.refilter_slash(cx);
             return;
         }
-        // First open for this harness: one ListCommands, targeted like file
-        // search (the chat/space host device owns the agent binary).
-        self.slash.request = self.slash.request.wrapping_add(1);
-        self.slash.loading = true;
-        self.refilter_slash(cx);
         let Some(engine) = self.state.read(cx).engine().cloned() else {
-            self.slash.loading = false;
             return;
         };
-        let target = {
-            let state = self.state.read(cx);
-            state
-                .selected_chat_row()
-                .map(|chat| chat.device_id.clone())
-                .or_else(|| state.selected_space_row().map(|s| s.device_id.clone()))
-        };
+        self.slash.request = self.slash.request.wrapping_add(1);
         let request = self.slash.request;
+        self.slash.loading = true;
+        self.refilter_slash(cx);
         self.slash_task = Some(cx.spawn(async move |this, cx| {
-            let mut params = serde_json::json!({ "harness": harness });
-            if let (Some(target), Some(object)) = (&target, params.as_object_mut()) {
-                object.insert("targetDeviceId".into(), target.clone().into());
-            }
-            let result = engine.client().call(methods::LIST_COMMANDS, params).await;
+            let method = if skill {
+                methods::LIST_SKILLS
+            } else {
+                methods::LIST_COMMANDS
+            };
+            let result = engine.client().call(method, params).await;
             this.update(cx, |composer, cx| {
-                if composer.slash.request != request {
+                if composer.slash.request != request || composer.slash.context != context {
                     return;
                 }
                 composer.slash.loading = false;
-                match result {
-                    Ok(value) => match serde_json::from_value::<Vec<SlashCommand>>(value) {
-                        Ok(commands) => {
-                            composer.slash_cache.insert(harness, commands);
-                        }
-                        Err(err) => tracing::warn!(%err, "slash command decode failed"),
-                    },
-                    Err(err) => {
-                        tracing::debug!(%err, "slash command discovery failed");
-                        composer.slash.error = Some(slash_error_message(&err));
+                let decoded = result.and_then(|value| {
+                    if skill {
+                        serde_json::from_value::<Option<Vec<zeron_proto::invocation::Skill>>>(value)
+                            .map(|skills| {
+                                composer.slash.supported = skills.is_some();
+                                skills
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .filter(|s| s.enabled)
+                                    .map(|s| InvocationCandidate {
+                                        input_hint: None,
+                                        name: s.name.clone(),
+                                        description: format!("{} — {}", s.description, s.path),
+                                        invocation: zeron_proto::invocation::Invocation::Skill {
+                                            name: s.name,
+                                            path: s.path,
+                                        },
+                                    })
+                                    .collect()
+                            })
+                    } else {
+                        serde_json::from_value::<Vec<SlashCommand>>(value).map(|commands| {
+                            commands
+                                .into_iter()
+                                .map(|c| InvocationCandidate {
+                                    input_hint: c.input_hint,
+                                    name: c.name.clone(),
+                                    description: c.description,
+                                    invocation: zeron_proto::invocation::Invocation::Command {
+                                        name: c.name,
+                                    },
+                                })
+                                .collect()
+                        })
                     }
+                    .map_err(|e| RpcError::Failed(e.to_string()))
+                });
+                match decoded {
+                    Ok(candidates) => {
+                        composer.slash_cache.insert(context, candidates);
+                    }
+                    Err(err) => composer.slash.error = Some(slash_error_message(&err, skill)),
                 }
                 composer.refilter_slash(cx);
             })
@@ -5449,9 +5937,8 @@ impl Composer {
             .map(|t| t.query.clone())
             .unwrap_or_default();
         let commands = self
-            .slash
-            .harness
-            .and_then(|h| self.slash_cache.get(&h))
+            .slash_cache
+            .get(&self.slash.context)
             .map(Vec::as_slice)
             .unwrap_or_default();
         let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
@@ -5495,9 +5982,8 @@ impl Composer {
             .active
             .and_then(|active| self.slash.filtered.get(active))
             .and_then(|&ix| {
-                self.slash
-                    .harness
-                    .and_then(|h| self.slash_cache.get(&h))
+                self.slash_cache
+                    .get(&self.slash.context)
                     .and_then(|c| c.get(ix))
             })
             .cloned()
@@ -5505,7 +5991,7 @@ impl Composer {
             return;
         };
         self.input.update(cx, |input, cx| {
-            input.replace_plain_token(token.range, &format!("/{}", command.name), cx)
+            input.replace_plain_token(token.range, &command.invocation.link(), cx)
         });
         self.reset_slash(None, cx);
         cx.notify();
@@ -5533,9 +6019,8 @@ impl Composer {
         // Only while a slash token is active.
         self.slash.token.as_ref()?;
         let commands = self
-            .slash
-            .harness
-            .and_then(|h| self.slash_cache.get(&h))
+            .slash_cache
+            .get(&self.slash.context)
             .map(Vec::as_slice)
             .unwrap_or_default();
         // Full pill width at the mention card's height budget — both composer
@@ -5576,9 +6061,21 @@ impl Composer {
                     .text_size(crate::typography::ui_rems(12.0))
                     .text_color(theme.text_muted)
                     .child(if commands.is_empty() {
-                        "This agent has no slash commands"
+                        if self.slash.skill {
+                            if self.slash.supported {
+                                "No skills available for this project"
+                            } else {
+                                "This agent does not advertise skills"
+                            }
+                        } else {
+                            "This agent has no slash commands"
+                        }
                     } else {
-                        "No matching commands"
+                        if self.slash.skill {
+                            "No matching skills"
+                        } else {
+                            "No matching commands"
+                        }
                     }),
             );
         } else {
@@ -5588,7 +6085,8 @@ impl Composer {
                     continue;
                 };
                 let selected = self.slash.active == Some(row_ix);
-                let name: SharedString = format!("/{}", command.name).into();
+                let name: SharedString =
+                    format!("{}{}", command.invocation.prefix(), command.name).into();
                 let mut description = command.description.clone();
                 if let Some(hint) = &command.input_hint {
                     if description.is_empty() {
@@ -5772,6 +6270,7 @@ impl Composer {
             // the navigation); only the transient chrome resets.
             self.preview = None;
             self.reset_mention(None, cx);
+            self.reset_slash(None, cx);
             // Route changes snap (round 5/6): a mode difference between the
             // old and new session's composer must not glide across
             // navigation. Killing the in-flight morph here isn't enough —
@@ -8335,25 +8834,143 @@ mod tests {
         assert!(server_in.try_recv().is_err());
     }
 
-    /// The press intent is judged by eye everywhere except here: that a
-    /// multi-click leaves the drag disarmed is invisible until a selection
-    /// collapses under the pointer.
     #[test]
-    fn a_press_of_two_or_more_clicks_takes_the_whole_field_and_leaves_the_drag_disarmed() {
+    fn rich_projection_keeps_unicode_offsets_and_atomic_invocations() {
+        let invocation = zeron_proto::invocation::Invocation::Skill {
+            name: "review".into(),
+            path: "/repo/SKILL.md".into(),
+        };
+        let raw = format!("**café** {} end\nactive", invocation.link());
+        let active = raw.rfind('\n').unwrap() + 1..raw.len();
+        let projection = TextProjection::rich(&raw, Some(active));
+        assert!(projection.display.starts_with("café"));
+        assert!(projection.display.contains("$review"));
+        assert_eq!(projection.mentions.len(), 1);
+        let (link, display) = &projection.mentions[0];
+        assert_eq!(projection.raw_to_display(link.range.start), display.start);
+        assert_eq!(projection.display_to_raw(display.end), link.range.end);
+        assert_eq!(
+            projection.normalize_range(link.range.start + 1..link.range.end - 1),
+            link.range
+        );
+        assert_eq!(
+            projection.previous_boundary(link.range.end),
+            Some(link.range.start)
+        );
+        let (sent, _) = sent_mention_display(&raw).unwrap();
+        assert!(sent.contains("$review"));
+        assert!(sent.starts_with("**café**"));
+    }
+
+    #[test]
+    fn invocation_completion_rejects_code_paths_currency_and_escapes() {
+        for text in [
+            "cost $100",
+            "word$review",
+            "\\$review",
+            "`$review",
+            "```\n$review",
+            "path/$review",
+        ] {
+            assert!(invocation_token(text, text.len(), '$').is_none(), "{text}");
+        }
+        for text in [
+            "use $review",
+            "- $review",
+            "($review",
+            "first\n$review",
+            "hello\u{00a0}$review",
+        ] {
+            assert_eq!(
+                invocation_token(text, text.len(), '$').unwrap().query,
+                "review"
+            );
+        }
+        assert!(slash_token("try /usr/bin", 12).is_none());
+        assert!(mention_token("`@file", 6).is_none());
+    }
+
+    #[gpui::test]
+    fn rich_editor_selection_lists_and_undo(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    input.set_text("hello café world\n- item", cx);
+                    assert_eq!(input.selection_unit(PressIntent::Word, 8), 6..11);
+                    input.drag_unit = Some((PressIntent::Word, 6..11));
+                    input.drag_select_to(2, cx);
+                    assert_eq!(input.selected_range, 0..11);
+                    assert!(input.selection_reversed);
+                    input.drag_select_to(14, cx);
+                    assert_eq!(input.selected_range, 6..17);
+                    input.move_to(input.content.len(), cx);
+                    input.newline(&Newline, window, cx);
+                    assert!(input.content.ends_with("\n- "));
+                    input.undo(&Undo, window, cx);
+                    assert!(input.content.ends_with("\n- item"));
+                    input.redo(&Redo, window, cx);
+                    input.newline(&Newline, window, cx);
+                    assert!(input.content.ends_with("item\n"));
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn rendered_word_selection_uses_pointer_hit_testing(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        let input = handle
+            .read_with(cx, |composer, _| composer.input.clone())
+            .unwrap();
+        input.update(cx, |input, cx| input.set_text("hello café world", cx));
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear();
+            let position = {
+                let editor = input.read(cx);
+                let local = editor.point_for_index(8).unwrap();
+                editor.last_bounds.unwrap().origin + local + point(px(1.0), px(5.0))
+            };
+            window.dispatch_event(
+                gpui::PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    click_count: 2,
+                    ..Default::default()
+                }),
+                cx,
+            );
+            assert_eq!(input.read(cx).selected_range, 6..11);
+            window.dispatch_event(
+                gpui::PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    ..Default::default()
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                gpui::PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    click_count: 3,
+                    ..Default::default()
+                }),
+                cx,
+            );
+            assert_eq!(input.read(cx).selected_range, 0..17);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn multi_click_selects_words_and_lines() {
         assert_eq!(press_intent(1, false), PressIntent::PlaceCaret);
         assert_eq!(press_intent(1, true), PressIntent::ExtendSelection);
-        assert_eq!(press_intent(2, false), PressIntent::SelectAll);
-        // A triple click keeps the whole field, so holding the button down
-        // through a third click does not change what is selected.
-        assert_eq!(press_intent(3, false), PressIntent::SelectAll);
-        // The whole field wins over the shift modifier: shift has nothing
-        // left to extend once everything is selected.
-        assert_eq!(press_intent(2, true), PressIntent::SelectAll);
-        // Only a caret press arms the drag. A select-all that armed it would
-        // collapse to a drag selection on the next mouse move.
-        assert!(press_intent(1, false).arms_drag());
-        assert!(press_intent(1, true).arms_drag());
-        assert!(!press_intent(2, false).arms_drag());
+        assert_eq!(press_intent(2, false), PressIntent::Word);
+        assert_eq!(press_intent(3, false), PressIntent::Line);
+        assert_eq!(word_range("hello café world", 8), 6..11);
+        assert_eq!(word_range("hello world", 3), 0..5);
     }
 
     #[test]
@@ -8544,7 +9161,7 @@ mod tests {
     }
 
     #[test]
-    fn slash_token_only_opens_the_prompt() {
+    fn slash_token_opens_at_prose_boundaries() {
         assert_eq!(
             slash_token("/comp", 5),
             Some(MentionToken {
@@ -8561,7 +9178,7 @@ mod tests {
             })
         );
         // Not at offset 0 → prose, not a command.
-        assert!(slash_token("run /compact", 12).is_none());
+        assert_eq!(slash_token("run /compact", 12).unwrap().range, 4..12);
         // Cursor past the command word (typing the argument) → closed.
         assert!(slash_token("/goal ship it", 10).is_none());
         // A typed absolute path is not a command.
@@ -8655,12 +9272,14 @@ mod tests {
                 basename: "mod.rs".into(),
                 path: "foo/mod.rs".into(),
                 is_dir: false,
+                prefix: '@',
             },
             FileMentionLink {
                 range: 0..0,
                 basename: "oomod.rs".into(),
                 path: "bar/oomod.rs".into(),
                 is_dir: false,
+                prefix: '@',
             },
         ];
         assert_eq!(

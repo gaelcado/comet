@@ -169,10 +169,13 @@ impl CodexHarness {
     /// (custom `~/.codex/prompts` are NOT exposed; the TUI-only built-ins
     /// aren't either). Skills are what the codex TUI itself surfaces as
     /// slash-invocables, listed per-cwd and deduped by name here.
-    async fn discover_commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
+    async fn discover_skills(&self, cwd: Option<&std::path::Path>) -> Result<Value, HarnessError> {
         let exe = self.resolve_executable()?;
         let mut cmd = Command::new(&exe);
         cmd.arg("app-server");
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
+        }
         crate::compose_child_path(&mut cmd, &exe);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -207,8 +210,11 @@ impl CodexHarness {
                 )
                 .await?;
             client.notify("initialized", None);
-            let skills = client.request("skills/list", json!({})).await?;
-            Ok::<Vec<SlashCommand>, HarnessError>(parse_skill_commands(&skills))
+            let params = cwd
+                .map(|cwd| json!({ "cwds": [cwd], "forceReload": true }))
+                .unwrap_or_else(|| json!({}));
+            let skills = client.request("skills/list", params).await?;
+            Ok::<Value, HarnessError>(skills)
         };
         let result = tokio::time::timeout(Duration::from_secs(10), discovery).await;
         shutdown_child(&mut child, self.kill_grace).await;
@@ -473,6 +479,47 @@ fn parse_model_list_page(result: &Value) -> (Vec<(Model, bool)>, Option<String>)
 /// same skill appears under every root, so dedupe by name keeping first
 /// appearance order. The interface's shortDescription is picker-sized; the
 /// top-level description is a model-facing paragraph, kept only as fallback.
+fn parse_skills(result: &Value) -> Vec<zeron_proto::invocation::Skill> {
+    let mut seen = HashSet::new();
+    result
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|group| {
+            group
+                .get("skills")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|skill| {
+            let name = skill.get("name")?.as_str()?.trim();
+            let path = skill.get("path")?.as_str()?;
+            if name.is_empty()
+                || path.is_empty()
+                || !seen.insert((name.to_owned(), path.to_owned()))
+            {
+                return None;
+            }
+            Some(zeron_proto::invocation::Skill {
+                name: name.to_owned(),
+                path: path.to_owned(),
+                description: skill
+                    .pointer("/interface/shortDescription")
+                    .and_then(Value::as_str)
+                    .or_else(|| skill.get("description").and_then(Value::as_str))
+                    .unwrap_or_default()
+                    .to_owned(),
+                enabled: skill
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+            })
+        })
+        .collect()
+}
+
 fn parse_skill_commands(result: &Value) -> Vec<SlashCommand> {
     let mut seen = std::collections::HashSet::new();
     let mut commands = Vec::new();
@@ -565,11 +612,24 @@ impl Harness for CodexHarness {
         }
     }
 
+    async fn skills(
+        &self,
+        cwd: &std::path::Path,
+    ) -> Result<Option<Vec<zeron_proto::invocation::Skill>>, HarnessError> {
+        self.discover_skills(Some(cwd))
+            .await
+            .map(|value| Some(parse_skills(&value)))
+    }
+
     /// Skills from a short-lived `skills/list` probe (see
-    /// [`Self::discover_commands`]); cached on success.
+    /// [`Self::discover_skills`]); cached on success.
     async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
         self.commands
-            .get_or_try_init(|| self.discover_commands())
+            .get_or_try_init(|| async {
+                self.discover_skills(None)
+                    .await
+                    .map(|value| parse_skill_commands(&value))
+            })
             .await
             .cloned()
     }
@@ -1764,5 +1824,22 @@ mod tests {
         r.note_started("t-3".into());
         assert_eq!(r.active.as_deref(), Some("t-3"));
         assert!(r.is_completed("t-2"));
+    }
+}
+
+#[cfg(test)]
+mod skill_discovery_tests {
+    use super::*;
+    #[test]
+    fn preserves_paths_enabled_state_and_duplicate_names() {
+        let value = json!({"data": [{"skills": [
+            {"name":"review", "path":"/a/SKILL.md", "description":"A", "enabled":true},
+            {"name":"review", "path":"/b/SKILL.md", "description":"B", "enabled":false},
+            {"name":"review", "path":"/a/SKILL.md", "description":"duplicate"}
+        ]}]});
+        let skills = parse_skills(&value);
+        assert_eq!(skills.len(), 2);
+        assert_ne!(skills[0].path, skills[1].path);
+        assert!(!skills[1].enabled);
     }
 }
