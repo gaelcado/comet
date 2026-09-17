@@ -5,10 +5,44 @@
 //! fade: over a see-through blurred backdrop no painted overlay can fade
 //! content out, because "what is behind the window" is not a paintable color.
 
+use std::cell::RefCell;
+
 use gpui::{
-    AnyElement, App, Bounds, EdgeFade, Element, GlobalElementId, InspectorElementId, IntoElement,
-    LayoutId, Pixels, ScrollHandle, Window, px,
+    AnyElement, App, Bounds, EdgeFade, Element, Global, GlobalElementId, InspectorElementId,
+    IntoElement, LayoutId, Pixels, ScrollHandle, Window, WindowId, px,
 };
+
+// GPUI replaces rather than composes nested EdgeFade scopes. Keep the active
+// wrapper scopes during painting so a label can retain its scroll container's
+// vertical fade. Window IDs prevent a nested draw of another window inheriting it.
+#[derive(Default)]
+struct PaintFades(RefCell<Vec<(WindowId, EdgeFade)>>);
+
+impl Global for PaintFades {}
+
+fn active_fade(window: &Window, cx: &App) -> Option<EdgeFade> {
+    cx.try_global::<PaintFades>()?
+        .0
+        .borrow()
+        .iter()
+        .rev()
+        .find(|(id, _)| *id == window.window_handle().window_id())
+        .map(|(_, fade)| *fade)
+}
+
+fn inherit_vertical_fade(mut label: EdgeFade, parent: EdgeFade) -> EdgeFade {
+    if !label.top && !label.bottom && (parent.top || parent.bottom) {
+        label.bounds.origin.y = parent.bounds.origin.y;
+        label.bounds.size.height = parent.bounds.size.height;
+        label.top = parent.top;
+        label.bottom = parent.bottom;
+        // Keep the label's horizontal band independent of the container's
+        // vertical band, including asymmetric top/bottom overrides.
+        label.band_top = Some(parent.band_top.unwrap_or(parent.band));
+        label.band_bottom = Some(parent.band_bottom.unwrap_or(parent.band));
+    }
+    label
+}
 
 /// Fade the child's content at its own edges: `top`/`bottom` select which
 /// edges (pass the "is there hidden overflow" flags), `band` is the ramp
@@ -218,7 +252,24 @@ impl Element for EdgeFaded {
                 right,
             }
         });
-        window.with_edge_fade(fade, |window| self.child.paint(window, cx));
+        let Some(mut fade) = fade else {
+            self.child.paint(window, cx);
+            return;
+        };
+        if self.smooth_overflow_x
+            && let Some(parent) = active_fade(window, cx)
+        {
+            fade = inherit_vertical_fade(fade, parent);
+        }
+        if !cx.has_global::<PaintFades>() {
+            cx.set_global(PaintFades::default());
+        }
+        cx.global::<PaintFades>()
+            .0
+            .borrow_mut()
+            .push((window.window_handle().window_id(), fade));
+        window.with_edge_fade(Some(fade), |window| self.child.paint(window, cx));
+        cx.global::<PaintFades>().0.borrow_mut().pop();
     }
 }
 
@@ -231,7 +282,123 @@ fn label_fade_outset(overflow: f32, band: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::label_fade_outset;
+    use super::*;
+    use gpui::{AppContext, Context, Render, Styled, div, prelude::*};
+    use std::rc::Rc;
+
+    #[gpui::test]
+    fn painted_label_retains_scroll_fade_across_overflow_transitions(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        struct Fixture {
+            width: f32,
+            top: bool,
+            bottom: bool,
+            observed: Rc<RefCell<Vec<Option<EdgeFade>>>>,
+        }
+        impl Render for Fixture {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let probe = |width: f32| {
+                    let observed = self.observed.clone();
+                    gpui::canvas(
+                        |_, _, _| (),
+                        move |_, _, window, cx| {
+                            observed.borrow_mut().push(active_fade(window, cx));
+                        },
+                    )
+                    .w(px(width))
+                    .h(px(20.0))
+                    .flex_none()
+                };
+                let scroll = ScrollHandle::new();
+                let label = edge_faded(
+                    20.0,
+                    false,
+                    false,
+                    div()
+                        .id("label")
+                        .w(px(self.width))
+                        .overflow_hidden()
+                        .track_scroll(&scroll)
+                        .flex()
+                        .child(probe(200.0)),
+                )
+                .fade_right(true)
+                .fade_label_overflow(&scroll);
+                div()
+                    .child(
+                        edge_faded(
+                            24.0,
+                            self.top,
+                            self.bottom,
+                            div()
+                                .w(px(300.0))
+                                .h(px(100.0))
+                                .child(label)
+                                .child(probe(20.0)),
+                        )
+                        .band_top(12.0)
+                        .band_bottom(30.0)
+                        .inset_top(7.0)
+                        .outset_bottom(9.0),
+                    )
+                    .child(probe(20.0))
+            }
+        }
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let handle = cx.add_window(|_, _| Fixture {
+            width: 80.0,
+            top: true,
+            bottom: true,
+            observed: observed.clone(),
+        });
+        for (top, bottom) in [(true, true), (true, false), (false, true), (false, false)] {
+            for width in [80.0, 240.0, 80.0] {
+                handle
+                    .update(cx, |view, _, cx| {
+                        view.width = width;
+                        view.top = top;
+                        view.bottom = bottom;
+                        cx.notify();
+                    })
+                    .unwrap();
+                observed.borrow_mut().clear();
+                cx.update_window(handle.into(), |_, window, cx| {
+                    window.draw(cx).clear();
+                    assert!(active_fade(window, cx).is_none(), "paint scope leaked");
+                })
+                .unwrap();
+                let seen = observed.borrow();
+                let [label, sibling, outside] = &seen[seen.len() - 3..] else {
+                    unreachable!()
+                };
+                assert!(outside.is_none(), "fade leaked outside scroll container");
+                let overflowing = width < 200.0;
+                if top || bottom {
+                    let label = label.unwrap();
+                    let sibling = sibling.unwrap();
+                    assert_eq!((label.top, label.bottom), (top, bottom));
+                    assert_eq!(label.bounds.origin.y, sibling.bounds.origin.y);
+                    assert_eq!(label.bounds.size.height, sibling.bounds.size.height);
+                    assert_eq!(label.band_top, Some(px(12.0)));
+                    assert_eq!(label.band_bottom, Some(px(30.0)));
+                    assert_eq!(label.right, overflowing);
+                    assert!(!sibling.right, "label fade leaked to a sibling");
+                    if overflowing {
+                        assert_eq!(label.band, px(20.0));
+                        assert_eq!(label.bounds.size.width, px(width));
+                    }
+                } else {
+                    assert!(sibling.is_none());
+                    assert_eq!(label.is_some(), overflowing);
+                    if let Some(label) = label {
+                        assert!(!label.top && !label.bottom);
+                        assert!(label.right);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn label_fade_enters_continuously_and_settles_at_one_band() {
