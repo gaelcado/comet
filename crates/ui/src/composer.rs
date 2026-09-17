@@ -1175,7 +1175,11 @@ impl TextProjection {
                 .into_iter()
                 .map(|(range, invocation)| FileMentionLink {
                     range,
-                    basename: invocation.name().to_string(),
+                    basename: if icons && invocation.prefix() == '$' {
+                        skill_display_name(invocation.name())
+                    } else {
+                        invocation.name().to_string()
+                    },
                     path: invocation.detail(),
                     is_dir: false,
                     prefix: invocation.prefix(),
@@ -4395,6 +4399,22 @@ fn invocation_token(text: &str, cursor: usize, prefix: char) -> Option<MentionTo
     })
 }
 
+/// Human-readable presentation only; invocation names and paths stay canonical.
+fn skill_display_name(name: &str) -> String {
+    name.rsplit(':')
+        .next()
+        .unwrap_or(name)
+        .split(|c: char| c == '-' || c == '_' || c.is_whitespace())
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            let first = chars.next().unwrap();
+            first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[derive(Debug, Clone)]
 struct InvocationCandidate {
     name: String,
@@ -6176,11 +6196,11 @@ impl Composer {
                     continue;
                 };
                 let selected = self.slash.active == Some(row_ix);
-                let name: SharedString = format!(
-                    "{}{}",
-                    if self.slash.skill { '$' } else { '/' },
-                    command.name
-                )
+                let name: SharedString = if command.invocation.prefix() == '$' {
+                    skill_display_name(&command.name)
+                } else {
+                    format!("/{}", command.name)
+                }
                 .into();
                 let mut description = command.description.clone();
                 if let Some(hint) = &command.input_hint {
@@ -8991,7 +9011,7 @@ mod tests {
     #[test]
     fn rich_projection_keeps_unicode_offsets_and_atomic_invocations() {
         let invocation = zeron_proto::invocation::Invocation::Skill {
-            name: "review".into(),
+            name: "bla-bla:bla-bla".into(),
             path: "/repo/SKILL.md".into(),
         };
         let raw = format!("**café** {} end\nactive", invocation.link());
@@ -9001,7 +9021,7 @@ mod tests {
         assert!(
             projection
                 .display
-                .contains(&format!("{MENTION_ICON_SLOT}review"))
+                .contains(&format!("{MENTION_ICON_SLOT}Bla\u{00A0}Bla"))
         );
         assert_eq!(projection.mentions.len(), 1);
         let (link, display) = &projection.mentions[0];
@@ -9016,7 +9036,7 @@ mod tests {
             Some(link.range.start)
         );
         let (sent, _) = sent_mention_display(&raw).unwrap();
-        assert!(sent.contains("$review"));
+        assert!(sent.contains("$bla-bla:bla-bla"));
         assert!(sent.starts_with("**café**"));
     }
 
