@@ -5,6 +5,22 @@ Markdown bullets/emphasis and word selection. Full picker/animation visual QA
 remains incomplete because UI automation intermittently rejects input. The work is prepared for draft PR review. The running UI and engine must
 both use this build.
 
+## Inline icon and model menu follow-up
+
+- File/folder chips now use the existing Symbols identity icons; skill chips
+  and skill completion rows use the shared Solar Widget icon. Commands retain
+  their slash marker. Icon slots share the text projection's source mapping,
+  including selection and IME, while clipboard/transcript text stays readable.
+- Model menus now use the shared measured trigger geometry in both new and
+  existing chats, with end alignment, above/below placement, a capped card,
+  and separate model-list/settings-tray budgets.
+- Passed all 1,023 UI library tests with `--test-threads=1`, including new icon
+  slot/IME and menu budget regressions. `cargo build --locked -p zeron` passed.
+- Native isolated preview verified Rust/CSS file icons, the skill icon and
+  slash chip; the model menu stays aligned and shortens on window resize,
+  with the settings tray visible and the last model reachable by scrolling.
+  Broader theme/platform/animation checks remain pending.
+
 ## Rebase validation (2026-09-17)
 
 - Rebased onto `origin/main` at `8ee7a622`, preserving upstream Enter/stop

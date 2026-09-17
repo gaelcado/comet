@@ -860,15 +860,12 @@ const UNDO_COALESCE: Duration = Duration::from_millis(700);
 /// Cap on retained undo steps — a long-lived composer must not grow forever.
 const UNDO_LIMIT: usize = 200;
 
-/// The literal `@` a chip displays before its file name. Projected as TEXT so
-/// it shapes, wraps, and hit-tests with the label — the earlier SVG icons
-/// painted into a reserved whitespace slot never sat right at text size
-/// (user report). Chips read as inline code: `@name` in the mono font over
-/// the code wash.
-
 const MENTION_TOOLTIP_DELAY: Duration = Duration::from_millis(420);
 const MENTION_TOOLTIP_HEIGHT: f32 = 24.0;
 const MENTION_SIDE_PAD: &str = "\u{00A0}";
+// Real nonbreaking spaces shape predictably in the chip's mono font. Reserve
+// two cells for the icon and a third for separation from the label.
+const MENTION_ICON_SLOT: &str = "\u{00A0}\u{00A0}\u{00A0}";
 /// A private URI scheme keeps file mentions distinguishable from ordinary
 /// Markdown links pasted into the composer.
 const FILE_MENTION_SCHEME: &str = "zeron-file:";
@@ -1164,10 +1161,14 @@ struct MentionHit {
 
 impl TextProjection {
     fn new(raw: &str) -> Self {
-        Self::rich(raw, None)
+        Self::project(raw, None, false)
     }
 
     fn rich(raw: &str, active: Option<Range<usize>>) -> Self {
+        Self::project(raw, active, true)
+    }
+
+    fn project(raw: &str, active: Option<Range<usize>>, icons: bool) -> Self {
         let mut links = file_mention_links(raw);
         links.extend(
             zeron_proto::invocation::invocation_links(raw)
@@ -1196,9 +1197,14 @@ impl TextProjection {
             .zip(labels)
             .map(|(link, label)| {
                 let label = label.replace(' ', "\u{00A0}");
+                let marker = if icons && link.prefix != '/' {
+                    MENTION_ICON_SLOT.to_owned()
+                } else {
+                    link.prefix.to_string()
+                };
                 (
                     link.range.clone(),
-                    format!("{MENTION_SIDE_PAD}{}{label}{MENTION_SIDE_PAD}", link.prefix),
+                    format!("{MENTION_SIDE_PAD}{marker}{label}{MENTION_SIDE_PAD}"),
                     Some(link),
                 )
             })
@@ -3757,6 +3763,7 @@ impl Render for MentionPathTooltip {
 struct ComposerTextPrepaint {
     cursor: Option<PaintQuad>,
     mention_quads: Vec<PaintQuad>,
+    mention_icons: Vec<gpui::AnyElement>,
     mention_hits: Vec<MentionHit>,
     selection_quads: Vec<PaintQuad>,
     /// Completion preview: window-space origin of the end-of-text caret plus
@@ -3845,7 +3852,25 @@ impl gpui::Element for ComposerTextElement {
 
         let mut mention_quads = Vec::new();
         let mut mention_hits = Vec::new();
+        let mut icon_specs = Vec::new();
         for (mention, display) in &input.projection.mentions {
+            if mention.prefix != '/' {
+                let slot_start = display.start + MENTION_SIDE_PAD.len();
+                let slot_end = slot_start + MENTION_SIDE_PAD.len() * 2;
+                if let Some(slot) = input.bounds_for_display_range(slot_start..slot_end).first() {
+                    let icon_size = px(14.0).min(slot.size.width);
+                    let icon_bounds = Bounds::new(
+                        point(
+                            origin.x + slot.left() + (slot.size.width - icon_size) / 2.0,
+                            origin.y + slot.top() + (slot.size.height - icon_size) / 2.0,
+                        ),
+                        size(icon_size, icon_size),
+                    );
+                    if icon_bounds.intersects(&paint_bounds) {
+                        icon_specs.push((mention.clone(), icon_bounds));
+                    }
+                }
+            }
             let target = MentionTooltipTarget {
                 range: mention.range.clone(),
                 path: SharedString::from(format!(
@@ -3980,9 +4005,38 @@ impl gpui::Element for ComposerTextElement {
                     .point_for_index(input.content.len())
                     .map(|p| (point(origin.x + p.x, origin.y + p.y), g))
             });
+        let theme = Theme::of(cx).clone();
+        let mention_icons = icon_specs
+            .into_iter()
+            .map(|(mention, bounds)| {
+                let mut icon = if mention.prefix == '$' {
+                    crate::icons::icon(crate::icons::WIDGET)
+                        .size(bounds.size.width)
+                        .text_color(theme.code_text)
+                        .into_any_element()
+                } else {
+                    let identity = if mention.is_dir {
+                        crate::file_icons::FileIconIdentity::directory(&mention.path, false)
+                    } else {
+                        crate::file_icons::FileIconIdentity::file(&mention.path)
+                    };
+                    crate::file_icons::icon(identity, theme.appearance)
+                        .size(bounds.size.width)
+                        .into_any_element()
+                };
+                icon.prepaint_as_root(
+                    bounds.origin,
+                    bounds.size.map(gpui::AvailableSpace::Definite),
+                    window,
+                    cx,
+                );
+                icon
+            })
+            .collect();
         ComposerTextPrepaint {
             cursor,
             mention_quads,
+            mention_icons,
             mention_hits,
             selection_quads,
             ghost,
@@ -4039,6 +4093,9 @@ impl gpui::Element for ComposerTextElement {
                 }
                 for quad in prepaint.selection_quads.drain(..) {
                     window.paint_quad(quad);
+                }
+                for icon in &mut prepaint.mention_icons {
+                    icon.paint(window, cx);
                 }
                 let mut y = bounds.top() - px(scroll);
                 for (line_ix, line) in lines.iter().enumerate() {
@@ -6110,9 +6167,13 @@ impl Composer {
                                 .items_center()
                                 .gap(px(8.0))
                                 .child(
-                                    crate::icons::icon(crate::icons::COMMAND)
-                                        .size(px(14.0))
-                                        .text_color(theme.text_muted),
+                                    crate::icons::icon(if command.invocation.prefix() == '$' {
+                                        crate::icons::WIDGET
+                                    } else {
+                                        crate::icons::COMMAND
+                                    })
+                                    .size(px(14.0))
+                                    .text_color(theme.text_muted),
                                 )
                                 .child(
                                     div()
@@ -8834,6 +8895,61 @@ mod tests {
         assert!(server_in.try_recv().is_err());
     }
 
+    #[gpui::test]
+    fn inline_icon_slots_preserve_chip_selection_and_ime(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        let raw = format!(
+            "{} {} {}",
+            local_file_link("src/main.rs", false),
+            zeron_proto::invocation::Invocation::Skill {
+                name: "review".into(),
+                path: "/repo/SKILL.md".into(),
+            }
+            .link(),
+            zeron_proto::invocation::Invocation::Command {
+                name: "help".into()
+            }
+            .link(),
+        );
+        let input = handle
+            .read_with(cx, |composer, _| composer.input.clone())
+            .unwrap();
+        input.update(cx, |input, cx| input.set_text(&raw, cx));
+        cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        input.update(cx, |input, _| {
+            assert_eq!(input.projection.mentions.len(), 3);
+            for (mention, display) in &input.projection.mentions {
+                let label = &input.projection.display[display.clone()];
+                if mention.prefix == '/' {
+                    assert!(label.contains("/help"));
+                } else {
+                    assert!(label.starts_with(&format!("{MENTION_SIDE_PAD}{MENTION_ICON_SLOT}")));
+                    let start = display.start + MENTION_SIDE_PAD.len();
+                    let bounds =
+                        input.bounds_for_display_range(start..start + MENTION_SIDE_PAD.len() * 2);
+                    assert_eq!(bounds.len(), 1);
+                    assert!(bounds[0].size.width >= px(12.0));
+                    assert_eq!(input.projection.display_to_raw(start), mention.range.start);
+                    assert_eq!(
+                        input
+                            .projection
+                            .normalize_range(mention.range.start + 1..mention.range.end - 1),
+                        mention.range
+                    );
+                }
+            }
+            let display = input.projection.display.clone();
+            input.marked_range = Some(raw.len()..raw.len());
+            input.refresh_projection();
+            assert_eq!(
+                input.projection.display, display,
+                "IME must retain icon slots"
+            );
+            assert_eq!(input.text(), raw);
+        });
+    }
+
     #[test]
     fn rich_projection_keeps_unicode_offsets_and_atomic_invocations() {
         let invocation = zeron_proto::invocation::Invocation::Skill {
@@ -8844,7 +8960,11 @@ mod tests {
         let active = raw.rfind('\n').unwrap() + 1..raw.len();
         let projection = TextProjection::rich(&raw, Some(active));
         assert!(projection.display.starts_with("café"));
-        assert!(projection.display.contains("$review"));
+        assert!(
+            projection
+                .display
+                .contains(&format!("{MENTION_ICON_SLOT}review"))
+        );
         assert_eq!(projection.mentions.len(), 1);
         let (link, display) = &projection.mentions[0];
         assert_eq!(projection.raw_to_display(link.range.start), display.start);

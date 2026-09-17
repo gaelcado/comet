@@ -541,7 +541,6 @@ pub struct Pickers {
     setting_hover_pending: Option<ModelSetting>,
     setting_hover_pointer: Option<gpui::Point<gpui::Pixels>>,
     setting_hover_task: Option<Task<()>>,
-    model_space_below: Option<f32>,
     setting_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     setting_scroll: gpui::ScrollHandle,
     harnesses: Loadable<Vec<HarnessDescriptor>>,
@@ -731,7 +730,6 @@ impl Pickers {
             setting_hover_pending: None,
             setting_hover_pointer: None,
             setting_hover_task: None,
-            model_space_below: None,
             setting_bounds: None,
             setting_scroll: gpui::ScrollHandle::new(),
             harnesses: Loadable::Idle,
@@ -2989,6 +2987,7 @@ impl Pickers {
         let theme = Theme::of(cx).for_popup();
         popover::popover_card_flush(&theme)
             .w(px(width))
+            .max_h(px(self.menu_geometry().height))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.on_key_down(event, window, cx)
@@ -3312,21 +3311,8 @@ impl Pickers {
     /// with a ⌘N jump chip and a star toggle trailing. Searching hides the
     /// rail and spans every harness.
     fn render_harness_model_popover(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        // Compact tabbed layout (user request, modeled on the referenced
-        // picker): the model LIST gets a fixed band of roughly seven compact
-        // rows; the pinned traits tray below sizes to its sections.
-        let list_height = if self.state.read(cx).selected_chat.is_none() {
-            // Keep the settings tray visible while the model list scrolls
-            // within the room below the new-chat composer.
-            let tray_height = if self.setting_groups(cx).is_empty() {
-                0.0
-            } else {
-                self.setting_groups(cx).len() as f32 * 32.0 + 7.0
-            };
-            (self.model_space_below.unwrap_or(640.0) - 82.0 - tray_height).clamp(30.0, 216.0)
-        } else {
-            216.0
-        };
+        let (list_height, tray_height) =
+            model_menu_budgets(self.menu_geometry().height, self.setting_groups(cx).len());
 
         let theme = Theme::of(cx).for_popup();
 
@@ -3631,7 +3617,7 @@ impl Pickers {
                 .border_color(crate::theme::hairline(0.08))
                 // Long option stacks scroll inside the tray rather than
                 // growing the card past the viewport.
-                .max_h(px(236.0))
+                .max_h(px(tray_height))
                 .overflow_y_scroll()
                 .px(px(popover::CARD_INSET))
                 .child(sections)
@@ -4558,6 +4544,19 @@ fn offered_harnesses_impl(list: &[HarnessDescriptor], allow_mock: bool) -> Vec<H
         .collect()
 }
 
+// Tabs and search consume 80px, with 2px reserved for the card border.
+// Keep one model row where possible; long option stacks scroll in the tray.
+fn model_menu_budgets(height: f32, setting_count: usize) -> (f32, f32) {
+    let body = (height - 82.0).max(0.0);
+    let desired_tray = if setting_count == 0 {
+        0.0
+    } else {
+        (setting_count as f32 * 32.0 + 7.0).min(236.0)
+    };
+    let tray = desired_tray.min((body - 30.0).max(0.0));
+    ((body - tray).min(216.0), tray)
+}
+
 /// Attach the (single) open popover above a selector trigger.
 fn attach_overlay(
     chip: gpui::Stateful<gpui::Div>,
@@ -4815,52 +4814,13 @@ impl Render for Pickers {
                     ),
                 ))
             });
-        let new_chat = self.state.read(cx).selected_chat.is_none();
-        let entity = cx.entity().downgrade();
-        let model_chip = model_chip.relative().child(
-            gpui::canvas(
-                move |bounds, window, cx| {
-                    let available = (f32::from(window.viewport_size().height - bounds.bottom())
-                        - 14.0)
-                        .max(0.0);
-                    let _ = entity.update(cx, |this, cx| {
-                        if this.model_space_below != Some(available) {
-                            this.model_space_below = Some(available);
-                            if new_chat && this.open_kind() == Some(PickerKind::HarnessModel) {
-                                cx.notify();
-                                window.request_animation_frame();
-                            }
-                        }
-                    });
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .inset_0(),
+        let model_chip = attach_overlay_end(
+            model_chip,
+            &mut overlay,
+            PickerKind::HarnessModel,
+            "model-popover",
+            closing,
         );
-        let model_chip = if new_chat {
-            if overlay
-                .as_ref()
-                .is_some_and(|(kind, _)| *kind == PickerKind::HarnessModel)
-                && let Some((_, content)) = overlay.take()
-            {
-                model_chip.child(popover::anchored_menu_below_end(
-                    "model-popover",
-                    content,
-                    closing.0,
-                ))
-            } else {
-                model_chip
-            }
-        } else {
-            attach_overlay_end(
-                model_chip,
-                &mut overlay,
-                PickerKind::HarnessModel,
-                "model-popover",
-                closing,
-            )
-        };
         div()
             .flex()
             .flex_row()
@@ -5025,6 +4985,28 @@ mod tests {
                 .read_with(cx, |host, cx| assert!(!host.pickers.read(cx).is_open()))
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn model_menu_height_tracks_both_sides_and_long_settings() {
+        for (top, bottom, viewport, below) in [
+            (80.0, 112.0, 500.0, true),
+            (430.0, 462.0, 500.0, false),
+            (190.0, 222.0, 360.0, false),
+        ] {
+            let geometry = popover::menu_geometry(top, bottom, viewport);
+            assert_eq!(geometry.below, below);
+            for settings in [0, 1, 3, 20] {
+                let (list, tray) = model_menu_budgets(geometry.height, settings);
+                assert!(list + tray + 82.0 <= geometry.height);
+                assert!((0.0..=216.0).contains(&list));
+                assert!((0.0..=236.0).contains(&tray));
+                if settings == 0 {
+                    assert_eq!(tray, 0.0);
+                }
+            }
+        }
+        assert!(model_menu_budgets(180.0, 2).0 < model_menu_budgets(400.0, 2).0);
     }
 
     #[gpui::test]
