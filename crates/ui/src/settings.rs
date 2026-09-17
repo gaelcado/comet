@@ -610,6 +610,8 @@ pub struct UiSettings {
     pub window_geometry: Option<WindowGeometry>,
     /// Submit using Enter or the platform modifier plus Enter.
     pub composer_send_behavior: ComposerSendBehavior,
+    /// Include discovered skills in slash completion; dollar completion always lists skills.
+    pub skills_in_slash_menu: bool,
     pub sidebar_width: f32,
     pub sidebar_collapsed: bool,
     /// Legacy: the grouped-by-project toggle predates spaces (which group by
@@ -780,6 +782,7 @@ impl Default for UiSettings {
             keymap: KeymapConfig::default(),
             escape_stops_active_agent: false,
             composer_send_behavior: ComposerSendBehavior::default(),
+            skills_in_slash_menu: false,
             appshots_enabled: false,
             appshot_sound_enabled: true,
             appshot_destination: crate::appshots::AppshotDestination::Automatic,
@@ -1492,6 +1495,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn slash_skills_are_opt_in_and_persist() {
+        let old: UiSettings = serde_json::from_str("{}").unwrap();
+        assert!(!old.skills_in_slash_menu);
+        let dir = tempfile::tempdir().unwrap();
+        let mut settings = old;
+        settings.skills_in_slash_menu = true;
+        settings.save(dir.path()).unwrap();
+        assert!(UiSettings::load(dir.path()).skills_in_slash_menu);
+    }
+
+    #[test]
     fn composer_send_behavior_is_opt_in_for_old_and_partial_settings() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -2013,6 +2027,7 @@ mod tests {
             },
             escape_stops_active_agent: true,
             composer_send_behavior: ComposerSendBehavior::ModEnter,
+            skills_in_slash_menu: true,
             appshots_enabled: false,
             appshot_sound_enabled: true,
             // The destination is only persisted where Appshots exist (macOS and

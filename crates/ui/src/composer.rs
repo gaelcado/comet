@@ -4459,6 +4459,35 @@ fn mention_error_message(err: &RpcError) -> SharedString {
 }
 
 /// A failed command discovery, translated for the popup.
+fn invocation_candidates(
+    commands: Vec<SlashCommand>,
+    skills: Vec<zeron_proto::invocation::Skill>,
+) -> Vec<InvocationCandidate> {
+    commands
+        .into_iter()
+        .map(|c| InvocationCandidate {
+            input_hint: c.input_hint,
+            name: c.name.clone(),
+            description: c.description,
+            invocation: zeron_proto::invocation::Invocation::Command { name: c.name },
+        })
+        .chain(
+            skills
+                .into_iter()
+                .filter(|s| s.enabled)
+                .map(|s| InvocationCandidate {
+                    input_hint: None,
+                    name: s.name.clone(),
+                    description: format!("{} — {}", s.description, s.path),
+                    invocation: zeron_proto::invocation::Invocation::Skill {
+                        name: s.name,
+                        path: s.path,
+                    },
+                }),
+        )
+        .collect()
+}
+
 fn slash_error_message(err: &RpcError, skill: bool) -> SharedString {
     match err {
         RpcError::UnknownMethod(_) => {
@@ -4749,6 +4778,10 @@ impl Composer {
             }
             ComposerInputEvent::PastedPaths(paths) => this.add_paths(paths.clone(), cx),
         });
+        cx.observe_global::<crate::settings::SettingsStore>(|this, cx| {
+            this.on_input_edited(cx);
+        })
+        .detach();
         let current_key = state.read(cx).selected_chat.clone().unwrap_or_default();
         let mut composer = Self {
             state,
@@ -5850,6 +5883,7 @@ impl Composer {
     fn update_slash(&mut self, text: &str, cursor: usize, cx: &mut Context<Self>) {
         let skill_token = invocation_token(text, cursor, '$');
         let skill = skill_token.is_some();
+        let include_skills = skill || crate::settings::current(cx).skills_in_slash_menu;
         let token = skill_token.or_else(|| slash_token(text, cursor));
         let harness = self.pickers.read(cx).resolved(cx).harness;
         let selected_worktree = match self.pickers.read(cx).checkout_plan() {
@@ -5875,7 +5909,10 @@ impl Composer {
                 params["targetDeviceId"] = device.into();
             }
         }
-        let context = format!("{}:{params}", if skill { "skill" } else { "command" });
+        let context = format!(
+            "{}:{include_skills}:{params}",
+            if skill { "skill" } else { "command" }
+        );
         let context_changed = self.slash.context != context;
         if !context_changed
             && token.as_ref().is_some_and(|token| {
@@ -5924,53 +5961,46 @@ impl Composer {
         self.slash.loading = true;
         self.refilter_slash(cx);
         self.slash_task = Some(cx.spawn(async move |this, cx| {
-            let method = if skill {
-                methods::LIST_SKILLS
-            } else {
-                methods::LIST_COMMANDS
-            };
-            let result = engine.client().call(method, params).await;
+            let result = async {
+                let commands = async {
+                    if skill {
+                        return Ok(Vec::new());
+                    }
+                    let value = engine
+                        .client()
+                        .call(methods::LIST_COMMANDS, params.clone())
+                        .await?;
+                    serde_json::from_value::<Vec<SlashCommand>>(value)
+                        .map_err(|e| RpcError::Failed(e.to_string()))
+                };
+                let skills = async {
+                    if !include_skills {
+                        return Ok(None);
+                    }
+                    let value = engine
+                        .client()
+                        .call(methods::LIST_SKILLS, params.clone())
+                        .await?;
+                    serde_json::from_value::<Option<Vec<zeron_proto::invocation::Skill>>>(value)
+                        .map_err(|e| RpcError::Failed(e.to_string()))
+                };
+                let (commands, skills) = futures::join!(commands, skills);
+                let skills = skills?;
+                let supported = !skill || skills.is_some();
+                Ok::<_, RpcError>((
+                    invocation_candidates(commands?, skills.unwrap_or_default()),
+                    supported,
+                ))
+            }
+            .await;
             this.update(cx, |composer, cx| {
                 if composer.slash.request != request || composer.slash.context != context {
                     return;
                 }
                 composer.slash.loading = false;
-                let decoded = result.and_then(|value| {
-                    if skill {
-                        serde_json::from_value::<Option<Vec<zeron_proto::invocation::Skill>>>(value)
-                            .map(|skills| {
-                                composer.slash.supported = skills.is_some();
-                                skills
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .filter(|s| s.enabled)
-                                    .map(|s| InvocationCandidate {
-                                        input_hint: None,
-                                        name: s.name.clone(),
-                                        description: format!("{} — {}", s.description, s.path),
-                                        invocation: zeron_proto::invocation::Invocation::Skill {
-                                            name: s.name,
-                                            path: s.path,
-                                        },
-                                    })
-                                    .collect()
-                            })
-                    } else {
-                        serde_json::from_value::<Vec<SlashCommand>>(value).map(|commands| {
-                            commands
-                                .into_iter()
-                                .map(|c| InvocationCandidate {
-                                    input_hint: c.input_hint,
-                                    name: c.name.clone(),
-                                    description: c.description,
-                                    invocation: zeron_proto::invocation::Invocation::Command {
-                                        name: c.name,
-                                    },
-                                })
-                                .collect()
-                        })
-                    }
-                    .map_err(|e| RpcError::Failed(e.to_string()))
+                let decoded = result.map(|(candidates, supported)| {
+                    composer.slash.supported = supported;
+                    candidates
                 });
                 match decoded {
                     Ok(candidates) => {
@@ -6124,12 +6154,16 @@ impl Composer {
                             } else {
                                 "This agent does not advertise skills"
                             }
+                        } else if crate::settings::current(cx).skills_in_slash_menu {
+                            "No commands or skills available"
                         } else {
                             "This agent has no slash commands"
                         }
                     } else {
                         if self.slash.skill {
                             "No matching skills"
+                        } else if crate::settings::current(cx).skills_in_slash_menu {
+                            "No matching commands or skills"
                         } else {
                             "No matching commands"
                         }
@@ -6142,8 +6176,12 @@ impl Composer {
                     continue;
                 };
                 let selected = self.slash.active == Some(row_ix);
-                let name: SharedString =
-                    format!("{}{}", command.invocation.prefix(), command.name).into();
+                let name: SharedString = format!(
+                    "{}{}",
+                    if self.slash.skill { '$' } else { '/' },
+                    command.name
+                )
+                .into();
                 let mut description = command.description.clone();
                 if let Some(hint) = &command.input_hint {
                     if description.is_empty() {
@@ -9278,6 +9316,85 @@ mod tests {
             mention_token("See (@lib", 9).map(|token| token.range),
             Some(5..9)
         );
+    }
+
+    #[gpui::test]
+    fn changing_slash_skill_preference_invalidates_open_completion(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, _, cx| {
+                composer
+                    .input
+                    .update(cx, |input, cx| input.set_text("/review", cx));
+                composer.on_input_edited(cx);
+                composer
+                    .slash_cache
+                    .insert(composer.slash.context.clone(), vec![]);
+            })
+            .unwrap();
+        let (context, request) = handle
+            .read_with(cx, |composer, _| {
+                (composer.slash.context.clone(), composer.slash.request)
+            })
+            .unwrap();
+        cx.update(|cx| {
+            crate::settings::update(crate::settings::SavePolicy::Immediate, cx, |s| {
+                s.skills_in_slash_menu = true
+            });
+        });
+        cx.run_until_parked();
+        handle
+            .read_with(cx, |composer, _| {
+                assert_ne!(composer.slash.context, context);
+                assert!(
+                    composer.slash.request > request,
+                    "late responses must be rejected"
+                );
+                assert!(composer.slash_cache.is_empty());
+                assert_eq!(composer.slash.token.as_ref().unwrap().query, "review");
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn combined_invocations_preserve_skill_identity_and_command_collisions() {
+        use zeron_proto::invocation::{Invocation, Skill};
+        let commands = vec![SlashCommand {
+            name: "review".into(),
+            description: "Command".into(),
+            input_hint: None,
+        }];
+        let skills = vec![
+            Skill {
+                name: "review".into(),
+                path: "/a/SKILL.md".into(),
+                description: "A".into(),
+                enabled: true,
+            },
+            Skill {
+                name: "review".into(),
+                path: "/b/SKILL.md".into(),
+                description: "B".into(),
+                enabled: true,
+            },
+            Skill {
+                name: "hidden".into(),
+                path: "/c/SKILL.md".into(),
+                description: String::new(),
+                enabled: false,
+            },
+        ];
+        assert_eq!(invocation_candidates(commands.clone(), vec![]).len(), 1);
+        let dollar = invocation_candidates(vec![], skills.clone());
+        assert_eq!(dollar.len(), 2);
+        let slash = invocation_candidates(commands, skills);
+        assert_eq!(slash.len(), 3);
+        assert!(matches!(slash[0].invocation, Invocation::Command { .. }));
+        for candidate in &slash[1..] {
+            assert!(matches!(candidate.invocation, Invocation::Skill { .. }));
+            assert!(candidate.invocation.prompt_text().contains("SKILL.md"));
+        }
+        assert_ne!(slash[1].invocation, slash[2].invocation);
     }
 
     #[test]

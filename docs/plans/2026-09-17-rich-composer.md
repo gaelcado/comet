@@ -5,6 +5,20 @@ Markdown bullets/emphasis and word selection. Full picker/animation visual QA
 remains incomplete because UI automation intermittently rejects input. The work is prepared for draft PR review. The running UI and engine must
 both use this build.
 
+## Optional slash-menu skills
+
+- Settings → Shortcuts now has **Show skills in / menu**, off by default.
+  `$` always lists skills; opting in includes typed skills alongside `/`
+  commands. Skill chips preserve their canonical path regardless of trigger.
+- Removed Codex's legacy skills-to-commands conversion. Codex app-server does
+  not advertise a separate command catalog, so its `/` menu is empty when the
+  toggle is off. Providers' advertised command catalogs remain intact.
+- The preference persists locally and invalidates completion caches and
+  in-flight requests immediately. Restore defaults turns it off.
+- Passed 1,026 UI and 148 harness library tests, the Codex discovery integration
+  regression, and `cargo build --locked -p zeron`. Native settings interaction
+  could not be completed because UI automation returned `noWindowsAvailable`.
+
 ## Inline icon and model menu follow-up
 
 - File/folder chips now use the existing Symbols identity icons; skill chips

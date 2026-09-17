@@ -54,7 +54,7 @@ use tokio::sync::mpsc;
 
 use zeron_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ModelOption, ModelOptionChoice, ReasoningLevel,
-    RunRequest, SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
+    RunRequest, SteeringMode, UserInputAnswer, UserInputQuestion,
 };
 
 use crate::jsonrpc::{Incoming, RpcClient};
@@ -109,9 +109,6 @@ pub struct CodexHarness {
     interrupt_grace: Duration,
     /// Grace between SIGTERM and SIGKILL.
     kill_grace: Duration,
-    /// Command discovery cache: only a successful probe is cached, so a
-    /// broken CLI retries on the next picker open (ACP-harness parity).
-    commands: tokio::sync::OnceCell<Vec<SlashCommand>>,
 }
 
 impl Default for CodexHarness {
@@ -120,7 +117,6 @@ impl Default for CodexHarness {
             executable: None,
             interrupt_grace: Duration::from_secs(2),
             kill_grace: Duration::from_secs(3),
-            commands: tokio::sync::OnceCell::new(),
         }
     }
 }
@@ -167,8 +163,8 @@ impl CodexHarness {
     /// Short-lived discovery probe: a `codex app-server` handshake followed by
     /// `skills/list` — the only invocable-listing method the 0.146.x wire has
     /// (custom `~/.codex/prompts` are NOT exposed; the TUI-only built-ins
-    /// aren't either). Skills are what the codex TUI itself surfaces as
-    /// slash-invocables, listed per-cwd and deduped by name here.
+    /// aren't either). Preserve each skill's path and project context;
+    /// skills are separate from the slash-command catalog.
     async fn discover_skills(&self, cwd: Option<&std::path::Path>) -> Result<Value, HarnessError> {
         let exe = self.resolve_executable()?;
         let mut cmd = Command::new(&exe);
@@ -475,10 +471,9 @@ fn parse_model_list_page(result: &Value) -> (Vec<(Model, bool)>, Option<String>)
     (models, next_cursor)
 }
 
-/// `skills/list` result → picker commands. `data` groups skills by cwd; the
-/// same skill appears under every root, so dedupe by name keeping first
-/// appearance order. The interface's shortDescription is picker-sized; the
-/// top-level description is a model-facing paragraph, kept only as fallback.
+/// `skills/list` result → typed skills. Keep distinct paths for duplicate names.
+/// Identical name/path pairs are deduplicated across cwd groups. The interface's
+/// shortDescription is picker-sized; the model-facing description is a fallback.
 fn parse_skills(result: &Value) -> Vec<zeron_proto::invocation::Skill> {
     let mut seen = HashSet::new();
     result
@@ -518,49 +513,6 @@ fn parse_skills(result: &Value) -> Vec<zeron_proto::invocation::Skill> {
             })
         })
         .collect()
-}
-
-fn parse_skill_commands(result: &Value) -> Vec<SlashCommand> {
-    let mut seen = std::collections::HashSet::new();
-    let mut commands = Vec::new();
-    for group in result
-        .get("data")
-        .and_then(Value::as_array)
-        .map(|a| a.as_slice())
-        .unwrap_or_default()
-    {
-        for skill in group
-            .get("skills")
-            .and_then(Value::as_array)
-            .map(|a| a.as_slice())
-            .unwrap_or_default()
-        {
-            let Some(name) = skill
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|n| !n.is_empty())
-            else {
-                continue;
-            };
-            if !seen.insert(name.to_owned()) {
-                continue;
-            }
-            let interface = skill.get("interface");
-            let description = interface
-                .and_then(|i| i.get("shortDescription"))
-                .and_then(Value::as_str)
-                .filter(|d| !d.is_empty())
-                .or_else(|| skill.get("description").and_then(Value::as_str))
-                .unwrap_or_default();
-            commands.push(SlashCommand {
-                name: name.to_owned(),
-                description: description.to_owned(),
-                input_hint: None,
-            });
-        }
-    }
-    commands
 }
 
 #[async_trait]
@@ -621,18 +573,8 @@ impl Harness for CodexHarness {
             .map(|value| Some(parse_skills(&value)))
     }
 
-    /// Skills from a short-lived `skills/list` probe (see
-    /// [`Self::discover_skills`]); cached on success.
-    async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
-        self.commands
-            .get_or_try_init(|| async {
-                self.discover_skills(None)
-                    .await
-                    .map(|value| parse_skill_commands(&value))
-            })
-            .await
-            .cloned()
-    }
+    // Codex app-server exposes skills/list, but no slash-command catalog.
+    // Use Harness::commands' empty default; skills must retain their identity.
 
     async fn run(
         &self,
