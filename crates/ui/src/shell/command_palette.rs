@@ -10,11 +10,30 @@ pub(super) struct CommandPalette {
     focus: FocusHandle,
     previous_focus: Option<FocusHandle>,
     active: usize,
+    enter_press: EnterPress,
     // Claim focus during mount so the shell does not restore the composer
     // while this input is still absent from the dispatch tree.
     focus_pending: bool,
     scroll: gpui::ScrollHandle,
     _search_events: Subscription,
+}
+
+// X11 suppresses synthetic repeat releases but sends repeated keydowns with
+// is_held=false. Keep our own latch until the physical key is released.
+#[derive(Default)]
+struct EnterPress {
+    down: bool,
+}
+
+impl EnterPress {
+    fn press(&mut self, is_held: bool) -> bool {
+        let was_down = std::mem::replace(&mut self.down, true);
+        !was_down && !is_held
+    }
+
+    fn release(&mut self) {
+        self.down = false;
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -67,6 +86,12 @@ fn actions_for(query: &str, is_dark: bool) -> Vec<Entry> {
 }
 
 impl Shell {
+    pub(super) fn reset_command_palette_key_state(&mut self) {
+        if let Some(palette) = self.command_palette.as_mut() {
+            palette.enter_press.release();
+        }
+    }
+
     pub(super) fn toggle_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.command_palette.is_some() {
             self.close_command_palette(window, cx);
@@ -91,6 +116,7 @@ impl Shell {
             focus: cx.focus_handle(),
             previous_focus,
             active: 0,
+            enter_press: EnterPress::default(),
             focus_pending: true,
             scroll: gpui::ScrollHandle::new(),
             _search_events: events,
@@ -363,7 +389,11 @@ impl Shell {
                             }
                         }
                         "enter" => {
-                            if event.is_held {
+                            let activate = this
+                                .command_palette
+                                .as_mut()
+                                .is_some_and(|palette| palette.enter_press.press(event.is_held));
+                            if !activate {
                                 cx.stop_propagation();
                                 return;
                             }
@@ -383,6 +413,14 @@ impl Shell {
                     cx.stop_propagation();
                 }),
             )
+            .on_key_up(cx.listener(|this, event: &gpui::KeyUpEvent, _, cx| {
+                if event.keystroke.key == "enter" {
+                    if let Some(palette) = this.command_palette.as_mut() {
+                        palette.enter_press.release();
+                    }
+                    cx.stop_propagation();
+                }
+            }))
             .on_mouse_down_out(
                 cx.listener(|this, _, window, cx| this.close_command_palette(window, cx)),
             )
@@ -470,6 +508,29 @@ fn command_key_hint(theme: &Theme, keys: &str, label: &'static str) -> gpui::Div
 mod tests {
     use super::*;
     use crate::appearance::AppearanceMode;
+
+    #[test]
+    fn x11_unflagged_enter_repeats_activate_once_until_release() {
+        let mut enter = EnterPress::default();
+        // The pinned X11 backend drops synthetic repeat releases and emits
+        // every repeated KeyDownEvent with is_held=false.
+        assert!(enter.press(false));
+        for _ in 0..35 {
+            assert!(!enter.press(false));
+        }
+        enter.release();
+        assert!(enter.press(false));
+    }
+
+    #[test]
+    fn flagged_enter_repeats_do_not_activate() {
+        let mut enter = EnterPress::default();
+        assert!(!enter.press(true));
+        assert!(!enter.press(false));
+        enter.release();
+        assert!(enter.press(false));
+        assert!(!enter.press(true));
+    }
 
     #[test]
     fn action_search_hides_empty_section_and_preserves_order() {
