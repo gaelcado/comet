@@ -3733,6 +3733,8 @@ impl Shell {
         self.settings.code_font_family = current.code_font_family;
         self.settings.code_font_size = current.code_font_size;
         self.settings.transcript_width = current.transcript_width;
+        self.settings.skill_completion_by_harness = current.skill_completion_by_harness;
+        self.settings.skills_in_slash_menu = current.skills_in_slash_menu;
     }
 
     fn retry_engine(&mut self, cx: &mut Context<Self>) {
@@ -4057,15 +4059,6 @@ impl Shell {
                                 }
                                 ShortcutsEvent::EscapeStopsActiveAgentChanged(enabled) => {
                                     this.settings.escape_stops_active_agent = *enabled;
-                                }
-                                ShortcutsEvent::SkillCompletionChanged(harness, preferences) => {
-                                    this.settings
-                                        .skill_completion_by_harness
-                                        .insert(*harness, *preferences);
-                                }
-                                ShortcutsEvent::ResetSkillCompletion => {
-                                    this.settings.skills_in_slash_menu = false;
-                                    this.settings.skill_completion_by_harness.clear();
                                 }
                                 ShortcutsEvent::ComposerSendBehaviorChanged(behavior) => {
                                     this.settings.composer_send_behavior = *behavior;
@@ -12353,6 +12346,13 @@ mod exit_regressions {
                         settings.code_font_family = code_family.clone();
                         settings.code_font_size = code_size;
                         settings.transcript_width = transcript_width;
+                        settings.skill_completion_by_harness.insert(
+                            zeron_proto::HarnessId::ClaudeCode,
+                            settings::SkillCompletionSettings {
+                                dollar: open_links_in_zeron,
+                                separate_from_slash: true,
+                            },
+                        );
                     });
                     for step in 0..3 {
                         shell.settings.sidebar_width = 290.0 + step as f32;
@@ -12368,6 +12368,17 @@ mod exit_regressions {
                         assert_eq!(current.code_font_family, code_family);
                         assert_eq!(current.code_font_size, code_size);
                         assert_eq!(current.transcript_width, transcript_width);
+                        assert_eq!(
+                            current
+                                .skill_completion(zeron_proto::HarnessId::ClaudeCode)
+                                .dollar,
+                            open_links_in_zeron
+                        );
+                        assert!(
+                            current
+                                .skill_completion(zeron_proto::HarnessId::ClaudeCode)
+                                .separate_from_slash
+                        );
                     }
                     settings::flush(cx);
                     let loaded = settings::UiSettings::load(dir.path());
