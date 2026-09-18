@@ -489,10 +489,10 @@ fn parse_skills(result: &Value) -> Vec<zeron_proto::invocation::Skill> {
                 .flatten()
         })
         .filter_map(|skill| {
-            let name = skill.get("name")?.as_str()?.trim();
+            let name = skill.get("name")?.as_str()?;
             let path = skill.get("path")?.as_str()?;
-            if name.is_empty()
-                || path.is_empty()
+            if !zeron_proto::invocation::valid_invocation_name(name)
+                || !zeron_proto::invocation::valid_skill_path(path)
                 || !seen.insert((name.to_owned(), path.to_owned()))
             {
                 return None;
@@ -1998,6 +1998,45 @@ mod skill_discovery_tests {
             json!({"type":"custom","instructions":"check errors"})
         );
         assert_eq!(params["delivery"], "inline");
+    }
+
+    #[test]
+    fn catalog_rejects_invalid_identities_without_changing_valid_names() {
+        use zeron_proto::invocation::{Invocation, invocation_links};
+        let mut entries = vec![];
+        for name in [
+            "",
+            "two words",
+            " padded",
+            "padded ",
+            "line\nbreak",
+            "tab\tname",
+            "nul\0name",
+            "non\u{a0}breaking",
+        ] {
+            entries.push(json!({"name":name,"path":"/repo/SKILL.md"}));
+        }
+        for path in ["", "/repo/line\nbreak/SKILL.md", "/repo/\0/SKILL.md"] {
+            entries.push(json!({"name":"invalid-path","path":path}));
+        }
+        for (name, path) in [
+            (r"review[ui]\draft`", "/repo/é skill/SKILL.md"),
+            ("审查-é", "harness-skill:custom:审查-é"),
+        ] {
+            entries.push(json!({"name":name,"path":path}));
+        }
+        let skills = parse_skills(&json!({"data":[{"skills":entries}]}));
+        assert_eq!(skills.len(), 2);
+        assert_eq!(skills[0].name, r"review[ui]\draft`");
+        assert_eq!(skills[1].path, "harness-skill:custom:审查-é");
+        for skill in skills {
+            let invocation = Invocation::Skill {
+                name: skill.name,
+                path: skill.path,
+                command: skill.command,
+            };
+            assert_eq!(invocation_links(&invocation.link())[0].1, invocation);
+        }
     }
 
     #[test]

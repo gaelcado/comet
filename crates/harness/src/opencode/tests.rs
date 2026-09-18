@@ -1383,3 +1383,48 @@ async fn v2_recovered_step_failure_does_not_poison_successful_execution() {
     assert_eq!(status, DoneStatus::Completed);
     assert_eq!(text, "Recovered");
 }
+
+#[test]
+fn native_skill_catalog_rejects_unrepresentable_commands() {
+    use zeron_proto::invocation::{Invocation, Skill, invocation_links};
+    let mut skills = vec![Skill {
+        name: "review[ui]".into(),
+        path: "/repo/é skill/SKILL.md".into(),
+        description: String::new(),
+        enabled: true,
+        command: None,
+    }];
+    let mut commands = vec![];
+    for name in [
+        "",
+        "two words",
+        " padded",
+        "padded ",
+        "line\nbreak",
+        "tab\tname",
+        "nul\0name",
+        "non\u{a0}breaking",
+        "review[ui]",
+        "review/extra",
+    ] {
+        commands.push(json!({"name":name,"source":"skill"}));
+    }
+    for name in ["review", "审查-é:ui.v2_test"] {
+        commands.push(json!({"name":name,"source":"skill"}));
+    }
+    merge_skill_commands(&mut skills, &json!(commands));
+    assert_eq!(skills.len(), 3);
+    assert!(
+        skills[0].command.is_none(),
+        "an invalid command must not poison a valid file skill"
+    );
+    assert_eq!(skills[2].path, "opencode-skill:审查-é:ui.v2_test");
+    for skill in skills {
+        let invocation = Invocation::Skill {
+            name: skill.name,
+            path: skill.path,
+            command: skill.command,
+        };
+        assert_eq!(invocation_links(&invocation.link())[0].1, invocation);
+    }
+}

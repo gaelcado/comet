@@ -24,6 +24,9 @@ pub(crate) fn attach_advertised_commands(
 ) {
     use zeron_proto::invocation::SkillCommand;
     for command in commands {
+        if !zeron_proto::invocation::valid_skill_command_name(&command.name) {
+            continue;
+        }
         let name = if harness == HarnessId::Pi {
             let Some(name) = command.name.strip_prefix("skill:") else {
                 continue;
@@ -214,7 +217,9 @@ fn scan_root(
                     skill.name = relative.to_string_lossy().replace(['/', '\\'], ":");
                 }
                 skill.name = format!("{namespace}{}", skill.name);
-                found.insert(skill.name.clone(), skill);
+                if zeron_proto::invocation::valid_invocation_name(&skill.name) {
+                    found.insert(skill.name.clone(), skill);
+                }
             }
         }
     }
@@ -268,14 +273,16 @@ fn read_skill(path: &Path) -> Result<Option<Skill>, HarnessError> {
     let name = metadata
         .get("name")
         .and_then(|v| v.as_str())
-        .unwrap_or(fallback)
-        .trim();
-    if name.is_empty() || name.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        .unwrap_or(fallback);
+    let path = path.to_string_lossy();
+    if !zeron_proto::invocation::valid_invocation_name(name)
+        || !zeron_proto::invocation::valid_skill_path(&path)
+    {
         return Ok(None);
     }
     Ok(Some(Skill {
         name: name.into(),
-        path: path.to_string_lossy().into_owned(),
+        path: path.into_owned(),
         description: metadata
             .get("description")
             .and_then(|v| v.as_str())
@@ -346,6 +353,98 @@ mod tests {
             attach_advertised_commands(harness, &mut skills, &[command]);
             assert_eq!(skills[0].command.as_ref().unwrap().harness, harness);
         }
+    }
+
+    #[test]
+    fn advertised_commands_preserve_valid_skill_links() {
+        use zeron_proto::invocation::{Invocation, invocation_links};
+        let commands = [
+            "skill:",
+            "skill:two words",
+            "skill:bad\nname",
+            "skill:bad\0name",
+            "skill:review[ui]",
+            "skill:审查-é:ui.v2_test",
+        ]
+        .into_iter()
+        .map(|name| zeron_proto::SlashCommand {
+            name: name.into(),
+            description: String::new(),
+            input_hint: None,
+        })
+        .collect::<Vec<_>>();
+        let mut skills = vec![];
+        attach_advertised_commands(HarnessId::Pi, &mut skills, &commands);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "审查-é:ui.v2_test");
+        let skill = skills.pop().unwrap();
+        let invocation = Invocation::Skill {
+            name: skill.name,
+            path: skill.path,
+            command: skill.command,
+        };
+        assert_eq!(invocation_links(&invocation.link())[0].1, invocation);
+    }
+
+    #[test]
+    fn discovery_rejects_invalid_names_and_control_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        for name in [
+            "two words",
+            " padded",
+            "padded ",
+            "tab\tname",
+            "non\u{a0}breaking",
+        ] {
+            let path = write(
+                temp.path(),
+                "invalid/SKILL.md",
+                &format!(
+                    "---\nname: {}\n---\nBody",
+                    serde_json::to_string(name).unwrap()
+                ),
+            );
+            assert!(read_skill(&path).unwrap().is_none(), "{name:?}");
+        }
+        #[cfg(unix)]
+        {
+            let path = write(
+                temp.path(),
+                "bad\npath/SKILL.md",
+                "---\nname: valid\n---\nBody",
+            );
+            assert!(read_skill(&path).unwrap().is_none());
+        }
+        let path = write(
+            temp.path(),
+            "é skill/SKILL.md",
+            "---\nname: '审查[ui]`'\n---\nBody",
+        );
+        let skill = read_skill(&path).unwrap().unwrap();
+        assert_eq!(skill.name, "审查[ui]`");
+        assert_eq!(skill.path, path.to_str().unwrap());
+    }
+
+    #[test]
+    fn derived_legacy_names_and_plugin_namespaces_are_validated() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("commands");
+        write(&root, "bad folder/review.md", "---\nname: valid\n---\nBody");
+        write(&root, "good/review.md", "Body");
+        let mut found = BTreeMap::new();
+        scan_root(&root, "", HarnessId::ClaudeCode, &mut found).unwrap();
+        assert_eq!(
+            found.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["good:review"]
+        );
+        found.clear();
+        scan_root(&root, "bad namespace:", HarnessId::ClaudeCode, &mut found).unwrap();
+        assert!(found.is_empty());
+        scan_root(&root, "é-plugin:", HarnessId::ClaudeCode, &mut found).unwrap();
+        assert_eq!(
+            found.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["é-plugin:good:review"]
+        );
     }
 
     #[test]

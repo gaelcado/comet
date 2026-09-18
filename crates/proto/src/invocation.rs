@@ -18,6 +18,24 @@ pub fn native_skill_identity(path: &str) -> bool {
     path.starts_with("opencode-skill:") || path.starts_with("harness-skill:")
 }
 
+/// Catalog names must survive canonical link decoding without changing identity.
+pub fn valid_invocation_name(name: &str) -> bool {
+    !name.is_empty() && !name.chars().any(|c| c.is_control() || c.is_whitespace())
+}
+
+/// Spaces and Unicode are valid in local paths and native skill identities.
+pub fn valid_skill_path(path: &str) -> bool {
+    !path.is_empty() && !path.chars().any(char::is_control)
+}
+
+/// Advertised native commands use the same grammar as selected skill commands.
+pub fn valid_skill_command_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillCommand {
@@ -138,29 +156,14 @@ pub fn invocation_links(text: &str) -> Vec<(Range<usize>, Invocation)> {
         else {
             continue;
         };
-        if invocation.name().is_empty()
-            || invocation
-                .name()
-                .chars()
-                .any(|c| c.is_control() || c.is_whitespace())
-        {
+        if !valid_invocation_name(invocation.name()) {
             continue;
         }
-        if let Invocation::Skill { path, .. } = &invocation {
-            if path.is_empty() || path.chars().any(char::is_control) {
-                continue;
-            }
-        }
-        if let Invocation::Skill {
-            command: Some(command),
-            ..
-        } = &invocation
-        {
-            if command.name.is_empty()
+        if let Invocation::Skill { path, command, .. } = &invocation {
+            if !valid_skill_path(path)
                 || command
-                    .name
-                    .chars()
-                    .any(|c| !(c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.')))
+                    .as_ref()
+                    .is_some_and(|command| !valid_skill_command_name(&command.name))
             {
                 continue;
             }

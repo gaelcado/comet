@@ -990,7 +990,10 @@ fn merge_skill_commands(skills: &mut Vec<zeron_proto::invocation::Skill>, comman
         if command["source"] != "skill" {
             continue;
         }
-        let Some(name) = command["name"].as_str().filter(|name| !name.is_empty()) else {
+        let Some(name) = command["name"]
+            .as_str()
+            .filter(|name| zeron_proto::invocation::valid_skill_command_name(name))
+        else {
             continue;
         };
         if let Some(skill) = skills.iter_mut().find(|skill| skill.name == name) {
