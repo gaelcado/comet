@@ -1,9 +1,48 @@
 # Rich composer PR plan
 
-Status: implemented locally; automated checks pass. Native preview verifies
-Markdown bullets/emphasis and word selection. Full picker/animation visual QA
-remains incomplete because UI automation intermittently rejects input. The work is prepared for draft PR review. The running UI and engine must
-both use this build.
+Status: rich-composer hardening validated on September 18. The current
+settings live under **Agents**, with a logo and independent `$` completion and
+slash-menu separation preferences for each of the nine production harnesses.
+See the current [command mapping audit](../harness-command-audit.md) for command
+semantics and provider limits. The sections below preserve earlier milestones;
+their original settings locations and harness counts are historical.
+
+## September 18 hardening
+
+- Restored the original active/bare-bullet contract: bullets remain rendered
+  while editing before, inside, or after a list. Added parser-aware task,
+  heading, strikethrough, quoted-list, CRLF, and fenced-code handling while
+  retaining canonical Markdown and editable active syntax.
+- Synchronized projection with edits, selection, undo, and IME composition;
+  preserved UTF-16 replacement offsets, soft-wrap caret affinity, and vertical
+  navigation's preferred horizontal position. Native fixtures exercise actual
+  arrow-key movement as well as preselected caret positions.
+- Kept literal code/image examples literal when copied; external clipboard text
+  uses readable links while internal paste restores canonical references.
+  Repeated chips stay compact and distinct paths retain distinct labels.
+- Completion respects closing formatting, link destinations, reference
+  definitions, quote prefixes, and Unicode combining marks. Insertion preserves
+  surrounding Markdown and punctuation. Malformed remote catalog entries are
+  filtered before they can produce undecodable references.
+- Hardened canonical labels and cross-harness delivery, including malformed
+  skill discovery, native command whitespace, retries, steering, attachments,
+  and queue edits. All nine production harnesses share the same rich editor.
+- No ZUI changes or companion checkout are required. Native fixture evidence
+  covers light/narrow and dark/wide composers; full live-provider and platform
+  QA remain separate from these automated and isolated native checks.
+
+Validation for this batch: 1,120 UI library tests passed serially; 37 protocol
+tests and 319 harness tests passed, with 10 environment/live-provider tests
+ignored. The subsequent catalog-validation changes passed 16 focused harness
+tests and the 37 protocol tests. Three engine delivery matrices cover all nine
+harnesses. `cargo check --locked -p zeron` passed. The native fixture generated
+42 captures, including active/inactive bullets, quoted tasks, CRLF lists,
+Unicode wrapping, and selections across chips. Caret blink can hide the caret
+in a screenshot; native geometry assertions cover its exact placement.
+
+A standalone optimized label probe with 5,000 repeated references dropped from
+about 130 ms to 0.5 ms after grouping and reusing disambiguation results. This
+measures that helper only, not end-to-end editor latency.
 
 ## Optional slash-menu skills
 

@@ -15,6 +15,7 @@ at the start of a prompt; inline command chips elsewhere remain prompt text.
 | Grok | ACP session command updates in the selected project | Slash text through `session/prompt` |
 | Hermes | ACP session command updates in the selected project | Slash text through `session/prompt` |
 | Pi | ACP session command updates in the selected project | Slash text through `session/prompt` |
+| Antigravity | ACP session command updates in the selected project | Slash text through `session/prompt` |
 | OpenCode | Command endpoint scoped to the selected directory; refresh for the live run | Advertised leading command → session command endpoint; v1 `arguments`, v2 `text`; unknown tokens remain prompts |
 | Mock | Empty catalog | Test prompt behavior only |
 
@@ -29,12 +30,15 @@ OpenCode uses its [server command API](https://opencode.ai/docs/server/).
 
 ## Edge cases requiring review
 
-1. **Terminal UI parity:** Codex `/model`, `/new`, `/permissions` and other
-   recognized client commands require Zeron UI actions. They are not advertised
-   and return an explicit mapping error if typed. Unknown slash tokens remain
-   literal, including paths; this is not an exhaustive terminal-command registry.
-   Cursor has no native mapping in the pinned SDK. Decide which UI actions to
-   expose as cross-harness commands in a follow-up.
+1. **Terminal UI parity:** Zeron supplies `model`, `new`, `resume`, `settings`,
+   `diff`, `files`, `terminal`, `rename`, and `stop` across harnesses; actions
+   requiring a conversation appear only in chats. Selecting an action anywhere
+   in the draft consumes its trigger and preserves surrounding text and staged
+   attachments. Provider name collisions keep both choices, with the Zeron
+   action prefixed by `zeron:`. Other terminal-only commands such as Codex
+   `/permissions` have no mapping. Unknown slash tokens remain literal,
+   including paths; this is not an exhaustive terminal-command registry.
+   Cursor has no native command mapping in the pinned SDK.
 2. **Review target:** Codex `/review` reviews uncommitted changes; arguments are
    custom instructions. There is no branch/commit target picker yet. Native
    operations queued during a turn run at its boundary; steering during a native
@@ -50,8 +54,10 @@ OpenCode uses its [server command API](https://opencode.ai/docs/server/).
    or after the menu opens, are not propagated live. Same-project definition edits
    may require refreshing the composer context. Discovery can create temporary
    provider sessions. Consider a session-backed catalog subscription.
-6. **Skills versus commands:** The slash-menu preference controls typed skills
-   returned by `ListSkills`; `$` always retains those skills. Providers can also
+6. **Skills versus commands:** Agents settings expose independent per-harness
+   toggles for `$` completion and separating skills from `/` commands. Both
+   default on for Codex and off for the other eight harnesses; users can opt
+   Claude Code, OpenCode, or another harness into `$`. Providers can also
    advertise skills inside an undifferentiated command catalog. Those entries
    cannot reliably be filtered without provider metadata. Name collisions remain
    separate typed choices; skill chips preserve their canonical paths.
@@ -60,6 +66,16 @@ OpenCode uses its [server command API](https://opencode.ai/docs/server/).
    command behavior still need live provider smoke testing before release.
 
 ## Validation
+
+The September 18 hardening adds canonical-reference delivery matrices for all
+nine production harnesses: new and resumed sends, steering, attachments,
+startup retry, and editing a queued message before sending it. These use a
+recording harness to inspect the engine boundary and persisted transcript;
+they do not establish live provider compatibility. Protocol regressions cover
+literal code/image contexts, repeated references, punctuation in labels,
+native skill identity, and leading command whitespace.
+
+Earlier command integration validation:
 
 - Full harness suite: 250 passed, 10 ignored environment/live-provider tests.
 - Harness library: 150 tests passed.
