@@ -1038,10 +1038,10 @@ async fn dollar_selected_skill_uses_opencode_native_command_with_arguments() {
         command: skill.command,
     };
     let prompt = harness_prompt(
-        &format!("{} inspect tests", invocation.link()),
+        &format!("\n  {} inspect tests", invocation.link()),
         HarnessId::Opencode,
     );
-    assert_eq!(prompt, "/review inspect tests");
+    assert_eq!(prompt, "\n  /review inspect tests");
     let (controls, _steer, _) = controls();
     let mut stream = h.run(request(&prompt), controls).await.unwrap();
     let _ = next_event(&mut stream).await;

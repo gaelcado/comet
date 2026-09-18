@@ -816,21 +816,9 @@ fn command_request(
     thread_id: &str,
 ) -> Result<Option<(&'static str, Value)>, HarnessError> {
     let decoded = zeron_proto::invocation::invocation_prompt(text);
-    let trimmed = decoded.trim_start();
-    let indent = decoded[..decoded.len() - trimmed.len()]
-        .rsplit('\n')
-        .next()
-        .unwrap_or_default();
-    // Indented Markdown code is literal, even when it resembles a command.
-    if indent.contains('\t') || indent.chars().count() >= 4 {
-        return Ok(None);
-    }
-    let Some(rest) = trimmed.strip_prefix('/') else {
+    let Some((name, args)) = zeron_proto::invocation::leading_command(&decoded) else {
         return Ok(None);
     };
-    let mut parts = rest.splitn(2, char::is_whitespace);
-    let name = parts.next().unwrap_or_default();
-    let args = parts.next().unwrap_or_default().trim();
     if matches!(name, "compact" | "review")
         && zeron_proto::invocation::invocation_links(text)
             .iter()
@@ -1938,8 +1926,12 @@ mod skill_discovery_tests {
             "$review".into(),
             format!("`{}`", a.link()),
             format!("\\{}", a.link()),
+            format!("![skill example {}](example.png)", a.link()),
+            format!("    {}", a.link()),
         ] {
-            assert_eq!(prompt_input(&raw).as_array().unwrap().len(), 1);
+            let input = prompt_input(&raw);
+            assert_eq!(input.as_array().unwrap().len(), 1);
+            assert_eq!(input[0]["text"], raw);
         }
         let command = Invocation::Command {
             name: "review".into(),
@@ -1955,6 +1947,28 @@ mod skill_discovery_tests {
     }
 
     #[test]
+    fn backtick_labels_keep_native_skill_identity_with_repeated_selections() {
+        use zeron_proto::invocation::{Invocation, harness_prompt};
+        let skill = Invocation::Skill {
+            command: None,
+            name: "review`ui".into(),
+            path: "/repo/é skill/SKILL.md".into(),
+        };
+        let file = zeron_proto::file_mentions::local_file_link("src/a`b.rs", false);
+        let raw = format!("{} on {file} and {}", skill.link(), skill.link());
+        let input = prompt_input(&harness_prompt(&raw, HarnessId::Codex));
+        assert_eq!(input.as_array().unwrap().len(), 2);
+        assert_eq!(
+            input[1],
+            json!({"type":"skill", "name":"review`ui", "path":"/repo/é skill/SKILL.md"})
+        );
+        let text = input[0]["text"].as_str().unwrap();
+        assert!(!text.contains("zeron-invoke:"));
+        assert!(!text.contains("zeron-file:"));
+        assert_eq!(text.matches("/repo/%C3%A9%20skill/SKILL.md").count(), 2);
+    }
+
+    #[test]
     fn commands_map_arguments_and_leave_inline_mentions_literal() {
         assert!(
             command_request("please /review this", "t")
@@ -1965,6 +1979,7 @@ mod skill_discovery_tests {
             "    /review",
             "\t/review",
             "\n    /compact",
+            "\u{a0}/review",
             "`/review`",
             "```\n/review\n```",
         ] {

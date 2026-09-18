@@ -1981,11 +1981,8 @@ async fn post_prompt(
         attachments,
     } = spec;
     let protocol = server.protocol().await;
-    if let Some(rest) = prompt.strip_prefix('/') {
-        let mut split = rest.splitn(2, char::is_whitespace);
-        let name = split.next().unwrap_or_default();
-        let arguments = split.next().unwrap_or_default().trim().to_owned();
-        if !name.is_empty() && commands.iter().any(|c| c.name == name) {
+    if let Some((name, arguments)) = zeron_proto::invocation::leading_command(prompt) {
+        if commands.iter().any(|c| c.name == name) {
             if !attachments.is_empty() {
                 return Err(HarnessError::Protocol(
                     "OpenCode commands cannot include attachments; send them in a separate prompt"
