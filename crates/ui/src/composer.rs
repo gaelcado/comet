@@ -61,7 +61,7 @@ pub const ACTIONS_ROW_HEIGHT: f32 = 46.0;
 /// The pill's 1px hairline, top + bottom (`rounded-[26px] border`).
 pub const PILL_BORDER_V: f32 = 2.0;
 /// Corner radius shared by the composer and the queue tray behind it.
-pub(crate) const COMPOSER_RADIUS: f32 = 26.0;
+pub(crate) const COMPOSER_RADIUS: f32 = 32.0;
 /// Expanded composer bounds, border-box: 76 + 46 + 2 = 124 when empty (the
 /// new-chat canvas), 260 + 46 + 2 = 308 at the content cap.
 pub const COMPOSER_MIN_HEIGHT: f32 = TEXTAREA_MIN + ACTIONS_ROW_HEIGHT + PILL_BORDER_V;
@@ -7802,6 +7802,7 @@ impl Composer {
                 this.on_wizard_key(event, window, cx)
             }))
             .rounded(px(COMPOSER_RADIUS))
+            .corner_smoothing(Theme::SURFACE_CORNER_SMOOTHING)
             .border_1()
             .border_color(theme.border)
             .bg(theme.input_glass_bg())
@@ -8390,7 +8391,7 @@ impl Render for Composer {
                 morph_t
             };
         let text_pt = morph_text_pad(layout_morph_t);
-        let surface_radius = COMPOSER_RADIUS - 4.0 * dock_amount;
+        let surface_radius = COMPOSER_RADIUS - 5.0 * dock_amount;
         let route_to_single_line =
             self.dock_frame.is_some_and(|frame| frame.active) && !session_expanded;
         let textarea_height = (pill_height
@@ -8498,6 +8499,7 @@ impl Render for Composer {
                 }),
             )
             .rounded(px(surface_radius))
+            .corner_smoothing(Theme::SURFACE_CORNER_SMOOTHING)
             .border_1()
             .border_color(pill_border)
             .when(theme.is_frost(), |el| el.bg(theme.composer_sidebar_tint()))
@@ -8717,7 +8719,10 @@ impl Render for Composer {
         let pill_surface = div()
             .relative()
             .id("composer-surface")
-            .child(crate::frost::frosted(surface_radius, 16.0, body))
+            .child(
+                crate::frost::frosted(surface_radius, 16.0, body)
+                    .corner_smoothing(Theme::SURFACE_CORNER_SMOOTHING),
+            )
             .child({
                 let measured = self.surface_bounds.clone();
                 // All prepaint completes before any paint. The background
