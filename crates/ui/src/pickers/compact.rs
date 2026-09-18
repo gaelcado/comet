@@ -19,12 +19,20 @@ pub(super) struct CatalogStatus {
 }
 
 pub(super) const COMPACT_WIDTH: f32 = 256.0;
-const THUMB_INSET: f32 = 8.0;
+// Stops and pointer input share the thumb radius as their end inset.
+// The track spans the full width, so endpoint dots stay inside its caps.
+const THUMB_INSET: f32 = 14.0;
 
 #[derive(Default)]
 pub(super) struct CompactMotion {
     effort: Option<ScalarTransition>,
+    press: Option<ScalarTransition>,
+    drag_fraction: Option<f32>,
+    energy_last_frame: Option<std::time::Instant>,
+    energy_phase: f32,
     height: Option<ScalarTransition>,
+    page: Option<bool>,
+    reveal: Option<ScalarTransition>,
     pub frame_height: f32,
 }
 
@@ -35,9 +43,9 @@ struct ScalarTransition {
 }
 impl ScalarTransition {
     fn value(&self, now: std::time::Instant) -> f32 {
-        let progress = motion::TAB_SLIDE.progress(
+        let progress = motion::RESIZE.progress(
             now.duration_since(self.started).as_secs_f32()
-                / motion::TAB_SLIDE
+                / motion::RESIZE
                     .total()
                     .mul_f32(motion::speed_scale())
                     .as_secs_f32(),
@@ -285,7 +293,18 @@ impl Pickers {
         ) else {
             return;
         };
+        if self.effort_dragging {
+            let fraction =
+                effort_fraction(f32::from(x - bounds.left()), f32::from(bounds.size.width));
+            self.compact_motion.drag_fraction = Some(if levels.len() > 1 { fraction } else { 0.0 });
+            cx.notify();
+        }
         self.pick_compact_effort(levels[index], cx);
+    }
+
+    pub(super) fn compact_option_visible(id: &ModelSetting) -> bool {
+        !matches!(id, ModelSetting::Reasoning)
+            && !matches!(id, ModelSetting::Option(id) if id == "serviceTier")
     }
 
     fn compact_controls(&self, cx: &App) -> Vec<CompactControl> {
@@ -300,7 +319,7 @@ impl Pickers {
         controls.extend(
             self.setting_groups(cx)
                 .into_iter()
-                .filter(|g| g.id != ModelSetting::Reasoning)
+                .filter(|g| Self::compact_option_visible(&g.id))
                 .map(|g| CompactControl::Option(g.id)),
         );
         controls
@@ -313,17 +332,21 @@ impl Pickers {
         }
     }
 
-    pub(super) fn render_compact_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_compact_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let options = self
             .setting_groups(cx)
             .iter()
-            .filter(|g| g.id != ModelSetting::Reasoning)
+            .filter(|g| Self::compact_option_visible(&g.id))
             .count();
         let panel_height =
-            38.0 + if self.trait_ladder(cx).is_empty() {
+            54.0 + if self.trait_ladder(cx).is_empty() {
                 0.0
             } else {
-                50.0
+                44.0
             } + if options == 0 {
                 0.0
             } else {
@@ -342,15 +365,43 @@ impl Pickers {
         );
         self.compact_motion.frame_height = height;
         if moving {
-            motion::pulse_lease(cx.entity_id(), cx);
+            window.request_animation_frame();
         }
         let content = if self.compact_model_list {
             self.render_harness_model_popover(cx)
         } else {
-            self.render_compact_model_panel(cx)
+            self.render_compact_model_panel(window, cx)
         };
-        let page = div().child(content);
-        let content = motion::fade_quick(("compact-page", self.compact_model_list as usize), page)
+        let now = std::time::Instant::now();
+        if self
+            .compact_motion
+            .page
+            .is_some_and(|page| page != self.compact_model_list)
+        {
+            self.compact_motion.reveal = Some(ScalarTransition {
+                from: 0.0,
+                to: 1.0,
+                started: now,
+            });
+        }
+        self.compact_motion.page = Some(self.compact_model_list);
+        let (reveal, revealing) = ScalarTransition::sample(
+            &mut self.compact_motion.reveal,
+            1.0,
+            now,
+            cx.reduce_motion(),
+        );
+        if revealing {
+            window.request_animation_frame();
+        }
+        // One short directional entrance, coordinated with the card resize.
+        // Initial opening uses the shared popover entrance only.
+        let direction = if self.compact_model_list { 1.0 } else { -1.0 };
+        let content = div()
+            .relative()
+            .left(px(direction * 6.0 * (1.0 - reveal)))
+            .opacity(0.65 + reveal * 0.35)
+            .child(content)
             .into_any_element();
         self.popover_frame_flush(COMPACT_WIDTH, content, cx)
     }
@@ -386,7 +437,7 @@ impl Pickers {
                     let index = self
                         .setting_groups(cx)
                         .iter()
-                        .filter(|g| g.id != ModelSetting::Reasoning)
+                        .filter(|g| Self::compact_option_visible(&g.id))
                         .position(|g| &g.id == id)
                         .unwrap_or(0);
                     self.menu_scroll
@@ -499,7 +550,11 @@ impl Pickers {
             .into_any_element()
     }
 
-    pub(super) fn render_compact_model_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_compact_model_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = Theme::of(cx).for_popup();
         let levels = self.trait_ladder(cx);
         let selected = levels
@@ -518,48 +573,11 @@ impl Pickers {
             .unwrap_or("Default")
             .into();
         let mut header = div()
-            .h(px(28.0))
+            .h(px(44.0))
             .flex_none()
             .flex()
             .items_center()
             .gap(px(2.0));
-        header = header.child(
-            div()
-                .id("compact-select-model")
-                .role(gpui::Role::Button)
-                .aria_label("Select model")
-                .h_full()
-                .flex_1()
-                .min_w_0()
-                .px(px(8.0))
-                .rounded(px(popover::MENU_ITEM_RADIUS))
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .cursor_pointer()
-                .when(
-                    self.compact_keyboard && self.compact_control == CompactControl::Model,
-                    |el| el.bg(theme.accent.opacity(0.10)),
-                )
-                .hover(|s| s.bg(crate::theme::ink(0.05)))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.compact_keyboard = false;
-                    this.show_compact_models(cx);
-                }))
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .truncate()
-                        .text_size(crate::typography::ui_rems(12.0))
-                        .child(label),
-                )
-                .child(
-                    crate::icons::icon(crate::icons::ALT_ARROW_RIGHT)
-                        .size(px(11.0))
-                        .text_color(theme.text_muted),
-                ),
-        );
         if let Some((option, choice, default, fast)) = self.compact_fast_choice(cx) {
             header = header.child(
                 popover::menu_row(&theme, fast, "compact-fast")
@@ -584,6 +602,65 @@ impl Pickers {
                     ),
             );
         }
+        if self.compact_fast_choice(cx).is_none() {
+            header = header.child(div().size(px(26.0)).flex_none());
+        }
+        header = header.child(
+            div()
+                .id("compact-select-model")
+                .role(gpui::Role::Button)
+                .aria_label("Select model")
+                .h_full()
+                .flex_1()
+                .min_w_0()
+                .px(px(8.0))
+                .rounded(px(popover::MENU_ITEM_RADIUS))
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .gap(px(2.0))
+                .cursor_pointer()
+                .when(
+                    self.compact_keyboard && self.compact_control == CompactControl::Model,
+                    |el| el.bg(theme.accent.opacity(0.10)),
+                )
+                .hover(|s| s.bg(crate::theme::ink(0.05)))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.compact_keyboard = false;
+                    this.show_compact_models(cx);
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .text_size(crate::typography::ui_rems(12.0))
+                        .text_color(if levels.is_empty() {
+                            theme.text
+                        } else {
+                            theme.accent
+                        })
+                        .child(if levels.is_empty() {
+                            SharedString::from("Select model")
+                        } else {
+                            effort.clone()
+                        })
+                        .child(
+                            crate::icons::icon(crate::icons::ALT_ARROW_RIGHT)
+                                .size(px(11.0))
+                                .text_color(theme.text_muted),
+                        ),
+                )
+                .child(
+                    div()
+                        .max_w_full()
+                        .truncate()
+                        .text_size(crate::typography::ui_rems(11.0))
+                        .text_color(theme.text_muted)
+                        .child(label),
+                ),
+        );
         header = header.child(
             popover::menu_row(&theme, false, "compact-reset")
                 .id("compact-reset")
@@ -617,15 +694,52 @@ impl Pickers {
             } else {
                 0.0
             };
-            let (fraction, moving) = ScalarTransition::sample(
+            let (mut fraction, moving) = ScalarTransition::sample(
                 &mut self.compact_motion.effort,
                 target,
                 std::time::Instant::now(),
                 cx.reduce_motion(),
             );
-            if moving {
-                motion::pulse_lease(cx.entity_id(), cx);
+            if self.effort_dragging {
+                fraction = self.compact_motion.drag_fraction.unwrap_or(target);
+                // Keep the release animation rooted at the actual pointer, not the previous stop.
+                self.compact_motion.effort = Some(ScalarTransition {
+                    from: fraction,
+                    to: fraction,
+                    started: std::time::Instant::now(),
+                });
             }
+            if moving {
+                window.request_animation_frame();
+            }
+            let energy = ((fraction - 0.15) / 0.85).clamp(0.0, 1.0);
+            let reduced = cx.reduce_motion();
+            let now = std::time::Instant::now();
+            let dt = self
+                .compact_motion
+                .energy_last_frame
+                .replace(now)
+                .map(|last| now.duration_since(last).as_secs_f32().min(0.05))
+                .unwrap_or(0.0);
+            // Integrate velocity: changing effort must not jump the trail phase.
+            if !reduced {
+                self.compact_motion.energy_phase =
+                    (self.compact_motion.energy_phase + dt * (0.35 + energy * 0.85)).fract();
+            }
+            let phase = self.compact_motion.energy_phase;
+            if energy > 0.0 && !reduced {
+                window.request_animation_frame();
+            }
+            let (press, pressing) = ScalarTransition::sample(
+                &mut self.compact_motion.press,
+                if self.effort_dragging { 1.0 } else { 0.0 },
+                std::time::Instant::now(),
+                cx.reduce_motion(),
+            );
+            if pressing {
+                window.request_animation_frame();
+            }
+            let thumb_size = 28.0 * (1.0 - 0.04 * press);
             let entity = cx.entity().downgrade();
             let drag_entity = entity.clone();
             let slider = div()
@@ -634,7 +748,7 @@ impl Pickers {
                 .aria_label("Reasoning effort")
                 .aria_value(effort.clone())
                 .relative()
-                .h(px(28.0))
+                .h(px(38.0))
                 .cursor_pointer()
                 .on_mouse_down(
                     gpui::MouseButton::Left,
@@ -660,6 +774,7 @@ impl Pickers {
                                 if phase == gpui::DispatchPhase::Bubble {
                                     let _ = release.update(cx, |this, cx| {
                                         this.effort_dragging = false;
+                                        this.compact_motion.drag_fraction = None;
                                         cx.notify();
                                     });
                                 }
@@ -683,87 +798,55 @@ impl Pickers {
                     .absolute()
                     .inset_0(),
                 )
+                .child(effort_track(
+                    &theme,
+                    fraction,
+                    levels.len(),
+                    energy,
+                    phase,
+                    reduced,
+                ))
                 .child(
                     div()
                         .absolute()
                         .left(px(THUMB_INSET))
                         .right(px(THUMB_INSET))
-                        .top(px(11.0))
-                        .h(px(6.0))
-                        .rounded_full()
-                        .bg(crate::theme::ink(0.10))
-                        .child(
-                            div()
-                                .h_full()
-                                .w(gpui::relative(fraction))
-                                .rounded_full()
-                                .bg(theme.accent),
-                        ),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(THUMB_INSET - 1.5))
-                        .right(px(THUMB_INSET - 1.5))
-                        .top(px(12.5))
-                        .h(px(3.0))
-                        .flex()
-                        .justify_between()
-                        .children(levels.iter().enumerate().map(|(index, _)| {
-                            div().size(px(3.0)).rounded_full().bg(if index <= selected {
-                                theme.on_solid.opacity(0.75)
-                            } else {
-                                theme.text_muted.opacity(0.6)
-                            })
-                        })),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(THUMB_INSET))
-                        .right(px(THUMB_INSET))
-                        .top(px(6.0))
+                        .top(px((38.0 - thumb_size) / 2.0))
                         .child(
                             div()
                                 .absolute()
                                 .left(gpui::relative(fraction))
-                                .ml(px(-8.0))
-                                .size(px(16.0))
+                                .ml(px(-thumb_size / 2.0))
+                                .size(px(thumb_size))
                                 .rounded_full()
-                                .bg(theme.surface_raised)
-                                .border_1()
-                                .border_color(theme.accent)
-                                .shadow(crate::theme::card_selected_shadows())
+                                .bg(if theme.appearance.is_dark() {
+                                    theme.text
+                                } else {
+                                    theme.on_solid
+                                })
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .shadow(vec![gpui::BoxShadow {
+                                    color: theme.accent.opacity(0.12 + energy * 0.32),
+                                    offset: gpui::point(px(0.0), px(0.0)),
+                                    blur_radius: px(3.0 + energy * 13.0),
+                                    spread_radius: px(energy * 2.0),
+                                    inset: false,
+                                }])
                                 .when(
-                                    self.effort_dragging
-                                        || (self.compact_keyboard
-                                            && self.compact_control == CompactControl::Effort),
-                                    |el| el.bg(theme.accent),
+                                    self.compact_keyboard
+                                        && self.compact_control == CompactControl::Effort,
+                                    |el| el.border_2().border_color(theme.text),
                                 ),
                         ),
                 );
-            panel = panel.child(
-                div()
-                    .px(px(8.0))
-                    .pt(px(6.0))
-                    .child(
-                        div()
-                            .h(px(16.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .text_size(crate::typography::ui_rems(11.0))
-                            .text_color(theme.text_muted)
-                            .child("Reasoning")
-                            .child(div().text_color(theme.accent).child(effort)),
-                    )
-                    .child(slider),
-            );
+            panel = panel.child(div().px(px(8.0)).pt(px(6.0)).child(slider));
         }
         let option_count = self
             .setting_groups(cx)
             .iter()
-            .filter(|g| g.id != ModelSetting::Reasoning)
+            .filter(|g| Self::compact_option_visible(&g.id))
             .count();
         if option_count > 0 {
             let options = self.render_traits_sections(cx);
@@ -779,9 +862,8 @@ impl Pickers {
                             .child(popover::faded_menu_list(
                                 &self.menu_scroll,
                                 popover::menu_scroll_list("compact-options", &self.menu_scroll)
-                                    .max_h(px(
-                                        64.0_f32.min((self.menu_geometry().height - 93.0).max(0.0))
-                                    ))
+                                    .max_h(px(64.0_f32
+                                        .min((self.menu_geometry().height - 103.0).max(0.0))))
                                     .child(options),
                             ))
                             .children(scrollbar),
@@ -792,13 +874,116 @@ impl Pickers {
     }
 }
 
+/// Paint every part of the rail in one coordinate space. The filled capsule
+/// extends beneath the thumb, so its left cap cannot peek around the first stop.
+fn effort_track(
+    theme: &Theme,
+    fraction: f32,
+    count: usize,
+    energy: f32,
+    time: f32,
+    reduced: bool,
+) -> AnyElement {
+    let accent = theme.accent;
+    let rail = crate::theme::ink(0.09);
+    let dot = theme.text_muted.opacity(0.5);
+    let light = crate::theme::grey(255);
+    gpui::canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let width = f32::from(bounds.size.width);
+            let center = THUMB_INSET + fraction * (width - 2.0 * THUMB_INSET).max(0.0);
+            let rect = |x: f32, y: f32, w: f32, h: f32| {
+                gpui::Bounds::new(
+                    bounds.origin + gpui::point(px(x), px(y)),
+                    gpui::size(px(w), px(h)),
+                )
+            };
+            let paint = |window: &mut Window, bounds, radius, background: gpui::Background| {
+                window.paint_quad(gpui::quad(
+                    bounds,
+                    px(radius),
+                    background,
+                    px(0.0),
+                    gpui::transparent_black(),
+                    gpui::BorderStyle::default(),
+                ));
+            };
+            paint(window, rect(0.0, 7.0, width, 24.0), 12.0, rail.into());
+            let fill_width = (center + THUMB_INSET).min(width);
+            let start = accent.opacity(0.5 + fraction * 0.4);
+            let hot = accent.blend(light.opacity(energy * 0.32));
+            paint(
+                window,
+                rect(0.0, 7.0, fill_width, 24.0),
+                12.0,
+                gpui::linear_gradient(
+                    90.0,
+                    gpui::linear_color_stop(start, 0.0),
+                    gpui::linear_color_stop(hot, 1.0),
+                )
+                .into(),
+            );
+            // Deterministic, soft-ended streaks stay inside the straight section of
+            // the capsule. Intensity changes their visibility, length and speed.
+            if !reduced && energy > 0.0 {
+                let run = (center - THUMB_INSET).max(0.0);
+                for i in 0..10 {
+                    let seed = i as f32;
+                    let phase = (time + seed * 0.618034).fract();
+                    let envelope = (std::f32::consts::PI * phase).sin().powi(2);
+                    let density = (energy * 10.0 - seed).clamp(0.0, 1.0);
+                    let x = THUMB_INSET + run * phase;
+                    let length = (5.0 + energy * 18.0) * envelope;
+                    let length = length.min((center - x).max(0.0));
+                    if length > 0.5 {
+                        paint(
+                            window,
+                            rect(x, 12.0 + (i * 7 % 14) as f32, length, 1.2),
+                            0.6,
+                            gpui::linear_gradient(
+                                90.0,
+                                gpui::linear_color_stop(light.opacity(0.0), 0.0),
+                                gpui::linear_color_stop(
+                                    light.opacity(density * envelope * 0.65),
+                                    1.0,
+                                ),
+                            )
+                            .into(),
+                        );
+                    }
+                }
+            }
+            for i in 0..count {
+                let stop = if count > 1 {
+                    i as f32 / (count - 1) as f32
+                } else {
+                    0.0
+                };
+                let x = THUMB_INSET + stop * (width - THUMB_INSET * 2.0).max(0.0);
+                // Filled ticks follow the animated front, never jump ahead of it.
+                let color = if stop <= fraction {
+                    light.opacity(0.65)
+                } else {
+                    dot
+                };
+                paint(window, rect(x - 2.0, 17.0, 4.0, 4.0), 2.0, color.into());
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
+    .into_any_element()
+}
+
+fn effort_fraction(x: f32, width: f32) -> f32 {
+    ((x - THUMB_INSET) / (width - THUMB_INSET * 2.0).max(1.0)).clamp(0.0, 1.0)
+}
+
 /// Slider stops include both endpoints and only advertised reasoning levels.
 fn effort_index(x: f32, width: f32, count: usize) -> Option<usize> {
-    (count > 0).then(|| {
-        (((x - THUMB_INSET) / (width - THUMB_INSET * 2.0).max(1.0)).clamp(0.0, 1.0)
-            * count.saturating_sub(1) as f32)
-            .round() as usize
-    })
+    (count > 0)
+        .then(|| (effort_fraction(x, width) * count.saturating_sub(1) as f32).round() as usize)
 }
 
 #[cfg(test)]
@@ -817,10 +1002,7 @@ mod tests {
             ScalarTransition::sample(&mut state, 1.0, start, false).0,
             0.5
         );
-        let middle = start
-            + motion::TAB_SLIDE
-                .total()
-                .mul_f32(motion::speed_scale() * 0.5);
+        let middle = start + motion::RESIZE.total().mul_f32(motion::speed_scale() * 0.5);
         let before = state.as_ref().unwrap().value(middle);
         let retargeted = ScalarTransition::sample(&mut state, 0.0, middle, false).0;
         assert!((before - retargeted).abs() < 0.0001);
@@ -828,6 +1010,23 @@ mod tests {
             ScalarTransition::sample(&mut state, 0.0, middle, true),
             (0.0, false)
         );
+    }
+
+    #[test]
+    fn continuous_drag_and_stops_share_inset_geometry() {
+        let width = 228.0;
+        for count in 2..=8 {
+            for index in 0..count {
+                let fraction = index as f32 / (count - 1) as f32;
+                let x = THUMB_INSET + fraction * (width - THUMB_INSET * 2.0);
+                assert!((effort_fraction(x, width) - fraction).abs() < 0.00001);
+                assert_eq!(effort_index(x, width, count), Some(index));
+                assert!(x - 2.0 >= 0.0 && x + 2.0 <= width);
+            }
+        }
+        assert!((effort_fraction(64.0, width) - 0.25).abs() < 0.00001);
+        assert_eq!(effort_fraction(-100.0, width), 0.0);
+        assert_eq!(effort_fraction(500.0, width), 1.0);
     }
 
     #[test]

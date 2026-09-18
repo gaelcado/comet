@@ -4106,7 +4106,7 @@ impl Pickers {
         let base_index = self.model_rows_len(cx);
         let mut rows = Vec::new();
         for (ix, group) in self.setting_groups(cx).into_iter().enumerate() {
-            if self.compact_model_picker(cx) && group.id == ModelSetting::Reasoning {
+            if self.compact_model_picker(cx) && !Self::compact_option_visible(&group.id) {
                 continue;
             }
             let open = self.setting_menu.as_ref() == Some(&group.id);
@@ -4899,7 +4899,7 @@ impl Render for Pickers {
             | Some(PickerKind::Device) => None,
             Some(PickerKind::HarnessModel) => {
                 let menu = if self.compact_model_picker(cx) {
-                    self.render_compact_menu(cx)
+                    self.render_compact_menu(window, cx)
                 } else {
                     let content = self.render_harness_model_popover(cx);
                     self.popover_frame_flush(304.0, content, cx)
@@ -4946,9 +4946,6 @@ impl Render for Pickers {
                 &theme,
                 cx,
             )
-            .when(self.compact_model_picker(cx), |chip| {
-                chip.bg(theme.accent.opacity(0.12))
-            })
             .when(fast, |chip| {
                 chip.child(motion::fast_tier(
                     "composer-fast-tier",
@@ -5574,6 +5571,17 @@ mod tests {
                     })
                     .to_vec(),
             }];
+            model.options.push(ModelOption {
+                id: "contextWindow".into(),
+                label: "Context window".into(),
+                default_choice: "standard".into(),
+                choices: ["standard", "large"]
+                    .map(|id| ModelOptionChoice {
+                        id: id.into(),
+                        label: id.into(),
+                    })
+                    .to_vec(),
+            });
             picker
                 .models
                 .insert(HarnessId::Codex, Loadable::Ready(vec![model]));
@@ -5620,7 +5628,7 @@ mod tests {
                 );
                 assert_eq!(
                     picker.setting_menu,
-                    Some(ModelSetting::Option("serviceTier".into()))
+                    Some(ModelSetting::Option("contextWindow".into()))
                 );
             })
             .unwrap();
@@ -5633,7 +5641,7 @@ mod tests {
             .read_with(cx, |picker, _| {
                 assert_eq!(
                     picker.compact_control,
-                    CompactControl::Option(ModelSetting::Option("serviceTier".into()))
+                    CompactControl::Option(ModelSetting::Option("contextWindow".into()))
                 )
             })
             .unwrap();
