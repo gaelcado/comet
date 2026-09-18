@@ -66,6 +66,7 @@ fn project_dirs(harness: HarnessId) -> &'static [&'static str] {
         HarnessId::Hermes => &[".agents/skills"],
         HarnessId::Pi => &[".agents/skills", ".pi/skills"],
         HarnessId::Devin => &[".agents/skills"],
+        HarnessId::Antigravity => &[".agents/skills", ".gemini/skills"],
         HarnessId::Codex => &[".agents/skills", ".codex/skills"],
         HarnessId::Mock => &[],
     }
@@ -77,6 +78,13 @@ fn discover_at(harness: HarnessId, cwd: &Path, home: &Path) -> Result<Vec<Skill>
         .map(|dir| (home.join(dir), String::new()))
         .collect();
     match harness {
+        HarnessId::Antigravity => {
+            roots.extend(
+                crate::acp::antigravity_skill_dirs()
+                    .into_iter()
+                    .map(|path| (path, String::new())),
+            );
+        }
         HarnessId::Pi => roots.push((
             std::env::var_os("PI_CODING_AGENT_DIR")
                 .map(PathBuf::from)
@@ -354,6 +362,7 @@ mod tests {
             HarnessId::Grok,
             HarnessId::Hermes,
             HarnessId::Pi,
+            HarnessId::Antigravity,
             HarnessId::Opencode,
         ] {
             let skills = discover_at(harness, &repo, &home).unwrap();

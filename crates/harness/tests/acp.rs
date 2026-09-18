@@ -1291,6 +1291,7 @@ async fn all_acp_harnesses_use_project_scoped_session_command_updates() {
         AcpHarness::grok(),
         AcpHarness::hermes(),
         AcpHarness::pi(),
+        AcpHarness::antigravity(),
     ] {
         let h = h.with_executable(fixture_path());
         for name in ["project-a", "project-b"] {
@@ -1314,6 +1315,7 @@ async fn all_acp_harnesses_bind_selected_skills_to_native_commands() {
         AcpHarness::grok(),
         AcpHarness::hermes(),
         AcpHarness::pi(),
+        AcpHarness::antigravity(),
     ] {
         let h = h.with_executable(fixture_path());
         let cwd = tempfile::tempdir().unwrap();
