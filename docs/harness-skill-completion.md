@@ -1,4 +1,42 @@
-# Skill completion across harnesses
+# Commands and skill completion across harnesses
+
+## Workspace commands
+
+Every harness gets Zeron actions in the `/` picker. Selecting one runs the action
+immediately; it does not create a model turn. Actions that require a conversation
+are shown only in an existing chat.
+
+| Command | Action |
+| --- | --- |
+| `/model` | Choose agent, model, and reasoning |
+| `/new` | Start a new conversation |
+| `/resume` | Search and open conversations |
+| `/settings` | Open Zeron settings |
+| `/diff` | Open a changes tab |
+| `/files` | Open project files |
+| `/terminal` | Open a terminal tab |
+| `/rename` | Open the conversation rename dialog |
+| `/stop` | Interrupt the current run |
+
+Provider commands remain available alongside these actions. When a provider owns
+the same name, its command keeps the name and the Zeron action gets a `zeron:`
+prefix, for example `/zeron:model`. A provider command and a workspace action are
+distinct entries, even when they have the same purpose. Workspace actions reject
+mixed drafts and attachments instead of discarding them.
+
+| Harness | Additional provider commands |
+| --- | --- |
+| Codex | Native `/compact` and `/review`; eleven total entries in an existing chat before skills |
+| Claude Code | Project-scoped commands from its initialize catalog |
+| OpenCode | Project-scoped server command catalog |
+| Devin, Grok, Hermes, Pi | Advertised ACP commands, including session command updates |
+| Cursor | Workspace actions; its SDK adapter has no native command catalog |
+
+This does not imply that every command in a provider's terminal UI can execute
+through its SDK. Provider-only operations without a corresponding protocol or
+Zeron action are not advertised as executable commands.
+
+## Skill preferences
 
 Settings → Keyboard Shortcuts has two independent controls for each production
 harness: Codex, Claude Code, Cursor, OpenCode, Devin, Grok, Hermes, and Pi.

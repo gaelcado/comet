@@ -4274,6 +4274,7 @@ impl Render for ComposerInput {
 /// Events the shell listens for.
 #[derive(Debug, Clone)]
 pub enum ComposerEvent {
+    WorkspaceCommand(WorkspaceCommand),
     /// Arm the shared-element transition before the draft route is replaced
     /// by the newly-created session. Emitting this before `select_chat` keeps
     /// the first destination frame on the same timeline as the source frame.
@@ -4281,11 +4282,17 @@ pub enum ComposerEvent {
     /// A prompt was sent optimistically — give the transcript its exact row
     /// identity so it can anchor the prompt at the top with the reply's
     /// reserved space below it.
-    Sent { chat_id: String, message_id: String },
+    Sent {
+        chat_id: String,
+        message_id: String,
+    },
     /// A locally-authored queue row was accepted. It is not a transcript send
     /// yet: the transcript remembers the stable id and promotes it to an
     /// own-turn anchor only when the host materializes the matching bubble.
-    Queued { chat_id: String, message_id: String },
+    Queued {
+        chat_id: String,
+        message_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4415,8 +4422,94 @@ fn skill_display_name(name: &str) -> String {
         .join(" ")
 }
 
+/// Commands implemented by Zeron, independently of the provider protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceCommand {
+    Model,
+    New,
+    Resume,
+    Settings,
+    Diff,
+    Files,
+    Terminal,
+    Rename,
+    Stop,
+}
+
+impl WorkspaceCommand {
+    fn catalog() -> &'static [(Self, &'static str, &'static str, bool)] {
+        &[
+            (
+                Self::Model,
+                "model",
+                "Zeron: choose agent, model, and reasoning",
+                false,
+            ),
+            (Self::New, "new", "Zeron: start a new conversation", false),
+            (
+                Self::Resume,
+                "resume",
+                "Zeron: search and open conversations",
+                false,
+            ),
+            (Self::Settings, "settings", "Zeron: open settings", false),
+            (Self::Diff, "diff", "Zeron: open changes", true),
+            (Self::Files, "files", "Zeron: open project files", true),
+            (Self::Terminal, "terminal", "Zeron: open a terminal", true),
+            (
+                Self::Rename,
+                "rename",
+                "Zeron: rename this conversation",
+                true,
+            ),
+            (Self::Stop, "stop", "Zeron: stop the active run", true),
+        ]
+    }
+}
+
+fn with_workspace_commands(
+    mut rows: Vec<InvocationCandidate>,
+    in_chat: bool,
+) -> Vec<InvocationCandidate> {
+    rows.retain(|row| row.workspace_command.is_none());
+    for &(command, name, description, needs_chat) in WorkspaceCommand::catalog() {
+        if needs_chat && !in_chat {
+            continue;
+        }
+        // Keep provider commands intact. Explicit Zeron names remain available
+        // when a provider owns the unqualified name.
+        let mut name = name.to_string();
+        while rows.iter().any(|row| row.name == name) {
+            name = format!("zeron:{name}");
+        }
+        rows.push(InvocationCandidate {
+            invocation: zeron_proto::invocation::Invocation::Command { name: name.clone() },
+            name,
+            description: description.into(),
+            input_hint: None,
+            workspace_command: Some(command),
+        });
+    }
+    rows
+}
+
+fn workspace_command_for_text(
+    text: &str,
+    rows: &[InvocationCandidate],
+) -> Option<WorkspaceCommand> {
+    let end = text.trim_end().len();
+    let token = slash_token(text, end)?;
+    if !text[..token.range.start].trim().is_empty() {
+        return None;
+    }
+    rows.iter()
+        .find(|row| row.name == token.query)?
+        .workspace_command
+}
+
 #[derive(Debug, Clone)]
 struct InvocationCandidate {
+    workspace_command: Option<WorkspaceCommand>,
     name: String,
     description: String,
     input_hint: Option<String>,
@@ -4496,6 +4589,7 @@ fn invocation_candidates(
     commands
         .into_iter()
         .map(|c| InvocationCandidate {
+            workspace_command: None,
             input_hint: c.input_hint,
             name: c.name.clone(),
             description: c.description,
@@ -4506,6 +4600,7 @@ fn invocation_candidates(
                 .into_iter()
                 .filter(|s| s.enabled)
                 .map(|s| InvocationCandidate {
+                    workspace_command: None,
                     input_hint: None,
                     name: s.name.clone(),
                     description: if zeron_proto::invocation::native_skill_identity(&s.path) {
@@ -4963,7 +5058,7 @@ impl Composer {
 
     /// Capture-knob passthrough (`ZERON_OPEN_DIALOG=model`): open the
     /// combined harness/model menu.
-    pub fn debug_open_model_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_model_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.pickers
             .update(cx, |pickers, cx| pickers.open_model_menu(window, cx));
     }
@@ -5994,11 +6089,25 @@ impl Composer {
             self.sync_mention_controls(cx);
             return;
         }
+        if harness.is_none() && !skill && commands_allowed {
+            self.slash_cache.insert(
+                context.clone(),
+                with_workspace_commands(vec![], self.state.read(cx).selected_chat.is_some()),
+            );
+        }
         if harness.is_none() || self.slash_cache.contains_key(&context) || self.slash.loading {
             self.refilter_slash(cx);
             return;
         }
         let Some(engine) = self.state.read(cx).engine().cloned() else {
+            if !skill && commands_allowed {
+                self.slash_cache.insert(
+                    context,
+                    with_workspace_commands(vec![], self.state.read(cx).selected_chat.is_some()),
+                );
+                self.slash.error = Some("Agent command discovery requires a connection".into());
+                self.refilter_slash(cx);
+            }
             return;
         };
         self.slash.request = self.slash.request.wrapping_add(1);
@@ -6050,9 +6159,28 @@ impl Composer {
                 });
                 match decoded {
                     Ok(candidates) => {
+                        let candidates = if !skill && commands_allowed {
+                            with_workspace_commands(
+                                candidates,
+                                composer.state.read(cx).selected_chat.is_some(),
+                            )
+                        } else {
+                            candidates
+                        };
                         composer.slash_cache.insert(context, candidates);
                     }
-                    Err(err) => composer.slash.error = Some(slash_error_message(&err, skill)),
+                    Err(err) => {
+                        composer.slash.error = Some(slash_error_message(&err, skill));
+                        if !skill && commands_allowed {
+                            composer.slash_cache.insert(
+                                context,
+                                with_workspace_commands(
+                                    vec![],
+                                    composer.state.read(cx).selected_chat.is_some(),
+                                ),
+                            );
+                        }
+                    }
                 }
                 composer.refilter_slash(cx);
             })
@@ -6123,6 +6251,20 @@ impl Composer {
         else {
             return;
         };
+        if let Some(action) = command.workspace_command {
+            let text = self.input.read(cx).text();
+            if text[..token.range.start].trim().is_empty()
+                && text[token.range.end..].trim().is_empty()
+            {
+                self.execute_workspace_command(action, cx);
+            } else {
+                self.failure =
+                    Some("Send the draft separately before running a Zeron command".into());
+                self.failure_key = Some(self.current_key.clone());
+                cx.notify();
+            }
+            return;
+        }
         self.input.update(cx, |input, cx| {
             input.replace_plain_token(token.range, &command.invocation.link(), cx)
         });
@@ -6520,6 +6662,28 @@ impl Composer {
         send_button_mode(self.run_live(cx), has_text)
     }
 
+    fn execute_workspace_command(&mut self, command: WorkspaceCommand, cx: &mut Context<Self>) {
+        if !self.staged().is_empty()
+            || !self.staged_appshots().is_empty()
+            || !self.staged_comments(cx).is_empty()
+            || self.editing_queued.is_some()
+        {
+            self.failure = Some(
+                "Send attachments and queued edits separately before running a Zeron command"
+                    .into(),
+            );
+            self.failure_key = Some(self.current_key.clone());
+            cx.notify();
+            return;
+        }
+        self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.reset_slash(None, cx);
+        self.failure = None;
+        self.failure_key = None;
+        cx.emit(ComposerEvent::WorkspaceCommand(command));
+        cx.notify();
+    }
+
     fn on_submit(&mut self, cx: &mut Context<Self>) {
         if self.commit_queue_edit(cx) {
             return;
@@ -6534,6 +6698,14 @@ impl Composer {
             return;
         }
         let text = self.input.read(cx).text().trim().to_string();
+        if let Some(action) = self
+            .slash_cache
+            .get(&self.slash.context)
+            .and_then(|rows| workspace_command_for_text(self.input.read(cx).text(), rows))
+        {
+            self.execute_workspace_command(action, cx);
+            return;
+        }
         let no_content = !composer_has_content(
             &text,
             self.staged().len() + self.staged_appshots().len(),
@@ -8895,6 +9067,99 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn workspace_commands_extend_every_harness_without_overriding_native_commands() {
+        for (harness, _) in crate::settings::SKILL_COMPLETION_HARNESSES {
+            let native = invocation_candidates(
+                vec![
+                    SlashCommand {
+                        name: "model".into(),
+                        description: "Native model command".into(),
+                        input_hint: Some("model id".into()),
+                    },
+                    SlashCommand {
+                        name: "zeron:model".into(),
+                        description: "Plugin command".into(),
+                        input_hint: None,
+                    },
+                ],
+                vec![],
+            );
+            let rows = with_workspace_commands(native, true);
+            assert_eq!(rows.len(), 11, "{harness:?}");
+            assert!(rows[0].workspace_command.is_none());
+            assert_eq!(rows[0].input_hint.as_deref(), Some("model id"));
+            assert_eq!(workspace_command_for_text("/model", &rows), None);
+            assert_eq!(workspace_command_for_text("/zeron:model", &rows), None);
+            assert_eq!(
+                workspace_command_for_text("/zeron:zeron:model", &rows),
+                Some(WorkspaceCommand::Model)
+            );
+            assert_eq!(with_workspace_commands(rows, true).len(), 11);
+        }
+        let draft_rows = with_workspace_commands(vec![], false);
+        assert_eq!(draft_rows.len(), 4);
+        assert_eq!(workspace_command_for_text("/diff", &draft_rows), None);
+        assert_eq!(
+            workspace_command_for_text("/model  ", &draft_rows),
+            Some(WorkspaceCommand::Model)
+        );
+        for literal in [
+            "    /model",
+            "`/model`",
+            "```\n/model\n```",
+            "please /model",
+            "/model extra",
+            "/model/path",
+        ] {
+            assert_eq!(
+                workspace_command_for_text(literal, &draft_rows),
+                None,
+                "{literal:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn workspace_command_submission_is_local_and_preserves_invalid_drafts(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let state = cx.new(|_| AppState::new());
+        let composer = cx.new(|cx| Composer::new(state, cx));
+        let actions = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let captured = actions.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
+                if let ComposerEvent::WorkspaceCommand(command) = event {
+                    captured.borrow_mut().push(*command);
+                }
+            })
+        });
+        composer.update(cx, |composer, cx| {
+            composer
+                .input
+                .update(cx, |input, cx| input.set_text("/model", cx));
+            composer.update_slash("/model", 6, cx);
+            composer.on_submit(cx);
+            assert!(composer.input.read(cx).text().is_empty());
+            assert!(
+                composer.failure.is_none(),
+                "must not require an engine or create a run"
+            );
+        });
+        assert_eq!(&*actions.borrow(), &[WorkspaceCommand::Model]);
+        composer.update(cx, |composer, cx| {
+            composer
+                .input
+                .update(cx, |input, cx| input.set_text("/model keep this draft", cx));
+            composer.update_slash("/model keep this draft", 6, cx);
+            composer.accept_slash(cx);
+            assert_eq!(composer.input.read(cx).text(), "/model keep this draft");
+            assert!(composer.failure.is_some());
+        });
+        assert_eq!(actions.borrow().len(), 1);
+    }
+
     #[gpui::test]
     fn projectless_composer_allows_send_and_enter_submission(cx: &mut gpui::TestAppContext) {
         let state = cx.new(|_| AppState::new());
@@ -9377,7 +9642,14 @@ mod tests {
                     composer.slash.request > request,
                     "late responses must be rejected"
                 );
-                assert!(composer.slash_cache.is_empty());
+                assert!(!composer.slash_cache.contains_key(&context));
+                assert!(
+                    composer
+                        .slash_cache
+                        .values()
+                        .flatten()
+                        .all(|row| row.workspace_command.is_some())
+                );
                 assert_eq!(composer.slash.token.as_ref().unwrap().query, "review");
             })
             .unwrap();
