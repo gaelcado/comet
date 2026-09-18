@@ -862,13 +862,16 @@ const UNDO_LIMIT: usize = 200;
 
 const MENTION_TOOLTIP_DELAY: Duration = Duration::from_millis(420);
 const MENTION_TOOLTIP_HEIGHT: f32 = 24.0;
+// Narrow nonbreaking spaces give UI-font chips compact insets and gaps,
+// while preserving the chip's atomic wrapping and source/caret projection.
 const MENTION_SIDE_PAD: &str = "\u{00A0}";
-// Real nonbreaking spaces shape predictably in the chip's mono font. Reserve
-// two cells for the icon and a third for separation from the label.
-const MENTION_ICON_SLOT: &str = "\u{00A0}\u{00A0}\u{00A0}";
+const COMPOSER_CHIP_PAD: &str = "\u{202F}\u{202F}";
+const MENTION_ICON_GLYPHS: &str = "\u{2007}\u{2007}";
+const MENTION_ICON_SLOT: &str = "\u{2007}\u{2007}\u{202F}";
+const MENTION_ICON_SIZE: f32 = 16.0;
 /// A private URI scheme keeps file mentions distinguishable from ordinary
 /// Markdown links pasted into the composer.
-const FILE_MENTION_SCHEME: &str = "zeron-file:";
+use zeron_proto::file_mentions::{FILE_MENTION_SCHEME, local_file_link, local_path_is_safe};
 
 /// A restorable point in the input's history: text plus where the caret and
 /// selection sat when the edit landed.
@@ -1206,9 +1209,14 @@ impl TextProjection {
                 } else {
                     link.prefix.to_string()
                 };
+                let pad = if icons {
+                    COMPOSER_CHIP_PAD
+                } else {
+                    MENTION_SIDE_PAD
+                };
                 (
                     link.range.clone(),
-                    format!("{MENTION_SIDE_PAD}{marker}{label}{MENTION_SIDE_PAD}"),
+                    format!("{pad}{marker}{label}{pad}"),
                     Some(link),
                 )
             })
@@ -1698,6 +1706,7 @@ struct InputLayoutKey {
     color: gpui::Hsla,
     chip_family: SharedString,
     chip_color: gpui::Hsla,
+    syntax: crate::theme::SyntaxPalette,
     marked_range: Option<Range<usize>>,
     placeholder: SharedString,
     mentions_enabled: bool,
@@ -1755,6 +1764,9 @@ pub struct ComposerInput {
     last_width: f32,
     /// Raw Markdown → chip display projection from the last layout pass.
     projection: TextProjection,
+    syntax_source: String,
+    syntax_spans: Vec<zeron_syntax::HighlightSpan>,
+    syntax_task: Option<Task<()>>,
     /// Inline completion preview: painted in faint ink after the text while
     /// the caret sits at the end (palette tab-completion). Owned by the
     /// wrapper — it recomputes and re-sets this on every render pass, so the
@@ -1848,6 +1860,9 @@ impl ComposerInput {
             max_line_width: 0.0,
             last_width: 0.0,
             projection: TextProjection::default(),
+            syntax_source: String::new(),
+            syntax_spans: Vec::new(),
+            syntax_task: None,
             ghost: None,
             mentions_enabled: false,
             layout_epoch: 0,
@@ -3250,6 +3265,7 @@ impl ComposerInput {
             color: style.color,
             chip_family: theme.font_mono.clone(),
             chip_color: theme.code_text,
+            syntax: theme.syntax.clone(),
             marked_range: self.marked_range.clone(),
             placeholder: self.placeholder.clone(),
             mentions_enabled: self.mentions_enabled,
@@ -3325,10 +3341,27 @@ impl ComposerInput {
         } else {
             Vec::new()
         };
+        let syntax: Vec<_> = if self.mentions_enabled && self.syntax_source == self.content {
+            self.syntax_spans
+                .iter()
+                .map(|span| {
+                    (
+                        self.projection.raw_to_display(span.range.start)
+                            ..self.projection.raw_to_display(span.range.end),
+                        span.kind,
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let marked = self.marked_range.as_ref().map(|r| {
             self.projection.raw_to_display(r.start)..self.projection.raw_to_display(r.end)
         });
         let mut boundaries = vec![0, display.len()];
+        for (range, _) in &syntax {
+            boundaries.extend([range.start, range.end]);
+        }
         for (range, _) in &faces {
             boundaries.extend([range.start, range.end]);
         }
@@ -3357,6 +3390,11 @@ impl ComposerInput {
                     marked.as_ref().is_some_and(|range| range.contains(&r[0])),
                     chip || code,
                 );
+                if chip {
+                    run.font = style.font();
+                    run.font.weight = gpui::FontWeight::MEDIUM;
+                    run.color = style.color;
+                }
                 for (range, face) in &faces {
                     if range.contains(&r[0]) && !chip {
                         match face {
@@ -3370,6 +3408,14 @@ impl ComposerInput {
                                 run.background_color = Some(Theme::of(cx).code_wash)
                             }
                         }
+                    }
+                }
+                if code && !chip {
+                    if let Some((_, kind)) = syntax
+                        .get(syntax.partition_point(|(range, _)| range.end <= r[0]))
+                        .filter(|(range, _)| range.contains(&r[0]))
+                    {
+                        run.color = Theme::of(cx).syntax.color(*kind);
                     }
                 }
                 run
@@ -3743,23 +3789,24 @@ struct MentionPathTooltip {
 
 impl Render for MentionPathTooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx);
+        let theme = Theme::of(cx).for_popup();
         motion::fade_quick(
             ("file-mention-path-tooltip", self.activation),
-            div()
-                .h(px(MENTION_TOOLTIP_HEIGHT))
-                .max_w(px(480.0))
-                .flex()
-                .items_center()
-                .px(px(8.0))
-                .rounded(px(5.0))
-                .border_1()
-                .border_color(theme.border_strong)
-                .bg(theme.surface_raised)
-                .font_family(theme.font_mono.clone())
-                .text_size(px(11.0))
-                .text_color(theme.text_muted)
-                .child(self.path.clone()),
+            div().child(crate::frost::frosted(
+                crate::popover::CARD_RADIUS,
+                crate::frost::MENU_BLUR,
+                crate::popover::popover_card(&theme)
+                    .h(px(MENTION_TOOLTIP_HEIGHT))
+                    .max_w(px(480.0))
+                    .flex()
+                    .items_center()
+                    .p_0()
+                    .px(px(8.0))
+                    .font_family(theme.font_mono.clone())
+                    .text_size(px(11.0))
+                    .text_color(theme.text_muted)
+                    .child(div().min_w_0().truncate().child(self.path.clone())),
+            )),
         )
     }
 }
@@ -3859,10 +3906,10 @@ impl gpui::Element for ComposerTextElement {
         let mut icon_specs = Vec::new();
         for (mention, display) in &input.projection.mentions {
             if mention.prefix != '/' {
-                let slot_start = display.start + MENTION_SIDE_PAD.len();
-                let slot_end = slot_start + MENTION_SIDE_PAD.len() * 2;
+                let slot_start = display.start + COMPOSER_CHIP_PAD.len();
+                let slot_end = slot_start + MENTION_ICON_GLYPHS.len();
                 if let Some(slot) = input.bounds_for_display_range(slot_start..slot_end).first() {
-                    let icon_size = px(14.0).min(slot.size.width);
+                    let icon_size = px(MENTION_ICON_SIZE).min(slot.size.width);
                     let icon_bounds = Bounds::new(
                         point(
                             origin.x + slot.left() + (slot.size.width - icon_size) / 2.0,
@@ -3887,9 +3934,9 @@ impl gpui::Element for ComposerTextElement {
                 let chip_bounds = Bounds::new(
                     point(
                         origin.x + local_bounds.origin.x,
-                        origin.y + local_bounds.origin.y + px(2.0),
+                        origin.y + local_bounds.origin.y + px(1.0),
                     ),
-                    size(local_bounds.size.width, local_bounds.size.height - px(4.0)),
+                    size(local_bounds.size.width, local_bounds.size.height - px(2.0)),
                 );
                 mention_quads.push(quad(
                     chip_bounds,
@@ -4024,8 +4071,14 @@ impl gpui::Element for ComposerTextElement {
                     } else {
                         crate::file_icons::FileIconIdentity::file(&mention.path)
                     };
-                    crate::file_icons::icon(identity, theme.appearance)
+                    div()
                         .size(bounds.size.width)
+                        .rounded(px(3.0))
+                        .bg(crate::file_icons::well_bg(&theme))
+                        .child(
+                            crate::file_icons::icon(identity, theme.appearance)
+                                .size(bounds.size.width),
+                        )
                         .into_any_element()
                 };
                 icon.prepaint_as_root(
@@ -4185,6 +4238,31 @@ impl gpui::Element for ComposerTextElement {
 
 impl Render for ComposerInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.mentions_enabled && self.syntax_source != self.content {
+            self.syntax_source = self.content.clone();
+            self.syntax_spans.clear();
+            let source = self.syntax_source.clone();
+            // Keep grammar loading and parsing off the input/paint thread. A
+            // dropped task and source check prevent stale edits recoloring text.
+            self.syntax_task = Some(cx.spawn(async move |input, cx| {
+                let (source, spans) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let spans = composer_markdown::syntax_spans(&source);
+                        (source, spans)
+                    })
+                    .await;
+                input
+                    .update(cx, |input, cx| {
+                        if input.content == source {
+                            input.syntax_spans = spans;
+                            input.needs_measure = true;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            }));
+        }
         let theme = Theme::of(cx);
         let popup_theme = theme.for_popup();
         let theme = if self.key_context == "PaletteSearch"
@@ -5761,10 +5839,7 @@ impl Composer {
     ) -> Option<gpui::AnyElement> {
         let theme = &theme.for_popup();
         let token = self.mention.token.as_ref()?;
-        let mut card = crate::popover::popover_card(theme)
-            .w_full()
-            .max_h(px(320.0))
-            .overflow_hidden()
+        let mut card = crate::popover::completion_card(theme)
             // Completion choices belong to the input. Keep it focused until
             // mouse-up can accept a choice (or while dragging the scrollbar).
             .on_mouse_down(
@@ -5819,69 +5894,37 @@ impl Composer {
                             this.mention.active = Some(ix);
                             this.accept_mention(cx);
                         }))
-                        .child(
-                            div()
-                                .w_full()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(
-                                    crate::file_icons::icon(
-                                        if result.is_dir {
-                                            crate::file_icons::FileIconIdentity::directory(
-                                                &result.path,
-                                                false,
-                                            )
-                                        } else {
-                                            crate::file_icons::FileIconIdentity::file(&result.path)
-                                        },
-                                        theme.appearance,
+                        .child(crate::popover::completion_row_content(
+                            theme,
+                            crate::file_icons::icon(
+                                if result.is_dir {
+                                    crate::file_icons::FileIconIdentity::directory(
+                                        &result.path,
+                                        false,
                                     )
-                                    .size(px(14.0))
-                                    .flex_none(),
-                                )
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_size(px(13.0))
-                                        .text_color(theme.text)
-                                        .child(name),
-                                )
-                                .when(!directory.is_empty(), |row| {
-                                    row.child(
-                                        div()
-                                            .min_w_0()
-                                            .flex_1()
-                                            .overflow_hidden()
-                                            .truncate()
-                                            .text_size(px(12.5))
-                                            .text_color(theme.text_muted)
-                                            .child(directory),
-                                    )
-                                }),
-                        )
+                                } else {
+                                    crate::file_icons::FileIconIdentity::file(&result.path)
+                                },
+                                theme.appearance,
+                            )
+                            .size(px(16.0))
+                            .into_any_element(),
+                            name.into(),
+                            directory.into(),
+                        ))
                         .into_any_element(),
                 );
             }
             // Overflowing rows wheel-scroll inside a bounded viewport; the
             // floating rail mirrors the model-list scrollbar treatment.
             card = card.child(
-                div()
-                    .id("mention-scroll-host")
-                    .relative()
+                crate::popover::menu_scroll_host("mention-scroll-host")
                     .on_hover(cx.listener(Self::on_popup_list_hover))
-                    .child(
-                        div()
-                            .id("mention-list")
-                            .max_h(px(312.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(crate::popover::MENU_GAP))
-                            .overflow_y_scroll()
-                            .track_scroll(&self.mention_scroll)
-                            .children(rows),
-                    )
+                    .child(crate::popover::completion_list(
+                        "mention-list",
+                        &self.mention_scroll,
+                        rows,
+                    ))
                     .children(crate::popover::rail(self, "mention-scrollbar", theme, cx)),
             );
         }
@@ -6132,10 +6175,7 @@ impl Composer {
             .unwrap_or_default();
         // Full pill width at the mention card's height budget — both composer
         // completions share the same surface shape.
-        let mut card = crate::popover::popover_card(theme)
-            .w_full()
-            .max_h(px(320.0))
-            .overflow_hidden()
+        let mut card = crate::popover::completion_card(theme)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
@@ -6218,61 +6258,32 @@ impl Composer {
                             this.slash.active = Some(row_ix);
                             this.accept_slash(cx);
                         }))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(
-                                    crate::icons::icon(if command.invocation.prefix() == '$' {
-                                        crate::icons::WIDGET
-                                    } else {
-                                        crate::icons::COMMAND
-                                    })
-                                    .size(px(14.0))
-                                    .text_color(theme.text_muted),
-                                )
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_size(crate::typography::ui_rems(12.5))
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(theme.text)
-                                        .child(name),
-                                )
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex_1()
-                                        .overflow_hidden()
-                                        .truncate()
-                                        .text_size(crate::typography::ui_rems(12.0))
-                                        .text_color(theme.text_muted)
-                                        .child(description),
-                                ),
-                        )
+                        .child(crate::popover::completion_row_content(
+                            theme,
+                            crate::icons::icon(if command.invocation.prefix() == '$' {
+                                crate::icons::WIDGET
+                            } else {
+                                crate::icons::COMMAND
+                            })
+                            .size(px(16.0))
+                            .text_color(theme.text_muted)
+                            .into_any_element(),
+                            name,
+                            description,
+                        ))
                         .into_any_element(),
                 );
             }
             // Overflowing rows wheel-scroll inside a bounded viewport; the
             // floating rail mirrors the model-list scrollbar treatment.
             card = card.child(
-                div()
-                    .id("slash-scroll-host")
-                    .relative()
+                crate::popover::menu_scroll_host("slash-scroll-host")
                     .on_hover(cx.listener(Self::on_popup_list_hover))
-                    .child(
-                        div()
-                            .id("slash-list")
-                            .max_h(px(312.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(crate::popover::MENU_GAP))
-                            .overflow_y_scroll()
-                            .track_scroll(&self.slash_scroll)
-                            .children(rows),
-                    )
+                    .child(crate::popover::completion_list(
+                        "slash-list",
+                        &self.slash_scroll,
+                        rows,
+                    ))
                     .children(crate::popover::rail(self, "slash-scrollbar", theme, cx)),
             );
         }
@@ -8982,10 +8993,10 @@ mod tests {
                 if mention.prefix == '/' {
                     assert!(label.contains("/help"));
                 } else {
-                    assert!(label.starts_with(&format!("{MENTION_SIDE_PAD}{MENTION_ICON_SLOT}")));
-                    let start = display.start + MENTION_SIDE_PAD.len();
+                    assert!(label.starts_with(&format!("{COMPOSER_CHIP_PAD}{MENTION_ICON_SLOT}")));
+                    let start = display.start + COMPOSER_CHIP_PAD.len();
                     let bounds =
-                        input.bounds_for_display_range(start..start + MENTION_SIDE_PAD.len() * 2);
+                        input.bounds_for_display_range(start..start + MENTION_ICON_GLYPHS.len());
                     assert_eq!(bounds.len(), 1);
                     assert!(bounds[0].size.width >= px(12.0));
                     assert_eq!(input.projection.display_to_raw(start), mention.range.start);
