@@ -10,6 +10,9 @@ pub enum Face {
 }
 
 pub fn faces(text: &str) -> Vec<(Range<usize>, Face)> {
+    if text.len() > 128 * 1024 {
+        return Vec::new();
+    }
     Parser::new_ext(text, Options::ENABLE_TASKLISTS)
         .into_offset_iter()
         .filter_map(|(event, range)| {
@@ -24,39 +27,53 @@ pub fn faces(text: &str) -> Vec<(Range<usize>, Face)> {
         .collect()
 }
 
-/// Neutral, source-relative code colors. Markdown's injection registry uses
-/// every language bundled by zeron-syntax, just like the transcript renderer.
-/// Work is bounded and runs on the background executor; unsupported fences
-/// retain their ordinary code styling.
+/// Highlight fenced code with its own grammar. Running the Markdown grammar
+/// over the whole draft colors fence bodies as strings, including identifiers.
+/// Keep prose and fence markers neutral, and retain exact source byte offsets.
 pub fn syntax_spans(text: &str) -> Vec<zeron_syntax::HighlightSpan> {
-    let Ok(document) = zeron_syntax::highlight_with_limits(
-        zeron_syntax::HighlightRequest {
-            source: text,
-            path: None,
-            fence_tag: Some("markdown"),
-        },
-        zeron_syntax::HighlightLimits {
-            max_source_bytes: 128 * 1024,
-            max_spans: 16_000,
-        },
-        None,
-    ) else {
+    if text.len() > 128 * 1024 {
         return Vec::new();
-    };
-    let mut offset = 0;
-    text.split('\n')
-        .zip(document.lines)
-        .flat_map(|(line, spans)| {
-            let start = offset;
-            offset += line.len() + 1;
-            spans
-                .into_iter()
-                .map(move |span| zeron_syntax::HighlightSpan {
-                    range: start + span.range.start..start + span.range.end,
-                    kind: span.kind,
-                })
-        })
-        .collect()
+    }
+    let mut language = None;
+    let mut result = Vec::new();
+    for (event, range) in Parser::new(text).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(info))) => {
+                language = info.split_whitespace().next().map(str::to_owned);
+            }
+            Event::End(pulldown_cmark::TagEnd::CodeBlock) => language = None,
+            Event::Text(_) if language.is_some() => {
+                let source = &text[range.clone()];
+                let Ok(document) = zeron_syntax::highlight_with_limits(
+                    zeron_syntax::HighlightRequest {
+                        source,
+                        path: None,
+                        fence_tag: language.as_deref(),
+                    },
+                    zeron_syntax::HighlightLimits {
+                        max_source_bytes: 128 * 1024,
+                        max_spans: 16_000 - result.len(),
+                    },
+                    None,
+                ) else {
+                    continue;
+                };
+                let mut offset = range.start;
+                for (line, spans) in source.split('\n').zip(document.lines) {
+                    result.extend(spans.into_iter().map(|span| zeron_syntax::HighlightSpan {
+                        range: offset + span.range.start..offset + span.range.end,
+                        kind: span.kind,
+                    }));
+                    offset += line.len() + 1;
+                }
+                if result.len() >= 16_000 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    result
 }
 
 pub fn in_code(text: &str, cursor: usize) -> bool {
@@ -135,7 +152,15 @@ pub struct ListPrefix {
     pub bullet: Option<usize>,
 }
 
+fn is_thematic_break(line: &str) -> bool {
+    let marks: Vec<_> = line.chars().filter(|c| !c.is_whitespace()).collect();
+    marks.len() >= 3 && matches!(marks[0], '-' | '*' | '_') && marks.iter().all(|c| *c == marks[0])
+}
+
 pub fn list_prefix(line: &str) -> Option<ListPrefix> {
+    if is_thematic_break(line) {
+        return None;
+    }
     let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
     let rest = &line[indent..];
     let (marker_len, next, bullet) = if matches!(rest, "-" | "*" | "+") {
@@ -170,7 +195,7 @@ pub fn list_prefix(line: &str) -> Option<ListPrefix> {
 }
 
 pub fn newline_edit(text: &str, cursor: usize) -> Option<(Range<usize>, String)> {
-    if in_code(text, cursor) {
+    if cursor > text.len() || !text.is_char_boundary(cursor) || in_code(text, cursor) {
         return None;
     }
     let start = text[..cursor].rfind('\n').map_or(0, |i| i + 1);
@@ -191,31 +216,34 @@ pub fn newline_edit(text: &str, cursor: usize) -> Option<(Range<usize>, String)>
 /// Hidden delimiters outside the active logical line, and typographic bullets.
 /// Each replacement retains a source range for caret/IME mapping.
 pub fn decorations(text: &str, active: Range<usize>) -> Vec<(Range<usize>, String)> {
+    if text.len() > 128 * 1024 {
+        return Vec::new();
+    }
     let mut edits = Vec::new();
     let faces = faces(text);
-    for (range, face) in faces.iter().cloned() {
+    for (event, range) in Parser::new_ext(text, Options::ENABLE_TASKLISTS).into_offset_iter() {
         if range.start <= active.end && range.end >= active.start {
             continue;
         }
         let source = &text[range.clone()];
-        let n = match face {
-            Face::Bold => 2,
-            Face::Italic => 1,
-            Face::Code if source.starts_with('`') && !source.starts_with("```") => {
-                source.bytes().take_while(|b| *b == b'`').count()
-            }
-            Face::Code => continue,
+        let n = match event {
+            Event::Start(Tag::Strong) => 2,
+            Event::Start(Tag::Emphasis) => 1,
+            Event::Code(_) => source.bytes().take_while(|b| *b == b'`').count(),
+            _ => continue,
         };
-        if range.len() > 2 * n {
+        if n > 0 && range.len() > 2 * n {
             edits.push((range.start..range.start + n, String::new()));
             edits.push((range.end - n..range.end, String::new()));
         }
     }
     let mut at = 0;
     for line in text.split('\n') {
-        if !faces
-            .iter()
-            .any(|(r, f)| *f == Face::Code && r.contains(&at))
+        if !(at <= active.end && at + line.len() >= active.start)
+            && !is_thematic_break(line)
+            && !faces
+                .iter()
+                .any(|(r, f)| *f == Face::Code && r.contains(&at))
         {
             if let Some(prefix) = list_prefix(line) {
                 if let Some(bullet) = prefix.bullet {
@@ -245,6 +273,33 @@ pub fn decorations(text: &str, active: Range<usize>) -> Vec<(Range<usize>, Strin
 mod tests {
     use super::*;
     #[test]
+    fn decorations_preserve_rules_code_and_nested_emphasis() {
+        for rule in ["- - -", "* * *", "___"] {
+            assert!(list_prefix(rule).is_none());
+            assert!(
+                decorations(&format!("{rule}\nactive"), rule.len() + 1..rule.len() + 7).is_empty()
+            );
+        }
+        let text = "```inline```\nactive";
+        assert_eq!(
+            decorations(text, 13..text.len()),
+            vec![(0..3, String::new()), (9..12, String::new())]
+        );
+        let text = "***both*** and **bold _nested_**\nactive";
+        let edits = decorations(text, text.rfind('\n').unwrap() + 1..text.len());
+        for pair in edits.windows(2) {
+            assert!(pair[0].0.end <= pair[1].0.start);
+        }
+        let mut rendered = text.to_string();
+        for (range, replacement) in edits.into_iter().rev() {
+            rendered.replace_range(range, &replacement);
+        }
+        assert_eq!(rendered, "both and bold nested\nactive");
+        assert_eq!(newline_edit("café", 4), None);
+        assert_eq!(newline_edit("short", 100), None);
+    }
+
+    #[test]
     fn code_boundaries_and_delimiter_runs() {
         for text in [
             "    - shell-command",
@@ -273,6 +328,20 @@ mod tests {
         assert!(spans.iter().any(|span| &text[span.range.clone()] == "def"
             && span.kind == zeron_syntax::HighlightKind::Keyword));
         assert!(syntax_spans(&"x".repeat(128 * 1024 + 1)).is_empty());
+        assert!(
+            spans
+                .iter()
+                .all(|span| !text[span.range.clone()].contains("```"))
+        );
+        assert!(syntax_spans("Normal `inline code` and **bold**").is_empty());
+        let rust = "```rust\nlet name = \"literal\";\n```";
+        let highlighted = syntax_spans(rust);
+        assert!(
+            highlighted
+                .iter()
+                .filter(|span| span.kind == zeron_syntax::HighlightKind::String)
+                .all(|span| !rust[span.range.clone()].contains("name"))
+        );
     }
 
     #[test]
@@ -288,15 +357,12 @@ mod tests {
         assert!(!in_code("say \\` $", 8));
     }
     #[test]
-    fn empty_bullets_and_active_items_render_as_bullets() {
+    fn inactive_bullets_render_while_active_markers_remain_editable() {
         let text = "-\n- \n-";
         let edits = decorations(text, 5..6);
-        assert_eq!(
-            edits,
-            vec![(0..1, "•".into()), (2..3, "•".into()), (5..6, "•".into())]
-        );
+        assert_eq!(edits, vec![(0..1, "•".into()), (2..3, "•".into())]);
         assert_eq!(newline_edit("-", 1), Some((0..1, String::new())));
-        assert_eq!(decorations("- item", 0..6), vec![(0..1, "•".into())]);
+        assert!(decorations("- item", 0..6).is_empty());
         assert!(list_prefix("-word").is_none());
         assert!(decorations("```\n-\n```", 0..3).is_empty());
     }

@@ -864,10 +864,10 @@ const MENTION_TOOLTIP_HEIGHT: f32 = 24.0;
 // Narrow nonbreaking spaces give UI-font chips compact insets and gaps,
 // while preserving the chip's atomic wrapping and source/caret projection.
 const MENTION_SIDE_PAD: &str = "\u{00A0}";
-const COMPOSER_CHIP_PAD: &str = "\u{202F}\u{202F}";
-const MENTION_ICON_GLYPHS: &str = "\u{2007}\u{2007}";
-const MENTION_ICON_SLOT: &str = "\u{2007}\u{2007}\u{202F}";
-const MENTION_ICON_SIZE: f32 = 16.0;
+const COMPOSER_CHIP_PAD: &str = "\u{00A0}\u{00A0}";
+const MENTION_ICON_GLYPHS: &str = "\u{2007}\u{2007}\u{2007}\u{2007}";
+const MENTION_ICON_SLOT: &str = "\u{2007}\u{2007}\u{2007}\u{2007}\u{202F}";
+const MENTION_ICON_SIZE: f32 = 14.0;
 /// A private URI scheme keeps file mentions distinguishable from ordinary
 /// Markdown links pasted into the composer.
 use zeron_proto::file_mentions::{FILE_MENTION_SCHEME, local_file_link, local_path_is_safe};
@@ -1052,6 +1052,95 @@ struct MentionHit {
     anchor: Point<Pixels>,
 }
 
+/// A chip is a compact identity, with the complete path available in its tooltip.
+/// Truncate by grapheme so emoji and combining marks remain intact.
+fn compact_chip_label(label: &str) -> String {
+    let graphemes: Vec<_> = label.graphemes(true).collect();
+    if graphemes.len() <= 32 {
+        return label.to_string();
+    }
+    format!(
+        "{}…{}",
+        graphemes[..18].concat(),
+        graphemes[graphemes.len() - 12..].concat()
+    )
+}
+
+/// GPUI's text wrapper permits breaks at Unicode spacer glyphs. Reference
+/// chips need stronger boundaries than ordinary prose, without changing ZUI.
+fn wrap_reference_chips(line: &mut WrappedLine, chips: &[Range<usize>], width: Pixels) {
+    if chips.is_empty() || line.wrap_boundaries().is_empty() {
+        return;
+    }
+    let glyphs: Vec<_> = line
+        .runs()
+        .iter()
+        .enumerate()
+        .flat_map(|(run_ix, run)| {
+            run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
+                (
+                    glyph.index,
+                    glyph.position.x,
+                    gpui::WrapBoundary { run_ix, glyph_ix },
+                )
+            })
+        })
+        .collect();
+    let inside = |index| {
+        chips
+            .iter()
+            .any(|range| range.start < index && index < range.end)
+    };
+    // Keep GPUI's original layout when none of its boundaries splits a chip.
+    if !line
+        .wrap_boundaries()
+        .iter()
+        .any(|b| inside(line.runs()[b.run_ix].glyphs[b.glyph_ix].index))
+    {
+        return;
+    }
+    let mut boundaries = line.wrap_boundaries.clone();
+    boundaries.clear();
+    let mut row = 0;
+    while row < glyphs.len() {
+        let limit = glyphs[row].1 + width;
+        let overflow = (row..glyphs.len()).find(|&i| {
+            glyphs
+                .get(i + 1)
+                .map_or(line.unwrapped_layout.width, |g| g.1)
+                > limit
+        });
+        let Some(overflow) = overflow else {
+            break;
+        };
+        // Prefer whitespace or a complete chip boundary. If an individual
+        // token is wider than the viewport, retain the usual emergency wrap.
+        let preferred = (row + 1..=overflow).rev().find(|&i| {
+            let index = glyphs[i].0;
+            !inside(index)
+                && (chips.iter().any(|r| r.start == index || r.end == index)
+                    || line.text[..index]
+                        .chars()
+                        .next_back()
+                        .is_some_and(char::is_whitespace))
+        });
+        let at = preferred
+            .or_else(|| (row + 1..=overflow).rev().find(|&i| !inside(glyphs[i].0)))
+            .unwrap_or(overflow.max(row + 1));
+        if at >= glyphs.len() {
+            break;
+        }
+        boundaries.push(glyphs[at].2);
+        row = at;
+    }
+    let layout = gpui::WrappedLineLayout {
+        unwrapped_layout: line.unwrapped_layout.clone(),
+        wrap_boundaries: boundaries,
+        wrap_width: line.wrap_width,
+    };
+    *std::ops::DerefMut::deref_mut(line) = std::sync::Arc::new(layout);
+}
+
 impl TextProjection {
     fn new(raw: &str) -> Self {
         Self::project(raw, None, false)
@@ -1093,6 +1182,11 @@ impl TextProjection {
             .into_iter()
             .zip(labels)
             .map(|(link, label)| {
+                let label = if icons {
+                    compact_chip_label(&label)
+                } else {
+                    label
+                };
                 let label = label.replace(' ', "\u{00A0}");
                 let marker = if icons && link.prefix != '/' {
                     MENTION_ICON_SLOT.to_owned()
@@ -1161,6 +1255,14 @@ impl TextProjection {
         let mut raw_at = 0;
         let mut display_at = 0;
         for (range, display) in &self.mappings {
+            // Clicking a rendered character belongs after any hidden opening
+            // delimiters, not before them. Multiple nested delimiters can share
+            // the same display offset; consume all of them before mapping it.
+            if display.is_empty() && display_offset == display.start {
+                raw_at = range.end;
+                display_at = display.end;
+                continue;
+            }
             if display_offset <= display.start {
                 return raw_at + display_offset.saturating_sub(display_at);
             }
@@ -1854,13 +1956,19 @@ impl ComposerInput {
         self.refresh_projection();
     }
 
+    fn editing_source_range(&self) -> Range<usize> {
+        let start = self.line_range_at(self.selected_range.start).start;
+        let end = self.line_range_at(self.selected_range.end).end;
+        start..end
+    }
+
     fn refresh_projection(&mut self) {
         self.projection = if self.mentions_enabled {
             TextProjection::rich(
                 &self.content,
                 self.marked_range
                     .is_none()
-                    .then(|| self.line_range_at(self.cursor_offset())),
+                    .then(|| self.editing_source_range()),
             )
         } else {
             TextProjection {
@@ -3159,9 +3267,7 @@ impl ComposerInput {
             marked_range: self.marked_range.clone(),
             placeholder: self.placeholder.clone(),
             mentions_enabled: self.mentions_enabled,
-            active_line: self
-                .mentions_enabled
-                .then(|| self.line_range_at(self.cursor_offset())),
+            active_line: self.mentions_enabled.then(|| self.editing_source_range()),
         };
         // Height-only animation, scrolling, selection and caret blinking do
         // not change shaping. Reuse the entity's single retained layout,
@@ -3301,6 +3407,7 @@ impl ComposerInput {
                     }
                 }
                 if code && !chip {
+                    run.color = style.color;
                     if let Some((_, kind)) = syntax
                         .get(syntax.partition_point(|(range, _)| range.end <= r[0]))
                         .filter(|(range, _)| range.contains(&r[0]))
@@ -3380,7 +3487,17 @@ impl ComposerInput {
                 (!self.single_line).then_some((width - indent).max(px(20.0))),
                 None,
             ) {
-                for line in shaped {
+                let chips: Vec<_> = self
+                    .projection
+                    .mentions
+                    .iter()
+                    .filter(|(_, r)| r.start >= display_at && r.end <= end)
+                    .map(|(_, r)| r.start - display_at..r.end - display_at)
+                    .collect();
+                for mut line in shaped {
+                    if !self.single_line {
+                        wrap_reference_chips(&mut line, &chips, (width - indent).max(px(20.0)));
+                    }
                     lines.push(line);
                     indents.push(indent);
                 }
@@ -3788,8 +3905,8 @@ impl gpui::Element for ComposerTextElement {
         let origin = point(bounds.left() - px(input.scroll_left), bounds.top() - scroll);
         let selection_color = Theme::of(cx).selection;
         let caret_color = Theme::of(cx).caret;
-        // The inline-code recipe: chips use the spectrum wash like `code` spans.
-        let mention_color = Theme::of(cx).code_wash;
+        // Reference chips are quiet controls, distinct from inline code.
+        let mention_color = crate::theme::ink(0.055);
 
         let mut mention_quads = Vec::new();
         let mut mention_hits = Vec::new();
@@ -3824,16 +3941,21 @@ impl gpui::Element for ComposerTextElement {
                 let chip_bounds = Bounds::new(
                     point(
                         origin.x + local_bounds.origin.x,
-                        origin.y + local_bounds.origin.y + px(1.0),
+                        origin.y
+                            + local_bounds.origin.y
+                            + (local_bounds.size.height - px(20.0)).max(px(0.0)) / 2.0,
                     ),
-                    size(local_bounds.size.width, local_bounds.size.height - px(2.0)),
+                    size(
+                        local_bounds.size.width,
+                        local_bounds.size.height.min(px(20.0)),
+                    ),
                 );
                 mention_quads.push(quad(
                     chip_bounds,
                     px(5.0),
                     mention_color,
-                    px(0.0),
-                    gpui::transparent_black(),
+                    px(1.0),
+                    crate::theme::hairline(0.075),
                     BorderStyle::default(),
                 ));
                 let above_anchor = chip_bounds.top() - px(MENTION_TOOLTIP_HEIGHT) - px(1.0);
@@ -3953,7 +4075,7 @@ impl gpui::Element for ComposerTextElement {
                 let mut icon = if mention.prefix == '$' {
                     crate::icons::icon(crate::icons::WIDGET)
                         .size(bounds.size.width)
-                        .text_color(theme.code_text)
+                        .text_color(theme.text_muted)
                         .into_any_element()
                 } else {
                     let identity = if mention.is_dir {
@@ -3961,14 +4083,8 @@ impl gpui::Element for ComposerTextElement {
                     } else {
                         crate::file_icons::FileIconIdentity::file(&mention.path)
                     };
-                    div()
+                    crate::file_icons::icon(identity, theme.appearance)
                         .size(bounds.size.width)
-                        .rounded(px(3.0))
-                        .bg(crate::file_icons::well_bg(&theme))
-                        .child(
-                            crate::file_icons::icon(identity, theme.appearance)
-                                .size(bounds.size.width),
-                        )
                         .into_any_element()
                 };
                 icon.prepaint_as_root(
@@ -9279,6 +9395,74 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn inline_chips_wrap_as_units_with_full_sized_icons(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle.update(cx, |composer, window, cx| {
+            let file = local_file_link("src/composer.rs", false);
+            let skill = zeron_proto::invocation::Invocation::Skill { name: "review-changes".into(), path: "/repo/SKILL.md".into(), command: None }.link();
+            let raw = format!("Review {file} with {skill} and enough trailing prose to need more than one additional row of wrapping.");
+            composer.input.update(cx, |input, cx| {
+                input.set_text(&raw, cx);
+                for width in [240., 300., 360.] {
+                    input.layout_text(px(width), &window.text_style(), window, cx);
+                    for (_, display) in &input.projection.mentions {
+                        assert_eq!(input.bounds_for_display_range(display.clone()).len(), 1, "chip split at {width}");
+                        let start = display.start + COMPOSER_CHIP_PAD.len();
+                        assert!(input.bounds_for_display_range(start..start+MENTION_ICON_GLYPHS.len())[0].size.width >= px(MENTION_ICON_SIZE));
+                    }
+                }
+                assert_eq!(input.text(), raw);
+            });
+        }).unwrap();
+    }
+
+    #[test]
+    fn hidden_markdown_hit_testing_targets_visible_text() {
+        let raw = "***café***\nactive";
+        let projection = TextProjection::rich(raw, Some(12..raw.len()));
+        assert_eq!(projection.display_to_raw(0), 3);
+        assert_eq!(
+            &raw[projection.display_to_raw(0)..projection.display_to_raw(1)],
+            "c"
+        );
+        for (display, _) in projection.display.char_indices() {
+            assert!(raw.is_char_boundary(projection.display_to_raw(display)));
+        }
+    }
+
+    #[test]
+    fn long_chip_labels_keep_graphemes_and_full_source_identity() {
+        let label = "ä".repeat(48) + ".rs";
+        let shown = compact_chip_label(&label);
+        assert_eq!(shown.graphemes(true).count(), 31);
+        assert!(shown.ends_with(".rs"));
+        let raw = local_file_link(&format!("src/{label}"), false);
+        let projected = TextProjection::rich(&raw, Some(0..raw.len()));
+        assert_eq!(projected.mentions[0].0.range, 0..raw.len());
+        assert!(projected.mentions[0].0.path.ends_with(&label));
+        assert!(projected.display.contains('…'));
+        assert_eq!(projected.normalize_range(1..raw.len() - 1), 0..raw.len());
+    }
+
+    #[gpui::test]
+    fn multiline_selection_exposes_all_selected_markdown_source(cx: &mut gpui::TestAppContext) {
+        let input = cx.new(|cx| ComposerInput::new("Draft", cx));
+        input.update(cx, |input, cx| {
+            input.enable_mentions();
+            input.set_text("**first**\n_second_\nactive", cx);
+            input.selected_range = 2..18;
+            input.refresh_projection();
+            assert!(input.projection.display.starts_with("**first**\n_second_"));
+            input.selection_reversed = true;
+            input.refresh_projection();
+            assert!(input.projection.display.starts_with("**first**\n_second_"));
+            input.selected_range = input.content.len()..input.content.len();
+            input.refresh_projection();
+            assert!(input.projection.display.starts_with("first\nsecond"));
+        });
+    }
+
     #[test]
     fn rich_projection_keeps_unicode_offsets_and_atomic_invocations() {
         let invocation = zeron_proto::invocation::Invocation::Skill {
@@ -11054,6 +11238,12 @@ mod appshot_rebase_tests {
 
 #[cfg(feature = "appshots-fixture")]
 impl Composer {
+    pub fn fixture_rich_draft(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.set_text(text, cx));
+        self.expanded_mode = true;
+        cx.notify();
+    }
+
     pub fn fixture_clear_appshots(&mut self, cx: &mut Context<Self>) {
         self.appshots.clear();
         cx.notify();
