@@ -1423,8 +1423,10 @@ async fn run_session(session: Session) {
                 Some(msg) => {
                     let text = msg.prompt;
                     // Native operations run at a turn boundary, never as text
-                    // injected into an already running model turn.
-                    if !done_current && (current_native || !matches!(command_request(&text, &thread_id), Ok(None))) {
+                    // injected into an already running model turn. Later messages
+                    // must stay behind queued commands: Steered acknowledgments
+                    // retire the engine's accepted-message ledger in FIFO order.
+                    if !done_current && (!queued_steers.is_empty() || current_native || !matches!(command_request(&text, &thread_id), Ok(None))) {
                         queued_steers.push_back(text);
                         continue 'main;
                     }

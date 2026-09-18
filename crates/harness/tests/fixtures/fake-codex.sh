@@ -108,6 +108,24 @@ case "$turnline" in
   emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
   ;;
 
+*scenario:native-queue-order*)
+  emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
+  emit '{"method":"turn/started","params":{"turn":{"id":"t-1"}}}'
+  emit '{"method":"item/agentMessage/delta","params":{"delta":"working"}}'
+  sleep 0.1
+  emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
+  read -r next || exit 1
+  has "$next" '"method":"review/start"' || { fail_turn "$(rid "$next")" "followup overtook queued review"; exit 0; }
+  emit "{\"id\":$(rid "$next"),\"result\":{\"turn\":{\"id\":\"t-2\"}}}"
+  emit '{"method":"item/completed","params":{"item":{"id":"review-2","type":"exitedReviewMode","review":"Queued review result"}}}'
+  emit '{"method":"turn/completed","params":{"turn":{"id":"t-2","status":"completed"}}}'
+  read -r next || exit 1
+  has "$next" '"method":"turn/start"' && has "$next" 'Follow up after review' || { fail_turn "$(rid "$next")" "followup was lost"; exit 0; }
+  emit "{\"id\":$(rid "$next"),\"result\":{\"turn\":{\"id\":\"t-3\"}}}"
+  emit '{"method":"item/agentMessage/delta","params":{"delta":"followup"}}'
+  emit '{"method":"turn/completed","params":{"turn":{"id":"t-3","status":"completed"}}}'
+  ;;
+
 *scenario:native-queue*)
   emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
   emit '{"method":"turn/started","params":{"turn":{"id":"t-1"}}}'

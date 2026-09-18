@@ -7219,7 +7219,9 @@ impl Composer {
             self.wizard_advance(cx);
             return;
         }
-        let text = self.input.read(cx).text().trim().to_string();
+        // Leading indentation distinguishes literal Markdown from native commands
+        // and skill invocations. Only the empty-content check may trim the draft.
+        let text = self.input.read(cx).text().to_string();
         if let Some(action) = self
             .slash_cache
             .get(&self.slash.context)
@@ -9855,6 +9857,81 @@ mod tests {
                 "Pending edits must still block submission"
             );
         });
+    }
+
+    #[gpui::test]
+    fn submission_preserves_literal_command_and_skill_indentation(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let skill = zeron_proto::invocation::Invocation::Skill {
+            name: "review".into(),
+            path: "/skills/review/SKILL.md".into(),
+            command: None,
+        }
+        .link();
+        for editing_queue in [false, true] {
+            for raw in [
+                "    /review".to_string(),
+                "\t/compact".into(),
+                "\u{a0}/review".into(),
+                format!("    {skill}"),
+                "Keep this hard break  ".into(),
+                " \t\n ".into(),
+            ] {
+                let (out, mut requests) = tokio::sync::mpsc::channel::<String>(64);
+                let (_replies, inbound) = tokio::sync::mpsc::channel::<String>(64);
+                let state = cx.new(|_| AppState::new());
+                state.update(cx, |state, _| {
+                    state.set_test_engine(crate::state::EngineHandle::from_test_client(
+                        zeron_rpc::RpcClient::new(out, inbound),
+                    ));
+                    state.selected_chat = Some("literal-draft".into());
+                });
+                let composer = cx.new(|cx| Composer::new(state, cx));
+                composer.update(cx, |composer, cx| {
+                    composer
+                        .input
+                        .update(cx, |input, cx| input.set_text(&raw, cx));
+                    if editing_queue {
+                        composer.editing_queued = Some("queued-row".into());
+                        composer.queue_edit_lease_id = Some("lease".into());
+                        composer.queue_edit_chat_id = Some("literal-draft".into());
+                        composer.queue_edit_host_device_id = Some("host".into());
+                    }
+                    composer.on_submit(cx);
+                });
+                cx.run_until_parked();
+                let mut submitted = None;
+                let mut discarded = false;
+                while let Ok(frame) = requests.try_recv() {
+                    let frame: zeron_rpc::ClientFrame = serde_json::from_str(&frame).unwrap();
+                    if frame.method.as_deref() == Some(methods::FINISH_QUEUED_MESSAGE_EDIT) {
+                        discarded = frame.params["action"] == "discard";
+                        submitted = frame.params["text"].as_str().map(str::to_owned);
+                    }
+                    if frame.method.as_deref() == Some(methods::QUEUE_COMMAND) {
+                        submitted = Some(
+                            frame.params["command"]["request"]["prompt"]
+                                .as_str()
+                                .unwrap()
+                                .to_owned(),
+                        );
+                    }
+                }
+                if raw.trim().is_empty() {
+                    assert!(submitted.is_none(), "whitespace alone must not submit");
+                    assert_eq!(discarded, editing_queue);
+                } else {
+                    let submitted = submitted.expect("submission must reach the engine RPC");
+                    assert_eq!(submitted, raw);
+                    assert!(zeron_proto::invocation::leading_command(&submitted).is_none());
+                    assert!(zeron_proto::invocation::invocation_links(&submitted).is_empty());
+                }
+            }
+        }
     }
 
     /// Issue #406: Enter submits — it must never stop a run. Stop mode only
