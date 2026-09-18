@@ -514,11 +514,10 @@ fn antigravity_archive() -> Option<crate::archive_install::ArchivePin> {
     })
 }
 
-/// the user-global skill folders the server loads (`resolve_skills_paths`).
-/// its project-level `.gemini/skills` and `.agents/skills` depend on a session
-/// cwd the command listing doesn't have, so those still reach the agent when
-/// typed but aren't listed.
-fn antigravity_skill_dirs() -> Vec<PathBuf> {
+/// User-global skill folders the server loads (`resolve_skills_paths`).
+/// Shared discovery adds project `.gemini/skills` and `.agents/skills` using
+/// the selected session's cwd.
+pub(crate) fn antigravity_skill_dirs() -> Vec<PathBuf> {
     antigravity_paths::home()
         .map(|home| {
             vec![
@@ -1713,7 +1712,8 @@ impl Harness for AcpHarness {
     }
 
     async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
-        let discovered = self.commands
+        let discovered = self
+            .commands
             .get_or_try_init(|| self.discover_commands(None))
             .await
             .cloned();
@@ -1733,7 +1733,20 @@ impl Harness for AcpHarness {
     }
 
     async fn commands_for(&self, cwd: &std::path::Path) -> Result<Vec<SlashCommand>, HarnessError> {
-        self.discover_commands(Some(cwd)).await
+        let discovered = self.discover_commands(Some(cwd)).await;
+        let skills = skill_commands(&(self.spec.skill_dirs)());
+        let mut commands = match discovered {
+            Ok(commands) => commands,
+            Err(_) if !skills.is_empty() => Vec::new(),
+            Err(error) => return Err(error),
+        };
+        commands.retain(|command| !self.spec.hidden_commands.contains(&command.name.as_str()));
+        for skill in skills {
+            if !commands.iter().any(|command| command.name == skill.name) {
+                commands.push(skill);
+            }
+        }
+        Ok(commands)
     }
 
     async fn run(
