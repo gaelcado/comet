@@ -21,15 +21,22 @@ are shown only in an existing chat.
 Provider commands remain available alongside these actions. When a provider owns
 the same name, its command keeps the name and the Zeron action gets a `zeron:`
 prefix, for example `/zeron:model`. A provider command and a workspace action are
-distinct entries, even when they have the same purpose. Workspace actions reject
-mixed drafts and attachments instead of discarding them.
+distinct entries, even when they have the same purpose. `/` completion works at
+any word boundary in the draft, including later lines, just like `@` and `$`.
+Code, URLs and paths remain literal.
+
+Selecting a workspace action consumes only its trigger, preserving surrounding
+text, attachments and queued edits. Removing the trigger is undoable. Provider
+commands and skills insert references into the draft and are delivered on Send;
+provider command execution still follows its protocol's leading-command rules.
+Typing an unselected inline `/word` does not execute a local action.
 
 | Harness | Additional provider commands |
 | --- | --- |
 | Codex | Native `/compact` and `/review`; eleven total entries in an existing chat before skills |
 | Claude Code | Project-scoped commands from its initialize catalog |
 | OpenCode | Project-scoped server command catalog |
-| Devin, Grok, Hermes, Pi | Advertised ACP commands, including session command updates |
+| Devin, Grok, Hermes, Pi, Antigravity | Advertised ACP commands, including session command updates |
 | Cursor | Workspace actions; its SDK adapter has no native command catalog |
 
 This does not imply that every command in a provider's terminal UI can execute
@@ -39,7 +46,7 @@ Zeron action are not advertised as executable commands.
 ## Skill preferences
 
 Settings → Agents has two independent controls for each production
-harness: Codex, Claude Code, Cursor, OpenCode, Devin, Grok, Hermes, and Pi.
+harness: Codex, Claude Code, Cursor, OpenCode, Devin, Grok, Hermes, Pi, and Antigravity.
 
 - **$ for skills** enables the skill picker after `$`.
 - **Separate / commands** removes skills from the `/` picker.

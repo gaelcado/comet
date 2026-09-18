@@ -1,8 +1,10 @@
 # Harness command mapping audit
 
 The composer lists commands supported by each integration. This is not a claim
-of parity with every provider's terminal UI. Commands execute only at the start
-of a prompt; inline command chips elsewhere remain prompt text.
+of parity with every provider's terminal UI. Slash completion is available
+throughout the draft. Selected Zeron actions execute immediately and preserve
+the draft; provider commands insert references. Provider commands execute only
+at the start of a prompt; inline command chips elsewhere remain prompt text.
 
 | Harness | Discovery | Execution |
 | --- | --- | --- |
