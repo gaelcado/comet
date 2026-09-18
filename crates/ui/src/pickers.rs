@@ -2467,9 +2467,13 @@ impl Pickers {
 
     fn measure_trigger(&self, kind: PickerKind, cx: &Context<Self>) -> impl IntoElement {
         let entity = cx.entity().downgrade();
-        // The new-thread workspace row opens down, matching main's layout.
+        // New-thread model and workspace menus open down, matching the
+        // centered composer's layout. In-thread menus retain adaptive placement.
         let below = self.state.read(cx).selected_chat.is_none()
-            && matches!(kind, PickerKind::Branch | PickerKind::Checkout);
+            && matches!(
+                kind,
+                PickerKind::HarnessModel | PickerKind::Branch | PickerKind::Checkout
+            );
         gpui::canvas(
             move |bounds, window, cx| {
                 let mut geometry = popover::menu_geometry(
@@ -5140,6 +5144,51 @@ mod tests {
             }
         }
         assert!(model_menu_budgets(180.0, 2).0 < model_menu_budgets(400.0, 2).0);
+    }
+
+    #[gpui::test]
+    fn centered_new_thread_model_menu_opens_below(cx: &mut gpui::TestAppContext) {
+        struct Fixture(Entity<Pickers>);
+        impl Render for Fixture {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().relative().child(
+                    div()
+                        .absolute()
+                        .top(px(300.0))
+                        .left(px(200.0))
+                        .child(self.0.clone()),
+                )
+            }
+        }
+        cx.update(|cx| cx.set_global(Theme::dark()));
+        let handle = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            Fixture(cx.new(|cx| Pickers::new(state, cx)))
+        });
+        for new_thread in [true, false] {
+            handle
+                .update(cx, |fixture, _, cx| {
+                    fixture.0.update(cx, |picker, cx| {
+                        picker.state.update(cx, |state, cx| {
+                            state.selected_chat = (!new_thread).then(|| "thread".into());
+                            cx.notify();
+                        });
+                        cx.notify();
+                    });
+                    cx.notify();
+                })
+                .unwrap();
+            cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            handle
+                .read_with(cx, |fixture, cx| {
+                    let picker = fixture.0.read(cx);
+                    let geometry = picker.menu_geometry[&PickerKind::HarnessModel];
+                    assert_eq!(geometry.below, new_thread);
+                    assert!(geometry.height > 180.0);
+                })
+                .unwrap();
+        }
     }
 
     #[gpui::test]
