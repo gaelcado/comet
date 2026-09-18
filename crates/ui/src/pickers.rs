@@ -538,6 +538,7 @@ pub struct Pickers {
     open_model_width: Option<gpui::Pixels>,
     open_model_height: f32,
     compact_model_list: bool,
+    compact_control: compact::CompactControl,
     effort_dragging: bool,
     effort_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     open: popover::Popup<PickerKind>,
@@ -731,6 +732,7 @@ impl Pickers {
             open_model_width: None,
             open_model_height: model_menu_height(0),
             compact_model_list: false,
+            compact_control: compact::CompactControl::default(),
             effort_dragging: false,
             effort_bounds: None,
             config: DraftConfig::default(),
@@ -1032,6 +1034,7 @@ impl Pickers {
             return;
         }
         if kind == PickerKind::HarnessModel {
+            self.compact_control = compact::CompactControl::Model;
             self.compact_model_list = false;
             self.effort_dragging = false;
             self.open_model_width = self.model_trigger_bounds.map(|bounds| bounds.size.width);
@@ -1804,6 +1807,15 @@ impl Pickers {
     /// icon and then the model.
     fn activate_model_index(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(row) = self.model_rows(cx).get(ix).cloned() else {
+            if self.compact_model_picker(cx) && self.compact_model_list {
+                if let Some(status) = ix
+                    .checked_sub(self.model_rows_len(cx))
+                    .and_then(|index| self.compact_catalog_statuses(cx).get(index).cloned())
+                    .filter(|status| status.error.is_some())
+                {
+                    self.ensure_models(status.harness, true, cx);
+                }
+            }
             return;
         };
         if self.effective_harness(cx) != Some(row.harness) {
@@ -1814,6 +1826,7 @@ impl Pickers {
         }
         self.pick_model(row.model.id, cx);
         if self.compact_model_picker(cx) {
+            self.compact_control = compact::CompactControl::Model;
             self.compact_model_list = false;
             self.focus_on_mount = true;
         }
@@ -2341,6 +2354,7 @@ impl Pickers {
                 return;
             }
             if event.keystroke.key == "escape" {
+                self.compact_control = compact::CompactControl::Model;
                 self.compact_model_list = false;
                 self.focus_on_mount = true;
                 cx.notify();
@@ -2389,7 +2403,7 @@ impl Pickers {
                     Some(PickerKind::HarnessModel) => {
                         self.model_rows_len(cx)
                             + if self.compact_model_picker(cx) {
-                                0
+                                self.compact_catalog_statuses(cx).len()
                             } else {
                                 self.setting_groups(cx).len()
                             }
@@ -2405,7 +2419,13 @@ impl Pickers {
                 // the traits chips below live in the pinned tray and never
                 // need scrolling into view.
                 if self.open_kind() == Some(PickerKind::HarnessModel)
-                    && self.active < self.model_rows_len(cx)
+                    && self.active
+                        < self.model_rows_len(cx)
+                            + if self.compact_model_picker(cx) {
+                                self.compact_catalog_statuses(cx).len()
+                            } else {
+                                0
+                            }
                 {
                     self.model_scroll
                         .scroll_to_item(self.active, gpui::ScrollStrategy::Nearest);
@@ -3581,13 +3601,19 @@ impl Pickers {
         //    (field report: the un-virtualized stack was the picker's lag).
         //    Keyboard nav scrolls via the UniformListScrollHandle.
         let effective_models = effective.and_then(|h| self.models.get(&h));
-        let model_list: Option<AnyElement> = if !rows.is_empty() {
+        let catalog_statuses = if compact {
+            self.compact_catalog_statuses(cx)
+        } else {
+            Vec::new()
+        };
+        let list_count = rows.len() + catalog_statuses.len();
+        let model_list: Option<AnyElement> = if list_count > 0 {
             let entity = cx.entity();
             let row_data = rows.clone();
             Some(
                 gpui::uniform_list(
                     "model-menu-scroll",
-                    rows.len(),
+                    list_count,
                     move |range, _window, app| {
                         entity.update(app, |this, cx| {
                             range
@@ -3595,6 +3621,15 @@ impl Pickers {
                                     row_data
                                         .get(ix)
                                         .map(|row| this.render_model_row(ix, row, cx))
+                                        .or_else(|| {
+                                            catalog_statuses.get(ix - row_data.len()).map(
+                                                |status| {
+                                                    this.render_compact_catalog_status(
+                                                        ix, status, cx,
+                                                    )
+                                                },
+                                            )
+                                        })
                                 })
                                 .collect::<Vec<AnyElement>>()
                         })
@@ -4003,6 +4038,9 @@ impl Pickers {
     }
 
     fn open_setting(&mut self, id: ModelSetting, cx: &mut Context<Self>) {
+        if self.compact_model_picker(cx) {
+            self.compact_control = compact::CompactControl::Option(id.clone());
+        }
         self.cancel_setting_hover();
         self.setting_intent_origin = None;
         self.setting_active = self
@@ -5437,6 +5475,164 @@ mod tests {
             reasoning_levels: Vec::new(),
             options: Vec::new(),
         }
+    }
+
+    #[gpui::test]
+    fn compact_keyboard_reaches_every_control_and_returns_to_models(cx: &mut gpui::TestAppContext) {
+        use compact::CompactControl;
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let mut settings = crate::settings::UiSettings::default();
+            settings.compact_model_picker = true;
+            crate::settings::init(settings, dir.path(), cx);
+        });
+        let handle = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            let mut picker = Pickers::new(state, cx);
+            picker.config.harness = Some(HarnessId::Codex);
+            picker.harnesses = Loadable::Ready(vec![descriptor(HarnessId::Codex, "Codex")]);
+            let mut model = bare_model("model", "Model");
+            model.reasoning_levels = vec![ReasoningLevel::Low, ReasoningLevel::High];
+            model.options = vec![ModelOption {
+                id: "serviceTier".into(),
+                label: "Service tier".into(),
+                default_choice: "standard".into(),
+                choices: ["standard", "fast"]
+                    .map(|id| ModelOptionChoice {
+                        id: id.into(),
+                        label: id.into(),
+                    })
+                    .to_vec(),
+            }];
+            picker
+                .models
+                .insert(HarnessId::Codex, Loadable::Ready(vec![model]));
+            picker
+        });
+        handle
+            .update(cx, |picker, window, cx| picker.open_model_menu(window, cx))
+            .unwrap();
+        cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "down enter");
+        handle
+            .read_with(cx, |picker, cx| {
+                assert_eq!(picker.compact_control, CompactControl::Fast);
+                assert_eq!(picker.resolved(cx).model_options["serviceTier"], "fast");
+            })
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "down enter");
+        handle
+            .read_with(cx, |picker, cx| {
+                assert_eq!(picker.compact_control, CompactControl::Reset);
+                assert!(
+                    !picker
+                        .resolved(cx)
+                        .model_options
+                        .contains_key("serviceTier")
+                );
+            })
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "down home");
+        handle
+            .read_with(cx, |picker, cx| {
+                assert_eq!(picker.effective_reasoning(cx), Some(ReasoningLevel::Low))
+            })
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "end down enter");
+        handle
+            .read_with(cx, |picker, cx| {
+                assert_eq!(picker.effective_reasoning(cx), Some(ReasoningLevel::High));
+                assert_eq!(
+                    picker.setting_menu,
+                    Some(ModelSetting::Option("serviceTier".into()))
+                );
+            })
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "escape tab enter");
+        handle
+            .read_with(cx, |picker, _| assert!(picker.compact_model_list))
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "escape shift-tab");
+        handle
+            .read_with(cx, |picker, _| {
+                assert_eq!(
+                    picker.compact_control,
+                    CompactControl::Option(ModelSetting::Option("serviceTier".into()))
+                )
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn compact_catalog_failures_remain_visible_beside_ready_models(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            let mut settings = crate::settings::UiSettings::default();
+            settings.compact_model_picker = true;
+            crate::settings::init(settings, dir.path(), cx);
+        });
+        let handle = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            let mut picker = Pickers::new(state, cx);
+            picker.config.harness = Some(HarnessId::Codex);
+            picker.harnesses = Loadable::Ready(vec![
+                descriptor(HarnessId::Codex, "Codex"),
+                descriptor(HarnessId::ClaudeCode, "Claude"),
+                descriptor(HarnessId::Grok, "Grok"),
+            ]);
+            picker.models.insert(
+                HarnessId::Codex,
+                Loadable::Ready(vec![bare_model("model", "Model")]),
+            );
+            picker.models.insert(
+                HarnessId::ClaudeCode,
+                Loadable::Error("Catalog timed out".into()),
+            );
+            picker.models.insert(HarnessId::Grok, Loadable::Loading);
+            picker
+        });
+        handle
+            .update(cx, |picker, window, cx| {
+                picker.open_model_menu(window, cx);
+                picker.show_compact_models(cx);
+                let statuses = picker.compact_catalog_statuses(cx);
+                assert_eq!(statuses.len(), 2);
+                assert_eq!(statuses[0].harness, HarnessId::ClaudeCode);
+                assert_eq!(statuses[0].error.as_deref(), Some("Catalog timed out"));
+                assert!(statuses[1].error.is_none());
+                assert_eq!(picker.model_rows_len(cx), 1);
+            })
+            .unwrap();
+        cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "down");
+        handle
+            .read_with(cx, |picker, _| {
+                assert_eq!(picker.active, 1, "Retry row must be keyboard reachable")
+            })
+            .unwrap();
+        handle
+            .update(cx, |picker, _, cx| {
+                picker.models.insert(
+                    HarnessId::ClaudeCode,
+                    Loadable::Ready(vec![bare_model("claude", "Claude model")]),
+                );
+                picker.catalog_rev += 1;
+                assert_eq!(picker.model_rows_len(cx), 2);
+                assert_eq!(picker.compact_catalog_statuses(cx).len(), 1);
+                picker.state.update(cx, |state, cx| {
+                    state.selected_chat = Some("thread".into());
+                    cx.notify();
+                });
+                assert!(
+                    picker.compact_catalog_statuses(cx).is_empty(),
+                    "Other harness errors must stay hidden in-thread"
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]

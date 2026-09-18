@@ -1,6 +1,23 @@
 //! Alternate presentation of the same model and option mutations.
 use super::*;
 
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub(super) enum CompactControl {
+    #[default]
+    Model,
+    Fast,
+    Reset,
+    Effort,
+    Option(ModelSetting),
+}
+
+#[derive(Clone)]
+pub(super) struct CatalogStatus {
+    pub harness: HarnessId,
+    pub name: String,
+    pub error: Option<String>,
+}
+
 impl Pickers {
     pub(super) fn render_compact_model_row(
         &mut self,
@@ -139,6 +156,7 @@ impl Pickers {
                     .aria_label("Back to effort")
                     .w_full()
                     .on_click(cx.listener(|this, _, _, cx| {
+                        this.compact_control = CompactControl::Model;
                         this.compact_model_list = false;
                         this.focus_on_mount = true;
                         cx.notify();
@@ -217,59 +235,165 @@ impl Pickers {
         }
     }
 
+    fn compact_controls(&self, cx: &App) -> Vec<CompactControl> {
+        let mut controls = vec![CompactControl::Model];
+        if self.compact_fast_choice(cx).is_some() {
+            controls.push(CompactControl::Fast);
+        }
+        controls.push(CompactControl::Reset);
+        if !self.trait_ladder(cx).is_empty() {
+            controls.push(CompactControl::Effort);
+        }
+        controls.extend(
+            self.setting_groups(cx)
+                .into_iter()
+                .filter(|g| g.id != ModelSetting::Reasoning)
+                .map(|g| CompactControl::Option(g.id)),
+        );
+        controls
+    }
+
     pub(super) fn compact_panel_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let levels = self.trait_ladder(cx);
-        let index = levels
-            .iter()
-            .position(|level| Some(*level) == self.effective_reasoning(cx))
-            .unwrap_or(0);
+        let controls = self.compact_controls(cx);
+        if !controls.contains(&self.compact_control) {
+            self.compact_control = CompactControl::Model;
+        }
         match event.keystroke.key.as_str() {
             "escape" => self.animate_close(cx),
-            "enter" => {
-                let base = self.model_rows_len(cx);
-                if let Some(group) = self.active.checked_sub(base).and_then(|i| {
-                    self.setting_groups(cx)
-                        .get(i)
-                        .filter(|g| g.id != ModelSetting::Reasoning)
-                        .map(|g| g.id.clone())
-                }) {
-                    self.open_setting(group, cx);
-                } else {
-                    self.show_compact_models(cx);
-                }
-            }
-            "up" | "down" => {
-                let base = self.model_rows_len(cx);
-                let indices: Vec<_> = self
-                    .setting_groups(cx)
+            "up" | "down" | "tab" => {
+                let current = controls
                     .iter()
-                    .enumerate()
-                    .filter(|(_, group)| group.id != ModelSetting::Reasoning)
-                    .map(|(i, _)| base + i)
-                    .collect();
-                let current = indices.iter().position(|i| *i == self.active);
-                let next = popover::menu_step(
-                    current,
-                    indices.len(),
-                    if event.keystroke.key == "up" { -1 } else { 1 },
-                );
-                if let Some(next) = next {
-                    self.active = indices[next];
+                    .position(|control| *control == self.compact_control);
+                let backwards = event.keystroke.key == "up"
+                    || (event.keystroke.key == "tab" && event.keystroke.modifiers.shift);
+                let next =
+                    popover::menu_step(current, controls.len(), if backwards { -1 } else { 1 })
+                        .unwrap_or(0);
+                self.compact_control = controls[next].clone();
+                self.active = match &self.compact_control {
+                    CompactControl::Option(id) => self
+                        .setting_groups(cx)
+                        .iter()
+                        .position(|g| &g.id == id)
+                        .map(|i| self.model_rows_len(cx) + i)
+                        .unwrap_or(NO_ACTIVE_ROW),
+                    _ => NO_ACTIVE_ROW,
+                };
+                if let CompactControl::Option(id) = &self.compact_control {
+                    let index = self
+                        .setting_groups(cx)
+                        .iter()
+                        .filter(|g| g.id != ModelSetting::Reasoning)
+                        .position(|g| &g.id == id)
+                        .unwrap_or(0);
+                    self.menu_scroll
+                        .set_offset(gpui::point(px(0.0), px(-(index as f32 * 32.0))));
                 }
             }
-            "left" | "right" | "home" | "end" if !levels.is_empty() => {
-                let next = match event.keystroke.key.as_str() {
-                    "left" => index.saturating_sub(1),
-                    "right" => (index + 1).min(levels.len() - 1),
-                    "home" => 0,
-                    _ => levels.len() - 1,
-                };
-                self.pick_reasoning(levels[next], cx);
+            "enter" | "space" => match self.compact_control.clone() {
+                CompactControl::Model => self.show_compact_models(cx),
+                CompactControl::Fast => {
+                    if let Some((option, choice, default, _)) = self.compact_fast_choice(cx) {
+                        self.pick_option(option, choice, default, cx);
+                    }
+                }
+                CompactControl::Reset => self.reset_compact_options(cx),
+                CompactControl::Option(id) => self.open_setting(id, cx),
+                CompactControl::Effort => {}
+            },
+            "right" if matches!(self.compact_control, CompactControl::Option(_)) => {
+                if let CompactControl::Option(id) = self.compact_control.clone() {
+                    self.open_setting(id, cx);
+                }
+            }
+            "left" | "right" | "home" | "end" if self.compact_control == CompactControl::Effort => {
+                let levels = self.trait_ladder(cx);
+                if !levels.is_empty() {
+                    let index = levels
+                        .iter()
+                        .position(|level| Some(*level) == self.effective_reasoning(cx))
+                        .unwrap_or(0);
+                    let next = match event.keystroke.key.as_str() {
+                        "left" => index.saturating_sub(1),
+                        "right" => (index + 1).min(levels.len() - 1),
+                        "home" => 0,
+                        _ => levels.len() - 1,
+                    };
+                    self.pick_reasoning(levels[next], cx);
+                }
             }
             _ => return,
         }
         cx.notify();
         cx.stop_propagation();
+    }
+
+    pub(super) fn compact_catalog_statuses(&self, cx: &App) -> Vec<CatalogStatus> {
+        self.rail_descriptors(cx)
+            .into_iter()
+            .filter_map(|descriptor| {
+                let error = match self.models.get(&descriptor.id) {
+                    Some(Loadable::Ready(_)) => return None,
+                    Some(Loadable::Error(error)) => Some(error.clone()),
+                    _ => None,
+                };
+                Some(CatalogStatus {
+                    harness: descriptor.id,
+                    name: descriptor.name,
+                    error,
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn render_compact_catalog_status(
+        &self,
+        ix: usize,
+        status: &CatalogStatus,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).for_popup();
+        let harness = status.harness;
+        let failed = status.error.is_some();
+        let title: SharedString = format!(
+            "{} — {}",
+            status.name,
+            if failed {
+                "Models unavailable"
+            } else {
+                "Loading models…"
+            }
+        )
+        .into();
+        let mut row = popover::menu_row(&theme, self.active == ix, format!("catalog-status-{ix}"))
+            .id(("catalog-status", ix))
+            .h(px(48.0))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().truncate().child(title))
+                    .when_some(status.error.clone(), |el, error| {
+                        el.child(
+                            div()
+                                .truncate()
+                                .text_size(crate::typography::ui_rems(11.0))
+                                .text_color(theme.text_muted)
+                                .child(error),
+                        )
+                    }),
+            );
+        if failed {
+            row = row
+                .role(gpui::Role::Button)
+                .aria_label(SharedString::from(format!("Retry {} models", status.name)))
+                .on_click(cx.listener(move |this, _, _, cx| this.ensure_models(harness, true, cx)))
+                .child(div().text_color(theme.accent).child("Retry"));
+        }
+        div()
+            .pb(px(popover::MENU_GAP))
+            .child(row)
+            .into_any_element()
     }
 
     pub(super) fn render_compact_model_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -295,6 +419,9 @@ impl Pickers {
             header = header.child(
                 popover::menu_row(&theme, fast, "compact-fast")
                     .id("compact-fast")
+                    .when(self.compact_control == CompactControl::Fast, |el| {
+                        el.bg(theme.accent.opacity(0.16))
+                    })
                     .role(gpui::Role::Button)
                     .aria_label("Toggle fast mode")
                     .size(px(32.0))
@@ -314,6 +441,9 @@ impl Pickers {
             .child(
                 div()
                     .id("compact-select-model")
+                    .when(self.compact_control == CompactControl::Model, |el| {
+                        el.bg(theme.accent.opacity(0.10))
+                    })
                     .role(gpui::Role::Button)
                     .aria_label("Select model")
                     .flex_1()
@@ -350,6 +480,9 @@ impl Pickers {
             .child(
                 popover::menu_row(&theme, false, "compact-reset")
                     .id("compact-reset")
+                    .when(self.compact_control == CompactControl::Reset, |el| {
+                        el.bg(theme.accent.opacity(0.16))
+                    })
                     .role(gpui::Role::Button)
                     .aria_label("Reset model options")
                     .size(px(32.0))
@@ -372,6 +505,9 @@ impl Pickers {
             let drag_entity = entity.clone();
             let slider = div()
                 .id("compact-effort-slider")
+                .when(self.compact_control == CompactControl::Effort, |el| {
+                    el.shadow(crate::theme::card_selected_shadows())
+                })
                 .role(gpui::Role::Slider)
                 .aria_label("Reasoning effort")
                 .aria_value(SharedString::from(
@@ -392,6 +528,7 @@ impl Pickers {
                     gpui::MouseButton::Left,
                     cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         window.focus(&this.focus, cx);
+                        this.compact_control = CompactControl::Effort;
                         this.effort_dragging = true;
                         this.pick_effort_at(event.position.x, cx);
                         cx.stop_propagation();
