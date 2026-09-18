@@ -540,6 +540,8 @@ pub struct Pickers {
     compact_model_list: bool,
     compact_control: compact::CompactControl,
     effort_dragging: bool,
+    compact_motion: compact::CompactMotion,
+    compact_keyboard: bool,
     effort_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     open: popover::Popup<PickerKind>,
     /// The harness/model picker's rail selection (favorites vs the effective
@@ -734,6 +736,8 @@ impl Pickers {
             compact_model_list: false,
             compact_control: compact::CompactControl::default(),
             effort_dragging: false,
+            compact_motion: compact::CompactMotion::default(),
+            compact_keyboard: false,
             effort_bounds: None,
             config: DraftConfig::default(),
             defaults,
@@ -1037,6 +1041,8 @@ impl Pickers {
             self.compact_control = compact::CompactControl::Model;
             self.compact_model_list = false;
             self.effort_dragging = false;
+            self.compact_keyboard = false;
+            self.compact_motion = compact::CompactMotion::default();
             self.open_model_width = self.model_trigger_bounds.map(|bounds| bounds.size.width);
             self.open_model_height = model_menu_height(self.setting_groups(cx).len());
         }
@@ -3077,7 +3083,11 @@ impl Pickers {
         let theme = Theme::of(cx).for_popup();
         popover::popover_card_flush(&theme)
             .w(px(width))
-            .h(px(self.menu_geometry().height.min(self.open_model_height)))
+            .h(px(if self.compact_model_picker(cx) {
+                self.compact_motion.frame_height
+            } else {
+                self.menu_geometry().height.min(self.open_model_height)
+            }))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.on_key_down(event, window, cx)
@@ -3396,8 +3406,12 @@ impl Pickers {
     /// Model picker with favorites and harness tabs above a scoped search.
     /// Existing chats show only their own harness tab and models.
     fn render_harness_model_popover(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let height = self.menu_geometry().height.min(self.open_model_height);
         let compact = self.compact_model_picker(cx);
+        let height = self.menu_geometry().height.min(if compact {
+            302.0
+        } else {
+            self.open_model_height
+        });
         let (list_height, tray_height) = model_menu_budgets(
             height,
             if compact {
@@ -4115,7 +4129,11 @@ impl Pickers {
             )
             .id(("model-setting", ix))
             .relative()
-            .h(px(30.0))
+            .h(px(if self.compact_model_picker(cx) {
+                26.0
+            } else {
+                30.0
+            }))
             .py(px(0.0))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.active = base_index + ix;
@@ -4880,22 +4898,13 @@ impl Render for Pickers {
             | Some(PickerKind::Space)
             | Some(PickerKind::Device) => None,
             Some(PickerKind::HarnessModel) => {
-                let panel = self.compact_model_picker(cx) && !self.compact_model_list;
-                let content = if panel {
-                    self.render_compact_model_panel(cx)
+                let menu = if self.compact_model_picker(cx) {
+                    self.render_compact_menu(cx)
                 } else {
-                    self.render_harness_model_popover(cx)
+                    let content = self.render_harness_model_popover(cx);
+                    self.popover_frame_flush(304.0, content, cx)
                 };
-                Some((
-                    PickerKind::HarnessModel,
-                    // Compact single-harness pane (t3 ModelPickerContent
-                    // shrunk to its tabbed layout).
-                    if panel {
-                        self.popover_frame(304.0, content, cx)
-                    } else {
-                        self.popover_frame_flush(304.0, content, cx)
-                    },
-                ))
+                Some((PickerKind::HarnessModel, menu))
             }
             None => None,
         };
@@ -4950,13 +4959,23 @@ impl Render for Pickers {
                     ),
                 ))
             });
-        let model_chip = attach_overlay_end(
-            model_chip,
-            &mut overlay,
-            PickerKind::HarnessModel,
-            "model-popover",
-            closing,
-        );
+        let model_chip = if self.compact_model_picker(cx) {
+            attach_overlay(
+                model_chip,
+                &mut overlay,
+                PickerKind::HarnessModel,
+                "model-popover",
+                closing,
+            )
+        } else {
+            attach_overlay_end(
+                model_chip,
+                &mut overlay,
+                PickerKind::HarnessModel,
+                "model-popover",
+                closing,
+            )
+        };
         div()
             .flex()
             .flex_row()
@@ -5529,6 +5548,7 @@ mod tests {
     #[gpui::test]
     fn compact_keyboard_reaches_every_control_and_returns_to_models(cx: &mut gpui::TestAppContext) {
         use compact::CompactControl;
+        let haptics_before = crate::haptics::step_count();
         let dir = tempfile::tempdir().unwrap();
         cx.update(|cx| {
             cx.set_global(Theme::dark());
@@ -5583,16 +5603,21 @@ mod tests {
                 );
             })
             .unwrap();
-        cx.simulate_keystrokes(handle.into(), "down home");
+        cx.simulate_keystrokes(handle.into(), "down home home");
         handle
             .read_with(cx, |picker, cx| {
                 assert_eq!(picker.effective_reasoning(cx), Some(ReasoningLevel::Low))
             })
             .unwrap();
-        cx.simulate_keystrokes(handle.into(), "end down enter");
+        cx.simulate_keystrokes(handle.into(), "end end down enter");
         handle
             .read_with(cx, |picker, cx| {
                 assert_eq!(picker.effective_reasoning(cx), Some(ReasoningLevel::High));
+                assert_eq!(
+                    crate::haptics::step_count() - haptics_before,
+                    2,
+                    "One haptic per changed step, none at an unchanged endpoint"
+                );
                 assert_eq!(
                     picker.setting_menu,
                     Some(ModelSetting::Option("serviceTier".into()))
