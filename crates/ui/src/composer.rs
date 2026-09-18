@@ -391,9 +391,8 @@ impl FlipMorph {
 /// compact. The morph glides this optical adjustment instead of snapping.
 pub const CLUSTER_Y_DELTA: f32 = 4.5;
 
-/// Send's right inset differs between compact (8px) and expanded (12px).
-/// Glide this four-pixel shift during the morph. Attachment stays on the
-/// left; the model picker fades between the left and right groups.
+/// Attachment and Send share an outer inset: compact 8px, expanded 12px.
+/// Glide both edges together while the model picker changes groups.
 pub const CLUSTER_X_DELTA: f32 = 4.0;
 /// Optical join between the picker group and the paperclip. This is tighter
 /// than the structural spacing ladder because the narrow paperclip glyph
@@ -413,7 +412,7 @@ fn model_handoff(compact: f32) -> (f32, f32, f32) {
     (side, opacity, drift)
 }
 
-/// The right inset for the in-flight morph: eases from the OLD mode's resting
+/// The shared outer inset for the in-flight morph: eases from the OLD mode's resting
 /// inset to the committed mode's (compact 8 ↔ expanded 12).
 pub fn morph_cluster_inset(expanded: bool, progress: f32) -> f32 {
     let (from, to) = if expanded {
@@ -8511,6 +8510,7 @@ impl Render for Composer {
         // (round-9 follow-up: the send/attach/chips must not ride the height,
         // while the model picker fades between its two horizontal anchors).
         let cluster_dy = morph_cluster_dy(layout_morph_t);
+        let action_inset = morph_cluster_inset(expanded, layout_morph_t);
         // Share the height/route timeline instead of starting an independent
         // animation. Reversals continue from the current handoff phase.
         if self.model_handoff_morph != self.flip_morph {
@@ -8538,7 +8538,7 @@ impl Render for Composer {
             });
         let model_travel = (surface_width
             - PILL_BORDER_V
-            - 12.0
+            - action_inset
             - 28.0
             - ACTION_UTILITY_GAP
             - self
@@ -8547,8 +8547,8 @@ impl Render for Composer {
                 .map_or(0.0, |bounds| f32::from(bounds.size.width))
             - ACTION_PRIMARY_GAP
             - 28.0
-            - morph_cluster_inset(expanded, layout_morph_t))
-        .max(0.0);
+            - action_inset)
+            .max(0.0);
         let (model_side, model_opacity, model_drift) = model_handoff(self.model_handoff_position);
         let model_offset = (model_side - compact_target) * model_travel + model_drift;
         let measured_model_bounds = self.model_bounds.clone();
@@ -8608,8 +8608,7 @@ impl Render for Composer {
                         // attachment belongs to the utility pickers, while
                         // Send has a larger structural separation.
                         .gap(px(ACTION_PRIMARY_GAP))
-                        .pl(px(12.0))
-                        .pr(px(morph_cluster_inset(true, layout_morph_t)))
+                        .px(px(action_inset))
                         .pt(px(2.0))
                         .pb(px(12.0))
                         .child(
@@ -8658,7 +8657,7 @@ impl Render for Composer {
                         .child(
                             div()
                                 .flex_none()
-                                .pl(px(12.0))
+                                .pl(px(action_inset))
                                 .relative()
                                 .top(px(-cluster_dy))
                                 .child(attach),
@@ -8684,7 +8683,7 @@ impl Render for Composer {
                             div()
                                 .flex_none()
                                 .pl(px(ACTION_PRIMARY_GAP))
-                                .pr(px(morph_cluster_inset(false, layout_morph_t)))
+                                .pr(px(action_inset))
                                 .relative()
                                 .top(px(-cluster_dy))
                                 .child(send_button),
@@ -8931,9 +8930,10 @@ mod tests {
                     assert!((f32::from(origin.y - surface.top()) - (17.0 - 4.0 * amount)).abs() <= 1.0,
                         "editor jumped: docked={docked}, amount={amount}, origin={origin:?}, surface={surface:?}");
                     let model = composer.model_bounds.get().unwrap();
-                    let left = surface.left() + px(1.0 + 12.0 + 28.0 + ACTION_UTILITY_GAP);
-                    let travel = surface.size.width - px(2.0 + 12.0 + 28.0 + ACTION_UTILITY_GAP
-                        + ACTION_PRIMARY_GAP + 28.0 + motion::lerp(12.0, 8.0, amount)) - model.size.width;
+                    let inset = motion::lerp(12.0, 8.0, amount);
+                    let left = surface.left() + px(1.0 + inset + 28.0 + ACTION_UTILITY_GAP);
+                    let travel = surface.size.width - px(2.0 + inset + 28.0 + ACTION_UTILITY_GAP
+                        + ACTION_PRIMARY_GAP + 28.0 + inset) - model.size.width;
                     let (side, _, drift) = model_handoff(amount);
                     let expected_x = left + travel * side + px(drift);
                     assert!((f32::from(model.left() - expected_x)).abs() <= 1.0,
