@@ -403,7 +403,9 @@ impl Harness for ClaudeHarness {
             skills
                 .into_iter()
                 .filter_map(|mut skill| {
-                    if commands.iter().any(|command| command.name == skill.name) {
+                    if zeron_proto::invocation::valid_skill_command_name(&skill.name)
+                        && commands.iter().any(|command| command.name == skill.name)
+                    {
                         skill.command = Some(zeron_proto::invocation::SkillCommand {
                             name: skill.name.clone(),
                             harness: self.id(),
