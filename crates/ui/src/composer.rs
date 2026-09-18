@@ -2076,6 +2076,31 @@ impl ComposerInput {
         cx.notify();
     }
 
+    fn remove_completion_token(&mut self, mut range: Range<usize>, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        if self.content[..range.start].trim().is_empty()
+            && self.content[range.end..].trim().is_empty()
+        {
+            range = 0..self.content.len();
+        } else if (range.start == 0 || self.content[..range.start].ends_with(' '))
+            && self.content[range.end..].starts_with(' ')
+        {
+            range.end += 1;
+        }
+        self.record_edit(&range, "");
+        self.content.replace_range(range.clone(), "");
+        self.selected_range = range.start..range.start;
+        self.selection_reversed = false;
+        self.refresh_projection();
+        self.follow_cursor = true;
+        self.needs_measure = true;
+        self.reset_blink();
+        cx.emit(ComposerInputEvent::Edited);
+        cx.notify();
+    }
+
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()
     }
@@ -4514,10 +4539,7 @@ fn completion_trigger(
     let skill = skill_token.is_some();
     let include_skills = skill || !preferences.separate_from_slash;
     let token = skill_token.or_else(|| slash_token(text, cursor));
-    let commands_allowed = token
-        .as_ref()
-        .is_some_and(|token| text[..token.range.start].trim().is_empty());
-    let token = token.filter(|_| skill || commands_allowed || include_skills);
+    let commands_allowed = token.is_some() && !skill;
     (token, skill, include_skills, commands_allowed)
 }
 
@@ -6367,17 +6389,7 @@ impl Composer {
             return;
         };
         if let Some(action) = command.workspace_command {
-            let text = self.input.read(cx).text();
-            if text[..token.range.start].trim().is_empty()
-                && text[token.range.end..].trim().is_empty()
-            {
-                self.execute_workspace_command(action, cx);
-            } else {
-                self.failure =
-                    Some("Send the draft separately before running a Zeron command".into());
-                self.failure_key = Some(self.current_key.clone());
-                cx.notify();
-            }
+            self.execute_workspace_command(action, token.range, cx);
             return;
         }
         self.input.update(cx, |input, cx| {
@@ -6777,21 +6789,16 @@ impl Composer {
         send_button_mode(self.run_live(cx), has_text)
     }
 
-    fn execute_workspace_command(&mut self, command: WorkspaceCommand, cx: &mut Context<Self>) {
-        if !self.staged().is_empty()
-            || !self.staged_appshots().is_empty()
-            || !self.staged_comments(cx).is_empty()
-            || self.editing_queued.is_some()
-        {
-            self.failure = Some(
-                "Send attachments and queued edits separately before running a Zeron command"
-                    .into(),
-            );
-            self.failure_key = Some(self.current_key.clone());
-            cx.notify();
-            return;
-        }
-        self.input.update(cx, |input, cx| input.set_text("", cx));
+    fn execute_workspace_command(
+        &mut self,
+        command: WorkspaceCommand,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        // Actions consume only their trigger. Draft text, attachments and queued
+        // edits remain in the composer; selecting a command never sends them.
+        self.input
+            .update(cx, |input, cx| input.remove_completion_token(range, cx));
         self.reset_slash(None, cx);
         self.failure = None;
         self.failure_key = None;
@@ -6818,7 +6825,7 @@ impl Composer {
             .get(&self.slash.context)
             .and_then(|rows| workspace_command_for_text(self.input.read(cx).text(), rows))
         {
-            self.execute_workspace_command(action, cx);
+            self.execute_workspace_command(action, 0..self.input.read(cx).text().len(), cx);
             return;
         }
         let no_content = !composer_has_content(
@@ -9237,9 +9244,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn workspace_command_submission_is_local_and_preserves_invalid_drafts(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn workspace_command_submission_is_local_and_preserves_drafts(cx: &mut gpui::TestAppContext) {
         let state = cx.new(|_| AppState::new());
         let composer = cx.new(|cx| Composer::new(state, cx));
         let actions = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -9270,10 +9275,83 @@ mod tests {
                 .update(cx, |input, cx| input.set_text("/model keep this draft", cx));
             composer.update_slash("/model keep this draft", 6, cx);
             composer.accept_slash(cx);
-            assert_eq!(composer.input.read(cx).text(), "/model keep this draft");
-            assert!(composer.failure.is_some());
+            assert_eq!(composer.input.read(cx).text(), "keep this draft");
+            assert!(composer.failure.is_none());
         });
-        assert_eq!(actions.borrow().len(), 1);
+        assert_eq!(actions.borrow().len(), 2);
+    }
+
+    #[gpui::test]
+    fn inline_slash_completion_distinguishes_actions_from_references(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                let attachment = attachments::stage_png_bytes("draft.png".into(), Vec::new());
+                let attachment_id = attachment.id.clone();
+                composer
+                    .attachments
+                    .insert(composer.current_key.clone(), vec![attachment]);
+                composer.editing_queued = Some("queued-draft".into());
+                for draft in [
+                    "café /model keep this",
+                    "first\n/model\nlast",
+                    "(/model) text",
+                ] {
+                    let cursor = draft.find("/model").unwrap() + 6;
+                    composer
+                        .input
+                        .update(cx, |input, cx| input.set_text(draft, cx));
+                    composer.update_slash(draft, cursor, cx);
+                    assert!(composer.slash.token.is_some());
+                    composer.accept_slash(cx);
+                    let expected = draft.replace("/model ", "").replace("/model", "");
+                    assert_eq!(composer.input.read(cx).text(), expected);
+                    assert!(composer.failure.is_none());
+                    assert_eq!(composer.staged()[0].id, attachment_id);
+                    assert_eq!(composer.editing_queued.as_deref(), Some("queued-draft"));
+                    composer.input.update(cx, |input, cx| {
+                        input.undo(&Undo, window, cx);
+                        assert_eq!(input.text(), draft, "action removal is undoable");
+                    });
+                }
+                let skill = zeron_proto::invocation::Invocation::Skill {
+                    name: "review".into(),
+                    path: "/repo/SKILL.md".into(),
+                    command: None,
+                };
+                for invocation in [
+                    zeron_proto::invocation::Invocation::Command {
+                        name: "review".into(),
+                    },
+                    skill,
+                ] {
+                    let draft = "café /rev after";
+                    composer
+                        .input
+                        .update(cx, |input, cx| input.set_text(draft, cx));
+                    composer.update_slash(draft, "café /rev".len(), cx);
+                    composer.slash_cache.insert(
+                        composer.slash.context.clone(),
+                        vec![InvocationCandidate {
+                            name: "review".into(),
+                            description: String::new(),
+                            input_hint: None,
+                            workspace_command: None,
+                            invocation: invocation.clone(),
+                        }],
+                    );
+                    composer.refilter_slash(cx);
+                    composer.accept_slash(cx);
+                    assert_eq!(
+                        composer.input.read(cx).text(),
+                        format!("café {} after", invocation.link())
+                    );
+                    assert!(composer.failure.is_none());
+                }
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -9918,17 +9996,27 @@ mod tests {
     }
 
     #[gpui::test]
-    fn commands_only_complete_at_prompt_start_and_partial_discovery_retries(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn commands_complete_inline_and_partial_discovery_retries(cx: &mut gpui::TestAppContext) {
         let (_dir, handle) = composer_focus_window(cx);
         handle
             .update(cx, |composer, _, cx| {
-                for text in ["please /review", "(/review", "first\n/review"] {
+                for text in [
+                    "https://example/review",
+                    "/repo/review/",
+                    "`/review",
+                    "```\n/review",
+                ] {
                     composer.update_slash(text, text.len(), cx);
                     assert!(composer.slash.token.is_none(), "{text}");
                 }
-                for text in ["/review", "  /review", "please $review"] {
+                for text in [
+                    "/review",
+                    "  /review",
+                    "please $review",
+                    "please /review",
+                    "(/review",
+                    "first\n/review",
+                ] {
                     composer.update_slash(text, text.len(), cx);
                     assert!(composer.slash.token.is_some(), "{text}");
                 }
@@ -9962,8 +10050,7 @@ mod tests {
                     assert_eq!(include, !separate_from_slash);
                     let (token, _, _, commands) =
                         completion_trigger("please /review", 14, preferences);
-                    assert_eq!(token.is_some(), !separate_from_slash);
-                    assert!(!commands);
+                    assert!(token.is_some() && commands);
                 }
             }
         }
