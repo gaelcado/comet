@@ -1,0 +1,110 @@
+[
+  {
+    "asset": "settings-appearance-light.png",
+    "pr": 449,
+    "captured_local": "2026-09-14 21:32:01",
+    "original_filename": "Capture d’écran 2026-09-14 à 21.32.01.png",
+    "dimensions": [
+      3024,
+      1964
+    ],
+    "sha256": "94f823d0f72e7fd7a6905b7a151f0b5c283a30ae145fa24da8643f6df4d1a2b6",
+    "edited": false
+  },
+  {
+    "asset": "settings-appearance-dark.png",
+    "pr": 449,
+    "captured_local": "2026-09-14 21:11:38",
+    "original_filename": "Capture d’écran 2026-09-14 à 21.11.38.png",
+    "dimensions": [
+      2864,
+      1920
+    ],
+    "sha256": "bb68b5dd42b48e91e86654f7db72f28295d426807bd4a2eaaab7c7f3d3543c00",
+    "edited": false
+  },
+  {
+    "asset": "settings-notifications.png",
+    "pr": 449,
+    "captured_local": "2026-09-14 21:11:29",
+    "original_filename": "Capture d’écran 2026-09-14 à 21.11.29.png",
+    "dimensions": [
+      2864,
+      1920
+    ],
+    "sha256": "f578bf50119e1336db839c21e7f17b380d5cbdca0d12730fcc01c7f4ebcb0a59",
+    "edited": false
+  },
+  {
+    "asset": "settings-shortcuts.png",
+    "pr": 449,
+    "captured_local": "2026-09-14 21:11:43",
+    "original_filename": "Capture d’écran 2026-09-14 à 21.11.43.png",
+    "dimensions": [
+      2864,
+      1920
+    ],
+    "sha256": "a9167ce84af8585fe51f95e5fd33c59d03c41721cfab669321741838840fc7cc",
+    "edited": false
+  },
+  {
+    "asset": "harness-desktop-dark.png",
+    "pr": 389,
+    "captured_local": "2026-09-16 01:10:02",
+    "original_filename": "Capture d’écran 2026-09-16 à 01.10.02.png",
+    "dimensions": [
+      2712,
+      1920
+    ],
+    "sha256": "b46d2330994300911614acbb79be7cd54bcea138041a585bef0bf850491aaf28",
+    "edited": false
+  },
+  {
+    "asset": "harness-desktop-light.png",
+    "pr": 389,
+    "captured_local": "2026-09-16 01:14:58",
+    "original_filename": "Capture d’écran 2026-09-16 à 01.14.58.png",
+    "dimensions": [
+      2782,
+      1920
+    ],
+    "sha256": "b7983cbc001e3238dea8cd28d84a1d9d7adfa86a160931f9dec9f559ddfb0245",
+    "edited": false
+  },
+  {
+    "asset": "harness-desktop-compact.png",
+    "pr": 389,
+    "captured_local": "2026-09-16 01:15:15",
+    "original_filename": "Capture d’écran 2026-09-16 à 01.15.15.png",
+    "dimensions": [
+      2782,
+      1920
+    ],
+    "sha256": "e8ef72184d712ae75b630b90e97483e26f0262c26dfeae274f57327b9fef7b72",
+    "edited": false
+  },
+  {
+    "asset": "harness-ios-updates.png",
+    "pr": 389,
+    "captured_local": "2026-09-16 01:46:29",
+    "original_filename": "Simulator Screenshot - iPhone 17 Pro - 2026-09-16 at 01.46.29.png",
+    "dimensions": [
+      1206,
+      2622
+    ],
+    "sha256": "7216c28d68ac605d9f049ee95c0b6e6bc7ff731b28ffff7eeb36d7e6cffd9c44",
+    "edited": false
+  },
+  {
+    "asset": "harness-ios-offline-devices.png",
+    "pr": 389,
+    "captured_local": "2026-09-16 01:46:37",
+    "original_filename": "Simulator Screenshot - iPhone 17 Pro - 2026-09-16 at 01.46.37.png",
+    "dimensions": [
+      1206,
+      2622
+    ],
+    "sha256": "5066fb7818655a6f963c7e034d62428b9ea7b227cb8ee472d15210817e9afa50",
+    "edited": false
+  }
+]
