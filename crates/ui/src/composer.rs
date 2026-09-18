@@ -10798,6 +10798,155 @@ mod tests {
     }
 
     #[gpui::test]
+    fn delayed_catalogs_cannot_replace_current_harness_or_preferences(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _runtime = runtime.enter();
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            crate::settings::init(crate::settings::UiSettings::default(), directory.path(), cx);
+        });
+        let (out, mut requests) = tokio::sync::mpsc::channel(64);
+        let (replies, inbound) = tokio::sync::mpsc::channel(64);
+        let state = cx.new(|_| AppState::new());
+        state.update(cx, |state, _| {
+            state.set_test_engine(crate::state::EngineHandle::from_test_client(
+                zeron_rpc::RpcClient::new(out, inbound),
+            ));
+            state.chats = crate::settings::SKILL_COMPLETION_HARNESSES
+                .iter()
+                .enumerate()
+                .map(|(index, (harness, _))| {
+                    serde_json::from_value(serde_json::json!({
+                        "id": format!("chat-{index}"), "deviceId": "host", "archived": false,
+                        "cwd": format!("/worktree-{index}"), "createdAt": chrono::Utc::now(),
+                        "config": { "harness": harness, "sandbox": "workspace-write" }
+                    }))
+                    .unwrap()
+                })
+                .collect();
+        });
+        let composer = cx.new(|cx| Composer::new(state.clone(), cx));
+        let mut delayed = Vec::new();
+        for (index, (harness, _)) in crate::settings::SKILL_COMPLETION_HARNESSES
+            .iter()
+            .enumerate()
+        {
+            state.update(cx, |state, cx| {
+                state.selected_chat = Some(format!("chat-{index}"));
+                cx.notify();
+            });
+            cx.run_until_parked();
+            composer.update(cx, |composer, cx| {
+                composer
+                    .input
+                    .update(cx, |input, cx| input.set_text("/", cx));
+            });
+            cx.run_until_parked();
+            let mut batch = Vec::new();
+            while let Ok(frame) = requests.try_recv() {
+                let frame: zeron_rpc::ClientFrame = serde_json::from_str(&frame).unwrap();
+                if matches!(
+                    frame.method.as_deref(),
+                    Some(methods::LIST_COMMANDS | methods::LIST_SKILLS)
+                ) {
+                    assert_eq!(
+                        frame.params["harness"],
+                        serde_json::to_value(harness).unwrap()
+                    );
+                    assert_eq!(frame.params["cwd"], format!("/worktree-{index}"));
+                    batch.push(frame);
+                }
+            }
+            assert_eq!(batch.len(), 2, "catalog requests for {harness:?}");
+            delayed.extend(batch);
+        }
+        // Change the active checkout and slash separation while its original
+        // catalog is still in flight. The token itself remains unchanged.
+        state.update(cx, |state, cx| {
+            state.chats.last_mut().unwrap().cwd = Some("/current-checkout".into());
+            cx.notify();
+        });
+        cx.update(|cx| {
+            crate::settings::update(crate::settings::SavePolicy::Immediate, cx, |settings| {
+                settings.skill_completion_by_harness.insert(
+                    HarnessId::Opencode,
+                    crate::settings::SkillCompletionSettings {
+                        dollar: true,
+                        separate_from_slash: true,
+                    },
+                );
+            });
+        });
+        cx.run_until_parked();
+        let mut current = Vec::new();
+        while let Ok(frame) = requests.try_recv() {
+            let frame: zeron_rpc::ClientFrame = serde_json::from_str(&frame).unwrap();
+            if matches!(
+                frame.method.as_deref(),
+                Some(methods::LIST_COMMANDS | methods::LIST_SKILLS)
+            ) {
+                assert_eq!(frame.params["cwd"], "/current-checkout");
+                current.push(frame);
+            }
+        }
+        assert_eq!(current.len(), 2);
+        let respond = |frames: Vec<zeron_rpc::ClientFrame>, name: &str| {
+            for frame in frames {
+                let value = if frame.method.as_deref() == Some(methods::LIST_COMMANDS) {
+                    serde_json::json!([{ "name": name, "description": "Provider command" }])
+                } else {
+                    serde_json::json!([{ "name": format!("{name}-skill"), "path": "/skills/SKILL.md", "description": "Skill", "enabled": true }])
+                };
+                replies
+                    .try_send(
+                        serde_json::to_string(&zeron_rpc::ServerFrame {
+                            id: frame.id,
+                            ok: Some(value),
+                            ..Default::default()
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+            runtime.block_on(async { tokio::task::yield_now().await });
+        };
+        respond(current, "current-command");
+        cx.run_until_parked();
+        let visible_names = |composer: &Composer| {
+            let rows = composer.slash_cache.get(&composer.slash.context).unwrap();
+            composer
+                .slash
+                .filtered
+                .iter()
+                .map(|&index| rows[index].name.clone())
+                .collect::<Vec<_>>()
+        };
+        let current_names = composer.read_with(cx, |composer, _| {
+            assert!(!composer.slash.loading);
+            let names = visible_names(composer);
+            assert!(names.iter().any(|name| name == "current-command"));
+            assert!(
+                !names.iter().any(|name| name.ends_with("-skill")),
+                "separated slash menu must exclude skills"
+            );
+            names
+        });
+        // Every abandoned harness now replies after the visible current result.
+        delayed.reverse();
+        respond(delayed, "stale-command");
+        cx.run_until_parked();
+        composer.read_with(cx, |composer, _| {
+            assert_eq!(visible_names(composer), current_names);
+            assert_eq!(composer.slash.harness, Some(HarnessId::Opencode));
+        });
+    }
+
+    #[gpui::test]
     fn reconnect_reconsiders_unchanged_completion_tokens(cx: &mut gpui::TestAppContext) {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
