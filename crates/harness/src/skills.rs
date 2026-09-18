@@ -224,13 +224,18 @@ fn scan_root(
 fn read_skill(path: &Path) -> Result<Option<Skill>, HarnessError> {
     use std::io::Read;
     // Bound reads even if the file grows between metadata and read.
-    let mut text = String::new();
+    let mut bytes = Vec::new();
     std::fs::File::open(path)?
         .take(256 * 1024 + 1)
-        .read_to_string(&mut text)?;
-    if text.len() > 256 * 1024 {
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 256 * 1024 {
         return Ok(None);
     }
+    // A malformed skill must not hide every other completion. Decode only
+    // after checking the byte bound, which can end inside a UTF-8 character.
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return Ok(None);
+    };
     let mut lines = text.lines();
     let metadata = if lines.next().is_some_and(|line| line.trim() == "---") {
         let mut yaml = String::new();
@@ -368,6 +373,37 @@ mod tests {
             let skills = discover_at(harness, &repo, &home).unwrap();
             assert!(
                 skills.iter().any(|skill| skill.name == "portable"),
+                "{harness:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_or_oversized_skill_files_do_not_hide_valid_completions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("skills");
+        write(&root, "valid/SKILL.md", "---\nname: valid\n---\nBody");
+        let invalid = write(&root, "invalid/SKILL.md", "");
+        std::fs::write(invalid, [0xff, 0xfe]).unwrap();
+        // The bounded read ends partway through this last character.
+        let oversized = format!("{}é", "x".repeat(256 * 1024));
+        write(&root, "oversized/SKILL.md", &oversized);
+        for harness in [
+            HarnessId::ClaudeCode,
+            HarnessId::Codex,
+            HarnessId::Cursor,
+            HarnessId::Devin,
+            HarnessId::Grok,
+            HarnessId::Hermes,
+            HarnessId::Pi,
+            HarnessId::Antigravity,
+            HarnessId::Opencode,
+        ] {
+            let mut found = BTreeMap::new();
+            scan_root(&root, "", harness, &mut found).unwrap();
+            assert_eq!(
+                found.keys().map(String::as_str).collect::<Vec<_>>(),
+                ["valid"],
                 "{harness:?}"
             );
         }

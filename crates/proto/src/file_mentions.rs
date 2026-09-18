@@ -44,6 +44,7 @@ fn escape_mention_label(label: &str) -> String {
         .replace('\\', "\\\\")
         .replace('[', "\\[")
         .replace(']', "\\]")
+        .replace('`', "\\`")
 }
 
 pub fn local_file_link(path: &str, is_dir: bool) -> String {
@@ -76,9 +77,22 @@ pub fn file_mention_links(text: &str) -> Vec<FileMentionLink> {
     if !text.contains(FILE_MENTION_SCHEME) {
         return Vec::new();
     }
+    let mut image_depth = 0;
     pulldown_cmark::Parser::new(text)
         .into_offset_iter()
         .filter_map(|(event, range)| {
+            match &event {
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Image { .. }) => {
+                    image_depth += 1;
+                }
+                pulldown_cmark::Event::End(pulldown_cmark::TagEnd::Image) => {
+                    image_depth -= 1;
+                }
+                _ => {}
+            }
+            if image_depth > 0 {
+                return None;
+            }
             let pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. }) = event
             else {
                 return None;
@@ -86,7 +100,13 @@ pub fn file_mention_links(text: &str) -> Vec<FileMentionLink> {
             let target = percent_decode_path(dest_url.strip_prefix(FILE_MENTION_SCHEME)?)?;
             let is_dir = target.ends_with('/');
             let path = target.strip_suffix('/').unwrap_or(&target);
-            if !local_path_is_safe(path) || local_file_link(path, is_dir) != text[range.clone()] {
+            if !local_path_is_safe(path) {
+                return None;
+            }
+            let canonical = local_file_link(path, is_dir);
+            let source = &text[range.clone()];
+            // Keep old recognizable selections after escaping new labels.
+            if canonical != source && canonical.replace("\\`", "`") != source {
                 return None;
             }
             Some(FileMentionLink {
@@ -134,12 +154,17 @@ mod tests {
             format!("`{file}`"),
             format!("```\n{file}\n```"),
             format!("\\{file}"),
+            format!("![example {file}](example.png)"),
             "[x](zeron-file:../x)".into(),
             "[other](zeron-file:src/x)".into(),
         ] {
             assert!(file_mention_links(&literal).is_empty());
             assert_eq!(file_mention_prompt(&literal), literal);
         }
+        let image_then_file = format!("![example {file}](example.png) then {file}");
+        let links = file_mention_links(&image_then_file);
+        assert_eq!(links.len(), 1);
+        assert_eq!(&image_then_file[links[0].range.clone()], file);
         for name in ["src/é.rs", "src/](zeron-file:x)", "src/what?.rs"] {
             let raw = local_file_link(name, false);
             assert_eq!(file_mention_links(&raw)[0].path, name);
