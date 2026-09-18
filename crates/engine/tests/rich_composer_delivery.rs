@@ -63,6 +63,28 @@ impl Harness for RecordingHarness {
     async fn models(&self) -> Result<Vec<Model>, HarnessError> {
         Ok(vec![])
     }
+    async fn commands_for(
+        &self,
+        cwd: &std::path::Path,
+    ) -> Result<Vec<zeron_proto::SlashCommand>, HarnessError> {
+        Ok(vec![zeron_proto::SlashCommand {
+            name: "probe".into(),
+            description: cwd.to_string_lossy().into_owned(),
+            input_hint: None,
+        }])
+    }
+    async fn skills(
+        &self,
+        cwd: &std::path::Path,
+    ) -> Result<Option<Vec<zeron_proto::invocation::Skill>>, HarnessError> {
+        Ok(Some(vec![zeron_proto::invocation::Skill {
+            name: "probe".into(),
+            path: cwd.join("SKILL.md").to_string_lossy().into_owned(),
+            description: cwd.to_string_lossy().into_owned(),
+            enabled: true,
+            command: None,
+        }]))
+    }
     async fn run(
         &self,
         request: RunRequest,
@@ -364,5 +386,67 @@ async fn queue_edits_preserve_reselected_skills_until_delivery_for_every_harness
         assert_eq!(run.prompt, expected(&edited, &readable, id), "{id:?}");
         assert_persisted(&core, &edited, 2);
         core.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn projectless_catalogs_use_the_session_directory_and_reject_unknown_targets() {
+    let (tmp, core, _harness, _rx) = setup(HarnessId::Codex).await;
+    let client = zeron_rpc::memory_client(core.rpc_service());
+    for method in [
+        zeron_rpc::methods::LIST_COMMANDS,
+        zeron_rpc::methods::LIST_SKILLS,
+    ] {
+        let new_chat = client
+            .call(method, serde_json::json!({"harness":"codex"}))
+            .await
+            .unwrap();
+        let existing_chat = client
+            .call(
+                method,
+                serde_json::json!({"harness":"codex", "chatId":CHAT}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            existing_chat, new_chat,
+            "projectless chat should use home: {method}"
+        );
+        assert!(
+            client
+                .call(
+                    method,
+                    serde_json::json!({"harness":"codex", "chatId":"missing-chat"})
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .call(
+                    method,
+                    serde_json::json!({"harness":"codex", "chatId":CHAT, "path":"/tmp"})
+                )
+                .await
+                .is_err()
+        );
+    }
+    let cwd = tmp.path().join("session-folder");
+    std::fs::create_dir(&cwd).unwrap();
+    core.workspace
+        .set_chat_cwd(CHAT, cwd.to_str().unwrap())
+        .unwrap();
+    for method in [
+        zeron_rpc::methods::LIST_COMMANDS,
+        zeron_rpc::methods::LIST_SKILLS,
+    ] {
+        let result = client
+            .call(
+                method,
+                serde_json::json!({"harness":"codex", "chatId":CHAT}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result[0]["description"], cwd.to_str().unwrap(), "{method}");
     }
 }

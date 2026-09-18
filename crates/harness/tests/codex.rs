@@ -1475,3 +1475,56 @@ async fn selected_command_chip_uses_native_operation() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn ordinary_followup_cannot_overtake_a_queued_native_command() {
+    let (controls, steer, _token) = controls("Yes");
+    let mut stream = harness()
+        .run(request("scenario:native-queue-order"), controls)
+        .await
+        .unwrap();
+    let mut sender = Some(steer);
+    let mut events = Vec::new();
+    while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .unwrap()
+    {
+        match event.unwrap() {
+            AgentEvent::TextDelta { text } => {
+                if text == "working" {
+                    let sender = sender.take().unwrap();
+                    for prompt in ["/review", "Follow up after review"] {
+                        sender
+                            .send(SteerMessage {
+                                prompt: prompt.into(),
+                                message_id: None,
+                            })
+                            .await
+                            .unwrap();
+                    }
+                }
+                events.push(text);
+            }
+            AgentEvent::Steered { .. } => events.push("steered".into()),
+            AgentEvent::Done { status, error, .. } => {
+                assert_eq!(status, DoneStatus::Completed, "{error:?}");
+                events.push("done".into());
+            }
+            AgentEvent::Error { message } => panic!("{message}"),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        events,
+        [
+            "working",
+            "done",
+            "steered",
+            "Queued review result",
+            "done",
+            "steered",
+            "followup",
+            "done"
+        ]
+    );
+}
