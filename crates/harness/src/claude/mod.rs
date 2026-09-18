@@ -389,6 +389,42 @@ impl Harness for ClaudeHarness {
     /// carries every command with description + argument hint and involves no
     /// model turn (verified live, 2.1.228: the control_response is the first
     /// stdout line, well before any API traffic). Cached on success.
+    async fn skills(
+        &self,
+        cwd: &std::path::Path,
+    ) -> Result<Option<Vec<zeron_proto::invocation::Skill>>, HarnessError> {
+        let (skills, commands) = tokio::try_join!(
+            crate::skills::discover(self.id(), cwd),
+            self.discover_commands(Some(cwd))
+        )?;
+        // The native advertised catalog controls availability (including plugin
+        // enablement and skillOverrides). Shared Agent Skills can use file delivery.
+        Ok(Some(
+            skills
+                .into_iter()
+                .filter_map(|mut skill| {
+                    if commands.iter().any(|command| command.name == skill.name) {
+                        skill.command = Some(zeron_proto::invocation::SkillCommand {
+                            name: skill.name.clone(),
+                            harness: self.id(),
+                        });
+                        Some(skill)
+                    } else if std::path::Path::new(&skill.path).ancestors().any(|dir| {
+                        dir.file_name().is_some_and(|name| name == "skills")
+                            && dir
+                                .parent()
+                                .and_then(std::path::Path::file_name)
+                                .is_some_and(|name| name == ".agents")
+                    }) {
+                        Some(skill)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        ))
+    }
+
     async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
         self.commands
             .get_or_try_init(|| self.discover_commands(None))

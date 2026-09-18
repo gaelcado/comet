@@ -349,7 +349,15 @@ async fn rejected_steer_falls_back_to_a_follow_up_turn() {
     let (controls, steer, _token) = controls("Yes");
     steer
         .send(SteerMessage {
-            prompt: "redirect please".into(),
+            prompt: format!(
+                "redirect please {}",
+                zeron_proto::invocation::Invocation::Skill {
+                    command: None,
+                    name: "review".into(),
+                    path: "/repo/followup/SKILL.md".into(),
+                }
+                .link()
+            ),
             message_id: None,
         })
         .await
@@ -1393,4 +1401,77 @@ async fn native_command_during_a_turn_waits_for_its_boundary() {
     }
     assert_eq!(completions, 2);
     assert!(output.contains("Queued review result"));
+}
+
+#[tokio::test]
+async fn native_skill_and_file_references_survive_initial_and_steered_turns() {
+    use zeron_proto::invocation::{Invocation, harness_prompt};
+    let initial = Invocation::Skill {
+        command: None,
+        name: "review".into(),
+        path: "/repo/a b/SKILL.md".into(),
+    };
+    let followup = Invocation::Skill {
+        command: None,
+        name: "review".into(),
+        path: "/repo/other/SKILL.md".into(),
+    };
+    let (controls, steer, _) = controls("Yes");
+    steer
+        .send(SteerMessage {
+            prompt: harness_prompt(&format!("Also {}", followup.link()), HarnessId::Codex),
+            message_id: Some("skill-steer".into()),
+        })
+        .await
+        .unwrap();
+    drop(steer);
+    let raw = format!(
+        "scenario:native-skills {} {}",
+        initial.link(),
+        zeron_proto::file_mentions::local_file_link("src/lib.rs", false)
+    );
+    let events = run_to_end(
+        &harness(),
+        request(&harness_prompt(&raw, HarnessId::Codex)),
+        controls,
+    )
+    .await;
+    assert!(events.iter().any(
+        |event| matches!(event, AgentEvent::TextDelta { text } if text == "native skills accepted")
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Done {
+            status: DoneStatus::Completed,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn selected_command_chip_uses_native_operation() {
+    let command = zeron_proto::invocation::Invocation::Command {
+        name: "review".into(),
+    };
+    let (controls, steer, _) = controls("Yes");
+    drop(steer);
+    let events = run_to_end(
+        &harness(),
+        request(&format!("  {} inspect errors", command.link())),
+        controls,
+    )
+    .await;
+    assert!(events.iter().any(
+        |event| matches!(event, AgentEvent::TextDelta { text } if text == "Review fixture result")
+    ));
+    let (controls, _, _) = self::controls("Yes");
+    let compact = zeron_proto::invocation::Invocation::Command {
+        name: "compact".into(),
+    };
+    assert!(
+        harness()
+            .run(request(&compact.link()), controls)
+            .await
+            .is_err()
+    );
 }

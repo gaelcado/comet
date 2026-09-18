@@ -89,6 +89,25 @@ if has "$turnline" '"method":"review/start"'; then
 fi
 
 case "$turnline" in
+*scenario:native-skills*)
+  for want in '"type":"skill"' '"path":"/repo/a b/SKILL.md"' '[lib.rs](src/lib.rs)'; do
+    has "$turnline" "$want" || { fail_turn "$tid" "initial native skill or file path missing"; exit 0; }
+  done
+  if has "$turnline" 'zeron-invoke:' || has "$turnline" 'zeron-file:'; then
+    fail_turn "$tid" "private chip URI leaked"; exit 0
+  fi
+  emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
+  emit '{"method":"turn/started","params":{"turn":{"id":"t-1"}}}'
+  read -r steerline || exit 1
+  sid=$(rid "$steerline")
+  for want in '"method":"turn/steer"' '"type":"skill"' '"path":"/repo/other/SKILL.md"'; do
+    has "$steerline" "$want" || { fail_turn "$sid" "steered native skill missing"; exit 0; }
+  done
+  emit "{\"id\":$sid,\"result\":{}}"
+  emit '{"method":"item/agentMessage/delta","params":{"delta":"native skills accepted"}}'
+  emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
+  ;;
+
 *scenario:native-queue*)
   emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
   emit '{"method":"turn/started","params":{"turn":{"id":"t-1"}}}'
@@ -251,6 +270,10 @@ case "$turnline" in
   # The harness must fall back to a follow-up turn/start carrying the text.
   read -r followline || exit 1
   fid=$(rid "$followline")
+  if has "$steerline" '"type":"skill"'; then
+    has "$followline" '"type":"skill"' && has "$followline" '"path":"/repo/followup/SKILL.md"' ||
+      { fail_turn "$fid" "native skill lost on steer fallback"; exit 0; }
+  fi
   if has "$followline" '"method":"turn/start"' && has "$followline" 'redirect please'; then
     emit "{\"id\":$fid,\"result\":{\"turn\":{\"id\":\"t-2\"}}}"
     emit '{"method":"turn/started","params":{"turn":{"id":"t-2"}}}'

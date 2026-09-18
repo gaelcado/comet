@@ -363,6 +363,23 @@ impl Harness for OpencodeHarness {
         Ok(models)
     }
 
+    async fn skills(
+        &self,
+        cwd: &std::path::Path,
+    ) -> Result<Option<Vec<zeron_proto::invocation::Skill>>, HarnessError> {
+        let mut skills = crate::skills::discover(self.id(), cwd).await?;
+        let _guard = self.probe_lock.lock().await;
+        let directory = cwd
+            .to_str()
+            .ok_or_else(|| HarnessError::Protocol("Project path is not UTF-8".into()))?;
+        let mut server = self.server(Some(directory)).await?;
+        let result = server.commands_wire(Some(directory)).await;
+        server.shutdown(self.kill_grace).await;
+        let commands = result?;
+        merge_skill_commands(&mut skills, &commands);
+        Ok(Some(skills))
+    }
+
     async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
         self.commands_cache
             .get_or_try_init(|| self.probe_commands())
@@ -964,6 +981,36 @@ fn models_from_providers(providers: &ProviderCatalog) -> Vec<Model> {
         out.extend(provider_models);
     }
     out
+}
+
+/// OpenCode exposes plugin/configured skills in its native command catalog.
+/// Source metadata prevents a command with the same name being misclassified.
+fn merge_skill_commands(skills: &mut Vec<zeron_proto::invocation::Skill>, commands: &Value) {
+    for command in commands.as_array().into_iter().flatten() {
+        if command["source"] != "skill" {
+            continue;
+        }
+        let Some(name) = command["name"].as_str().filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        if let Some(skill) = skills.iter_mut().find(|skill| skill.name == name) {
+            skill.command = Some(zeron_proto::invocation::SkillCommand {
+                name: name.into(),
+                harness: HarnessId::Opencode,
+            });
+        } else {
+            skills.push(zeron_proto::invocation::Skill {
+                name: name.into(),
+                path: format!("opencode-skill:{name}"),
+                description: command["description"].as_str().unwrap_or_default().into(),
+                enabled: true,
+                command: Some(zeron_proto::invocation::SkillCommand {
+                    name: name.into(),
+                    harness: HarnessId::Opencode,
+                }),
+            });
+        }
+    }
 }
 
 fn commands_from_wire(commands: &Value) -> Vec<SlashCommand> {
