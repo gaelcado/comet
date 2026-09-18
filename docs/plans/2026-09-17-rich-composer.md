@@ -39,6 +39,10 @@ harnesses. `cargo check --locked -p zeron` passed. The native fixture generated
 42 captures, including active/inactive bullets, quoted tasks, CRLF lists,
 Unicode wrapping, and selections across chips. Caret blink can hide the caret
 in a screenshot; native geometry assertions cover its exact placement.
+An additional UI regression passed with real delayed RPC replies across all
+nine harness selections, followed by checkout and preference changes. Eighteen
+abandoned catalog replies delivered after the current result cannot replace
+the visible choices or undo slash-menu separation.
 
 A standalone optimized label probe with 5,000 repeated references dropped from
 about 130 ms to 0.5 ms after grouping and reusing disambiguation results. This
