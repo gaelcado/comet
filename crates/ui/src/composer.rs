@@ -879,6 +879,7 @@ struct EditSnapshot {
     content: String,
     selected_range: Range<usize>,
     selection_reversed: bool,
+    caret_affinity: CaretAffinity,
 }
 
 /// A strict, local-only Markdown representation of a file mention. The
@@ -896,6 +897,17 @@ struct FileMentionLink {
 /// Build the text inserted when a workspace item is dropped at an arbitrary
 /// selection. Unlike completion, a drop does not necessarily happen at a
 /// token boundary, so it supplies its own leading separator when needed.
+/// A reference must not introduce whitespace before closing Markdown syntax.
+/// Existing horizontal whitespace is reused; line endings stay on their row.
+fn reference_suffix(next: Option<char>) -> (&'static str, usize) {
+    match next {
+        Some('\n' | '\r') => ("", 0),
+        Some(ch) if ch.is_whitespace() => ("", ch.len_utf8()),
+        Some(')' | ']' | '}' | '*' | '_' | '~' | ',' | '.' | ';' | ':' | '!' | '?') => ("", 0),
+        _ => (" ", 0),
+    }
+}
+
 fn dropped_file_mention(
     content: &str,
     range: Range<usize>,
@@ -913,23 +925,16 @@ fn dropped_file_mention(
         && content[..range.start]
             .chars()
             .next_back()
-            .is_some_and(|ch| !ch.is_whitespace())
-    {
+            .is_some_and(|ch| {
+                !ch.is_whitespace() && !matches!(ch, '(' | '[' | '{' | '*' | '_' | '~')
+            }) {
         " "
     } else {
         ""
     };
-    let existing_separator = suffix
-        .chars()
-        .next()
-        .filter(|ch| ch.is_whitespace() && *ch != '\n' && *ch != '\r');
-    let trailing = if existing_separator.is_some() {
-        ""
-    } else {
-        " "
-    };
+    let (trailing, advance) = reference_suffix(suffix.chars().next());
     let inserted = format!("{prefix}{}{trailing}", local_file_link(path, is_dir));
-    let cursor_advance = inserted.len() + existing_separator.map(char::len_utf8).unwrap_or(0);
+    let cursor_advance = inserted.len() + advance;
     Some((inserted, cursor_advance))
 }
 
@@ -1055,15 +1060,46 @@ struct MentionHit {
 /// A chip is a compact identity, with the complete path available in its tooltip.
 /// Truncate by grapheme so emoji and combining marks remain intact.
 fn compact_chip_label(label: &str) -> String {
+    compact_chip_label_with_limit(label, 32)
+}
+
+fn compact_chip_label_with_limit(label: &str, limit: usize) -> String {
     let graphemes: Vec<_> = label.graphemes(true).collect();
-    if graphemes.len() <= 32 {
+    if graphemes.len() <= limit {
         return label.to_string();
     }
     format!(
         "{}…{}",
-        graphemes[..18].concat(),
+        graphemes[..limit - 14].concat(),
         graphemes[graphemes.len() - 12..].concat()
     )
+}
+
+/// Preserve distinctions established by path disambiguation when shortening.
+fn compact_chip_labels(labels: &[String]) -> Vec<String> {
+    let mut shortened: Vec<_> = labels
+        .iter()
+        .map(|label| compact_chip_label(label))
+        .collect();
+    let mut limit = 32usize;
+    loop {
+        let mut distinct: HashMap<&str, std::collections::HashSet<&str>> = HashMap::new();
+        for (shown, full) in shortened.iter().zip(labels) {
+            distinct.entry(shown).or_default().insert(full);
+        }
+        let ambiguous: Vec<_> = shortened
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, shown)| (distinct[shown.as_str()].len() > 1).then_some(ix))
+            .collect();
+        if ambiguous.is_empty() {
+            return shortened;
+        }
+        limit = limit.saturating_mul(2);
+        for ix in ambiguous {
+            shortened[ix] = compact_chip_label_with_limit(&labels[ix], limit);
+        }
+    }
 }
 
 /// GPUI's text wrapper permits breaks at Unicode spacer glyphs. Reference
@@ -1167,26 +1203,18 @@ impl TextProjection {
                     prefix: invocation.prefix(),
                 }),
         );
-        let code = composer_markdown::faces(raw);
-        links.retain(|link| {
-            !code.iter().any(|(range, face)| {
-                *face == composer_markdown::Face::Code
-                    && range.start <= link.range.start
-                    && link.range.end <= range.end
-            })
-        });
         links.sort_by_key(|link| link.range.start);
         let labels = mention_display_labels(&links);
+        let labels = if icons {
+            compact_chip_labels(&labels)
+        } else {
+            labels
+        };
         let mut projection = Self::default();
         let mut edits: Vec<(Range<usize>, String, Option<FileMentionLink>)> = links
             .into_iter()
             .zip(labels)
             .map(|(link, label)| {
-                let label = if icons {
-                    compact_chip_label(&label)
-                } else {
-                    label
-                };
                 let label = label.replace(' ', "\u{00A0}");
                 let marker = if icons && link.prefix != '/' {
                     MENTION_ICON_SLOT.to_owned()
@@ -1206,10 +1234,12 @@ impl TextProjection {
             })
             .collect();
         if let Some(active) = active {
+            let links: Vec<_> = edits.iter().map(|(range, _, _)| range.clone()).collect();
             for (range, replacement) in composer_markdown::decorations(raw, active) {
-                if !edits
-                    .iter()
-                    .any(|(r, _, _)| r.start < range.end && range.start < r.end)
+                let candidate = links.partition_point(|link| link.end <= range.start);
+                if !links
+                    .get(candidate)
+                    .is_some_and(|link| link.start < range.end)
                 {
                     edits.push((range, replacement, None));
                 }
@@ -1236,46 +1266,38 @@ impl TextProjection {
     }
 
     fn raw_to_display(&self, raw: usize) -> usize {
-        let mut raw_at = 0;
-        let mut display_at = 0;
-        for (range, display) in &self.mappings {
-            if raw <= range.start {
-                return display_at + raw.saturating_sub(raw_at);
-            }
-            if raw < range.end {
+        let ix = self.mappings.partition_point(|(range, _)| range.end <= raw);
+        if let Some((range, display)) = self.mappings.get(ix) {
+            if raw > range.start {
                 return display.start;
             }
-            raw_at = range.end;
-            display_at = display.end;
         }
+        let (raw_at, display_at) = ix
+            .checked_sub(1)
+            .map(|previous| (&self.mappings[previous].0, &self.mappings[previous].1))
+            .map_or((0, 0), |(range, display)| (range.end, display.end));
         display_at + raw.saturating_sub(raw_at)
     }
 
     fn display_to_raw(&self, display_offset: usize) -> usize {
-        let mut raw_at = 0;
-        let mut display_at = 0;
-        for (range, display) in &self.mappings {
-            // Clicking a rendered character belongs after any hidden opening
-            // delimiters, not before them. Multiple nested delimiters can share
-            // the same display offset; consume all of them before mapping it.
-            if display.is_empty() && display_offset == display.start {
-                raw_at = range.end;
-                display_at = display.end;
-                continue;
-            }
-            if display_offset <= display.start {
-                return raw_at + display_offset.saturating_sub(display_at);
-            }
-            if display_offset < display.end {
+        // Equal zero-width boundaries are consumed together so clicks on the
+        // first rendered character land after nested hidden opening markers.
+        let ix = self
+            .mappings
+            .partition_point(|(_, display)| display.end <= display_offset);
+        if let Some((range, display)) = self.mappings.get(ix) {
+            if display_offset > display.start {
                 return if display_offset - display.start < display.len() / 2 {
                     range.start
                 } else {
                     range.end
                 };
             }
-            raw_at = range.end;
-            display_at = display.end;
         }
+        let (raw_at, display_at) = ix
+            .checked_sub(1)
+            .map(|previous| (&self.mappings[previous].0, &self.mappings[previous].1))
+            .map_or((0, 0), |(range, display)| (range.end, display.end));
         raw_at + display_offset.saturating_sub(display_at)
     }
 
@@ -1321,53 +1343,55 @@ impl TextProjection {
 /// more than once, use the shortest unique path suffix so chips remain
 /// distinguishable without always expanding to full paths.
 fn mention_display_labels(links: &[FileMentionLink]) -> Vec<String> {
+    // Only references with the same visible name can need disambiguation.
+    // Repeated references share the result instead of rescanning the draft.
+    let mut groups: HashMap<(char, &str), Vec<&FileMentionLink>> = HashMap::new();
+    for link in links {
+        groups
+            .entry((link.prefix, &link.basename))
+            .or_default()
+            .push(link);
+    }
+    let mut labels: HashMap<(char, &str, &str), String> = HashMap::new();
     links
         .iter()
-        .enumerate()
-        .map(|(ix, link)| {
-            if link.prefix != '@' {
-                let duplicates: Vec<_> = links
-                    .iter()
-                    .filter(|other| {
-                        other.prefix == link.prefix
-                            && other.basename == link.basename
-                            && other.path != link.path
-                    })
-                    .collect();
-                if duplicates.is_empty() {
-                    return link.basename.clone();
-                }
-                let parts: Vec<_> = link.path.split('/').collect();
-                let suffix = (1..=parts.len())
-                    .map(|n| parts[parts.len() - n..].join("/"))
-                    .find(|suffix| duplicates.iter().all(|other| !other.path.ends_with(suffix)))
-                    .unwrap_or_else(|| link.path.clone());
-                return format!("{} · {suffix}", link.basename);
-            }
-            if links
-                .iter()
-                .filter(|other| other.basename == link.basename)
-                .count()
-                == 1
-            {
-                return link.basename.clone();
-            }
-            let parts: Vec<_> = link.path.split('/').collect();
-            (1..=parts.len())
-                .map(|count| parts[parts.len() - count..].join("/"))
-                .find(|suffix| {
-                    let suffix: Vec<_> = suffix.split('/').collect();
-                    links.iter().enumerate().all(|(other_ix, other)| {
-                        other_ix == ix
-                            || !other
-                                .path
-                                .split('/')
-                                .rev()
-                                .take(suffix.len())
-                                .eq(suffix.iter().rev().copied())
-                    })
+        .map(|link| {
+            labels
+                .entry((link.prefix, &link.basename, &link.path))
+                .or_insert_with(|| {
+                    let duplicates: Vec<_> = groups[&(link.prefix, link.basename.as_str())]
+                        .iter()
+                        .filter(|other| other.path != link.path)
+                        .collect();
+                    if duplicates.is_empty() {
+                        return link.basename.clone();
+                    }
+                    let parts: Vec<_> = link.path.split('/').collect();
+                    let suffix = (1..=parts.len())
+                        .map(|count| parts[parts.len() - count..].join("/"))
+                        .find(|suffix| {
+                            if link.prefix != '@' {
+                                duplicates.iter().all(|other| !other.path.ends_with(suffix))
+                            } else {
+                                let suffix: Vec<_> = suffix.split('/').collect();
+                                duplicates.iter().all(|other| {
+                                    !other
+                                        .path
+                                        .split('/')
+                                        .rev()
+                                        .take(suffix.len())
+                                        .eq(suffix.iter().rev().copied())
+                                })
+                            }
+                        })
+                        .unwrap_or_else(|| link.path.clone());
+                    if link.prefix == '@' {
+                        suffix
+                    } else {
+                        format!("{} · {suffix}", link.basename)
+                    }
                 })
-                .unwrap_or_else(|| link.path.clone())
+                .clone()
         })
         .collect()
 }
@@ -1705,6 +1729,15 @@ struct InputLayoutKey {
     active_line: Option<Range<usize>>,
 }
 
+/// A soft-wrap boundary is both the previous row's end and the next row's
+/// start. Keep the visual side of the caret separately from its source offset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CaretAffinity {
+    Upstream,
+    #[default]
+    Downstream,
+}
+
 /// Multiline input entity: content + selection + IME marked text + measured
 /// layout (wrapped lines) for mouse mapping and auto-grow.
 pub struct ComposerInput {
@@ -1718,7 +1751,10 @@ pub struct ComposerInput {
     placeholder: SharedString,
     selected_range: Range<usize>,
     selection_reversed: bool,
+    caret_affinity: CaretAffinity,
     marked_range: Option<Range<usize>>,
+    /// Retained through vertical moves across short rows; other moves reset it.
+    preferred_column: Option<Pixels>,
     is_selecting: bool,
     drag_position: Option<Point<Pixels>>,
     drag_generation: u64,
@@ -1821,7 +1857,9 @@ impl ComposerInput {
             placeholder: placeholder.into(),
             selected_range: 0..0,
             selection_reversed: false,
+            caret_affinity: CaretAffinity::Downstream,
             marked_range: None,
+            preferred_column: None,
             is_selecting: false,
             drag_position: None,
             drag_generation: 0,
@@ -1957,19 +1995,19 @@ impl ComposerInput {
     }
 
     fn editing_source_range(&self) -> Range<usize> {
-        let start = self.line_range_at(self.selected_range.start).start;
-        let end = self.line_range_at(self.selected_range.end).end;
-        start..end
+        let selected = self.selected_range.clone();
+        let range = self
+            .marked_range
+            .as_ref()
+            .map_or(selected.clone(), |marked| {
+                selected.start.min(marked.start)..selected.end.max(marked.end)
+            });
+        self.line_range_at(range.start).start..self.line_range_at(range.end).end
     }
 
     fn refresh_projection(&mut self) {
         self.projection = if self.mentions_enabled {
-            TextProjection::rich(
-                &self.content,
-                self.marked_range
-                    .is_none()
-                    .then(|| self.editing_source_range()),
-            )
+            TextProjection::rich(&self.content, Some(self.editing_source_range()))
         } else {
             TextProjection {
                 display: self.content.clone(),
@@ -1987,26 +2025,22 @@ impl ComposerInput {
         is_dir: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.read_only {
+        if self.read_only || self.marked_range.is_some() || !local_path_is_safe(path) {
             return;
         }
         self.invalidate_mention_tooltip();
         let path = local_file_link(path, is_dir);
-        let next = self.content[range.end..].chars().next();
-        let existing_separator = next.filter(|ch| ch.is_whitespace() && *ch != '\n' && *ch != '\r');
-        let inserted = if existing_separator.is_some() {
-            path
-        } else {
-            format!("{path} ")
-        };
+        let (trailing, advance) = reference_suffix(self.content[range.end..].chars().next());
+        let inserted = format!("{path}{trailing}");
         self.record_edit(&range, &inserted);
         self.content =
             self.content[..range.start].to_owned() + &inserted + &self.content[range.end..];
-        self.refresh_projection();
-        let cursor =
-            range.start + inserted.len() + existing_separator.map(char::len_utf8).unwrap_or(0);
+        let cursor = range.start + inserted.len() + advance;
         self.selected_range = cursor..cursor;
         self.selection_reversed = false;
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
+        self.refresh_projection();
         self.follow_cursor = true;
         self.reset_blink();
         self.needs_measure = true;
@@ -2018,7 +2052,10 @@ impl ComposerInput {
     /// uses the same strict local Markdown transport and projected chip as an
     /// `@` mention selected from completion.
     fn insert_dropped_mention(&mut self, path: &str, is_dir: bool, cx: &mut Context<Self>) -> bool {
-        if self.read_only {
+        // The platform still owns the marked range during IME composition.
+        // Inserting a chip into it would leave those offsets pointing inside
+        // the new reference, and the next IME update could delete the chip.
+        if self.read_only || self.marked_range.is_some() {
             return false;
         }
         let range = self.selected_range.clone();
@@ -2031,12 +2068,15 @@ impl ComposerInput {
         self.record_edit(&range, &inserted);
         self.content =
             self.content[..range.start].to_owned() + &inserted + &self.content[range.end..];
-        self.refresh_projection();
         let cursor = range.start + cursor_advance;
         self.selected_range = cursor..cursor;
         self.selection_reversed = false;
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
+        self.refresh_projection();
         self.follow_cursor = true;
         self.reset_blink();
+        self.needs_measure = true;
         cx.emit(ComposerInputEvent::Edited);
         cx.notify();
         true
@@ -2054,21 +2094,17 @@ impl ComposerInput {
         if self.read_only {
             return;
         }
-        let next = self.content[range.end..].chars().next();
-        let existing_separator = next.filter(|ch| ch.is_whitespace() && *ch != '\n' && *ch != '\r');
-        let inserted = if existing_separator.is_some() {
-            replacement.to_owned()
-        } else {
-            format!("{replacement} ")
-        };
+        let (trailing, advance) = reference_suffix(self.content[range.end..].chars().next());
+        let inserted = format!("{replacement}{trailing}");
         self.record_edit(&range, &inserted);
         self.content =
             self.content[..range.start].to_owned() + &inserted + &self.content[range.end..];
-        self.refresh_projection();
-        let cursor =
-            range.start + inserted.len() + existing_separator.map(char::len_utf8).unwrap_or(0);
+        let cursor = range.start + inserted.len() + advance;
         self.selected_range = cursor..cursor;
         self.selection_reversed = false;
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
+        self.refresh_projection();
         self.follow_cursor = true;
         self.reset_blink();
         self.needs_measure = true;
@@ -2089,10 +2125,14 @@ impl ComposerInput {
         {
             range.end += 1;
         }
+        self.last_edit = None;
         self.record_edit(&range, "");
+        self.last_edit = None;
         self.content.replace_range(range.clone(), "");
         self.selected_range = range.start..range.start;
         self.selection_reversed = false;
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
         self.refresh_projection();
         self.follow_cursor = true;
         self.needs_measure = true;
@@ -2143,13 +2183,15 @@ impl ComposerInput {
         if self.single_line {
             self.content = self.content.replace(['\r', '\n'], " ");
         }
-        self.refresh_projection();
         let end = self.content.len();
         self.selected_range = end..end;
         self.selection_reversed = false;
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
         self.marked_range = None;
         self.scroll_top = 0.0;
         self.scroll_left = 0.0;
+        self.refresh_projection();
         self.follow_cursor = true;
         // Programmatic replacement (draft load, clear-on-submit) is a new
         // document, not an edit — undo must not reach back past it.
@@ -2294,6 +2336,7 @@ impl ComposerInput {
             content: self.content.clone(),
             selected_range: self.selected_range.clone(),
             selection_reversed: self.selection_reversed,
+            caret_affinity: self.caret_affinity,
         }
     }
 
@@ -2309,19 +2352,27 @@ impl ComposerInput {
         // the previous edit, of the same kind, and inside the idle window. A
         // pause, a word break, a paste, or a caret jump all break the run so
         // undo lands on a boundary the user recognizes.
-        let mergeable = match (kind, &self.last_edit) {
-            (EditKind::Insert, Some((EditKind::Insert, at, when))) => {
-                range.is_empty()
-                    && range.start == *at
-                    && new_text.chars().count() == 1
-                    && !new_text.starts_with(['\n', ' ', '\t'])
-                    && when.elapsed() < UNDO_COALESCE
-            }
-            (EditKind::Delete, Some((EditKind::Delete, at, when))) => {
-                range.end == *at && when.elapsed() < UNDO_COALESCE
-            }
-            _ => false,
+        let coalescible = match kind {
+            EditKind::Insert => range.is_empty() && new_text.chars().count() == 1,
+            EditKind::Delete => self
+                .content
+                .get(range.clone())
+                .is_some_and(|text| text.graphemes(true).count() == 1),
         };
+        let mergeable = coalescible
+            && match (kind, &self.last_edit) {
+                (EditKind::Insert, Some((EditKind::Insert, at, when))) => {
+                    range.is_empty()
+                        && range.start == *at
+                        && new_text.chars().count() == 1
+                        && !new_text.starts_with(['\n', ' ', '\t'])
+                        && when.elapsed() < UNDO_COALESCE
+                }
+                (EditKind::Delete, Some((EditKind::Delete, at, when))) => {
+                    range.end == *at && when.elapsed() < UNDO_COALESCE
+                }
+                _ => false,
+            };
         if !mergeable {
             self.undo_stack.push(self.snapshot());
             if self.undo_stack.len() > UNDO_LIMIT {
@@ -2334,16 +2385,18 @@ impl ComposerInput {
             EditKind::Insert => range.start + new_text.len(),
             EditKind::Delete => range.start,
         };
-        self.last_edit = Some((kind, tail, Instant::now()));
+        self.last_edit = coalescible.then(|| (kind, tail, Instant::now()));
     }
 
     fn restore(&mut self, snapshot: EditSnapshot, cx: &mut Context<Self>) {
         self.invalidate_mention_tooltip();
         self.content = snapshot.content;
-        self.refresh_projection();
         self.selected_range = snapshot.selected_range;
         self.selection_reversed = snapshot.selection_reversed;
+        self.caret_affinity = snapshot.caret_affinity;
+        self.preferred_column = None;
         self.marked_range = None;
+        self.refresh_projection();
         self.follow_cursor = true;
         // Never merge a subsequent edit into a step that undo just crossed.
         self.last_edit = None;
@@ -2386,9 +2439,12 @@ impl ComposerInput {
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.last_edit = None;
         let offset = self.projection.normalize_range(offset..offset).start;
         self.selected_range = offset..offset;
         self.selection_reversed = false;
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
         self.follow_cursor = true;
         self.reset_blink();
         cx.emit(ComposerInputEvent::CursorMoved);
@@ -2396,6 +2452,14 @@ impl ComposerInput {
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.last_edit = None;
+        self.extend_selection(offset, cx);
+    }
+
+    // Deletion extends the selection internally without breaking a typing run.
+    fn extend_selection(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
         let offset = self.projection.normalize_range(offset..offset).start;
         if self.selection_reversed {
             self.selected_range.start = offset;
@@ -2474,13 +2538,27 @@ impl ComposerInput {
         start..end
     }
 
+    /// Navigation stops before the whole line ending. The raw line range
+    /// intentionally retains CR for full-line selection and block edits.
+    fn line_content_end_at(&self, offset: usize) -> usize {
+        let end = self.line_range_at(offset).end;
+        if self.content.as_bytes().get(end) == Some(&b'\n')
+            && end > 0
+            && self.content.as_bytes()[end - 1] == b'\r'
+        {
+            end - 1
+        } else {
+            end
+        }
+    }
+
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             let prev = self.previous_boundary(self.cursor_offset());
             if self.cursor_offset() == prev {
                 return;
             }
-            self.select_to(prev, cx);
+            self.extend_selection(prev, cx);
         }
         self.replace_text_in_range(None, "", window, cx);
     }
@@ -2491,7 +2569,7 @@ impl ComposerInput {
             if self.cursor_offset() == next {
                 return;
             }
-            self.select_to(next, cx);
+            self.extend_selection(next, cx);
         }
         self.replace_text_in_range(None, "", window, cx);
     }
@@ -2519,8 +2597,10 @@ impl ComposerInput {
             cx.emit(ComposerInputEvent::MentionNavigate(-1));
             return;
         }
-        if let Some(ix) = self.vertical_target(-1.0) {
+        if let Some((ix, affinity, column)) = self.vertical_target(-1.0) {
             self.move_to(ix, cx);
+            self.caret_affinity = affinity;
+            self.preferred_column = Some(column);
         }
     }
 
@@ -2529,36 +2609,44 @@ impl ComposerInput {
             cx.emit(ComposerInputEvent::MentionNavigate(1));
             return;
         }
-        if let Some(ix) = self.vertical_target(1.0) {
+        if let Some((ix, affinity, column)) = self.vertical_target(1.0) {
             self.move_to(ix, cx);
+            self.caret_affinity = affinity;
+            self.preferred_column = Some(column);
         }
     }
 
     fn select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.vertical_target(-1.0) {
+        if let Some((ix, affinity, column)) = self.vertical_target(-1.0) {
             self.select_to(ix, cx);
+            self.caret_affinity = affinity;
+            self.preferred_column = Some(column);
         }
     }
 
     fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.vertical_target(1.0) {
+        if let Some((ix, affinity, column)) = self.vertical_target(1.0) {
             self.select_to(ix, cx);
+            self.caret_affinity = affinity;
+            self.preferred_column = Some(column);
         }
     }
 
     /// Offset one wrapped line above/below the cursor, keeping its x column.
     /// Clamps to the document edges, matching the platform's behavior on the
     /// first and last line.
-    fn vertical_target(&self, dir: f32) -> Option<usize> {
-        let current = self.point_for_index(self.cursor_offset())?;
+    fn vertical_target(&self, dir: f32) -> Option<(usize, CaretAffinity, Pixels)> {
+        let current = self.cursor_point()?;
+        let column = self.preferred_column.unwrap_or(current.x);
         let target_y = f32::from(current.y) + dir * f32::from(self.line_height);
         if target_y < 0.0 {
-            return Some(0);
+            return Some((0, CaretAffinity::Downstream, column));
         }
         if target_y >= self.content_height {
-            return Some(self.content.len());
+            return Some((self.content.len(), CaretAffinity::Upstream, column));
         }
-        Some(self.index_for_point(point(current.x, px(target_y))))
+        let (index, affinity) = self.caret_for_point(point(column, px(target_y)));
+        Some((index, affinity, column))
     }
 
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
@@ -2580,8 +2668,7 @@ impl ComposerInput {
     }
 
     fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
-        let line = self.line_range_at(self.cursor_offset());
-        self.move_to(line.end, cx);
+        self.move_to(self.line_content_end_at(self.cursor_offset()), cx);
     }
 
     fn select_home(&mut self, _: &SelectHome, _: &mut Window, cx: &mut Context<Self>) {
@@ -2590,8 +2677,7 @@ impl ComposerInput {
     }
 
     fn select_end(&mut self, _: &SelectEnd, _: &mut Window, cx: &mut Context<Self>) {
-        let line = self.line_range_at(self.cursor_offset());
-        self.select_to(line.end, cx);
+        self.select_to(self.line_content_end_at(self.cursor_offset()), cx);
     }
 
     fn doc_start(&mut self, _: &DocStart, _: &mut Window, cx: &mut Context<Self>) {
@@ -2637,7 +2723,7 @@ impl ComposerInput {
             if self.cursor_offset() == offset {
                 return;
             }
-            self.select_to(offset, cx);
+            self.extend_selection(offset, cx);
         }
         self.replace_text_in_range(None, "", window, cx);
     }
@@ -2678,15 +2764,36 @@ impl ComposerInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let end = self.line_range_at(self.cursor_offset()).end;
+        let end = self.line_content_end_at(self.cursor_offset());
         self.delete_to(end, window, cx);
     }
 
+    fn clipboard_selection(&self) -> Option<(String, String)> {
+        if self.selected_range.is_empty() {
+            return None;
+        }
+        let selected = self.projection.normalize_range(self.selected_range.clone());
+        let raw = self.content[selected.clone()].to_string();
+        let mut text = String::new();
+        let mut at = selected.start;
+        // Use the document's actual chips: parsing a selected substring alone
+        // would activate literal examples selected from inside code or images.
+        for (link, _) in &self.projection.mentions {
+            if link.range.start < selected.start || link.range.end > selected.end {
+                continue;
+            }
+            text.push_str(&self.content[at..link.range.start]);
+            text.push_str(&zeron_proto::invocation::invocation_prompt(
+                &zeron_proto::file_mentions::file_mention_prompt(&self.content[link.range.clone()]),
+            ));
+            at = link.range.end;
+        }
+        text.push_str(&self.content[at..selected.end]);
+        Some((raw, text))
+    }
+
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
-            let raw = self.content[self.projection.normalize_range(self.selected_range.clone())]
-                .to_string();
-            let text = zeron_proto::invocation::invocation_prompt(&raw);
+        if let Some((raw, text)) = self.clipboard_selection() {
             cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
                 text.clone(),
                 serde_json::json!({ "zeronComposerV1": raw, "text": text }),
@@ -2702,20 +2809,22 @@ impl ComposerInput {
         if self.read_only {
             return;
         }
-        if !self.selected_range.is_empty() {
-            let raw = self.content[self.projection.normalize_range(self.selected_range.clone())]
-                .to_string();
-            let text = zeron_proto::invocation::invocation_prompt(&raw);
+        if let Some((raw, text)) = self.clipboard_selection() {
             cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
                 text.clone(),
                 serde_json::json!({ "zeronComposerV1": raw, "text": text }),
             ));
 
+            self.last_edit = None;
             self.replace_text_in_range(None, "", window, cx);
+            self.last_edit = None;
         }
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let Some(item) = cx.read_from_clipboard() else {
             return;
         };
@@ -2754,8 +2863,10 @@ impl ComposerInput {
                     }
                 }
             }
-            // Compact fields normalize newlines in the input handler.
+            // Clipboard operations remain separate undo steps, even a one-character paste.
+            self.last_edit = None;
             self.replace_text_in_range(None, &text, window, cx);
+            self.last_edit = None;
         }
     }
 
@@ -2769,7 +2880,13 @@ impl ComposerInput {
                 return;
             }
         }
-        self.replace_text_in_range(None, "\n", window, cx);
+        let line_end = self.line_range_at(self.cursor_offset()).end;
+        let newline = if self.line_content_end_at(self.cursor_offset()) < line_end {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        self.replace_text_in_range(None, newline, window, cx);
     }
 
     fn message_newline_or_accept(
@@ -2839,14 +2956,14 @@ impl ComposerInput {
             let Some(prefix) = composer_markdown::list_prefix(line) else {
                 return false;
             };
-            if in_code(&self.content, at) {
+            if in_code(&self.content, at + prefix.indent) {
                 return false;
             }
             if ix > 0 {
                 replacement.push('\n');
             }
             let removed = if outdent {
-                line[..prefix.indent]
+                line[prefix.indent_start..prefix.indent]
                     .chars()
                     .take(2)
                     .map(char::len_utf8)
@@ -2855,11 +2972,12 @@ impl ComposerInput {
                 0
             };
             let added = if outdent { 0 } else { 2 };
+            replacement.push_str(&line[..prefix.indent_start]);
             if !outdent {
                 replacement.push_str("  ");
             }
-            replacement.push_str(&line[removed..]);
-            changes.push((at, removed, added));
+            replacement.push_str(&line[prefix.indent_start + removed..]);
+            changes.push((at + prefix.indent_start, removed, added));
             at += line.len() + 1;
         }
         let remap = |offset: usize| -> usize {
@@ -2878,6 +2996,7 @@ impl ComposerInput {
         self.replace_text_in_range(Some(edit), &replacement, window, cx);
         self.selected_range = next;
         self.selection_reversed = reversed;
+        self.refresh_projection();
         self.last_edit = None;
         cx.notify();
         true
@@ -2897,10 +3016,25 @@ impl ComposerInput {
         self.point_for_display_index(self.projection.raw_to_display(index))
     }
 
+    fn cursor_point(&self) -> Option<Point<Pixels>> {
+        self.point_for_display_index_with_affinity(
+            self.projection.raw_to_display(self.cursor_offset()),
+            self.caret_affinity,
+        )
+    }
+
     /// Content-local point for a shaped projection byte index. The icon layer
     /// uses this to occupy its explicit projection slot without inventing a
     /// second coordinate system beside the custom text editor.
     fn point_for_display_index(&self, index: usize) -> Option<Point<Pixels>> {
+        self.point_for_display_index_with_affinity(index, CaretAffinity::Downstream)
+    }
+
+    fn point_for_display_index_with_affinity(
+        &self,
+        index: usize,
+        affinity: CaretAffinity,
+    ) -> Option<Point<Pixels>> {
         for (line_ix, line) in self.last_lines.iter().enumerate() {
             let line_start = *self.line_starts.get(line_ix)?;
             let line_len = line.len();
@@ -2908,7 +3042,19 @@ impl ComposerInput {
                 continue;
             }
             if index <= line_start + line_len {
-                let local = line.position_for_index(index - line_start, self.line_height)?;
+                let relative_index = index - line_start;
+                let local = if affinity == CaretAffinity::Downstream {
+                    line.wrap_boundaries()
+                        .iter()
+                        .position(|boundary| {
+                            line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix].index
+                                == relative_index
+                        })
+                        .map(|row| point(px(0.0), self.line_height * (row + 1)))
+                        .or_else(|| line.position_for_index(relative_index, self.line_height))?
+                } else {
+                    line.position_for_index(relative_index, self.line_height)?
+                };
                 let y_offset: f32 = self
                     .last_lines
                     .iter()
@@ -2984,14 +3130,14 @@ impl ComposerInput {
         bounds
     }
 
-    /// Byte index closest to a content-local point.
-    fn index_for_point(&self, position: Point<Pixels>) -> usize {
+    /// Byte index and visual side closest to a content-local point.
+    fn caret_for_point(&self, position: Point<Pixels>) -> (usize, CaretAffinity) {
         if self.display_is_placeholder {
-            return 0;
+            return (0, CaretAffinity::Downstream);
         }
         let mut y = f32::from(position.y);
         if y < 0.0 {
-            return 0;
+            return (0, CaretAffinity::Downstream);
         }
         for (line_ix, line) in self.last_lines.iter().enumerate() {
             let height = f32::from(line.size(self.line_height).height);
@@ -3006,24 +3152,45 @@ impl ComposerInput {
                 let ix = line
                     .closest_index_for_position(local, self.line_height)
                     .unwrap_or_else(|ix| ix);
-                return self
+                let affinity = line
+                    .wrap_boundaries()
+                    .iter()
+                    .position(|boundary| {
+                        line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix].index == ix
+                    })
+                    .filter(|row| local.y < self.line_height * (row + 1))
+                    .map_or(CaretAffinity::Downstream, |_| CaretAffinity::Upstream);
+                let mut raw = self
                     .projection
                     .display_to_raw((line_start + ix).min(self.projection.display.len()));
+                // CRLF is one newline grapheme. A click past the text on its
+                // row must land before CR, never between its two bytes.
+                if raw > 0
+                    && self.content.as_bytes().get(raw) == Some(&b'\n')
+                    && self.content.as_bytes()[raw - 1] == b'\r'
+                {
+                    raw -= 1;
+                }
+                return (raw, affinity);
             }
             y -= height;
         }
-        self.content.len()
+        (self.content.len(), CaretAffinity::Upstream)
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
+        self.caret_for_mouse_position(position).0
+    }
+
+    fn caret_for_mouse_position(&self, position: Point<Pixels>) -> (usize, CaretAffinity) {
         let Some(bounds) = self.last_bounds else {
-            return 0;
+            return (0, CaretAffinity::Downstream);
         };
         let local = point(
             position.x - bounds.left() + px(self.scroll_left),
             position.y - bounds.top() + px(self.scroll_top),
         );
-        self.index_for_point(local)
+        self.caret_for_point(local)
     }
 
     fn on_mouse_down(
@@ -3057,12 +3224,14 @@ impl ComposerInput {
                 self.drag_unit = Some((intent, range));
             }
             PressIntent::ExtendSelection => {
-                let index = self.index_for_mouse_position(event.position);
+                let (index, affinity) = self.caret_for_mouse_position(event.position);
                 self.select_to(index, cx);
+                self.caret_affinity = affinity;
             }
             PressIntent::PlaceCaret => {
-                let index = self.index_for_mouse_position(event.position);
+                let (index, affinity) = self.caret_for_mouse_position(event.position);
                 self.move_to(index, cx);
+                self.caret_affinity = affinity;
             }
         }
     }
@@ -3104,6 +3273,14 @@ impl ComposerInput {
         }
     }
 
+    fn drag_select_at(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let (index, affinity) = self.caret_for_mouse_position(position);
+        self.drag_select_to(index, cx);
+        if self.drag_unit.is_none() {
+            self.caret_affinity = affinity;
+        }
+    }
+
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
         self.is_selecting = false;
         self.drag_position = None;
@@ -3116,7 +3293,7 @@ impl ComposerInput {
         if self.is_selecting {
             self.drag_position = Some(event.position);
             let position = self.drag_selection_position(event.position);
-            self.drag_select_to(self.index_for_mouse_position(position), cx);
+            self.drag_select_at(position, cx);
             if self.drag_scroll_delta(event.position) != 0.0 && !self.drag_autoscroll_active {
                 self.start_drag_autoscroll(cx);
             }
@@ -3191,7 +3368,7 @@ impl ComposerInput {
         }
         self.scroll_top = next;
         let edge_position = self.drag_selection_position(position);
-        self.drag_select_to(self.index_for_mouse_position(edge_position), cx);
+        self.drag_select_at(edge_position, cx);
         // Selection motion normally resumes caret following. During an edge
         // drag the autoscroll loop owns the viewport instead.
         self.follow_cursor = false;
@@ -3238,9 +3415,13 @@ impl ComposerInput {
     // ---- utf16 mapping (IME) ----
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
+        Self::utf8_offset(&self.content, offset)
+    }
+
+    fn utf8_offset(text: &str, offset: usize) -> usize {
         let mut utf8_offset = 0;
         let mut utf16_count = 0;
-        for ch in self.content.chars() {
+        for ch in text.chars() {
             if utf16_count >= offset {
                 break;
             }
@@ -3394,18 +3575,37 @@ impl ComposerInput {
         }
         boundaries.sort_unstable();
         boundaries.dedup();
+        let mut face_events: Vec<_> = faces
+            .iter()
+            .flat_map(|(range, face)| {
+                [
+                    (range.start, *face as usize, 1isize),
+                    (range.end, *face as usize, -1isize),
+                ]
+            })
+            .collect();
+        face_events.sort_by_key(|event| event.0);
+        let mut face_event = 0;
+        let mut face_depth = [0isize; 4];
         let runs: Vec<TextRun> = boundaries
             .windows(2)
             .filter(|r| r[1] > r[0])
             .map(|r| {
+                while face_event < face_events.len() && face_events[face_event].0 <= r[0] {
+                    let (_, face, delta) = face_events[face_event];
+                    face_depth[face] += delta;
+                    face_event += 1;
+                }
+                let mention_ix = self
+                    .projection
+                    .mentions
+                    .partition_point(|(_, range)| range.end <= r[0]);
                 let chip = self
                     .projection
                     .mentions
-                    .iter()
-                    .any(|(_, range)| range.contains(&r[0]));
-                let code = faces.iter().any(|(range, face)| {
-                    *face == composer_markdown::Face::Code && range.contains(&r[0])
-                });
+                    .get(mention_ix)
+                    .is_some_and(|(_, range)| range.contains(&r[0]));
+                let code = face_depth[composer_markdown::Face::Code as usize] > 0;
                 let mut run = run_for(
                     r[1] - r[0],
                     marked.as_ref().is_some_and(|range| range.contains(&r[0])),
@@ -3416,19 +3616,21 @@ impl ComposerInput {
                     run.font.weight = gpui::FontWeight::MEDIUM;
                     run.color = style.color;
                 }
-                for (range, face) in &faces {
-                    if range.contains(&r[0]) && !chip {
-                        match face {
-                            composer_markdown::Face::Bold => {
-                                run.font.weight = gpui::FontWeight::BOLD
-                            }
-                            composer_markdown::Face::Italic => {
-                                run.font.style = gpui::FontStyle::Italic
-                            }
-                            composer_markdown::Face::Code => {
-                                run.background_color = Some(Theme::of(cx).code_wash)
-                            }
-                        }
+                if !chip {
+                    if face_depth[composer_markdown::Face::Bold as usize] > 0 {
+                        run.font.weight = gpui::FontWeight::BOLD;
+                    }
+                    if face_depth[composer_markdown::Face::Italic as usize] > 0 {
+                        run.font.style = gpui::FontStyle::Italic;
+                    }
+                    if code {
+                        run.background_color = Some(theme.code_wash);
+                    }
+                    if face_depth[composer_markdown::Face::Strikethrough as usize] > 0 {
+                        run.strikethrough = Some(gpui::StrikethroughStyle {
+                            thickness: px(1.0),
+                            color: Some(style.color),
+                        });
                     }
                 }
                 if code && !chip {
@@ -3459,6 +3661,11 @@ impl ComposerInput {
                 (range, run)
             })
             .collect();
+        let code_ranges: Vec<_> = raw_faces
+            .iter()
+            .filter(|(_, face)| *face == composer_markdown::Face::Code)
+            .map(|(range, _)| range)
+            .collect();
         for text in display.split('\n') {
             let raw_line = self
                 .content
@@ -3468,13 +3675,14 @@ impl ComposerInput {
                 .next()
                 .unwrap_or_default();
             let mut indent = px(0.0);
-            if self.mentions_enabled
-                && !is_placeholder
-                && !raw_faces
-                    .iter()
-                    .any(|(r, face)| *face == composer_markdown::Face::Code && r.contains(&raw_at))
-            {
-                if let Some(prefix) = composer_markdown::list_prefix(raw_line) {
+            if self.mentions_enabled && !is_placeholder {
+                if let Some(prefix) = composer_markdown::list_prefix(raw_line).filter(|prefix| {
+                    let marker_at = raw_at + prefix.indent;
+                    let code_ix = code_ranges.partition_point(|range| range.end <= marker_at);
+                    !code_ranges
+                        .get(code_ix)
+                        .is_some_and(|range| range.contains(&marker_at))
+                }) {
                     let end = self
                         .projection
                         .raw_to_display(raw_at + prefix.end)
@@ -3512,10 +3720,12 @@ impl ComposerInput {
                 (!self.single_line).then_some((width - indent).max(px(20.0))),
                 None,
             ) {
-                let chips: Vec<_> = self
+                let chips: Vec<_> = self.projection.mentions[self
                     .projection
                     .mentions
+                    .partition_point(|(_, r)| r.end <= display_at)..]
                     .iter()
+                    .take_while(|(_, r)| r.start < end)
                     .filter(|(_, r)| r.start >= display_at && r.end <= end)
                     .map(|(_, r)| r.start - display_at..r.end - display_at)
                     .collect();
@@ -3599,7 +3809,7 @@ impl ComposerInput {
         if self.single_line {
             let previous = self.scroll_left;
             let width = (self.last_width - 2.0).max(1.0);
-            if let Some(cursor) = self.point_for_index(self.cursor_offset()) {
+            if let Some(cursor) = self.cursor_point() {
                 let x = f32::from(cursor.x);
                 self.scroll_left = self.scroll_left.min(x).max(x - width).max(0.0);
             }
@@ -3609,7 +3819,7 @@ impl ComposerInput {
         }
         let previous = self.scroll_top;
         if self.follow_cursor {
-            if let Some(cursor) = self.point_for_index(self.cursor_offset()) {
+            if let Some(cursor) = self.cursor_point() {
                 self.scroll_top = input_scroll_offset_for_cursor(
                     self.scroll_top,
                     f32::from(cursor.y),
@@ -3673,8 +3883,14 @@ impl EntityInputHandler for ComposerInput {
             .map(|range| self.range_to_utf16(range))
     }
 
-    fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {
-        self.marked_range = None;
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if self.marked_range.take().is_some() {
+            self.refresh_projection();
+            self.needs_measure = true;
+            self.last_edit = None;
+            cx.emit(ComposerInputEvent::CursorMoved);
+            cx.notify();
+        }
     }
 
     fn replace_text_in_range(
@@ -3709,11 +3925,13 @@ impl EntityInputHandler for ComposerInput {
         }
         self.content =
             self.content[0..range.start].to_owned() + new_text + &self.content[range.end..];
-        self.refresh_projection();
         let cursor = range.start + new_text.len();
         self.selected_range = cursor..cursor;
         self.selection_reversed = false;
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
         self.marked_range.take();
+        self.refresh_projection();
         self.follow_cursor = true;
         self.reset_blink();
         self.needs_measure = true;
@@ -3758,7 +3976,6 @@ impl EntityInputHandler for ComposerInput {
         }
         self.content =
             self.content[0..range.start].to_owned() + new_text + &self.content[range.end..];
-        self.refresh_projection();
         if new_text.is_empty() {
             self.marked_range = None;
         } else {
@@ -3766,9 +3983,13 @@ impl EntityInputHandler for ComposerInput {
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|r| self.range_from_utf16(r))
+            .map(|r| Self::utf8_offset(new_text, r.start)..Self::utf8_offset(new_text, r.end))
             .map(|new_range| new_range.start + range.start..new_range.end + range.start)
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+        self.selection_reversed = false;
+        self.caret_affinity = CaretAffinity::Downstream;
+        self.preferred_column = None;
+        self.refresh_projection();
         self.follow_cursor = true;
         self.reset_blink();
         self.needs_measure = true;
@@ -3786,7 +4007,11 @@ impl EntityInputHandler for ComposerInput {
         let range = self
             .projection
             .normalize_range(self.range_from_utf16(&range_utf16));
-        let start = self.point_for_index(range.start)?;
+        let start = if range.is_empty() && range.start == self.cursor_offset() {
+            self.cursor_point()?
+        } else {
+            self.point_for_index(range.start)?
+        };
         let origin = point(
             bounds.left() + start.x - px(self.scroll_left),
             bounds.top() + start.y - px(self.scroll_top),
@@ -4008,7 +4233,7 @@ impl gpui::Element for ComposerTextElement {
         let mut selection_quads = Vec::new();
         let mut cursor = None;
         if input.selected_range.is_empty() || input.display_is_placeholder {
-            if let Some(p) = input.point_for_index(input.cursor_offset()) {
+            if let Some(p) = input.cursor_point() {
                 cursor = Some(fill(
                     Bounds::new(
                         point(origin.x + p.x, origin.y + p.y),
@@ -4024,7 +4249,10 @@ impl gpui::Element for ComposerTextElement {
             }
         } else if let (Some(start), Some(end)) = (
             input.point_for_index(input.selected_range.start),
-            input.point_for_index(input.selected_range.end),
+            input.point_for_display_index_with_affinity(
+                input.projection.raw_to_display(input.selected_range.end),
+                CaretAffinity::Upstream,
+            ),
         ) {
             let lh = input.line_height;
             if start.y == end.y {
@@ -4447,13 +4675,125 @@ struct MentionToken {
     query: String,
 }
 
+/// Refine a locally identified token using Markdown source ranges. This is
+/// deliberately called only after a trigger has passed cheap boundary checks.
+fn completion_markdown_end(
+    text: &str,
+    start: usize,
+    cursor: usize,
+    mut end: usize,
+) -> Option<usize> {
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+    let needs_quote_boundary = text[..start].ends_with('>');
+    let line_start = text[..start].rfind('\n').map_or(0, |at| at + 1);
+    let mut paragraph_start = line_start;
+    let mut token_is_prose = false;
+    let mut quote_boundary = false;
+    let parser = Parser::new_ext(text, Options::ENABLE_STRIKETHROUGH);
+    // Definitions have no body events, but their destinations are still link
+    // syntax and must never be replaced by a nested canonical link.
+    if parser
+        .reference_definitions()
+        .iter()
+        .any(|(_, definition)| definition.span.contains(&start))
+    {
+        return None;
+    }
+    for (event, range) in parser.into_offset_iter() {
+        if !range.contains(&start) {
+            continue;
+        }
+        match event {
+            Event::Start(Tag::Link { .. } | Tag::Image { .. }) => return None,
+            Event::Start(Tag::Paragraph | Tag::Heading { .. } | Tag::Item) => {
+                paragraph_start = range.start;
+            }
+            Event::Text(_) => token_is_prose = true,
+            Event::Start(Tag::BlockQuote(_)) if needs_quote_boundary => {
+                let prefix = &text[range.start.max(line_start)..start];
+                quote_boundary |= prefix.chars().all(|ch| matches!(ch, '>' | ' ' | '\t'));
+            }
+            Event::Start(tag @ (Tag::Strong | Tag::Emphasis | Tag::Strikethrough)) => {
+                let delimiter = match tag {
+                    Tag::Strong => 2,
+                    Tag::Emphasis => 1,
+                    _ => text[range.clone()]
+                        .bytes()
+                        .take_while(|byte| *byte == b'~')
+                        .count(),
+                };
+                let closing = range.end.saturating_sub(delimiter);
+                if cursor > closing {
+                    return None;
+                }
+                end = end.min(closing);
+            }
+            _ => {}
+        }
+    }
+    if needs_quote_boundary && !quote_boundary {
+        return None;
+    }
+    // Duplicate reference definitions are consumed without body events and
+    // only the first definition is retained by reference_definitions(). Requiring
+    // text also protects those later definitions and raw HTML without excluding
+    // tight-list items, which omit paragraph events.
+    if !token_is_prose {
+        return None;
+    }
+    // The parser leaves an unfinished link as prose. Once its destination is
+    // being authored, inserting a canonical link would create nested syntax.
+    // An unfinished destination can continue across a soft line break. Stay
+    // within its parsed paragraph so a malformed link in an earlier block does
+    // not disable completion in later prose.
+    let before = &text[paragraph_start..cursor];
+    for (destination, _) in before.rmatch_indices("](") {
+        if let Some(label) = before[..destination].rfind('[') {
+            let escaped = before[..label]
+                .bytes()
+                .rev()
+                .take_while(|byte| *byte == b'\\')
+                .count()
+                % 2
+                == 1;
+            let closing_escaped = before[..destination]
+                .bytes()
+                .rev()
+                .take_while(|byte| *byte == b'\\')
+                .count()
+                % 2
+                == 1;
+            if !escaped && !closing_escaped && paragraph_start + destination + 2 <= start {
+                let mut depth = 1usize;
+                let mut chars = before[destination + 2..].chars();
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '(' => depth += 1,
+                        ')' => {
+                            depth = depth.saturating_sub(1);
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if depth > 0 {
+                    return None;
+                }
+            }
+        }
+    }
+    (!in_code(text, cursor)).then_some(end)
+}
+
 /// The `@` must begin a token. This intentionally excludes `name@example.com`
 /// and ordinary words while allowing punctuation such as `(@src`.
 fn mention_token(text: &str, cursor: usize) -> Option<MentionToken> {
     if cursor > text.len() || !text.is_char_boundary(cursor) {
-        return None;
-    }
-    if in_code(text, cursor) {
         return None;
     }
     let token_start = text[..cursor]
@@ -4469,7 +4809,7 @@ fn mention_token(text: &str, cursor: usize) -> Option<MentionToken> {
         || text[..at]
             .chars()
             .next_back()
-            .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '(' | '[' | '{'));
+            .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '(' | '[' | '{' | '>'));
     if text[at + 1..cursor].contains('@') || !valid_boundary {
         return None;
     }
@@ -4488,6 +4828,7 @@ fn mention_token(text: &str, cursor: usize) -> Option<MentionToken> {
     if closing.is_some_and(|ch| text[at + 1..cursor].contains(ch)) {
         return None;
     }
+    let end = completion_markdown_end(text, at, cursor, end)?;
     Some(MentionToken {
         range: at..end,
         query: text[at + 1..cursor].to_string(),
@@ -4501,31 +4842,37 @@ fn slash_token(text: &str, cursor: usize) -> Option<MentionToken> {
 }
 
 fn invocation_token(text: &str, cursor: usize, prefix: char) -> Option<MentionToken> {
-    if cursor > text.len() || !text.is_char_boundary(cursor) || in_code(text, cursor) {
+    if cursor > text.len() || !text.is_char_boundary(cursor) {
         return None;
     }
     let start = text[..cursor]
         .char_indices()
         .rev()
-        .find(|(_, c)| c.is_whitespace() || matches!(c, '(' | '[' | '{'))
+        .find(|(_, c)| c.is_whitespace() || matches!(c, '(' | '[' | '{' | '>'))
         .map_or(0, |(i, c)| i + c.len_utf8());
     if !text[start..cursor].starts_with(prefix) {
         return None;
     }
     let query = &text[start + 1..cursor];
-    if query
-        .chars()
-        .any(|c| !(c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.')))
-        || (prefix == '$' && query.starts_with(|c: char| c.is_ascii_digit()))
+    let name_grapheme = |grapheme: &str| {
+        grapheme.chars().next().is_some_and(char::is_alphanumeric)
+            || matches!(grapheme, "-" | "_" | ":" | ".")
+    };
+    if !query.graphemes(true).all(name_grapheme)
+        || (prefix == '$' && query.starts_with(char::is_numeric))
     {
         return None;
     }
-    let end = text[cursor..]
-        .find(|c: char| !(c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.')))
-        .map_or(text.len(), |i| cursor + i);
+    // Scan from the token's start, including any combining marks after a caret
+    // positioned between code points of the same grapheme.
+    let end = text[start + 1..]
+        .grapheme_indices(true)
+        .find_map(|(offset, grapheme)| (!name_grapheme(grapheme)).then_some(start + 1 + offset))
+        .unwrap_or(text.len());
     if text.get(end..end + 1) == Some("/") {
         return None;
     }
+    let end = completion_markdown_end(text, start, cursor, end)?;
     Some(MentionToken {
         range: start..end,
         query: query.to_string(),
@@ -4721,13 +5068,31 @@ fn invocation_candidates(
     commands: Vec<SlashCommand>,
     skills: Vec<zeron_proto::invocation::Skill>,
 ) -> Vec<InvocationCandidate> {
+    use zeron_proto::invocation::{
+        valid_invocation_name, valid_skill_command_name, valid_skill_path,
+    };
+    // A remote engine may use an older catalog decoder. Every visible choice
+    // must still survive the local canonical-reference decoder unchanged.
+    let skills: Vec<_> = skills
+        .into_iter()
+        .filter(|skill| {
+            valid_invocation_name(&skill.name)
+                && valid_skill_path(&skill.path)
+                && skill
+                    .command
+                    .as_ref()
+                    .is_none_or(|command| valid_skill_command_name(&command.name))
+        })
+        .collect();
     let skill_commands: std::collections::HashSet<_> = skills
         .iter()
         .filter_map(|skill| skill.command.as_ref().map(|command| command.name.as_str()))
         .collect();
     let commands: Vec<_> = commands
         .into_iter()
-        .filter(|command| !skill_commands.contains(command.name.as_str()))
+        .filter(|command| {
+            valid_invocation_name(&command.name) && !skill_commands.contains(command.name.as_str())
+        })
         .collect();
     commands
         .into_iter()
@@ -5048,7 +5413,7 @@ impl Composer {
             ComposerInputEvent::ViewportChanged => cx.notify(),
             // The slash popup and the mention popup share the input's
             // completion key routing; they are mutually exclusive by token
-            // shape (`/` at offset 0 vs `@` at a token boundary).
+            // shape (`/`, `$`, or `@` at a token boundary).
             ComposerInputEvent::MentionNavigate(delta) => {
                 if this.slash.token.is_some() {
                     this.move_slash(*delta, cx)
@@ -5871,6 +6236,29 @@ impl Composer {
         target.map(|_| params)
     }
 
+    fn completion_connection_context(&self, cx: &App) -> String {
+        let state = self.state.read(cx);
+        let engine = state
+            .engine()
+            .map(|engine| engine.client() as *const _ as usize);
+        let target = state
+            .selected_chat_row()
+            .map(|chat| chat.device_id.clone())
+            .or_else(|| {
+                state
+                    .selected_space_row()
+                    .map(|space| space.device_id.clone())
+            })
+            .or_else(|| state.effective_device_id());
+        let online = target
+            .as_deref()
+            .is_none_or(|device| state.device_online(device, chrono::Utc::now()));
+        format!(
+            "{engine:?}:{:?}:{:?}:{online}",
+            state.connection, state.connectivity.state
+        )
+    }
+
     fn on_input_edited(&mut self, cx: &mut Context<Self>) {
         if self.wizard.is_some() {
             if self.mention.token.is_some() || self.mention_task.is_some() {
@@ -5896,7 +6284,7 @@ impl Composer {
         let token = mention_token(&text, cursor);
         let context = self
             .file_search_params("", cx)
-            .map(|params| params.to_string())
+            .map(|params| format!("{}:{params}", self.completion_connection_context(cx)))
             .unwrap_or_default();
         if self.mention.context != context {
             self.reset_mention(None, cx);
@@ -5981,7 +6369,10 @@ impl Composer {
                 composer.mention.loading = false;
                 match result {
                     Ok(value) => match serde_json::from_value::<Vec<FileSearchMatch>>(value) {
-                        Ok(results) => {
+                        Ok(mut results) => {
+                            // Search results can include legal filesystem names
+                            // that the canonical reference format cannot encode.
+                            results.retain(|result| local_path_is_safe(&result.path));
                             composer.mention.error = None;
                             composer.mention.active = (!results.is_empty()).then_some(0);
                             composer.mention.results = results;
@@ -6191,8 +6582,9 @@ impl Composer {
             }
         }
         let context = format!(
-            "{}:{preferences:?}:{include_skills}:{commands_allowed}:{params}",
-            if skill { "skill" } else { "command" }
+            "{}:{preferences:?}:{include_skills}:{commands_allowed}:{}:{params}",
+            if skill { "skill" } else { "command" },
+            self.completion_connection_context(cx),
         );
         let context_changed = self.slash.context != context;
         if !context_changed
@@ -6702,6 +7094,7 @@ impl Composer {
 
         // A pending agent question must not take over an active queue edit.
         if self.editing_queued.is_some() {
+            self.on_input_edited(cx);
             cx.notify();
             return;
         }
@@ -6749,6 +7142,7 @@ impl Composer {
         let input_context = message_input_context(self.wizard.is_some());
         self.input
             .update(cx, |input, cx| input.set_key_context(input_context, cx));
+        self.on_input_edited(cx);
         cx.notify();
     }
 
@@ -9576,6 +9970,224 @@ mod tests {
         }).unwrap();
     }
 
+    #[gpui::test]
+    fn crlf_navigation_deletion_and_newlines_keep_the_pair_intact(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    for (first, continued) in [
+                        ("plain café", ""),
+                        ("- item", "- "),
+                        ("- [x] item", "- [ ] "),
+                    ] {
+                        let raw = format!("{first}\r\nnext");
+                        input.set_text(&raw, cx);
+                        input.move_to(0, cx);
+                        input.end(&End, window, cx);
+                        assert_eq!(input.cursor_offset(), first.len());
+                        input.layout_text(px(600.0), &window.text_style(), window, cx);
+                        assert_eq!(
+                            input.caret_for_point(point(px(590.0), px(1.0))).0,
+                            first.len()
+                        );
+                        assert_eq!(
+                            input.selection_unit(PressIntent::Line, 0),
+                            0..first.len() + 2
+                        );
+                        input.move_to(0, cx);
+                        input.select_end(&SelectEnd, window, cx);
+                        assert_eq!(input.selected_range, 0..first.len());
+                        input.move_to(0, cx);
+                        input.end(&End, window, cx);
+                        input.backspace(&Backspace, window, cx);
+                        let previous = first.grapheme_indices(true).last().unwrap().0;
+                        assert_eq!(input.text(), format!("{}\r\nnext", &first[..previous]));
+                        input.undo(&Undo, window, cx);
+                        input.move_to(first.len(), cx);
+                        input.delete(&Delete, window, cx);
+                        assert_eq!(input.text(), format!("{first}next"));
+                        input.undo(&Undo, window, cx);
+                        input.move_to(first.len() + 2, cx);
+                        input.backspace(&Backspace, window, cx);
+                        assert_eq!(input.text(), format!("{first}next"));
+                        input.undo(&Undo, window, cx);
+                        input.move_to(0, cx);
+                        input.end(&End, window, cx);
+                        input.newline(&Newline, window, cx);
+                        assert_eq!(input.text(), format!("{first}\r\n{continued}\r\nnext"));
+                        input.undo(&Undo, window, cx);
+                        input.move_to(2, cx);
+                        input.delete_to_line_end(&DeleteToLineEnd, window, cx);
+                        assert_eq!(input.text(), format!("{}\r\nnext", &first[..2]));
+                        input.undo(&Undo, window, cx);
+                        assert_eq!(input.text(), raw);
+                    }
+                    input.set_text("\r\nnext", cx);
+                    input.move_to(0, cx);
+                    input.end(&End, window, cx);
+                    assert_eq!(input.cursor_offset(), 0);
+                    input.backspace(&Backspace, window, cx);
+                    assert_eq!(input.text(), "\r\nnext");
+                    input.delete(&Delete, window, cx);
+                    assert_eq!(input.text(), "next");
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn soft_wrap_carets_preserve_pointer_keyboard_and_ime_affinity(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle.update(cx, |composer, window, cx| {
+            composer.input.update(cx, |input, cx| {
+                input.set_text("Café and emoji 🦀 wrap across several visual rows with enough text to keep moving downward.", cx);
+                input.layout_text(px(140.0), &window.text_style(), window, cx);
+                let line = &input.last_lines[0];
+                assert!(line.wrap_boundaries().len() >= 2);
+                let boundary = line.wrap_boundaries()[0];
+                let offset = line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+                let upstream = input.point_for_display_index_with_affinity(offset, CaretAffinity::Upstream).unwrap();
+                let downstream = input.point_for_display_index(offset).unwrap();
+                assert_eq!(upstream.y, px(0.0));
+                assert_eq!(downstream, point(px(0.0), input.line_height));
+                assert!(upstream.x > downstream.x);
+                let raw_offset = input.projection.display_to_raw(offset);
+                assert_eq!(input.caret_for_point(upstream + point(px(20.0), px(1.0))), (raw_offset, CaretAffinity::Upstream));
+                assert_eq!(input.caret_for_point(downstream + point(px(0.0), px(1.0))), (raw_offset, CaretAffinity::Downstream));
+                let bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(140.0), px(200.0)));
+                input.last_bounds = Some(bounds);
+                for (local, affinity) in [(upstream, CaretAffinity::Upstream), (downstream, CaretAffinity::Downstream)] {
+                    input.on_mouse_down(&MouseDownEvent {
+                        button: MouseButton::Left,
+                        position: bounds.origin + local + point(px(0.0), px(1.0)),
+                        click_count: 1,
+                        ..Default::default()
+                    }, window, cx);
+                    assert_eq!(input.cursor_offset(), raw_offset);
+                    assert_eq!(input.caret_affinity, affinity);
+                    assert_eq!(input.cursor_point(), Some(local));
+                    let utf16 = input.offset_to_utf16(raw_offset);
+                    let ime = input.bounds_for_range(utf16..utf16, bounds, window, cx).unwrap();
+                    assert_eq!(ime.origin, bounds.origin + local);
+                    input.replace_text_in_range(None, "x", window, cx);
+                    input.undo(&Undo, window, cx);
+                    input.layout_text(px(140.0), &window.text_style(), window, cx);
+                    assert_eq!(input.cursor_offset(), raw_offset);
+                    assert_eq!(input.caret_affinity, affinity);
+                    assert_eq!(input.cursor_point(), Some(local));
+                }
+                input.move_to(0, cx);
+                input.down(&Down, window, cx);
+                assert_eq!(input.cursor_point(), Some(downstream));
+                input.down(&Down, window, cx);
+                assert_eq!(input.cursor_point().unwrap().y, input.line_height * 2);
+                input.up(&Up, window, cx);
+                assert_eq!(input.cursor_point(), Some(downstream));
+                input.up(&Up, window, cx);
+                assert_eq!(input.cursor_offset(), 0);
+                input.select_down(&SelectDown, window, cx);
+                assert_eq!(input.selected_range, 0..raw_offset);
+                assert_eq!(input.cursor_point(), Some(downstream));
+                input.select_up(&SelectUp, window, cx);
+                assert_eq!(input.selected_range, 0..0);
+            });
+        }).unwrap();
+    }
+
+    #[gpui::test]
+    fn vertical_navigation_retains_column_across_short_and_wrapped_rows(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    let long = "abcdefghijklmnopqrstuvwx";
+                    let raw = format!("{long}\nx\n{long}");
+                    let last_start = long.len() + 3;
+                    for width in [1000.0, 140.0] {
+                        input.set_text(&raw, cx);
+                        input.layout_text(px(width), &window.text_style(), window, cx);
+                        input.move_to(7, cx);
+                        let start = input.cursor_point().unwrap();
+                        let target = input.point_for_index(last_start + 7).unwrap();
+                        let rows = (f32::from(target.y - start.y) / f32::from(input.line_height))
+                            .round() as usize;
+                        assert!(rows >= 2);
+                        for _ in 0..rows {
+                            input.down(&Down, window, cx);
+                        }
+                        assert_eq!(
+                            input.cursor_offset(),
+                            last_start + 7,
+                            "column lost at width {width}"
+                        );
+                        assert_eq!(input.preferred_column, Some(start.x));
+                        for _ in 0..rows {
+                            input.up(&Up, window, cx);
+                        }
+                        assert_eq!(input.cursor_offset(), 7);
+                        for _ in 0..rows {
+                            input.select_down(&SelectDown, window, cx);
+                        }
+                        assert_eq!(input.selected_range, 7..last_start + 7);
+                        for _ in 0..rows {
+                            input.select_up(&SelectUp, window, cx);
+                        }
+                        assert_eq!(input.selected_range, 7..7);
+                        input.right(&Right, window, cx);
+                        assert_eq!(input.preferred_column, None);
+                        input.down(&Down, window, cx);
+                        assert!(input.preferred_column.is_some());
+                        input.replace_text_in_range(None, "é", window, cx);
+                        assert_eq!(input.preferred_column, None);
+                        input.undo(&Undo, window, cx);
+                        assert_eq!(input.text(), raw);
+                    }
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn wrapped_rich_lines_keep_caret_and_range_geometry_aligned(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle.update(cx, |composer, window, cx| {
+            composer.input.update(cx, |input, cx| {
+                let file = local_file_link("src/composer.rs", false);
+                let raw = format!("- First **bold** item with café and enough words to wrap over several visual rows\n- Second item with {file} and more trailing content to wrap\n\nDone");
+                input.set_text(&raw, cx);
+                input.layout_text(px(190.0), &window.text_style(), window, cx);
+                let mut y_offset = px(0.0);
+                let mut checked = 0;
+                for (line_ix, line) in input.last_lines.iter().enumerate() {
+                    let line_start = input.line_starts[line_ix];
+                    for (row, boundary) in line.wrap_boundaries().iter().enumerate() {
+                        let local_offset = line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+                        let display_offset = line_start + local_offset;
+                        let raw_offset = input.projection.display_to_raw(display_offset);
+                        let downstream = input.point_for_display_index(display_offset).unwrap();
+                        assert_eq!(downstream.y, y_offset + input.line_height * (row + 1));
+                        assert_eq!(downstream.x, input.line_indents[line_ix]);
+                        assert_eq!(input.caret_for_point(downstream + point(px(0.0), px(1.0))), (raw_offset, CaretAffinity::Downstream));
+                        let upstream = input.point_for_display_index_with_affinity(display_offset, CaretAffinity::Upstream).unwrap();
+                        assert_eq!(upstream.y + input.line_height, downstream.y);
+                        assert_eq!(input.caret_for_point(upstream + point(px(20.0), px(1.0))), (raw_offset, CaretAffinity::Upstream));
+                        let end = line_start + line.text[local_offset..].char_indices().nth(1).map_or(line.len(), |(offset, _)| local_offset + offset);
+                        let boxes = input.bounds_for_display_range(display_offset..end);
+                        assert!(!boxes.is_empty());
+                        assert_eq!(boxes[0].origin, downstream);
+                        checked += 1;
+                    }
+                    y_offset += line.size(input.line_height).height;
+                }
+                assert!(checked >= 3);
+                assert_eq!(input.text(), raw);
+            });
+        }).unwrap();
+    }
+
     #[test]
     fn hidden_markdown_hit_testing_targets_visible_text() {
         let raw = "***café***\nactive";
@@ -9602,6 +10214,319 @@ mod tests {
         assert!(projected.mentions[0].0.path.ends_with(&label));
         assert!(projected.display.contains('…'));
         assert_eq!(projected.normalize_range(1..raw.len() - 1), 0..raw.len());
+    }
+
+    #[test]
+    fn chip_labels_stay_compact_for_repeats_and_distinct_after_truncation() {
+        let path = "src/components/field.rs";
+        let raw = format!(
+            "{} {}",
+            local_file_link(path, false),
+            local_file_link(path, false)
+        );
+        assert_eq!(
+            mention_display_labels(&file_mention_links(&raw)),
+            ["field.rs", "field.rs"]
+        );
+        let left = format!("{}alpha{}", "x".repeat(20), "tail".repeat(8));
+        let right = format!("{}bravo{}", "x".repeat(20), "tail".repeat(8));
+        assert_eq!(compact_chip_label(&left), compact_chip_label(&right));
+        let shown = compact_chip_labels(&[left.clone(), right, left]);
+        assert_ne!(shown[0], shown[1]);
+        assert_eq!(shown[0], shown[2]);
+    }
+
+    #[gpui::test]
+    fn clipboard_is_readable_outside_zeron_and_lossless_inside(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    let raw = format!(
+                        "**Check** {} with {}",
+                        local_file_link("src/café.rs", false),
+                        zeron_proto::invocation::Invocation::Skill {
+                            name: "review".into(),
+                            path: "/repo/SKILL.md".into(),
+                            command: None
+                        }
+                        .link()
+                    );
+                    input.set_text(&raw, cx);
+                    input.select_all(&SelectAll, window, cx);
+                    input.copy(&Copy, window, cx);
+                    let copied = cx.read_from_clipboard().unwrap().text().unwrap();
+                    assert_eq!(
+                        copied,
+                        "**Check** [café.rs](src/caf%C3%A9.rs) with [$review](/repo/SKILL.md)"
+                    );
+                    input.set_text("", cx);
+                    input.paste(&Paste, window, cx);
+                    assert_eq!(input.text(), raw);
+                    assert_eq!(input.projection.mentions.len(), 2);
+                    input.set_text("x", cx);
+                    cx.write_to_clipboard(ClipboardItem::new_string("a".into()));
+                    input.paste(&Paste, window, cx);
+                    input.replace_text_in_range(None, "b", window, cx);
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), "xa");
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), "x");
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn dense_rich_draft_keeps_offsets_and_reuses_unchanged_layout(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    let raw = "- **café** _text_\n".repeat(1000) + "active";
+                    input.set_text(&raw, cx);
+                    input.layout_text(px(320.), &window.text_style(), window, cx);
+                    assert!(input.projection.display.starts_with("• café text\n"));
+                    assert_eq!(input.last_lines.len(), 1001);
+                    let mut previous = 0;
+                    for (offset, _) in raw.char_indices() {
+                        let display = input.projection.raw_to_display(offset);
+                        assert!(display >= previous && display <= input.projection.display.len());
+                        assert!(input.projection.display.is_char_boundary(display));
+                        previous = display;
+                    }
+                    for (offset, _) in input.projection.display.char_indices() {
+                        assert!(raw.is_char_boundary(input.projection.display_to_raw(offset)));
+                    }
+                    let rebuilt = input.layout_rebuilds;
+                    input.layout_text(px(320.), &window.text_style(), window, cx);
+                    assert_eq!(input.layout_rebuilds, rebuilt);
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn rich_edit_state_is_current_before_the_next_layout(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    let draft = "**first**\n_second_\nlast";
+                    input.set_text(draft, cx);
+                    assert_eq!(input.projection.display, "first\nsecond\nlast");
+                    input.replace_text_in_range(None, "\n**next**", window, cx);
+                    assert_eq!(input.projection.display, "first\nsecond\nlast\n**next**");
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.projection.display, "first\nsecond\nlast");
+                    input.redo(&Redo, window, cx);
+                    assert_eq!(input.projection.display, "first\nsecond\nlast\n**next**");
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn ime_uses_replacement_relative_utf16_and_restores_markdown_on_unmark(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    let before = "**bold**\n😀x";
+                    input.set_text(before, cx);
+                    let start = before.len() - 1;
+                    input.selected_range = start..before.len();
+                    input.selection_reversed = true;
+                    input.replace_and_mark_text_in_range(None, "あいう", Some(1..2), window, cx);
+                    assert_eq!(input.selected_range, start + 3..start + 6);
+                    assert!(!input.selection_reversed);
+                    assert_eq!(&input.text()[input.selected_range.clone()], "い");
+                    assert!(
+                        input.projection.display.starts_with("bold\n"),
+                        "composition must not reveal unrelated syntax"
+                    );
+                    input.layout_text(px(320.), &window.text_style(), window, cx);
+                    assert!(!input.needs_measure);
+                    input.unmark_text(window, cx);
+                    assert!(input.needs_measure);
+                    assert!(input.projection.display.starts_with("bold\n"));
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), before);
+                    assert_eq!(input.selected_range, start..before.len());
+                    assert!(input.selection_reversed);
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn bulk_edits_and_following_typing_are_separate_undo_steps(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    input.set_text("", cx);
+                    input.replace_text_in_range(None, "paste", window, cx);
+                    input.replace_text_in_range(None, "d", window, cx);
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), "paste");
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), "");
+                    input.set_text("@a", cx);
+                    input.replace_mention(0..2, "src/a.rs", false, cx);
+                    let chip = input.text().to_owned();
+                    input.replace_text_in_range(None, "x", window, cx);
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), chip);
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn inserting_references_preserves_surrounding_markdown_and_punctuation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    for raw in [
+                        "**see @src**",
+                        "_see @src_",
+                        "~~see @src~~",
+                        "See (@src)",
+                        "- @src\r\nnext",
+                    ] {
+                        let start = raw.find("@src").unwrap();
+                        let token = mention_token(raw, start + 4).unwrap();
+                        input.set_text(raw, cx);
+                        let file = local_file_link("src/main.rs", false);
+                        input.replace_mention(token.range, "src/main.rs", false, cx);
+                        assert_eq!(input.text(), raw.replacen("@src", &file, 1));
+                        assert_eq!(input.projection.mentions.len(), 1);
+                        input.undo(&Undo, window, cx);
+                        assert_eq!(input.text(), raw);
+                        let source = raw.replace("@src", "$review");
+                        input.set_text(&source, cx);
+                        let skill = zeron_proto::invocation::Invocation::Skill {
+                            name: "review".into(),
+                            path: "/repo/SKILL.md".into(),
+                            command: None,
+                        }
+                        .link();
+                        let token = invocation_token(&source, start + 7, '$').unwrap();
+                        input.replace_plain_token(token.range, &skill, cx);
+                        assert_eq!(input.text(), source.replacen("$review", &skill, 1));
+                        assert_eq!(input.projection.mentions.len(), 1);
+                    }
+                    input.set_text("**selected**", cx);
+                    input.selected_range = 2..10;
+                    assert!(input.insert_dropped_mention("src/main.rs", false, cx));
+                    assert_eq!(
+                        input.text(),
+                        format!("**{}**", local_file_link("src/main.rs", false))
+                    );
+                    assert!(
+                        composer_markdown::faces(input.text())
+                            .iter()
+                            .any(|(_, face)| *face == composer_markdown::Face::Bold)
+                    );
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn completion_rejects_paths_that_cannot_round_trip_as_chips(cx: &mut gpui::TestAppContext) {
+        let input = cx.new(|cx| ComposerInput::new("Draft", cx));
+        input.update(cx, |input, cx| {
+            input.enable_mentions();
+            input.set_text("See @src", cx);
+            for path in [
+                "src/a\nb.rs",
+                "src/a\rb.rs",
+                "src/a\tb.rs",
+                "",
+                "../secret",
+                "https://example.com",
+            ] {
+                input.replace_mention(4..8, path, false, cx);
+                assert_eq!(input.text(), "See @src", "{path:?}");
+                assert!(input.undo_stack.is_empty());
+            }
+            input.replace_mention(4..8, "src/café [draft].rs", false, cx);
+            assert_eq!(input.projection.mentions.len(), 1);
+            assert_eq!(input.projection.mentions[0].0.path, "src/café [draft].rs");
+        });
+    }
+
+    #[gpui::test]
+    fn quoted_list_indentation_preserves_containers_and_selection(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    for original in ["> - café\n> - [x] done", "> > - café\r\n> > - [x] done"] {
+                        input.set_text(original, cx);
+                        input.selected_range = 0..original.len();
+                        input.selection_reversed = true;
+                        input.refresh_projection();
+                        assert!(input.indent_list(false, window, cx));
+                        let indented = original.replace("- ", "  - ");
+                        assert_eq!(input.text(), indented);
+                        assert_eq!(input.selected_range, 0..indented.len());
+                        assert!(input.selection_reversed);
+                        assert!(input.indent_list(true, window, cx));
+                        assert_eq!(input.text(), original);
+                        assert_eq!(input.selected_range, 0..original.len());
+                        assert!(input.selection_reversed);
+                        input.undo(&Undo, window, cx);
+                        assert_eq!(input.text(), indented);
+                        input.undo(&Undo, window, cx);
+                        assert_eq!(input.text(), original);
+                    }
+                    input.set_text("> ```\n> - literal\n> ```", cx);
+                    input.move_to(input.text().find("literal").unwrap(), cx);
+                    assert!(!input.indent_list(false, window, cx));
+                    input.set_text(
+                        ">     - literal code that wraps over several rows\n\nactive",
+                        cx,
+                    );
+                    input.layout_text(px(160.), &window.text_style(), window, cx);
+                    assert_eq!(input.line_indents[0], px(0.));
+                    assert!(input.projection.display.starts_with(">     - literal"));
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn dropped_chip_replacement_rebuilds_same_length_layout(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    input.set_text(local_file_link("src/a.rs", false), cx);
+                    input.layout_text(px(320.), &window.text_style(), window, cx);
+                    let rebuilds = input.layout_rebuilds;
+                    input.selected_range = 0..input.content.len();
+                    assert!(input.insert_dropped_mention("src/b.rs", false, cx));
+                    assert!(input.needs_measure);
+                    input.layout_text(px(320.), &window.text_style(), window, cx);
+                    assert_eq!(input.layout_rebuilds, rebuilds + 1);
+                    assert!(input.projection.display.contains("b.rs"));
+                    input.set_text("    - code\n\nactive", cx);
+                    input.layout_text(px(160.), &window.text_style(), window, cx);
+                    assert_eq!(input.line_indents[0], px(0.));
+                    input.move_to(7, cx);
+                    assert!(!input.indent_list(false, window, cx));
+                    assert_eq!(input.text(), "    - code\n\nactive");
+                });
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -9954,6 +10879,122 @@ mod tests {
     }
 
     #[gpui::test]
+    fn reconnect_reconsiders_unchanged_completion_tokens(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _runtime = runtime.enter();
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, _, cx| {
+                composer
+                    .input
+                    .update(cx, |input, cx| input.set_text("/model", cx));
+                composer.on_input_edited(cx);
+                let old_context = composer.slash.context.clone();
+                let old_request = composer.slash.request;
+                composer.state.update(cx, |state, _| {
+                    state.connection = crate::state::ConnectionStatus::Ready
+                });
+                composer.on_state_changed(cx);
+                assert_ne!(composer.slash.context, old_context);
+                assert!(composer.slash.request > old_request);
+                assert!(composer.slash.token.is_some());
+                let context = composer.completion_connection_context(cx);
+                let (out, _server) = tokio::sync::mpsc::channel(4);
+                let (_incoming, inbound) = tokio::sync::mpsc::channel(4);
+                composer.state.update(cx, |state, _| {
+                    state.set_test_engine(crate::state::EngineHandle::from_test_client(
+                        zeron_rpc::RpcClient::new(out, inbound),
+                    ))
+                });
+                assert_ne!(composer.completion_connection_context(cx), context);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn explicit_navigation_breaks_undo_runs_but_backspace_remains_coalesced(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    input.set_text("", cx);
+                    input.replace_text_in_range(None, "a", window, cx);
+                    input.move_to(0, cx);
+                    input.move_to(1, cx);
+                    input.replace_text_in_range(None, "b", window, cx);
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), "a");
+                    input.set_text("abcd", cx);
+                    input.backspace(&Backspace, window, cx);
+                    input.backspace(&Backspace, window, cx);
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), "abcd");
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn unmarking_ime_reopens_completion_without_another_keystroke(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    input.set_text("", cx);
+                    input.replace_and_mark_text_in_range(None, "/model", None, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        handle
+            .update(cx, |composer, window, cx| {
+                assert!(composer.slash.token.is_none());
+                composer
+                    .input
+                    .update(cx, |input, cx| input.unmark_text(window, cx));
+            })
+            .unwrap();
+        cx.run_until_parked();
+        handle
+            .read_with(cx, |composer, _| assert!(composer.slash.token.is_some()))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn copying_part_of_a_literal_example_preserves_its_source(cx: &mut gpui::TestAppContext) {
+        let input = cx.new(|cx| ComposerInput::new("Draft", cx));
+        input.update(cx, |input, cx| {
+            input.enable_mentions();
+            for reference in [
+                local_file_link("src/a.rs", false),
+                zeron_proto::invocation::Invocation::Command {
+                    name: "review".into(),
+                }
+                .link(),
+            ] {
+                for document in [
+                    format!("`{reference}`"),
+                    format!("```\n{reference}\n```"),
+                    format!("![example {reference}](image.png)"),
+                ] {
+                    input.set_text(&document, cx);
+                    let start = document.find(&reference).unwrap();
+                    input.selected_range = start..start + reference.len();
+                    assert_eq!(
+                        input.clipboard_selection(),
+                        Some((reference.clone(), reference.clone()))
+                    );
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
     fn changing_slash_skill_preference_invalidates_open_completion(cx: &mut gpui::TestAppContext) {
         let (_dir, handle) = composer_focus_window(cx);
         handle
@@ -10024,6 +11065,149 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[test]
+    fn completion_respects_markdown_containers_and_destinations() {
+        for prefix in ['@', '$', '/'] {
+            let token = |text: &str, cursor| {
+                if prefix == '@' {
+                    mention_token(text, cursor)
+                } else {
+                    invocation_token(text, cursor, prefix)
+                }
+            };
+            for container in [">", ">>", "> >", "- >", "> first\n>"] {
+                let text = format!("{container}{prefix}review");
+                let found = token(&text, text.len()).unwrap();
+                assert_eq!(found.range, container.len()..text.len(), "{text:?}");
+            }
+            for literal in ["comparison >", "> comparison >", "    >", "\\>"] {
+                let text = format!("{literal}{prefix}review");
+                assert!(token(&text, text.len()).is_none(), "{text:?}");
+            }
+            for link in [
+                format!("[label]({prefix}review)"),
+                format!("[label]({prefix}review"),
+                format!("![label]({prefix}review)"),
+                format!("[{prefix}review](https://example.com)"),
+            ] {
+                let cursor = link.find("review").unwrap() + "review".len();
+                assert!(token(&link, cursor).is_none(), "{link:?}");
+            }
+            let after_link = format!("[label](url) ({prefix}review");
+            assert!(token(&after_link, after_link.len()).is_some());
+        }
+        let canonical = zeron_proto::invocation::Invocation::Command {
+            name: "review".into(),
+        }
+        .link();
+        assert!(slash_token(&canonical, canonical.find("review").unwrap() + 6).is_none());
+    }
+
+    #[test]
+    fn completion_keeps_multiline_and_reference_destinations_literal() {
+        for prefix in ['@', '$', '/'] {
+            let token = |text: &str, cursor| {
+                if prefix == '@' {
+                    mention_token(text, cursor)
+                } else {
+                    invocation_token(text, cursor, prefix)
+                }
+            };
+            for source in [
+                format!("[label](\n{prefix}review"),
+                format!("[label](foo\n {prefix}review"),
+                format!("[label](url \"title\n {prefix}review"),
+                format!("[id]: {prefix}review"),
+                format!("[id]:\n  {prefix}review"),
+                format!("> [id]: {prefix}review"),
+                format!("[id]: url\n[id]: {prefix}review"),
+                format!("[id]: url\n[id]:\n  {prefix}review"),
+                format!("[outer]([inner\\]({prefix}review"),
+                format!("<!-- {prefix}review -->"),
+            ] {
+                let cursor = source.find("review").unwrap() + "review".len();
+                assert!(token(&source, cursor).is_none(), "{source:?}");
+            }
+            for source in [
+                format!("[label](unfinished\n\n{prefix}review"),
+                format!("[label](unfinished\n- {prefix}review"),
+                format!("[id]: url\n\n{prefix}review"),
+                format!("[label\\]({prefix}review"),
+                format!("[label](url)\n{prefix}review"),
+                format!("- first\n- {prefix}review"),
+                format!("- first\n\n- {prefix}review"),
+                format!("- first\n  - {prefix}review"),
+                format!("> - {prefix}review"),
+                prefix.to_string(),
+            ] {
+                assert!(token(&source, source.len()).is_some(), "{source:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn completion_closes_at_parsed_emphasis_delimiters() {
+        for prefix in ['@', '$', '/'] {
+            let token = |text: &str, cursor| {
+                if prefix == '@' {
+                    mention_token(text, cursor)
+                } else {
+                    invocation_token(text, cursor, prefix)
+                }
+            };
+            for delimiter in ["_", "**", "***", "~~"] {
+                let source = format!("{delimiter}see {prefix}review{delimiter}");
+                let closing = source.len() - delimiter.len();
+                assert_eq!(token(&source, closing).unwrap().range.end, closing);
+                for cursor in closing + 1..=source.len() {
+                    assert!(token(&source, cursor).is_none(), "{source:?}@{cursor}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invocation_tokens_preserve_unicode_graphemes() {
+        for name in ["réview", "re\u{301}view", "確認", "レビュー"] {
+            for prefix in ['$', '/'] {
+                let text = format!("please {prefix}{name}");
+                let token = invocation_token(&text, text.len(), prefix).unwrap();
+                assert_eq!(token.query, name);
+                assert_eq!(&text[token.range], format!("{prefix}{name}"));
+            }
+        }
+        let text = "$re\u{301}view";
+        let token = invocation_token(text, 3, '$').unwrap();
+        assert_eq!(token.query, "re");
+        assert_eq!(token.range, 0..text.len());
+        for text in ["$🧑", "$٣", "$12", "$re/view", "$\u{301}"] {
+            assert!(
+                invocation_token(text, text.len(), '$').is_none(),
+                "{text:?}"
+            );
+        }
+        assert!(invocation_token("$é", 2, '$').is_none());
+    }
+
+    #[test]
+    fn file_completion_retains_parsed_emphasis_closing_delimiters() {
+        for (text, suffix) in [
+            ("**see @src**", "**"),
+            ("_see @src_", "_"),
+            ("~~see @src~~", "~~"),
+            ("***see @src***", "***"),
+        ] {
+            let cursor = text.find("@src").unwrap() + 4;
+            let token = mention_token(text, cursor).unwrap();
+            assert_eq!(&text[token.range.end..], suffix, "{text:?}");
+            assert_eq!(&text[token.range], "@src");
+        }
+        assert_eq!(
+            mention_token("@file*name.rs", 13).unwrap().query,
+            "file*name.rs"
+        );
     }
 
     #[test]
@@ -10133,6 +11317,51 @@ mod tests {
                         completion_trigger("please /review", 14, preferences);
                     assert!(token.is_some() && commands);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn every_harness_catalog_only_offers_round_trippable_references() {
+        use zeron_proto::invocation::{Skill, SkillCommand, invocation_links};
+        for (harness, _) in crate::settings::SKILL_COMPLETION_HARNESSES {
+            let commands = ["review", "bad\ncommand", "two words"]
+                .into_iter()
+                .map(|name| SlashCommand {
+                    name: name.into(),
+                    description: String::new(),
+                    input_hint: None,
+                })
+                .collect();
+            let skills = [
+                ("审查-é", "/repo/skill dir/SKILL.md", None),
+                ("bad name", "/repo/SKILL.md", None),
+                ("review", "/repo/bad\npath/SKILL.md", Some("review")),
+                ("broken-native", "harness-skill:probe", Some("bad command")),
+            ]
+            .into_iter()
+            .map(|(name, path, command)| Skill {
+                name: name.into(),
+                path: path.into(),
+                description: String::new(),
+                enabled: true,
+                command: command.map(|name| SkillCommand {
+                    name: name.into(),
+                    harness,
+                }),
+            })
+            .collect();
+            let rows = invocation_candidates(commands, skills);
+            assert_eq!(
+                rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+                ["review", "审查-é"],
+                "{harness:?}"
+            );
+            for row in rows {
+                assert_eq!(
+                    invocation_links(&row.invocation.link())[0].1,
+                    row.invocation
+                );
             }
         }
     }
@@ -11226,6 +12455,74 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn composition_drops_and_atomic_chip_edits_preserve_rich_draft_history(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        fn assert_ranges(input: &ComposerInput) {
+            for range in std::iter::once(&input.selected_range).chain(input.marked_range.iter()) {
+                assert!(range.start <= range.end && range.end <= input.content.len());
+                assert!(input.content.is_char_boundary(range.start));
+                assert!(input.content.is_char_boundary(range.end));
+            }
+            for (chip, display) in &input.projection.mentions {
+                assert!(input.content.get(chip.range.clone()).is_some());
+                assert!(input.projection.display.get(display.clone()).is_some());
+            }
+        }
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, window, cx| {
+                composer.input.update(cx, |input, cx| {
+                    let chip = local_file_link("src/café.rs", false);
+                    let raw = format!("**bold** e\u{301} 👨‍👩‍👧‍👦 {chip}\n`{chip}`\nactive ");
+                    input.set_text(&raw, cx);
+                    assert_eq!(input.projection.mentions.len(), 1);
+                    input.replace_and_mark_text_in_range(None, "かな", Some(0..1), window, cx);
+                    let composed = input.text().to_owned();
+                    let selection = input.selected_range.clone();
+                    let marked = input.marked_range.clone();
+                    let history = input.undo_stack.len();
+                    assert!(!input.insert_dropped_mention("src/dropped.rs", false, cx));
+                    assert_eq!(input.text(), composed);
+                    assert_eq!(input.selected_range, selection);
+                    assert_eq!(input.marked_range, marked);
+                    assert_eq!(input.undo_stack.len(), history);
+                    assert_ranges(input);
+                    input.replace_and_mark_text_in_range(None, "かんじ", Some(1..2), window, cx);
+                    assert_eq!(&input.content[input.selected_range.clone()], "ん");
+                    assert_ranges(input);
+                    input.replace_text_in_range(None, "漢字", window, cx);
+                    let committed = format!("{raw}漢字");
+                    assert_eq!(input.text(), committed);
+                    assert!(input.marked_range.is_none());
+                    assert_ranges(input);
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), raw);
+                    input.redo(&Redo, window, cx);
+                    assert_eq!(input.text(), committed);
+                    assert_ranges(input);
+                    let link = input.projection.mentions[0].0.range.clone();
+                    let partial = input.range_to_utf16(&(link.start + 1..link.end - 1));
+                    input.replace_text_in_range(Some(partial), "🦀", window, cx);
+                    assert!(input.projection.mentions.is_empty());
+                    assert!(input.text().contains(&format!("`{chip}`")));
+                    assert_ranges(input);
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), committed);
+                    assert_eq!(input.projection.mentions.len(), 1);
+                    input.move_to(input.content.len(), cx);
+                    assert!(input.insert_dropped_mention("src/dropped.rs", false, cx));
+                    assert_eq!(input.projection.mentions.len(), 2);
+                    assert_ranges(input);
+                    input.undo(&Undo, window, cx);
+                    assert_eq!(input.text(), committed);
+                    assert_ranges(input);
+                });
+            })
+            .unwrap();
+    }
+
     #[test]
     fn pending_input_detection() {
         use zeron_doc::MessageStatus;
@@ -11410,6 +12707,26 @@ impl Composer {
         self.input.update(cx, |input, cx| input.set_text(text, cx));
         self.expanded_mode = true;
         cx.notify();
+    }
+
+    pub fn fixture_rich_selection(
+        &mut self,
+        text: &str,
+        selection: Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.fixture_rich_draft(text, cx);
+        self.input.update(cx, |input, cx| {
+            assert!(
+                selection.start <= selection.end
+                    && text.is_char_boundary(selection.start)
+                    && text.is_char_boundary(selection.end)
+            );
+            input.selected_range = selection;
+            input.refresh_projection();
+            input.needs_measure = true;
+            cx.notify();
+        });
     }
 
     pub fn fixture_clear_appshots(&mut self, cx: &mut Context<Self>) {
