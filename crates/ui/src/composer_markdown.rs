@@ -24,47 +24,107 @@ pub fn faces(text: &str) -> Vec<(Range<usize>, Face)> {
         .collect()
 }
 
+/// Neutral, source-relative code colors. Markdown's injection registry uses
+/// every language bundled by zeron-syntax, just like the transcript renderer.
+/// Work is bounded and runs on the background executor; unsupported fences
+/// retain their ordinary code styling.
+pub fn syntax_spans(text: &str) -> Vec<zeron_syntax::HighlightSpan> {
+    let Ok(document) = zeron_syntax::highlight_with_limits(
+        zeron_syntax::HighlightRequest {
+            source: text,
+            path: None,
+            fence_tag: Some("markdown"),
+        },
+        zeron_syntax::HighlightLimits {
+            max_source_bytes: 128 * 1024,
+            max_spans: 16_000,
+        },
+        None,
+    ) else {
+        return Vec::new();
+    };
+    let mut offset = 0;
+    text.split('\n')
+        .zip(document.lines)
+        .flat_map(|(line, spans)| {
+            let start = offset;
+            offset += line.len() + 1;
+            spans
+                .into_iter()
+                .map(move |span| zeron_syntax::HighlightSpan {
+                    range: start + span.range.start..start + span.range.end,
+                    kind: span.kind,
+                })
+        })
+        .collect()
+}
+
 pub fn in_code(text: &str, cursor: usize) -> bool {
-    // Parser ranges include unclosed fenced blocks. Treat an unfinished inline
-    // backtick span as code as well, so typing a trigger cannot steal focus.
-    if faces(text)
-        .iter()
-        .any(|(r, f)| *f == Face::Code && r.start <= cursor && cursor < r.end)
-    {
-        return true;
+    if cursor > text.len() || !text.is_char_boundary(cursor) {
+        return false;
     }
-    let mut fence: Option<char> = None;
-    for line in text[..cursor].split('\n') {
-        let line = line.trim_start();
-        if line.starts_with("```") || line.starts_with("~~~") {
-            let ch = line.chars().next().unwrap();
-            if fence == Some(ch) {
-                fence = None;
-            } else if fence.is_none() {
-                fence = Some(ch);
+    let mut parsed_code = Vec::new();
+    for (event, range) in Parser::new_ext(text, Options::ENABLE_TASKLISTS).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(kind)) => {
+                if range.start <= cursor && cursor < range.end {
+                    return true;
+                }
+                if range.end == cursor {
+                    match kind {
+                        pulldown_cmark::CodeBlockKind::Indented => return true,
+                        pulldown_cmark::CodeBlockKind::Fenced(_) => {
+                            let source = &text[range.clone()];
+                            let mut lines = source.lines();
+                            let opening = lines.next().unwrap_or_default().trim_start();
+                            let delimiter = opening.chars().next().unwrap_or('`');
+                            let count = opening.chars().take_while(|c| *c == delimiter).count();
+                            let closed = lines.last().is_some_and(|line| {
+                                let line = line.trim();
+                                line.len() >= count && line.chars().all(|c| c == delimiter)
+                            });
+                            if !closed {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                parsed_code.push(range);
             }
+            Event::Code(_) => {
+                if range.start <= cursor && cursor < range.end {
+                    return true;
+                }
+                parsed_code.push(range);
+            }
+            _ => {}
         }
     }
-    if fence.is_some() {
-        return true;
+    // Pulldown intentionally leaves unfinished inline spans as prose. Match
+    // delimiter RUNS, skipping valid parsed spans (which can contain backticks
+    // of another length), rather than counting individual backticks.
+    let before = &text[..cursor];
+    let mut at = before.rfind("\n\n").map_or(0, |i| i + 2);
+    let bytes = before.as_bytes();
+    let mut delimiter = None;
+    while at < bytes.len() {
+        if let Some(range) = parsed_code.iter().find(|range| range.contains(&at)) {
+            at = range.end;
+        } else if bytes[at] == b'\\' && delimiter.is_none() {
+            at += 2;
+        } else if bytes[at] == b'`' {
+            let count = bytes[at..].iter().take_while(|b| **b == b'`').count();
+            if delimiter == Some(count) {
+                delimiter = None;
+            } else if delimiter.is_none() {
+                delimiter = Some(count);
+            }
+            at += count;
+        } else {
+            at += 1;
+        }
     }
-    let line = text[..cursor].rsplit('\n').next().unwrap_or_default();
-    let mut ticks = 0;
-    let mut escaped = false;
-    for c in line.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if c == '\\' {
-            escaped = true;
-            continue;
-        }
-        if c == '`' {
-            ticks += 1;
-        }
-    }
-    ticks % 2 == 1
+    delimiter.is_some()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +244,37 @@ pub fn decorations(text: &str, active: Range<usize>) -> Vec<(Range<usize>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn code_boundaries_and_delimiter_runs() {
+        for text in [
+            "    - shell-command",
+            "    $skill",
+            "``code $",
+            "````rust\ncode\n```",
+        ] {
+            assert!(in_code(text, text.len()), "{text:?}");
+        }
+        for text in [
+            "``literal ` backtick`` $skill",
+            "```rust\ncode\n```",
+            "`code` $skill",
+        ] {
+            assert!(!in_code(text, text.len()), "{text:?}");
+        }
+        assert_eq!(newline_edit("    - shell-command", 19), None);
+    }
+
+    #[test]
+    fn injected_colors_use_source_offsets_after_unicode_and_mentions() {
+        let text = "héllo [file](zeron-file:src/main.rs)\n```rust\nfn main() { let café = 42; }\n```\n```python\ndef hello(): pass\n```";
+        let spans = syntax_spans(text);
+        assert!(spans.iter().any(|span| &text[span.range.clone()] == "fn"
+            && span.kind == zeron_syntax::HighlightKind::Keyword));
+        assert!(spans.iter().any(|span| &text[span.range.clone()] == "def"
+            && span.kind == zeron_syntax::HighlightKind::Keyword));
+        assert!(syntax_spans(&"x".repeat(128 * 1024 + 1)).is_empty());
+    }
+
     #[test]
     fn list_continuation_exit_and_code() {
         assert_eq!(newline_edit("9. item", 7), Some((7..7, "\n10. ".into())));

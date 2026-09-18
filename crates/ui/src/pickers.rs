@@ -2061,7 +2061,8 @@ impl Pickers {
         } else {
             popover::menu_scroll_host("device-list-host")
                 .on_hover(cx.listener(Self::on_menu_list_hover))
-                .child(
+                .child(popover::faded_menu_list(
+                    &self.menu_scroll,
                     popover::menu_scroll_list("device-list", &self.menu_scroll)
                         .flex()
                         .flex_col()
@@ -2106,7 +2107,7 @@ impl Pickers {
                                 })
                             },
                         )),
-                )
+                ))
                 .children(scrollbar)
                 .into_any_element()
         };
@@ -2150,7 +2151,8 @@ impl Pickers {
         } else {
             popover::menu_scroll_host("space-list-host")
                 .on_hover(cx.listener(Self::on_menu_list_hover))
-                .child(
+                .child(popover::faded_menu_list(
+                    &self.menu_scroll,
                     popover::menu_scroll_list("space-list", &self.menu_scroll)
                         .flex()
                         .flex_col()
@@ -2172,7 +2174,7 @@ impl Pickers {
                             }))
                             .child(div().flex_1().min_w_0().truncate().child(label))
                         })),
-                )
+                ))
                 .children(scrollbar)
                 .into_any_element()
         };
@@ -3140,7 +3142,8 @@ impl Pickers {
                 let selected = session_branch.or_else(|| self.config.branch.clone());
                 popover::menu_scroll_host("branch-list-host")
                     .on_hover(cx.listener(Self::on_menu_list_hover))
-                    .child(
+                    .child(popover::faded_menu_list(
+                        &self.menu_scroll,
                         popover::menu_scroll_list("branch-list", &self.menu_scroll)
                             .flex()
                             .flex_col()
@@ -3197,7 +3200,7 @@ impl Pickers {
                                     )
                                 },
                             )),
-                    )
+                    ))
                     .children(scrollbar)
                     .into_any_element()
             }
@@ -3583,9 +3586,9 @@ impl Pickers {
             .bg(crate::theme::ink(0.02))
             .on_hover(cx.listener(Self::on_menu_list_hover))
             .child(match model_list {
-                Some(list) => crate::edge_fade::edge_faded(12.0, true, true, list)
-                    .fade_overflow_y(&self.model_scroll_base())
-                    .into_any_element(),
+                Some(list) => {
+                    popover::faded_menu_list(&self.model_scroll_base(), list).into_any_element()
+                }
                 // Empty/loading/error notes: a plain static stack.
                 None => div()
                     .id("model-menu-scroll")

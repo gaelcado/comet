@@ -359,6 +359,79 @@ pub fn menu_scroll_list(id: &'static str, scroll: &ScrollHandle) -> Stateful<Div
         .track_scroll(scroll)
 }
 
+/// Completion surfaces share the picker card, inset and scroll fade. Keep
+/// rails outside this wrapper so fading text never fades the scrollbar.
+pub fn completion_card(theme: &Theme) -> Div {
+    popover_card(theme).w_full().max_h(px(320.0))
+}
+
+pub fn completion_list(
+    id: &'static str,
+    scroll: &ScrollHandle,
+    rows: impl IntoIterator<Item = AnyElement>,
+) -> crate::edge_fade::EdgeFaded {
+    faded_menu_list(
+        scroll,
+        menu_scroll_list(id, scroll)
+            .max_h(px(310.0))
+            .flex()
+            .flex_col()
+            .gap(px(MENU_GAP))
+            .children(rows),
+    )
+}
+
+/// All picker lists use the same paint-time, overflow-dependent edge fades.
+pub fn faded_menu_list(
+    scroll: &ScrollHandle,
+    list: impl IntoElement,
+) -> crate::edge_fade::EdgeFaded {
+    crate::edge_fade::edge_faded(12.0, true, true, list).fade_overflow_y(scroll)
+}
+
+/// Shared completion-row typography and shrink rules. Long skill names and
+/// paths must truncate inside the card rather than push the detail offscreen.
+pub fn completion_row_content(
+    theme: &Theme,
+    icon: AnyElement,
+    label: SharedString,
+    detail: SharedString,
+) -> Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .child(div().size(px(16.0)).flex_none().child(icon))
+        .child(
+            div()
+                .flex_none()
+                .when(detail.is_empty(), |label| label.flex_1().min_w_0())
+                .when(!detail.is_empty(), |label| {
+                    label.max_w(gpui::relative(0.55))
+                })
+                .overflow_hidden()
+                .truncate()
+                .text_size(crate::typography::ui_rems(13.0))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(theme.text)
+                .child(label),
+        )
+        .when(!detail.is_empty(), |row| {
+            row.child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .overflow_hidden()
+                    .truncate()
+                    .text_size(crate::typography::ui_rems(12.5))
+                    .text_color(theme.text_muted)
+                    .child(detail),
+            )
+        })
+}
+
 /// Pin a floating layer's origin to the trigger's top-left. The anchored
 /// element is absolutely positioned; without explicit insets its *static*
 /// position is subject to the trigger's own flex alignment (an `items_center`
