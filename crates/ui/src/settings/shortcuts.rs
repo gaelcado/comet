@@ -49,11 +49,6 @@ pub enum ShortcutsEvent {
     EscapeStopsActiveAgentChanged(bool),
     /// The composer send behavior changed — persist + re-apply.
     ComposerSendBehaviorChanged(ComposerSendBehavior),
-    SkillCompletionChanged(
-        zeron_proto::HarnessId,
-        crate::settings::SkillCompletionSettings,
-    ),
-    ResetSkillCompletion,
     AppshotsChanged {
         enabled: bool,
         sound_enabled: bool,
@@ -538,102 +533,9 @@ impl Render for ShortcutsPage {
         let escape_stops_active_agent = self.escape_stops_active_agent;
         let send_behavior = self.composer_send_behavior;
         let customized = self.keymap != KeymapConfig::default()
-            || crate::settings::current(cx).skills_in_slash_menu
-            || !crate::settings::current(cx)
-                .skill_completion_by_harness
-                .is_empty()
             || escape_stops_active_agent
             || send_behavior != ComposerSendBehavior::default();
         let modifier_label = modifier_send_label(cfg!(target_os = "macos"));
-
-        let mut skills_row = widgets::section_card(&theme);
-        for (harness, name) in crate::settings::SKILL_COMPLETION_HARNESSES {
-            let preferences = crate::settings::current(cx).skill_completion(harness);
-            skills_row = skills_row.child(
-                div()
-                    .px(px(16.0))
-                    .pt(px(14.0))
-                    .child(widgets::row_title(&theme, name)),
-            );
-            for (key, title, description, enabled) in [
-                (
-                    "dollar",
-                    "Use $ for skills",
-                    "Find this agent’s skills by typing $.",
-                    preferences.dollar,
-                ),
-                (
-                    "separate",
-                    "Separate skills from / commands",
-                    "Keep skills out of the / menu. Use $ to find them when enabled.",
-                    preferences.separate_from_slash,
-                ),
-            ] {
-                let mut updated = preferences;
-                if key == "dollar" {
-                    updated.dollar = !enabled;
-                } else {
-                    updated.separate_from_slash = !enabled;
-                }
-                skills_row = skills_row.child(
-                    widgets::card_row(&theme, false)
-                        .min_h(px(68.0))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .child(widgets::row_title(&theme, title))
-                                .child(
-                                    div()
-                                        .mt(px(4.0))
-                                        .max_w(px(430.0))
-                                        .text_size(crate::typography::ui_rems(11.5))
-                                        .line_height(px(17.0))
-                                        .text_color(theme.text_muted.opacity(0.65))
-                                        .child(description),
-                                ),
-                        )
-                        .child(
-                            widgets::toggle_switch(&theme, enabled)
-                                .id(gpui::SharedString::from(format!(
-                                    "skill-completion-{harness:?}-{key}"
-                                )))
-                                .role(gpui::Role::Switch)
-                                .aria_label(format!(
-                                    "{name}: {title}, {}",
-                                    if enabled { "on" } else { "off" }
-                                ))
-                                .tab_index(0)
-                                .cursor_pointer()
-                                .focus_visible(|s| s.border_2().border_color(theme.accent))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    cx.emit(ShortcutsEvent::SkillCompletionChanged(
-                                        harness, updated,
-                                    ));
-                                    cx.notify();
-                                }))
-                                .on_key_down(cx.listener(
-                                    move |_, event: &gpui::KeyDownEvent, _, cx| {
-                                        if !event.is_held
-                                            && matches!(
-                                                event.keystroke.key.as_str(),
-                                                "enter" | "space"
-                                            )
-                                        {
-                                            cx.stop_propagation();
-                                            cx.emit(ShortcutsEvent::SkillCompletionChanged(
-                                                harness, updated,
-                                            ));
-                                            cx.notify();
-                                        }
-                                    },
-                                )),
-                        ),
-                );
-            }
-        }
 
         let escape_behavior_row = widgets::section_card(&theme).child(
             widgets::card_row(&theme, true)
@@ -873,7 +775,6 @@ impl Render for ShortcutsPage {
                                                         this.set_escape_stops_active_agent(
                                                             false, cx,
                                                         );
-                                                        cx.emit(ShortcutsEvent::ResetSkillCompletion);
                                                         this.set_composer_send_behavior(
                                                             ComposerSendBehavior::Enter,
                                                             cx,
@@ -890,7 +791,6 @@ impl Render for ShortcutsPage {
                                     }),
                             )
                             .child(send_behavior_row.mt(px(32.0)))
-                            .child(skills_row.mt(px(12.0)))
                             .child(
                                 div()
                                     .mt(px(28.0))

@@ -38,11 +38,11 @@ Zeron action are not advertised as executable commands.
 
 ## Skill preferences
 
-Settings → Keyboard Shortcuts has two independent controls for each production
+Settings → Agents has two independent controls for each production
 harness: Codex, Claude Code, Cursor, OpenCode, Devin, Grok, Hermes, and Pi.
 
-- **Use $ for skills** enables the skill picker after `$`.
-- **Separate skills from / commands** removes skills from the `/` picker.
+- **$ for skills** enables the skill picker after `$`.
+- **Separate / commands** removes skills from the `/` picker.
 
 Codex defaults to both enabled. Other harnesses default to both disabled, keeping
 skills available through `/`. To use Claude Code or OpenCode with `$` for skills
