@@ -24,7 +24,6 @@ pub const MENU_BLUR: f32 = 16.0;
 pub fn frosted(corner_radius: f32, blur_radius: f32, child: impl IntoElement) -> Frosted {
     Frosted {
         corner_radius,
-        corner_smoothing: 0.0,
         blur_radius,
         child: child.into_any_element(),
     }
@@ -32,17 +31,8 @@ pub fn frosted(corner_radius: f32, blur_radius: f32, child: impl IntoElement) ->
 
 pub struct Frosted {
     corner_radius: f32,
-    corner_smoothing: f32,
     blur_radius: f32,
     child: AnyElement,
-}
-
-impl Frosted {
-    /// Match the surface's smoothed corner mask in the backdrop pass.
-    pub fn corner_smoothing(mut self, smoothing: f32) -> Self {
-        self.corner_smoothing = smoothing;
-        self
-    }
 }
 
 impl Element for Frosted {
@@ -91,11 +81,10 @@ impl Element for Frosted {
     ) {
         if Theme::of(cx).is_frost() {
             window.paint_layer(bounds, |window| {
-                window.paint_backdrop_blur_with_corner_smoothing(
+                window.paint_backdrop_blur(
                     bounds,
                     Corners::all(px(self.corner_radius)),
                     px(self.blur_radius),
-                    self.corner_smoothing,
                 );
                 self.child.paint(window, cx);
             });
