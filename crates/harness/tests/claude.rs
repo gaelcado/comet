@@ -709,3 +709,41 @@ async fn command_discovery_tracks_project_changes() {
         assert_eq!(commands[0].name, name);
     }
 }
+
+#[tokio::test]
+async fn claude_skills_follow_native_availability_and_dollar_selection_keeps_arguments() {
+    use zeron_proto::{
+        HarnessId,
+        invocation::{Invocation, harness_prompt},
+    };
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir(cwd.path().join(".git")).unwrap();
+    for name in ["review", "disabled-plugin"] {
+        let directory = cwd.path().join(".claude/skills").join(name);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Test\n---\nInstructions"),
+        )
+        .unwrap();
+    }
+    let skills = harness().skills(cwd.path()).await.unwrap().unwrap();
+    assert!(!skills.iter().any(|skill| skill.name == "disabled-plugin"));
+    let skill = skills
+        .into_iter()
+        .find(|skill| skill.name == "review")
+        .unwrap();
+    assert_eq!(
+        skill.command.as_ref().unwrap().harness,
+        HarnessId::ClaudeCode
+    );
+    let invocation = Invocation::Skill {
+        name: skill.name,
+        path: skill.path,
+        command: skill.command,
+    };
+    assert_eq!(
+        harness_prompt(&format!("{} 123", invocation.link()), HarnessId::ClaudeCode),
+        "/review 123"
+    );
+}

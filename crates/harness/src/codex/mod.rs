@@ -498,6 +498,7 @@ fn parse_skills(result: &Value) -> Vec<zeron_proto::invocation::Skill> {
                 return None;
             }
             Some(zeron_proto::invocation::Skill {
+                command: None,
                 name: name.to_owned(),
                 path: path.to_owned(),
                 description: skill
@@ -617,12 +618,17 @@ impl CodexHarness {
         controls: RunControls,
         title_only: bool,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
-        if request.prompt.trim() == "/compact" && request.resume.is_none() {
+        let native = command_request(&request.prompt, "")?;
+        if native
+            .as_ref()
+            .is_some_and(|(method, _)| *method == "thread/compact/start")
+            && request.resume.is_none()
+        {
             return Err(HarnessError::Protocol(
                 "/compact needs an existing Codex conversation".into(),
             ));
         }
-        if command_request(&request.prompt, "")?.is_some() && !request.attachments.is_empty() {
+        if native.is_some() && !request.attachments.is_empty() {
             return Err(HarnessError::Protocol(
                 "Codex commands cannot include attachments; send them in a separate prompt".into(),
             ));
@@ -786,17 +792,59 @@ async fn send(tx: &mpsc::Sender<Result<AgentEvent, HarnessError>>, ev: AgentEven
     tx.send(Ok(ev)).await.is_ok()
 }
 
+/// Preserve the selected path in the app-server's native skill input. Text
+/// stays first for command routing; repeated selections do not load a skill twice.
+fn prompt_input(text: &str) -> Value {
+    use zeron_proto::invocation::{Invocation, invocation_links, invocation_prompt};
+    let mut input = vec![json!({"type": "text", "text": invocation_prompt(text)})];
+    let mut seen = std::collections::HashSet::new();
+    for (_, invocation) in invocation_links(text) {
+        if let Invocation::Skill { name, path, .. } = invocation {
+            if !zeron_proto::invocation::native_skill_identity(&path)
+                && seen.insert((name.clone(), path.clone()))
+            {
+                input.push(json!({"type": "skill", "name": name, "path": path}));
+            }
+        }
+    }
+    Value::Array(input)
+}
+
 /// Map supported leading commands to native app-server operations.
 fn command_request(
     text: &str,
     thread_id: &str,
 ) -> Result<Option<(&'static str, Value)>, HarnessError> {
-    let Some(rest) = text.strip_prefix('/') else {
+    let decoded = zeron_proto::invocation::invocation_prompt(text);
+    let trimmed = decoded.trim_start();
+    let indent = decoded[..decoded.len() - trimmed.len()]
+        .rsplit('\n')
+        .next()
+        .unwrap_or_default();
+    // Indented Markdown code is literal, even when it resembles a command.
+    if indent.contains('\t') || indent.chars().count() >= 4 {
+        return Ok(None);
+    }
+    let Some(rest) = trimmed.strip_prefix('/') else {
         return Ok(None);
     };
     let mut parts = rest.splitn(2, char::is_whitespace);
     let name = parts.next().unwrap_or_default();
     let args = parts.next().unwrap_or_default().trim();
+    if matches!(name, "compact" | "review")
+        && zeron_proto::invocation::invocation_links(text)
+            .iter()
+            .any(|(_, invocation)| {
+                matches!(
+                    invocation,
+                    zeron_proto::invocation::Invocation::Skill { .. }
+                )
+            })
+    {
+        return Err(HarnessError::Protocol(
+            "Codex commands cannot include skill selections; send them in a separate prompt".into(),
+        ));
+    }
     match name {
         "compact" if args.is_empty() => Ok(Some((
             "thread/compact/start",
@@ -832,7 +880,17 @@ async fn start_turn(client: &RpcClient, params: Value) -> Result<String, Harness
         .and_then(Value::as_str)
         .unwrap_or_default();
     let thread_id = params["threadId"].as_str().unwrap_or_default();
-    let (method, params) = command_request(text, thread_id)?.unwrap_or(("turn/start", params));
+    let native = command_request(text, thread_id)?;
+    if native.is_some()
+        && params["input"]
+            .as_array()
+            .is_some_and(|input| input.len() > 1)
+    {
+        return Err(HarnessError::Protocol(
+            "Codex commands cannot include skill selections; send them in a separate prompt".into(),
+        ));
+    }
+    let (method, params) = native.unwrap_or(("turn/start", params));
     let started = client.request(method, params).await?;
     Ok(started["turn"]["id"].as_str().unwrap_or("").to_owned())
 }
@@ -1014,7 +1072,7 @@ async fn run_session(session: Session) {
     let turn_params = |text: &str| -> Value {
         let mut p = serde_json::Map::new();
         p.insert("threadId".into(), Value::String(thread_id.clone()));
-        p.insert("input".into(), json!([{ "type": "text", "text": text }]));
+        p.insert("input".into(), prompt_input(text));
         p.insert("approvalPolicy".into(), approval_policy.into());
         p.insert(
             "sandboxPolicy".into(),
@@ -1386,7 +1444,7 @@ async fn run_session(session: Session) {
                         let steer_params = json!({
                             "threadId": thread_id,
                             "expectedTurnId": expected,
-                            "input": [{ "type": "text", "text": text }],
+                            "input": prompt_input(&text),
                         });
                         match client.request("turn/steer", steer_params).await {
                             Ok(_) => {
@@ -1855,12 +1913,63 @@ mod tests {
 mod skill_discovery_tests {
     use super::*;
     #[test]
+    fn selected_skills_use_native_identity_for_initial_and_steered_inputs() {
+        use zeron_proto::invocation::Invocation;
+        let a = Invocation::Skill {
+            command: None,
+            name: "review".into(),
+            path: "/repo/a b/SKILL.md".into(),
+        };
+        let b = Invocation::Skill {
+            command: None,
+            name: "review".into(),
+            path: "/repo/other/SKILL.md".into(),
+        };
+        let raw = format!("Use {} then {} and {}", a.link(), b.link(), a.link());
+        let input = prompt_input(&raw);
+        assert_eq!(input.as_array().unwrap().len(), 3);
+        assert_eq!(
+            input[1],
+            json!({"type":"skill","name":"review","path":"/repo/a b/SKILL.md"})
+        );
+        assert_eq!(input[2]["path"], "/repo/other/SKILL.md");
+        assert!(!input[0]["text"].as_str().unwrap().contains("zeron-invoke:"));
+        for raw in [
+            "$review".into(),
+            format!("`{}`", a.link()),
+            format!("\\{}", a.link()),
+        ] {
+            assert_eq!(prompt_input(&raw).as_array().unwrap().len(), 1);
+        }
+        let command = Invocation::Command {
+            name: "review".into(),
+        };
+        assert_eq!(
+            command_request(&format!("  {} check", command.link()), "t")
+                .unwrap()
+                .unwrap()
+                .0,
+            "review/start"
+        );
+        assert!(command_request(&format!("/review {}", a.link()), "t").is_err());
+    }
+
+    #[test]
     fn commands_map_arguments_and_leave_inline_mentions_literal() {
         assert!(
             command_request("please /review this", "t")
                 .unwrap()
                 .is_none()
         );
+        for code in [
+            "    /review",
+            "\t/review",
+            "\n    /compact",
+            "`/review`",
+            "```\n/review\n```",
+        ] {
+            assert!(command_request(code, "t").unwrap().is_none());
+        }
         assert!(command_request("/tmp/file.rs", "t").unwrap().is_none());
         assert!(command_request("/tmp", "t").unwrap().is_none());
         assert!(command_request("/compact extra", "t").is_err());

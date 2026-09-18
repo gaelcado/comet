@@ -603,6 +603,35 @@ impl WindowGeometry {
     }
 }
 
+/// Trigger preferences belong to each harness, not the currently selected model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCompletionSettings {
+    pub dollar: bool,
+    pub separate_from_slash: bool,
+}
+
+impl SkillCompletionSettings {
+    pub fn for_harness(harness: zeron_proto::HarnessId) -> Self {
+        let native_dollar = harness == zeron_proto::HarnessId::Codex;
+        Self {
+            dollar: native_dollar,
+            separate_from_slash: native_dollar,
+        }
+    }
+}
+
+pub const SKILL_COMPLETION_HARNESSES: [(zeron_proto::HarnessId, &str); 8] = [
+    (zeron_proto::HarnessId::ClaudeCode, "Claude Code"),
+    (zeron_proto::HarnessId::Codex, "Codex"),
+    (zeron_proto::HarnessId::Cursor, "Cursor"),
+    (zeron_proto::HarnessId::Devin, "Devin"),
+    (zeron_proto::HarnessId::Grok, "Grok"),
+    (zeron_proto::HarnessId::Hermes, "Hermes"),
+    (zeron_proto::HarnessId::Pi, "Pi"),
+    (zeron_proto::HarnessId::Opencode, "OpenCode"),
+];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiSettings {
@@ -610,8 +639,10 @@ pub struct UiSettings {
     pub window_geometry: Option<WindowGeometry>,
     /// Submit using Enter or the platform modifier plus Enter.
     pub composer_send_behavior: ComposerSendBehavior,
-    /// Include discovered skills in slash completion; dollar completion always lists skills.
+    /// Legacy global opt-in; per-harness preferences take precedence.
     pub skills_in_slash_menu: bool,
+    pub skill_completion_by_harness:
+        std::collections::HashMap<zeron_proto::HarnessId, SkillCompletionSettings>,
     pub sidebar_width: f32,
     pub sidebar_collapsed: bool,
     /// Legacy: the grouped-by-project toggle predates spaces (which group by
@@ -783,6 +814,7 @@ impl Default for UiSettings {
             escape_stops_active_agent: false,
             composer_send_behavior: ComposerSendBehavior::default(),
             skills_in_slash_menu: false,
+            skill_completion_by_harness: Default::default(),
             appshots_enabled: false,
             appshot_sound_enabled: true,
             appshot_destination: crate::appshots::AppshotDestination::Automatic,
@@ -1309,6 +1341,19 @@ impl UiSettings {
             .or_default()
     }
 
+    pub fn skill_completion(&self, harness: zeron_proto::HarnessId) -> SkillCompletionSettings {
+        self.skill_completion_by_harness
+            .get(&harness)
+            .copied()
+            .unwrap_or_else(|| {
+                let mut settings = SkillCompletionSettings::for_harness(harness);
+                if self.skills_in_slash_menu {
+                    settings.separate_from_slash = false;
+                }
+                settings
+            })
+    }
+
     /// Whether this session event may produce audio. Appshot capture has its
     /// own feature-local preference once the Appshots contribution lands.
     pub fn session_sound_enabled(&self, sound: crate::sound::Sound) -> bool {
@@ -1493,6 +1538,47 @@ fn min_or(value: f32, min: f32, default: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_completion_defaults_overrides_and_persistence_are_per_harness() {
+        use zeron_proto::HarnessId;
+        let dir = tempfile::tempdir().unwrap();
+        let mut settings = UiSettings::default();
+        for (harness, _) in SKILL_COMPLETION_HARNESSES {
+            let preferences = settings.skill_completion(harness);
+            assert_eq!(preferences.dollar, harness == HarnessId::Codex);
+            assert_eq!(preferences.separate_from_slash, harness == HarnessId::Codex);
+        }
+        settings.skill_completion_by_harness.insert(
+            HarnessId::ClaudeCode,
+            SkillCompletionSettings {
+                dollar: true,
+                separate_from_slash: true,
+            },
+        );
+        settings.skill_completion_by_harness.insert(
+            HarnessId::Opencode,
+            SkillCompletionSettings {
+                dollar: true,
+                separate_from_slash: false,
+            },
+        );
+        settings.save(dir.path()).unwrap();
+        let loaded = UiSettings::load(dir.path());
+        assert_eq!(
+            settings.skill_completion_by_harness,
+            loaded.skill_completion_by_harness
+        );
+        assert!(loaded.skill_completion(HarnessId::ClaudeCode).dollar);
+        assert!(!loaded.skill_completion(HarnessId::Cursor).dollar);
+        let legacy: UiSettings = serde_json::from_str(r#"{"skillsInSlashMenu":true}"#).unwrap();
+        assert!(
+            !legacy
+                .skill_completion(HarnessId::Codex)
+                .separate_from_slash
+        );
+        assert!(legacy.skill_completion(HarnessId::Codex).dollar);
+    }
 
     #[test]
     fn slash_skills_are_opt_in_and_persist() {
@@ -2028,6 +2114,7 @@ mod tests {
             escape_stops_active_agent: true,
             composer_send_behavior: ComposerSendBehavior::ModEnter,
             skills_in_slash_menu: true,
+            skill_completion_by_harness: Default::default(),
             appshots_enabled: false,
             appshot_sound_enabled: true,
             // The destination is only persisted where Appshots exist (macOS and

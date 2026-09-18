@@ -894,58 +894,6 @@ struct FileMentionLink {
     prefix: char,
 }
 
-fn percent_encode_path(path: &str) -> String {
-    let mut out = String::new();
-    for byte in path.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
-            out.push(byte as char);
-        } else {
-            out.push('%');
-            out.push_str(&format!("{byte:02X}"));
-        }
-    }
-    out
-}
-
-fn percent_decode_path(encoded: &str) -> Option<String> {
-    let mut bytes = Vec::with_capacity(encoded.len());
-    let raw = encoded.as_bytes();
-    let mut at = 0;
-    while at < raw.len() {
-        if raw[at] == b'%' {
-            let hex = std::str::from_utf8(raw.get(at + 1..at + 3)?).ok()?;
-            bytes.push(u8::from_str_radix(hex, 16).ok()?);
-            at += 3;
-        } else {
-            bytes.push(raw[at]);
-            at += 1;
-        }
-    }
-    String::from_utf8(bytes).ok()
-}
-
-fn escape_mention_label(label: &str) -> String {
-    label
-        .replace('\\', "\\\\")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-}
-
-fn local_file_link(path: &str, is_dir: bool) -> String {
-    let path = path.trim_end_matches('/');
-    let basename = path
-        .rsplit('/')
-        .next()
-        .filter(|part| !part.is_empty())
-        .unwrap_or(path);
-    format!(
-        "[{}]({}{})",
-        escape_mention_label(basename),
-        FILE_MENTION_SCHEME,
-        percent_encode_path(&format!("{path}{}", if is_dir { "/" } else { "" }))
-    )
-}
-
 /// Build the text inserted when a workspace item is dropped at an arbitrary
 /// selection. Unlike completion, a drop does not necessarily happen at a
 /// token boundary, so it supplies its own leading separator when needed.
@@ -986,74 +934,17 @@ fn dropped_file_mention(
     Some((inserted, cursor_advance))
 }
 
-fn local_path_is_safe(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.contains('\\')
-        && !path.chars().any(char::is_control)
-        && !path
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
-}
-
-fn label_close(text: &str, start: usize) -> Option<usize> {
-    let mut escaped = false;
-    for (at, ch) in text[start..].char_indices() {
-        if escaped {
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == ']' && text[start + at + 1..].starts_with('(') {
-            return Some(start + at);
-        }
-    }
-    None
-}
-
 fn file_mention_links(text: &str) -> Vec<FileMentionLink> {
-    let mut links = Vec::new();
-    let mut search = 0;
-    while let Some(relative_start) = text[search..].find('[') {
-        let start = search + relative_start;
-        let Some(label_end) = label_close(text, start + 1) else {
-            search = start + 1;
-            continue;
-        };
-        let target_start = label_end + 2;
-        let Some(relative_end) = text[target_start..].find(')') else {
-            search = start + 1;
-            continue;
-        };
-        let end = target_start + relative_end + 1;
-        let label = &text[start + 1..label_end];
-        let Some(encoded) = text[target_start..end - 1].strip_prefix(FILE_MENTION_SCHEME) else {
-            search = end;
-            continue;
-        };
-        let parsed = percent_decode_path(encoded).and_then(|target| {
-            let is_dir = target.ends_with('/');
-            let path = target.strip_suffix('/').unwrap_or(&target);
-            (local_path_is_safe(path)
-                && percent_encode_path(&target) == encoded
-                && path
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|basename| escape_mention_label(basename) == label))
-            .then(|| (path.to_string(), is_dir))
-        });
-        if let Some((path, is_dir)) = parsed {
-            let basename = path.rsplit('/').next().unwrap_or_default().to_string();
-            links.push(FileMentionLink {
-                range: start..end,
-                basename,
-                path,
-                is_dir,
-                prefix: '@',
-            });
-        }
-        search = end;
-    }
-    links
+    zeron_proto::file_mentions::file_mention_links(text)
+        .into_iter()
+        .map(|link| FileMentionLink {
+            range: link.range,
+            basename: link.basename,
+            path: link.path,
+            is_dir: link.is_dir,
+            prefix: '@',
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -4429,10 +4320,21 @@ fn mention_token(text: &str, cursor: usize) -> Option<MentionToken> {
     if text[at + 1..cursor].contains('@') || !valid_boundary {
         return None;
     }
+    let closing = text[..at].chars().next_back().and_then(|ch| match ch {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        _ => None,
+    });
     let end = text[cursor..]
         .char_indices()
-        .find_map(|(at, ch)| ch.is_whitespace().then_some(cursor + at))
+        .find_map(|(offset, ch)| {
+            (ch.is_whitespace() || Some(ch) == closing).then_some(cursor + offset)
+        })
         .unwrap_or(text.len());
+    if closing.is_some_and(|ch| text[at + 1..cursor].contains(ch)) {
+        return None;
+    }
     Some(MentionToken {
         range: at..end,
         query: text[at + 1..cursor].to_string(),
@@ -4475,6 +4377,26 @@ fn invocation_token(text: &str, cursor: usize, prefix: char) -> Option<MentionTo
         range: start..end,
         query: query.to_string(),
     })
+}
+
+/// Interpret the trigger before discovery so a disabled $ stays ordinary text.
+fn completion_trigger(
+    text: &str,
+    cursor: usize,
+    preferences: crate::settings::SkillCompletionSettings,
+) -> (Option<MentionToken>, bool, bool, bool) {
+    let skill_token = preferences
+        .dollar
+        .then(|| invocation_token(text, cursor, '$'))
+        .flatten();
+    let skill = skill_token.is_some();
+    let include_skills = skill || !preferences.separate_from_slash;
+    let token = skill_token.or_else(|| slash_token(text, cursor));
+    let commands_allowed = token
+        .as_ref()
+        .is_some_and(|token| text[..token.range.start].trim().is_empty());
+    let token = token.filter(|_| skill || commands_allowed || include_skills);
+    (token, skill, include_skills, commands_allowed)
 }
 
 /// Human-readable presentation only; invocation names and paths stay canonical.
@@ -4523,6 +4445,8 @@ struct SlashState {
 
 #[derive(Debug, Clone, Default)]
 struct FileMentionState {
+    /// Workspace/device identity; unchanged text must still refresh after a checkout switch.
+    context: String,
     token: Option<MentionToken>,
     results: Vec<FileSearchMatch>,
     active: Option<usize>,
@@ -4561,6 +4485,14 @@ fn invocation_candidates(
     commands: Vec<SlashCommand>,
     skills: Vec<zeron_proto::invocation::Skill>,
 ) -> Vec<InvocationCandidate> {
+    let skill_commands: std::collections::HashSet<_> = skills
+        .iter()
+        .filter_map(|skill| skill.command.as_ref().map(|command| command.name.as_str()))
+        .collect();
+    let commands: Vec<_> = commands
+        .into_iter()
+        .filter(|command| !skill_commands.contains(command.name.as_str()))
+        .collect();
     commands
         .into_iter()
         .map(|c| InvocationCandidate {
@@ -4576,14 +4508,47 @@ fn invocation_candidates(
                 .map(|s| InvocationCandidate {
                     input_hint: None,
                     name: s.name.clone(),
-                    description: format!("{} — {}", s.description, s.path),
+                    description: if zeron_proto::invocation::native_skill_identity(&s.path) {
+                        s.description.clone()
+                    } else {
+                        format!("{} — {}", s.description, s.path)
+                    },
                     invocation: zeron_proto::invocation::Invocation::Skill {
                         name: s.name,
                         path: s.path,
+                        command: s.command,
                     },
                 }),
         )
         .collect()
+}
+
+fn merge_invocation_results(
+    commands: Result<Vec<SlashCommand>, RpcError>,
+    skills: Result<Option<Vec<zeron_proto::invocation::Skill>>, RpcError>,
+    skill_only: bool,
+) -> Result<(Vec<InvocationCandidate>, bool, Option<SharedString>), RpcError> {
+    match (commands, skills) {
+        (Ok(commands), Ok(skills)) => {
+            let supported = !skill_only || skills.is_some();
+            Ok((
+                invocation_candidates(commands, skills.unwrap_or_default()),
+                supported,
+                None,
+            ))
+        }
+        (Ok(commands), Err(error)) if !skill_only && !commands.is_empty() => Ok((
+            invocation_candidates(commands, vec![]),
+            true,
+            Some(slash_error_message(&error, true)),
+        )),
+        (Err(error), Ok(Some(skills))) if skills.iter().any(|skill| skill.enabled) => Ok((
+            invocation_candidates(vec![], skills),
+            true,
+            Some(slash_error_message(&error, false)),
+        )),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+    }
 }
 
 fn slash_error_message(err: &RpcError, skill: bool) -> SharedString {
@@ -5629,11 +5594,43 @@ impl Composer {
         let request = self.mention.request.wrapping_add(1);
         self.mention_task = None;
         self.mention = FileMentionState {
+            context: self.mention.context.clone(),
             request,
             dismissed,
             ..FileMentionState::default()
         };
         self.sync_mention_controls(cx);
+    }
+
+    fn file_search_params(&self, query: &str, cx: &App) -> Option<serde_json::Value> {
+        let selected_worktree = match self.pickers.read(cx).checkout_plan() {
+            crate::pickers::CheckoutPlan::ReuseWorktree { path, .. } => Some(path),
+            _ => None,
+        };
+        let (params, target) = {
+            let state = self.state.read(cx);
+            let mut params = serde_json::Map::new();
+            params.insert("query".into(), query.into());
+            let target = if let Some(chat) = state.selected_chat_row() {
+                params.insert("chatId".into(), chat.id.clone().into());
+                params.insert("cwd".into(), chat.cwd.clone().into());
+                Some(chat.device_id.clone())
+            } else if let Some(space) = state.selected_space_row() {
+                params.insert("spaceId".into(), space.id.clone().into());
+                params.insert("cwd".into(), space.path.clone().into());
+                if let Some(path) = selected_worktree {
+                    params.insert("path".into(), path.into());
+                }
+                Some(space.device_id.clone())
+            } else {
+                None
+            };
+            if let Some(target) = &target {
+                params.insert("targetDeviceId".into(), target.clone().into());
+            }
+            (serde_json::Value::Object(params), target)
+        };
+        target.map(|_| params)
     }
 
     fn on_input_edited(&mut self, cx: &mut Context<Self>) {
@@ -5659,6 +5656,14 @@ impl Composer {
         let (text, cursor) = (input.text().to_string(), input.cursor_offset());
         self.update_slash(&text, cursor, cx);
         let token = mention_token(&text, cursor);
+        let context = self
+            .file_search_params("", cx)
+            .map(|params| params.to_string())
+            .unwrap_or_default();
+        if self.mention.context != context {
+            self.reset_mention(None, cx);
+            self.mention.context = context;
+        }
         let still_dismissed = token.as_ref().is_some_and(|token| {
             self.mention
                 .dismissed
@@ -5705,36 +5710,11 @@ impl Composer {
             cx.notify();
             return;
         };
-        let selected_worktree = match self.pickers.read(cx).checkout_plan() {
-            crate::pickers::CheckoutPlan::ReuseWorktree { path, .. } => Some(path),
-            _ => None,
-        };
-        let (params, target) = {
-            let state = self.state.read(cx);
-            let mut params = serde_json::Map::new();
-            params.insert("query".into(), token.query.clone().into());
-            let target = if let Some(chat) = state.selected_chat_row() {
-                params.insert("chatId".into(), chat.id.clone().into());
-                Some(chat.device_id.clone())
-            } else if let Some(space) = state.selected_space_row() {
-                params.insert("spaceId".into(), space.id.clone().into());
-                if let Some(path) = selected_worktree {
-                    params.insert("path".into(), path.into());
-                }
-                Some(space.device_id.clone())
-            } else {
-                None
-            };
-            if let Some(target) = &target {
-                params.insert("targetDeviceId".into(), target.clone().into());
-            }
-            (serde_json::Value::Object(params), target)
-        };
-        if target.is_none() {
+        let Some(params) = self.file_search_params(&token.query, cx) else {
             self.mention.loading = false;
             cx.notify();
             return;
-        }
+        };
         let request = self.mention.request;
         self.mention_task = Some(cx.spawn(async move |this, cx| {
             // A short debounce prevents one full workspace walk per keystroke
@@ -5944,11 +5924,11 @@ impl Composer {
     /// Track the `/` token on every edit: open/refresh the popup, fetch the
     /// harness's command list on first open, filter locally per keystroke.
     fn update_slash(&mut self, text: &str, cursor: usize, cx: &mut Context<Self>) {
-        let skill_token = invocation_token(text, cursor, '$');
-        let skill = skill_token.is_some();
-        let include_skills = skill || crate::settings::current(cx).skills_in_slash_menu;
-        let token = skill_token.or_else(|| slash_token(text, cursor));
         let harness = self.pickers.read(cx).resolved(cx).harness;
+        let preferences =
+            crate::settings::current(cx).skill_completion(harness.unwrap_or(HarnessId::Codex));
+        let (token, skill, include_skills, commands_allowed) =
+            completion_trigger(text, cursor, preferences);
         let selected_worktree = match self.pickers.read(cx).checkout_plan() {
             crate::pickers::CheckoutPlan::ReuseWorktree { path, .. } => Some(path),
             _ => None,
@@ -5973,7 +5953,7 @@ impl Composer {
             }
         }
         let context = format!(
-            "{}:{include_skills}:{params}",
+            "{}:{preferences:?}:{include_skills}:{commands_allowed}:{params}",
             if skill { "skill" } else { "command" }
         );
         let context_changed = self.slash.context != context;
@@ -6003,7 +5983,9 @@ impl Composer {
             self.slash.supported = true;
         }
         self.slash.token = token;
-        self.slash.error = None;
+        if context_changed {
+            self.slash.error = None;
+        }
         if self.slash.token.is_none() {
             self.slash.request = self.slash.request.wrapping_add(1);
             self.slash_task = None;
@@ -6022,11 +6004,12 @@ impl Composer {
         self.slash.request = self.slash.request.wrapping_add(1);
         let request = self.slash.request;
         self.slash.loading = true;
+        self.slash.error = None;
         self.refilter_slash(cx);
         self.slash_task = Some(cx.spawn(async move |this, cx| {
             let result = async {
                 let commands = async {
-                    if skill {
+                    if skill || !commands_allowed {
                         return Ok(Vec::new());
                     }
                     let value = engine
@@ -6037,9 +6020,6 @@ impl Composer {
                         .map_err(|e| RpcError::Failed(e.to_string()))
                 };
                 let skills = async {
-                    if !include_skills {
-                        return Ok(None);
-                    }
                     let value = engine
                         .client()
                         .call(methods::LIST_SKILLS, params.clone())
@@ -6048,12 +6028,14 @@ impl Composer {
                         .map_err(|e| RpcError::Failed(e.to_string()))
                 };
                 let (commands, skills) = futures::join!(commands, skills);
-                let skills = skills?;
-                let supported = !skill || skills.is_some();
-                Ok::<_, RpcError>((
-                    invocation_candidates(commands?, skills.unwrap_or_default()),
-                    supported,
-                ))
+                merge_invocation_results(commands, skills, skill).map(
+                    |(mut rows, supported, warning)| {
+                        if !include_skills {
+                            rows.retain(|row| row.invocation.prefix() == '/');
+                        }
+                        (rows, supported, warning)
+                    },
+                )
             }
             .await;
             this.update(cx, |composer, cx| {
@@ -6061,8 +6043,9 @@ impl Composer {
                     return;
                 }
                 composer.slash.loading = false;
-                let decoded = result.map(|(candidates, supported)| {
+                let decoded = result.map(|(candidates, supported, warning)| {
                     composer.slash.supported = supported;
+                    composer.slash.error = warning;
                     candidates
                 });
                 match decoded {
@@ -6149,6 +6132,10 @@ impl Composer {
 
     /// Tear down the slash completion (mirrors [`Self::reset_mention`]).
     fn reset_slash(&mut self, dismissed: Option<(Range<usize>, String)>, cx: &mut Context<Self>) {
+        // Partial discovery is useful now, but reopening must retry the failed provider call.
+        if self.slash.error.is_some() {
+            self.slash_cache.remove(&self.slash.context);
+        }
         let request = self.slash.request.wrapping_add(1);
         self.slash_task = None;
         self.slash = SlashState {
@@ -6183,15 +6170,7 @@ impl Composer {
                 }),
             )
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.dismiss_slash(cx)));
-        if self.slash.loading && commands.is_empty() {
-            card = card.child(crate::popover::skeleton_rows(
-                "slash-loading",
-                theme,
-                3,
-                cx.entity_id(),
-                cx,
-            ));
-        } else if let Some(error) = self.slash.error.clone() {
+        if let Some(error) = self.slash.error.clone() {
             card = card.child(
                 div()
                     .px(px(12.0))
@@ -6200,7 +6179,16 @@ impl Composer {
                     .text_color(theme.danger_muted)
                     .child(error),
             );
-        } else if self.slash.filtered.is_empty() {
+        }
+        if self.slash.loading && commands.is_empty() {
+            card = card.child(crate::popover::skeleton_rows(
+                "slash-loading",
+                theme,
+                3,
+                cx.entity_id(),
+                cx,
+            ));
+        } else if self.slash.filtered.is_empty() && self.slash.error.is_none() {
             card = card.child(
                 div()
                     .px(px(12.0))
@@ -6214,7 +6202,10 @@ impl Composer {
                             } else {
                                 "This agent does not advertise skills"
                             }
-                        } else if crate::settings::current(cx).skills_in_slash_menu {
+                        } else if !crate::settings::current(cx)
+                            .skill_completion(self.slash.harness.unwrap_or(HarnessId::Codex))
+                            .separate_from_slash
+                        {
                             "No commands or skills available"
                         } else {
                             "No slash commands available in this integration"
@@ -6222,7 +6213,10 @@ impl Composer {
                     } else {
                         if self.slash.skill {
                             "No matching skills"
-                        } else if crate::settings::current(cx).skills_in_slash_menu {
+                        } else if !crate::settings::current(cx)
+                            .skill_completion(self.slash.harness.unwrap_or(HarnessId::Codex))
+                            .separate_from_slash
+                        {
                             "No matching commands or skills"
                         } else {
                             "No matching commands"
@@ -8971,6 +8965,7 @@ mod tests {
             "{} {} {}",
             local_file_link("src/main.rs", false),
             zeron_proto::invocation::Invocation::Skill {
+                command: None,
                 name: "review".into(),
                 path: "/repo/SKILL.md".into(),
             }
@@ -9022,6 +9017,7 @@ mod tests {
     #[test]
     fn rich_projection_keeps_unicode_offsets_and_atomic_invocations() {
         let invocation = zeron_proto::invocation::Invocation::Skill {
+            command: None,
             name: "bla-bla:bla-bla".into(),
             path: "/repo/SKILL.md".into(),
         };
@@ -9387,6 +9383,175 @@ mod tests {
             .unwrap();
     }
 
+    #[gpui::test]
+    fn unchanged_mention_refreshes_when_its_workspace_changes(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, _, cx| {
+                composer
+                    .input
+                    .update(cx, |input, cx| input.set_text("@src", cx));
+                composer.on_input_edited(cx);
+                composer.mention.context = "departing-worktree".into();
+                composer.mention.token = mention_token("@src", 4);
+                let old_request = composer.mention.request;
+                composer.on_input_edited(cx);
+                assert_ne!(composer.mention.context, "departing-worktree");
+                assert!(composer.mention.request > old_request);
+                assert!(!mention_response_is_current(&composer.mention, old_request));
+                let context = composer.mention.context.clone();
+                composer.reset_mention(Some((0..4, "@src".into())), cx);
+                assert_eq!(composer.mention.context, context);
+                composer.on_input_edited(cx);
+                assert!(
+                    composer.mention.token.is_none(),
+                    "Escape must stay dismissed in the same workspace"
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn file_completion_preserves_surrounding_delimiters() {
+        for (text, end) in [("(@src)", 5), ("[@src]", 5), ("{@src}", 5)] {
+            let token = mention_token(text, end).unwrap();
+            assert_eq!(token.range, 1..end);
+            assert_eq!(token.query, "src");
+            assert!(mention_token(text, text.len()).is_none());
+        }
+        assert_eq!(mention_token("@src/(draft).rs", 15).unwrap().range, 0..15);
+        assert!(mention_token("\\@src", 5).is_none());
+    }
+
+    #[test]
+    fn partial_discovery_keeps_commands_and_skills_independently() {
+        let command = SlashCommand {
+            name: "review".into(),
+            description: String::new(),
+            input_hint: None,
+        };
+        let skill = zeron_proto::invocation::Skill {
+            command: None,
+            name: "review".into(),
+            path: "/repo/SKILL.md".into(),
+            description: String::new(),
+            enabled: true,
+        };
+        let (rows, supported, warning) = merge_invocation_results(
+            Ok(vec![command]),
+            Err(RpcError::UnknownMethod("ListSkills".into())),
+            false,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].invocation.prefix(), '/');
+        assert!(supported && warning.is_some());
+        let (rows, _, warning) = merge_invocation_results(
+            Err(RpcError::Failed("commands unavailable".into())),
+            Ok(Some(vec![skill])),
+            false,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].invocation.prefix(), '$');
+        assert!(warning.is_some());
+        assert!(merge_invocation_results(Ok(vec![]), Err(RpcError::Closed), true).is_err());
+        let (rows, supported, warning) =
+            merge_invocation_results(Ok(vec![]), Ok(None), true).unwrap();
+        assert!(rows.is_empty() && !supported && warning.is_none());
+    }
+
+    #[gpui::test]
+    fn commands_only_complete_at_prompt_start_and_partial_discovery_retries(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, _, cx| {
+                for text in ["please /review", "(/review", "first\n/review"] {
+                    composer.update_slash(text, text.len(), cx);
+                    assert!(composer.slash.token.is_none(), "{text}");
+                }
+                for text in ["/review", "  /review", "please $review"] {
+                    composer.update_slash(text, text.len(), cx);
+                    assert!(composer.slash.token.is_some(), "{text}");
+                }
+                composer
+                    .slash_cache
+                    .insert(composer.slash.context.clone(), vec![]);
+                composer.slash.error = Some("Skills unavailable".into());
+                composer.reset_slash(None, cx);
+                assert!(composer.slash_cache.is_empty());
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn every_harness_respects_both_skill_completion_toggles() {
+        use crate::settings::SkillCompletionSettings;
+        for (harness, _) in crate::settings::SKILL_COMPLETION_HARNESSES {
+            for dollar in [false, true] {
+                for separate_from_slash in [false, true] {
+                    let preferences = SkillCompletionSettings {
+                        dollar,
+                        separate_from_slash,
+                    };
+                    let (token, skill, include, _) = completion_trigger("$review", 7, preferences);
+                    assert_eq!(token.is_some(), dollar, "{harness:?}");
+                    assert_eq!(skill, dollar);
+                    assert_eq!(include, dollar || !separate_from_slash);
+                    let (token, skill, include, commands) =
+                        completion_trigger("/review", 7, preferences);
+                    assert!(token.is_some() && !skill && commands);
+                    assert_eq!(include, !separate_from_slash);
+                    let (token, _, _, commands) =
+                        completion_trigger("please /review", 14, preferences);
+                    assert_eq!(token.is_some(), !separate_from_slash);
+                    assert!(!commands);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn separated_native_skills_are_not_left_in_the_command_catalog() {
+        use zeron_proto::invocation::{Skill, SkillCommand};
+        for (harness, _) in crate::settings::SKILL_COMPLETION_HARNESSES {
+            let commands = vec![
+                SlashCommand {
+                    name: "review".into(),
+                    description: String::new(),
+                    input_hint: None,
+                },
+                SlashCommand {
+                    name: "compact".into(),
+                    description: String::new(),
+                    input_hint: None,
+                },
+            ];
+            let skills = vec![Skill {
+                name: "review".into(),
+                path: "/repo/SKILL.md".into(),
+                description: String::new(),
+                enabled: true,
+                command: Some(SkillCommand {
+                    name: "review".into(),
+                    harness,
+                }),
+            }];
+            let rows = invocation_candidates(commands, skills);
+            assert_eq!(rows.len(), 2);
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| row.invocation.prefix() == '/')
+                    .map(|row| row.name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["compact"]
+            );
+            assert_eq!(rows[1].invocation.prefix(), '$');
+        }
+    }
+
     #[test]
     fn combined_invocations_preserve_skill_identity_and_command_collisions() {
         use zeron_proto::invocation::{Invocation, Skill};
@@ -9397,18 +9562,21 @@ mod tests {
         }];
         let skills = vec![
             Skill {
+                command: None,
                 name: "review".into(),
                 path: "/a/SKILL.md".into(),
                 description: "A".into(),
                 enabled: true,
             },
             Skill {
+                command: None,
                 name: "review".into(),
                 path: "/b/SKILL.md".into(),
                 description: "B".into(),
                 enabled: true,
             },
             Skill {
+                command: None,
                 name: "hidden".into(),
                 path: "/c/SKILL.md".into(),
                 description: String::new(),

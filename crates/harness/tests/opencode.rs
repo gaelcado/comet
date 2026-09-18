@@ -34,6 +34,7 @@ struct FakeOpencode {
     /// Recorded `(path, body)` of every POST.
     posts: Arc<Mutex<Vec<(String, Value)>>>,
     providers: Arc<Mutex<Value>>,
+    commands: Arc<Mutex<Value>>,
     /// Whether an SSE subscriber existed when the FIRST prompt_async landed
     /// (the no-replay bus makes prompting before the subscription a real
     /// event-loss race — observed live on fast-failing turns).
@@ -54,6 +55,9 @@ impl FakeOpencode {
             backlog: Arc::new(Mutex::new(Vec::new())),
             posts: Arc::new(Mutex::new(Vec::new())),
             providers: Arc::new(Mutex::new(json!({ "all": [], "default": {} }))),
+            commands: Arc::new(Mutex::new(
+                json!([{ "name": "init", "description": "Create AGENTS.md" }]),
+            )),
             first_prompt_had_subscriber: Arc::new(Mutex::new(None)),
             fail_session_creates: Arc::new(Mutex::new(0)),
         };
@@ -199,10 +203,7 @@ impl FakeOpencode {
         match (method, path) {
             ("GET", "/global/health") => ("200 OK", json!({ "healthy": true })),
             ("GET", "/provider") => ("200 OK", self.providers.lock().unwrap().clone()),
-            ("GET", "/command") => (
-                "200 OK",
-                json!([{ "name": "init", "description": "Create AGENTS.md" }]),
-            ),
+            ("GET", "/command") => ("200 OK", self.commands.lock().unwrap().clone()),
             ("POST", "/session") => {
                 let mut fails = self.fail_session_creates.lock().unwrap();
                 if *fails > 0 {
@@ -1010,4 +1011,46 @@ async fn slash_command_rejects_attachments_instead_of_dropping_them() {
     )));
     assert!(fake.posts_to("/session/ses_test/command").is_empty());
     assert!(fake.posts_to("/session/ses_test/prompt_async").is_empty());
+}
+
+#[tokio::test]
+async fn dollar_selected_skill_uses_opencode_native_command_with_arguments() {
+    use zeron_proto::{
+        HarnessId,
+        invocation::{Invocation, harness_prompt},
+    };
+    let fake = FakeOpencode::start().await;
+    *fake.commands.lock().unwrap() = json!([
+        {"name":"review","description":"Native skill","source":"skill"},
+        {"name":"init","source":"command"}
+    ]);
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir(cwd.path().join(".git")).unwrap();
+    let h = harness(&fake);
+    let skills = h.skills(cwd.path()).await.unwrap().unwrap();
+    let skill = skills
+        .into_iter()
+        .find(|skill| skill.name == "review")
+        .unwrap();
+    let invocation = Invocation::Skill {
+        name: skill.name,
+        path: skill.path,
+        command: skill.command,
+    };
+    let prompt = harness_prompt(
+        &format!("{} inspect tests", invocation.link()),
+        HarnessId::Opencode,
+    );
+    assert_eq!(prompt, "/review inspect tests");
+    let (controls, _steer, _) = controls();
+    let mut stream = h.run(request(&prompt), controls).await.unwrap();
+    let _ = next_event(&mut stream).await;
+    let _ = next_event(&mut stream).await;
+    let commands = wait_posts(&fake, "/session/ses_test/command", 1).await;
+    assert_eq!(commands[0]["command"], "review");
+    assert_eq!(commands[0]["arguments"], "inspect tests");
+    assert!(fake.posts_to("/session/ses_test/prompt_async").is_empty());
+    assistant_message(&fake, "ses_test", "msg_1");
+    idle(&fake, "ses_test");
+    drain_to_done(&mut stream).await;
 }

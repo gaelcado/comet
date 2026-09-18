@@ -4052,8 +4052,14 @@ impl Shell {
                                 ShortcutsEvent::EscapeStopsActiveAgentChanged(enabled) => {
                                     this.settings.escape_stops_active_agent = *enabled;
                                 }
-                                ShortcutsEvent::SkillsInSlashMenuChanged(enabled) => {
-                                    this.settings.skills_in_slash_menu = *enabled;
+                                ShortcutsEvent::SkillCompletionChanged(harness, preferences) => {
+                                    this.settings
+                                        .skill_completion_by_harness
+                                        .insert(*harness, *preferences);
+                                }
+                                ShortcutsEvent::ResetSkillCompletion => {
+                                    this.settings.skills_in_slash_menu = false;
+                                    this.settings.skill_completion_by_harness.clear();
                                 }
                                 ShortcutsEvent::ComposerSendBehaviorChanged(behavior) => {
                                     this.settings.composer_send_behavior = *behavior;

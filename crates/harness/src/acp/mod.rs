@@ -1702,9 +1702,16 @@ impl Harness for AcpHarness {
         }
     }
 
-    /// the agent's advertised commands minus the spec's hidden ones, then its
-    /// skills. Skills are read fresh on every call so a newly added one shows
-    /// up, and they still list when discovery fails (a signed-out agent).
+    async fn skills(
+        &self,
+        cwd: &std::path::Path,
+    ) -> Result<Option<Vec<zeron_proto::invocation::Skill>>, HarnessError> {
+        let mut skills = crate::skills::discover(self.id(), cwd).await?;
+        let commands = self.discover_commands(Some(cwd)).await?;
+        crate::skills::attach_advertised_commands(self.id(), &mut skills, &commands);
+        Ok(Some(skills))
+    }
+
     async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
         let discovered = self.commands
             .get_or_try_init(|| self.discover_commands(None))
