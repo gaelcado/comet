@@ -827,11 +827,8 @@ impl Theme {
     /// hover-revealed timestamp) never sits inside the fade when scrolled
     /// to the bottom.
     pub const TRANSCRIPT_FADE_BAND: f32 = 24.0;
-    /// Gentle superellipse shaping; higher values make corners squarer.
-    /// Pair with the larger surface radii to retain visibly rounded corners.
-    pub const SURFACE_CORNER_SMOOTHING: f32 = 0.2;
     /// Message bubble corner radius.
-    pub const BUBBLE_RADIUS: f32 = 20.0;
+    pub const BUBBLE_RADIUS: f32 = 16.0;
     /// Panel / card corner radius.
     pub const PANEL_RADIUS: f32 = 10.0;
     /// Small control radius (buttons, chips).
@@ -2805,6 +2802,6 @@ mod tests {
     fn layout_numbers_match_zeron() {
         assert_eq!(Theme::HEADER_HEIGHT, 44.0); // h-11
         assert_eq!(Theme::STATUS_STRIP_HEIGHT, 24.0); // h-6
-        assert_eq!(Theme::BUBBLE_RADIUS, 20.0);
+        assert_eq!(Theme::BUBBLE_RADIUS, 16.0);
     }
 }
