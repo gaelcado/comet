@@ -4,6 +4,7 @@ use gpui::{
     WindowOptions, div, prelude::*, px, size,
 };
 use std::{ops::Range, path::PathBuf, time::Duration};
+use zeron_theme::SurfacePreference;
 use zeron_ui::*;
 
 struct Fixture {
@@ -18,6 +19,24 @@ impl Render for Fixture {
         div()
             .id("fixture")
             .size_full()
+            // The production shell owns focus traversal. This isolated host
+            // repeats that behavior so dispatched Tab keystrokes exercise the
+            // composer's real focus handles and keyboard listeners.
+            .on_key_down(|event, window, cx| {
+                let key = &event.keystroke;
+                if key.key == "tab"
+                    && !key.modifiers.control
+                    && !key.modifiers.alt
+                    && !key.modifiers.platform
+                {
+                    if key.modifiers.shift {
+                        window.focus_prev(cx);
+                    } else {
+                        window.focus_next(cx);
+                    }
+                    cx.stop_propagation();
+                }
+            })
             .bg(theme.surface)
             .text_color(theme.text)
             .font_family(theme.font_sans.clone())
@@ -181,26 +200,50 @@ fn markdown_cases() -> Vec<DraftCase> {
 }
 
 async fn pause(cx: &mut AsyncApp) {
+    pause_for(cx, 400).await;
+}
+
+async fn pause_for(cx: &mut AsyncApp, milliseconds: u64) {
     cx.background_executor()
-        .timer(Duration::from_millis(400))
+        .timer(Duration::from_millis(milliseconds))
         .await;
 }
+
+fn fixture_surface() -> anyhow::Result<(SurfacePreference, &'static str)> {
+    match std::env::var("ZERON_FIXTURE_SURFACE")
+        .unwrap_or_else(|_| "frosted".into())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "frosted" => Ok((SurfacePreference::Frosted, "frosted")),
+        "opaque" => Ok((SurfacePreference::Opaque, "opaque")),
+        value => {
+            anyhow::bail!("invalid ZERON_FIXTURE_SURFACE={value:?}; expected `frosted` or `opaque`")
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let _guard = runtime.enter();
     let output = PathBuf::from(std::env::args().nth(1).expect("output directory"));
     std::fs::create_dir_all(&output)?;
+    let (surface, surface_name) = fixture_surface()?;
+    let reduced_motion = std::env::var_os("ZERON_FIXTURE_REDUCE_MOTION").is_some();
+    let motion_name = if reduced_motion {
+        "reduced"
+    } else {
+        "standard"
+    };
     let temp = tempfile::tempdir()?;
     let data = temp.path().to_path_buf();
     gpui_platform::application().with_assets(icons::Assets).run(move |cx| {
         gpui_tokio::init(cx); gpui_base::init(cx);
         let mut prefs = settings::UiSettings::default();
         prefs.compact_model_picker = true;
+        prefs.surface = surface;
         settings::init(prefs.clone(), data.clone(), cx);
-        motion::set_reduced_motion(
-            cx,
-            std::env::var_os("ZERON_FIXTURE_REDUCE_MOTION").is_some(),
-        );
+        motion::set_reduced_motion(cx, reduced_motion);
         let fonts = typography::register_fonts(cx);
         typography::init(prefs.ui_font_family.clone(), prefs.ui_font_size, prefs.terminal_font_family.clone(), prefs.terminal_font_size, prefs.code_font_family.clone(), prefs.code_font_size, fonts, cx);
         theme_library::init(data.clone(), cx);
@@ -343,7 +386,12 @@ fn main() -> anyhow::Result<()> {
             let dense_question: zeron_proto::UserInputQuestion = serde_json::from_value(
                 question_cases.as_array().unwrap().iter().find(|case| case["name"] == "long-content").unwrap()["question"].clone()
             ).unwrap();
-            for light in [false, true] {
+            for (light, width, height, size_name) in [
+                (false, 440., 520., "min"),
+                (true, 440., 520., "min"),
+                (false, 840., 960., "normal"),
+                (true, 840., 960., "normal"),
+            ] {
                 cx.update(|cx| appearance::set_mode(if light { appearance::AppearanceMode::Light } else { appearance::AppearanceMode::Dark }, cx));
                 window.update(cx, |view, w, cx| {
                     view.settings = false;
@@ -357,14 +405,71 @@ fn main() -> anyhow::Result<()> {
                         ], cx);
                         composer.fixture_question(dense_question.clone(), cx);
                     });
-                    w.resize(size(px(440.), px(520.)));
+                    w.resize(size(px(width), px(height)));
                     cx.notify();
                 }).unwrap();
                 pause(cx).await;
                 let capture_window: gpui::AnyWindowHandle = window.into();
-                let name = format!("dense-stack-{}.png", if light { "light" } else { "dark" });
+                let name = format!(
+                    "dense-stack-{}-{surface_name}-{size_name}.png",
+                    if light { "light" } else { "dark" }
+                );
                 capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
             }
+
+            // Use actual keystrokes against the same disclosure rendered in
+            // production. The bounded Tab loop proves it remains reachable as
+            // focus order evolves; Enter, Escape, and Space exercise its own
+            // keyboard listener rather than mutating expansion directly.
+            cx.update(|cx| appearance::set_mode(appearance::AppearanceMode::Dark, cx));
+            window.update(cx, |view, w, cx| {
+                view.settings = false;
+                view.title = "Activity · keyboard and motion";
+                view.composer.update(cx, |composer, cx| {
+                    composer.fixture_activity(dense_calls.clone(), false, cx);
+                });
+                w.resize(size(px(440.), px(520.)));
+                w.activate_window();
+                w.focus(&view.composer.focus_handle(cx), cx);
+                cx.notify();
+            }).unwrap();
+            pause(cx).await;
+            let mut tab_count = 0;
+            let activity_focused = loop {
+                let focused = window.update(cx, |view, w, cx| {
+                    view.composer.read(cx).fixture_activity_keyboard_state(w).0
+                }).unwrap();
+                if focused || tab_count == 32 {
+                    break focused;
+                }
+                window.update(cx, |_, w, cx| {
+                    assert!(w.dispatch_keystroke(gpui::Keystroke::parse("tab").unwrap(), cx));
+                }).unwrap();
+                tab_count += 1;
+            };
+            assert!(activity_focused, "activity disclosure was not reachable after {tab_count} Tab keystrokes");
+            let capture_window: gpui::AnyWindowHandle = window.into();
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("keyboard-activity-tab-focus-{surface_name}.png"))).unwrap(); }).unwrap();
+
+            window.update(cx, |view, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx));
+                assert!(view.composer.read(cx).fixture_activity_keyboard_state(w).1);
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("activity-motion-{motion_name}-000ms-{surface_name}.png"))).unwrap(); }).unwrap();
+            pause_for(cx, 90).await;
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("activity-motion-{motion_name}-090ms-{surface_name}.png"))).unwrap(); }).unwrap();
+            pause_for(cx, 160).await;
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("activity-motion-{motion_name}-250ms-{surface_name}.png"))).unwrap(); }).unwrap();
+
+            window.update(cx, |view, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("escape").unwrap(), cx));
+                assert!(!view.composer.read(cx).fixture_activity_keyboard_state(w).1);
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("space").unwrap(), cx));
+                assert!(view.composer.read(cx).fixture_activity_keyboard_state(w).1);
+            }).unwrap();
+            pause(cx).await;
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("keyboard-activity-space-expanded-{surface_name}.png"))).unwrap(); }).unwrap();
+
             for (models, fast, name) in [(false, false, "compact-standard"), (false, true, "compact-fast"), (true, false, "compact-favorites")] {
                 window.update(cx, |view, w, cx| {
                     view.composer.update(cx, |composer, cx| {

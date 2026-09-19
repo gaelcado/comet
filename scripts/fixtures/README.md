@@ -32,10 +32,20 @@ then returns to page one and captures its preserved typed answer.
 authoritative empty task snapshots, overflowing plans and combined activity.
 The native runner captures collapsed/expanded states; projection tests consume
 the identical data. It also composes the combined activity payload with the
-long question and three queued messages in a 440×520 window, covering the
-densest supported glass stack. Existing rich Markdown/chip cases remain in that runner,
+long question and three queued messages from one synthetic Codex harness. It
+captures that densest supported glass stack at 440×520 and 840×960 in both light
+and dark appearances. Existing rich Markdown/chip cases remain in that runner,
 which now also opens the real compact picker in standard, fast and favorite-model
 list states with a fixture catalog.
+
+The fixture defaults to an explicitly frosted surface. Set
+`ZERON_FIXTURE_SURFACE=opaque` for the opaque preference; unknown values fail
+instead of silently producing mislabeled evidence. Its keyboard case dispatches
+real Tab, Enter, Escape and Space keystrokes through the production focus and
+activity handlers. The `activity-motion-*-000ms`, `090ms`, and `250ms` frames
+show transition geometry at fixed checkpoints. In a reduced-motion run those
+checkpoints should all show the settled state. Static frames do not establish
+smooth frame pacing, which still requires a live preview or recording.
 
 Relevant automated suites:
 - `cargo test -p zeron-ui --lib composer` — rich input, mode commands, question
@@ -52,8 +62,9 @@ Build the native fixture with `cargo check -p zeron-ui --features appshots-fixtu
 request, with a dedicated output directory:
 
 ```sh
-cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish
-ZERON_FIXTURE_REDUCE_MOTION=1 cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish-reduced-motion
+ZERON_FIXTURE_SURFACE=frosted cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish-frosted
+ZERON_FIXTURE_SURFACE=opaque cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish-opaque
+ZERON_FIXTURE_SURFACE=frosted ZERON_FIXTURE_REDUCE_MOTION=1 cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish-reduced-motion
 ```
 
 Rendered fixtures are visual evidence, not live provider compatibility evidence.
