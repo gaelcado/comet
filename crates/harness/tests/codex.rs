@@ -1602,6 +1602,23 @@ async fn native_plan_and_goal_modes_share_activity_and_question_bridge() {
 }
 
 #[tokio::test]
+async fn native_plan_mode_uses_the_server_default_model_when_unset() {
+    let mut req = request("scenario:plan");
+    req.model = None;
+    req.model_options
+        .insert(zeron_proto::AGENT_MODE_OPTION.into(), "plan".into());
+    let (controls, _steer, _token) = controls("Yes");
+    let events = run_to_end(&harness(), req, controls).await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Done {
+            status: DoneStatus::Completed,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
 async fn async_message_questions_deliver_answers_to_the_native_turn() {
     let (controls, _steer, _token) = controls("Review");
     let events = run_to_end(
@@ -1618,10 +1635,103 @@ async fn async_message_questions_deliver_answers_to_the_native_turn() {
 }
 
 #[tokio::test]
+async fn async_message_question_waiter_closes_on_run_teardown() {
+    let cwd = tempfile::tempdir().unwrap();
+    let bridge_ready = cwd.path().join(".bridge-ready");
+    let pending: Arc<Mutex<Option<oneshot::Sender<Vec<UserInputAnswer>>>>> =
+        Arc::new(Mutex::new(None));
+    let pending_for_bridge = Arc::clone(&pending);
+    let (_steer_tx, steer_rx) = mpsc::channel(1);
+    let controls = RunControls {
+        request_input: Box::new(move |_| {
+            let (tx, rx) = oneshot::channel();
+            *pending_for_bridge.lock().unwrap() = Some(tx);
+            std::fs::write(&bridge_ready, b"ready").unwrap();
+            rx
+        }),
+        steering: steer_rx,
+        interrupt: CancellationToken::new(),
+    };
+    let mut req = request("scenario:async-message-question-teardown");
+    req.cwd = cwd.path().to_string_lossy().into_owned();
+    let events = run_to_end(&harness(), req, controls).await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Done {
+            status: DoneStatus::Completed,
+            ..
+        }
+    )));
+    assert!(
+        pending
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(oneshot::Sender::is_closed),
+        "run teardown must close unanswered assistant-question receivers"
+    );
+}
+
+#[tokio::test]
+async fn blank_native_question_id_is_rejected_with_the_original_rpc_id() {
+    let (mut controls, _steer, _token) = controls("unused");
+    controls.request_input =
+        Box::new(|_| panic!("malformed native questions must not reach the UI bridge"));
+    let events = run_to_end(&harness(), request("scenario:blank-question-id"), controls).await;
+    assert!(events.iter().any(
+        |event| matches!(event, AgentEvent::TextDelta { text } if text == "blank question rejected")
+    ));
+}
+
+#[tokio::test]
 async fn typed_question_answer_reaches_codex_native_response() {
     let (controls, _steer, _token) = controls("Build a feature");
     let events = run_to_end(&harness(), request("scenario:typed-question"), controls).await;
     assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "typed answer received")), "{events:?}");
+}
+
+#[tokio::test]
+async fn native_question_resolution_drops_only_its_response_receiver() {
+    let cwd = tempfile::tempdir().unwrap();
+    let bridge_ready = cwd.path().join(".bridge-ready");
+    let pending: Arc<Mutex<Option<oneshot::Sender<Vec<UserInputAnswer>>>>> =
+        Arc::new(Mutex::new(None));
+    let pending_for_bridge = Arc::clone(&pending);
+    let (steer_tx, steer_rx) = mpsc::channel(1);
+    let interrupt = CancellationToken::new();
+    let controls = RunControls {
+        request_input: Box::new(move |_| {
+            let (tx, rx) = oneshot::channel();
+            *pending_for_bridge.lock().unwrap() = Some(tx);
+            std::fs::write(&bridge_ready, b"ready").unwrap();
+            rx
+        }),
+        steering: steer_rx,
+        interrupt,
+    };
+    let mut request = request("scenario:native-question-resolved");
+    request.cwd = cwd.path().to_string_lossy().into_owned();
+    let mut stream = harness().run(request, controls).await.unwrap();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(3), stream.next())
+            .await
+            .expect("fixture emitted marker")
+            .expect("stream remains open")
+            .expect("valid event");
+        if matches!(event, AgentEvent::TextDelta { ref text } if text == "native request resolved")
+        {
+            break;
+        }
+    }
+    assert!(
+        pending
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(oneshot::Sender::is_closed),
+        "serverRequest/resolved must cancel the matching bridge waiter"
+    );
+    drop(steer_tx);
 }
 
 #[tokio::test]
