@@ -11,11 +11,12 @@ use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
 use zeron_harness::{
-    CancellationToken, CodexHarness, Harness, HarnessError, RunControls, SteerMessage,
+    CancellationToken, CodexHarness, GoalActionRequest, Harness, HarnessError, RunControls,
+    SteerMessage,
 };
 use zeron_proto::{
-    AgentEvent, DoneStatus, HarnessId, ReasoningLevel, RunRequest, SandboxLevel, TodoItem,
-    ToolCall, UserInputAnswer, UserInputQuestion,
+    AgentEvent, DoneStatus, GoalAction, GoalState, HarnessId, ReasoningLevel, RunRequest,
+    SandboxLevel, TodoItem, ToolCall, UserInputAnswer, UserInputQuestion,
 };
 
 fn fixture_path() -> PathBuf {
@@ -55,7 +56,20 @@ fn request(prompt: &str) -> RunRequest {
 fn controls(
     answer_label: &'static str,
 ) -> (RunControls, mpsc::Sender<SteerMessage>, CancellationToken) {
+    let (controls, steer, _goal, token) = controls_with_goal(answer_label);
+    (controls, steer, token)
+}
+
+fn controls_with_goal(
+    answer_label: &'static str,
+) -> (
+    RunControls,
+    mpsc::Sender<SteerMessage>,
+    mpsc::Sender<GoalActionRequest>,
+    CancellationToken,
+) {
     let (steer_tx, steer_rx) = mpsc::channel(8);
+    let (goal_tx, goal_rx) = mpsc::channel(8);
     let token = CancellationToken::new();
     let controls = RunControls {
         request_input: Box::new(move |questions| {
@@ -71,9 +85,29 @@ fn controls(
             rx
         }),
         steering: steer_rx,
+        goal_actions: goal_rx,
         interrupt: token.clone(),
     };
-    (controls, steer_tx, token)
+    (controls, steer_tx, goal_tx, token)
+}
+
+async fn apply_goal(
+    tx: &mpsc::Sender<GoalActionRequest>,
+    action: GoalAction,
+    objective: Option<&str>,
+) -> Result<Option<GoalState>, HarnessError> {
+    let (response, result) = oneshot::channel();
+    tx.send(GoalActionRequest {
+        action,
+        objective: objective.map(str::to_owned),
+        response,
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), result)
+        .await
+        .expect("goal action responds")
+        .expect("goal response channel remains open")
 }
 
 async fn run_to_end(
@@ -88,6 +122,186 @@ async fn run_to_end(
     )
     .await
     .expect("run finished in time")
+}
+
+#[tokio::test]
+async fn native_plan_and_goal_modes_share_activity_and_question_bridge() {
+    for mode in ["plan", "goal"] {
+        let mut req = request(&format!("scenario:{mode}"));
+        req.model_options
+            .insert(zeron_proto::AGENT_MODE_OPTION.into(), mode.into());
+        if mode == "goal" {
+            req.model_options.insert(
+                zeron_proto::FRESH_GOAL_OPTION.into(),
+                serde_json::Value::Bool(true),
+            );
+        }
+        let (controls, _steer, _token) = controls("Yes");
+        let events = run_to_end(&harness(), req, controls).await;
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::ToolCall {
+                call: ToolCall::Todo { items },
+                ..
+            } if items.len() == 2 && items[0].done && !items[1].done
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Done {
+                status: DoneStatus::Completed,
+                ..
+            }
+        )));
+        if mode == "goal" {
+            assert!(events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ToolCall {
+                    call: ToolCall::Goal {
+                        status,
+                        tokens_used: 42,
+                        ..
+                    },
+                    ..
+                } if status == "complete"
+            )));
+        }
+    }
+}
+
+#[tokio::test]
+async fn goal_actions_survive_turn_completion_and_resume_an_autonomous_turn() {
+    let (controls, steer, goal, token) = controls_with_goal("Yes");
+    let mut req = request("scenario:goal-lifecycle");
+    req.model_options
+        .insert(zeron_proto::AGENT_MODE_OPTION.into(), "goal".into());
+    req.model_options.insert(
+        zeron_proto::FRESH_GOAL_OPTION.into(),
+        serde_json::Value::Bool(true),
+    );
+    let mut stream = harness().run(req, controls).await.unwrap();
+
+    while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .unwrap()
+    {
+        if matches!(
+            event.unwrap(),
+            AgentEvent::Done {
+                status: DoneStatus::Completed,
+                ..
+            }
+        ) {
+            break;
+        }
+    }
+
+    assert_eq!(
+        apply_goal(&goal, GoalAction::Pause, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "paused"
+    );
+    assert_eq!(
+        apply_goal(&goal, GoalAction::Resume, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "active"
+    );
+    steer
+        .send(SteerMessage {
+            prompt: "immediate follow-up".into(),
+            message_id: Some("post-resume-follow-up".into()),
+        })
+        .await
+        .unwrap();
+
+    let mut resumed_boundary = false;
+    let mut autonomous_output = false;
+    let mut followup_output = false;
+    let mut completed = 0;
+    while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .expect("post-resume stream remains responsive")
+    {
+        match event.unwrap() {
+            AgentEvent::AutonomousTurnStarted { .. } => resumed_boundary = true,
+            AgentEvent::TextDelta { text } if text == "autonomous continuation" => {
+                autonomous_output = true;
+            }
+            AgentEvent::TextDelta { text } if text == "follow-up after continuation" => {
+                followup_output = true;
+            }
+            AgentEvent::Done {
+                status: DoneStatus::Completed,
+                ..
+            } => {
+                completed += 1;
+                if completed == 2 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(resumed_boundary);
+    assert!(autonomous_output);
+    assert!(followup_output);
+    assert_eq!(
+        apply_goal(&goal, GoalAction::Edit, Some("  Revised objective  "))
+            .await
+            .unwrap()
+            .unwrap()
+            .objective,
+        "Revised objective"
+    );
+    assert_eq!(
+        apply_goal(&goal, GoalAction::Clear, None).await.unwrap(),
+        None
+    );
+    token.cancel();
+}
+
+#[tokio::test]
+async fn native_question_shapes_reach_the_codex_transport() {
+    let (async_controls, _steer, _token) = controls("Review");
+    let events = run_to_end(
+        &harness(),
+        request("scenario:async-message-question"),
+        async_controls,
+    )
+    .await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TextDelta { text } if text == "async answer received"
+    )));
+
+    let (typed_controls, _steer, _token) = controls("Build a feature");
+    let events = run_to_end(
+        &harness(),
+        request("scenario:typed-question"),
+        typed_controls,
+    )
+    .await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TextDelta { text } if text == "typed answer received"
+    )));
+}
+
+#[tokio::test]
+async fn blank_native_question_id_is_rejected_before_reaching_the_bridge() {
+    let (mut controls, _steer, _token) = controls("unused");
+    controls.request_input =
+        Box::new(|_| panic!("malformed native questions must not reach the UI bridge"));
+    let events = run_to_end(&harness(), request("scenario:blank-question-id"), controls).await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TextDelta { text } if text == "blank question rejected"
+    )));
 }
 
 #[tokio::test]
@@ -236,10 +450,14 @@ async fn happy_path_maps_deltas_items_usage_and_done() {
         call: ToolCall::Todo {
             items: vec![
                 TodoItem {
+                    id: None,
+                    status: None,
                     text: "a".into(),
                     done: true
                 },
                 TodoItem {
+                    id: None,
+                    status: None,
                     text: "b".into(),
                     done: false
                 },
@@ -414,6 +632,7 @@ async fn approvals_round_trip_as_input_requests() {
             rx
         }),
         steering: steer_rx,
+        goal_actions: mpsc::channel(1).1,
         interrupt: token.clone(),
     };
     let mut req = request("scenario:approve");
@@ -607,6 +826,12 @@ async fn missing_binary_is_not_installed() {
 #[tokio::test]
 async fn models_discovers_visible_catalog_with_pagination() {
     let models = harness().models().await.expect("models");
+    assert!(models.iter().all(|model| {
+        model.options.iter().any(|option| {
+            option.id == zeron_proto::AGENT_MODE_OPTION
+                && option.choices.iter().any(|choice| choice.id == "goal")
+        })
+    }));
     assert_eq!(models.len(), 3);
     assert_eq!(models[0].id, "gpt-6-astra");
     assert_eq!(models[1].id, "gpt-5.6-terra");

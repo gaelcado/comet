@@ -5865,6 +5865,7 @@ mod tests {
             last_message_at: Some(Utc.timestamp_opt(10, 0).unwrap()),
             created_at: Utc.timestamp_opt(5, 0).unwrap(),
             harness_session_id: None,
+            harness_session_harness: None,
             harness_session_cwd: None,
             space_id: None,
             last_seen_at: None,
