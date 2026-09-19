@@ -197,6 +197,10 @@ fn main() -> anyhow::Result<()> {
         let mut prefs = settings::UiSettings::default();
         prefs.compact_model_picker = true;
         settings::init(prefs.clone(), data.clone(), cx);
+        motion::set_reduced_motion(
+            cx,
+            std::env::var_os("ZERON_FIXTURE_REDUCE_MOTION").is_some(),
+        );
         let fonts = typography::register_fonts(cx);
         typography::init(prefs.ui_font_family.clone(), prefs.ui_font_size, prefs.terminal_font_family.clone(), prefs.terminal_font_size, prefs.code_font_family.clone(), prefs.code_font_size, fonts, cx);
         theme_library::init(data.clone(), cx);
@@ -290,6 +294,28 @@ fn main() -> anyhow::Result<()> {
                     capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
                 }
             }
+            let question_cases = cases.as_array().unwrap();
+            let paginated = vec![
+                serde_json::from_value(question_cases.iter().find(|case| case["name"] == "text-only").unwrap()["question"].clone()).unwrap(),
+                serde_json::from_value(question_cases.iter().find(|case| case["name"] == "multiple-with-text").unwrap()["question"].clone()).unwrap(),
+            ];
+            window.update(cx, |view, w, cx| {
+                view.settings = false;
+                view.title = "Agent question · page 2 of 2";
+                view.composer.update(cx, |composer, cx| composer.fixture_paginated_question(paginated, cx));
+                w.resize(size(px(440.), px(520.)));
+                cx.notify();
+            }).unwrap();
+            pause(cx).await;
+            let capture_window: gpui::AnyWindowHandle = window.into();
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join("question-pagination-page-2.png")).unwrap(); }).unwrap();
+            window.update(cx, |view, _, cx| {
+                view.title = "Agent question · restored page 1 of 2";
+                view.composer.update(cx, |composer, cx| composer.fixture_question_back(cx));
+                cx.notify();
+            }).unwrap();
+            pause(cx).await;
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join("question-pagination-page-1-restored.png")).unwrap(); }).unwrap();
             let cases: serde_json::Value = serde_json::from_str(include_str!("../../../scripts/fixtures/composer-activity.json")).unwrap();
             for case in cases.as_array().unwrap() {
                 for expanded in [false, true] {
@@ -305,6 +331,39 @@ fn main() -> anyhow::Result<()> {
                     let capture_window: gpui::AnyWindowHandle = window.into();
                     capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
                 }
+            }
+            // The densest supported stack: activity, a pending question, and
+            // queued follow-ups in a short/narrow window. This catches trays
+            // disappearing or consuming the answer controls under pressure.
+            let activity_cases: serde_json::Value = serde_json::from_str(include_str!("../../../scripts/fixtures/composer-activity.json")).unwrap();
+            let dense_calls = serde_json::from_value(
+                activity_cases.as_array().unwrap().iter().find(|case| case["name"] == "combined").unwrap()["calls"].clone()
+            ).unwrap();
+            let question_cases: serde_json::Value = serde_json::from_str(include_str!("../../../scripts/fixtures/composer-questions.json")).unwrap();
+            let dense_question = serde_json::from_value(
+                question_cases.as_array().unwrap().iter().find(|case| case["name"] == "long-content").unwrap()["question"].clone()
+            ).unwrap();
+            for light in [false, true] {
+                cx.update(|cx| appearance::set_mode(if light { appearance::AppearanceMode::Light } else { appearance::AppearanceMode::Dark }, cx));
+                window.update(cx, |view, w, cx| {
+                    view.settings = false;
+                    view.title = "Activity, question and queue";
+                    view.composer.update(cx, |composer, cx| {
+                        composer.fixture_activity(dense_calls.clone(), true, cx);
+                        composer.fixture_queue(&[
+                            "Run the focused checks after this answer",
+                            "Summarize any remaining provider-specific gaps",
+                            "Prepare the review notes without losing this queue",
+                        ], cx);
+                        composer.fixture_question(dense_question.clone(), cx);
+                    });
+                    w.resize(size(px(440.), px(520.)));
+                    cx.notify();
+                }).unwrap();
+                pause(cx).await;
+                let capture_window: gpui::AnyWindowHandle = window.into();
+                let name = format!("dense-stack-{}.png", if light { "light" } else { "dark" });
+                capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
             }
             for (models, fast, name) in [(false, false, "compact-standard"), (false, true, "compact-fast"), (true, false, "compact-favorites")] {
                 window.update(cx, |view, w, cx| {

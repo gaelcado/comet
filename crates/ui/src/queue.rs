@@ -285,6 +285,7 @@ impl Composer {
     pub(crate) fn render_queue_panel(
         &mut self,
         show_latest_shortcut: bool,
+        max_height: gpui::Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -302,7 +303,7 @@ impl Composer {
             );
             (state.queue.clone(), chat_id, host_supports_actions)
         };
-        self.prepare_queue_previews(&items, window, cx);
+        self.prepare_queue_previews(&items, max_height, window, cx);
         if items.is_empty() {
             return None;
         }
@@ -318,7 +319,7 @@ impl Composer {
         let drop_chat = chat_id.clone();
         let rows = queue_rows(
             &self.queue_scroll,
-            window.viewport_size().height * 0.3,
+            max_height,
             items.iter().enumerate().map(|(ix, item)| {
                 self.queue_row(
                     &chat_id,
@@ -676,6 +677,7 @@ impl Composer {
     fn prepare_queue_previews(
         &mut self,
         items: &[QueuedMessage],
+        visible_height: gpui::Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -690,7 +692,7 @@ impl Composer {
             (state.local_device_id.as_deref() != Some(device.as_str())).then(|| device.clone());
         let visible = visible_queue_rows(
             f32::from(self.queue_scroll.offset().y),
-            f32::from(window.viewport_size().height) * 0.3,
+            f32::from(visible_height),
             items.len(),
         );
         let keys: std::collections::HashSet<_> = items[visible]

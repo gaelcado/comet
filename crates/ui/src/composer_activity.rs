@@ -2,6 +2,29 @@
 use super::*;
 use zeron_proto::ToolCall;
 
+struct ActivitySummaryTooltip(SharedString);
+
+impl Render for ActivitySummaryTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx);
+        crate::frost::frosted(
+            6.0,
+            crate::frost::MENU_BLUR,
+            div()
+                .max_w(px(360.0))
+                .px(px(8.0))
+                .py(px(5.0))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(theme.border)
+                .bg(crate::popover::surface_bg(theme))
+                .text_size(crate::typography::ui_rems(10.5))
+                .text_color(theme.text_muted)
+                .child(self.0.clone()),
+        )
+    }
+}
+
 #[derive(Default)]
 struct Activity<'a> {
     plan: Option<&'a str>,
@@ -180,7 +203,8 @@ impl Composer {
             self.activity_scroll.set_offset(point(px(0.0), px(0.0)));
             self.activity_plan = None;
         }
-        let crowded = self.wizard.is_some() || !state.queue.is_empty();
+        let has_question = self.wizard.is_some();
+        let has_queue = !state.queue.is_empty();
         let latest = activity(&state.transcript);
         let plan = latest.plan.filter(|text| !text.trim().is_empty());
         let todos = latest.todos.as_deref().filter(|items| !items.is_empty());
@@ -288,6 +312,7 @@ impl Composer {
             .flatten()
             .collect::<Vec<_>>()
             .join(" · ");
+            let summary_tooltip: SharedString = summary.clone().into();
             let expanded = self.activity_expanded;
             let focus = self.activity_focus.clone();
             rows = rows.child(
@@ -295,6 +320,7 @@ impl Composer {
                     .id("activity-disclosure")
                     .role(Role::Button)
                     .track_focus(&focus)
+                    .tab_index(0)
                     .aria_label(SharedString::from(format!(
                         "{summary} · {} details",
                         if expanded { "Hide" } else { "Show" }
@@ -307,6 +333,11 @@ impl Composer {
                     .items_center()
                     .gap(px(8.0))
                     .cursor_pointer()
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| ActivitySummaryTooltip(summary_tooltip.clone()))
+                            .into()
+                    })
+                    .tooltip_show_delay(std::time::Duration::from_millis(500))
                     .hover(|s| s.bg(crate::theme::ink(0.05)))
                     .when(focus.is_focused(window), |el| {
                         el.shadow(vec![gpui::BoxShadow {
@@ -336,6 +367,7 @@ impl Composer {
                         div()
                             .flex_1()
                             .min_w_0()
+                            .truncate()
                             .text_size(crate::typography::ui_rems(12.0))
                             .child(SharedString::from(summary)),
                     )
@@ -367,9 +399,14 @@ impl Composer {
             .absolute()
             .inset_0(),
         );
-        // Questions take priority; expanded context remains available within a
-        // smaller budget so the answer controls stay reachable.
-        let limit = f32::from(window.viewport_size().height) * if crowded { 0.14 } else { 0.25 };
+        // Other trays take priority; expanded context remains available within
+        // a shared budget so the answer and queue controls stay reachable.
+        let limit = composer_tray_limits(
+            f32::from(window.viewport_size().height),
+            has_question,
+            has_queue,
+        )
+        .activity;
         let target = if self.activity_expanded && has_details {
             self.activity_height.min(limit)
         } else {
