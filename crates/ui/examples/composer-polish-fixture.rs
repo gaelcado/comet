@@ -336,11 +336,11 @@ fn main() -> anyhow::Result<()> {
             // queued follow-ups in a short/narrow window. This catches trays
             // disappearing or consuming the answer controls under pressure.
             let activity_cases: serde_json::Value = serde_json::from_str(include_str!("../../../scripts/fixtures/composer-activity.json")).unwrap();
-            let dense_calls = serde_json::from_value(
+            let dense_calls: Vec<zeron_proto::ToolCall> = serde_json::from_value(
                 activity_cases.as_array().unwrap().iter().find(|case| case["name"] == "combined").unwrap()["calls"].clone()
             ).unwrap();
             let question_cases: serde_json::Value = serde_json::from_str(include_str!("../../../scripts/fixtures/composer-questions.json")).unwrap();
-            let dense_question = serde_json::from_value(
+            let dense_question: zeron_proto::UserInputQuestion = serde_json::from_value(
                 question_cases.as_array().unwrap().iter().find(|case| case["name"] == "long-content").unwrap()["question"].clone()
             ).unwrap();
             for light in [false, true] {
