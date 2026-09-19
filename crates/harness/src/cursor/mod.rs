@@ -384,7 +384,7 @@ fn map_model_items(items: &Value) -> Vec<Model> {
                 .find(|v| v.get("isDefault").and_then(Value::as_bool) == Some(true))
                 .and_then(|v| v.get("params").and_then(Value::as_array).cloned())
                 .unwrap_or_default();
-            let options: Vec<ModelOption> = item
+            let mut options: Vec<ModelOption> = item
                 .get("parameters")
                 .and_then(Value::as_array)
                 .map(|a| a.as_slice())
@@ -422,6 +422,7 @@ fn map_model_items(items: &Value) -> Vec<Model> {
                     })
                 })
                 .collect();
+            options.extend(zeron_proto::agent_mode_option(HarnessId::Cursor));
             Some(Model {
                 id,
                 label,
@@ -750,6 +751,7 @@ fn decode_tool(name: &str, args: &Value) -> ToolCall {
             url: s(&["url"]),
             prompt: None,
         },
+        "createPlan" => ToolCall::Plan { text: s(&["plan"]) },
         "updateTodos" => ToolCall::Todo {
             items: args
                 .get("todos")
@@ -759,6 +761,8 @@ fn decode_tool(name: &str, args: &Value) -> ToolCall {
                 .unwrap_or_default()
                 .iter()
                 .map(|t| TodoItem {
+                    id: None,
+                    status: zeron_proto::TodoStatus::from_wire(t["status"].as_str()),
                     text: t
                         .get("content")
                         .or_else(|| t.get("text"))
@@ -948,6 +952,13 @@ mod tests {
 
     #[test]
     fn decodes_cursor_tool_vocabulary() {
+        assert_eq!(
+            decode_tool("createPlan", &json!({"plan":"# Native plan"})),
+            ToolCall::Plan {
+                text: "# Native plan".into()
+            }
+        );
+
         assert_eq!(
             decode_tool("shell", &json!({"command": "ls"})),
             ToolCall::Exec {

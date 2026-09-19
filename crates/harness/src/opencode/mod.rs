@@ -281,7 +281,23 @@ impl OpencodeHarness {
         let mut server = self.server(None).await?;
         let result = async {
             let providers = server.provider_catalog(None).await?;
-            let models = models_from_providers(&providers);
+            let mut models = models_from_providers(&providers);
+            if server.protocol().await == Protocol::V1 {
+                let agents: Vec<Value> = server.get("/agent", None).await.unwrap_or_default();
+                if ["build", "plan"].iter().all(|name| {
+                    agents.iter().any(|agent| {
+                        agent["name"].as_str() == Some(name)
+                            && agent["hidden"] != true
+                            && agent["mode"] != "subagent"
+                    })
+                }) {
+                    for model in &mut models {
+                        model
+                            .options
+                            .extend(zeron_proto::agent_mode_option(HarnessId::Opencode));
+                    }
+                }
+            }
             if models.is_empty() {
                 return Err(HarnessError::Protocol(
                     "opencode advertised no models (`opencode auth login` to configure a provider)"
@@ -1436,6 +1452,11 @@ async fn run_session(session: Session) {
         &commands,
         &request.prompt,
         TurnSpec {
+            agent: request
+                .model_options
+                .get(zeron_proto::AGENT_MODE_OPTION)
+                .and_then(Value::as_str)
+                .map(|mode| if mode == "plan" { "plan" } else { "build" }),
             model: model.as_ref(),
             variant: variant.as_deref(),
             attachments: &request.attachments,
@@ -1524,6 +1545,7 @@ async fn run_session(session: Session) {
                     &commands,
                     &steer,
                     TurnSpec {
+                        agent: request.model_options.get(zeron_proto::AGENT_MODE_OPTION).and_then(Value::as_str).map(|mode| if mode == "plan" { "plan" } else { "build" }),
                         model: model.as_ref(),
                         variant: variant.as_deref(),
                         attachments: &[],
@@ -1644,7 +1666,8 @@ async fn run_session(session: Session) {
                                 &commands,
                                 &steer.prompt,
                                 TurnSpec {
-                                    model: model.as_ref(),
+                                    agent: request.model_options.get(zeron_proto::AGENT_MODE_OPTION).and_then(Value::as_str).map(|mode| if mode == "plan" { "plan" } else { "build" }),
+                        model: model.as_ref(),
                                     variant: variant.as_deref(),
                                     attachments: &[],
                                 },
@@ -1743,7 +1766,7 @@ async fn run_session(session: Session) {
                             dir,
                             event_tx: &event_tx,
                             request_input: &request_input,
-                            auto_approve: request.auto_approve,
+                            auto_approve: request.auto_approve && request.model_options.get(zeron_proto::AGENT_MODE_OPTION).and_then(Value::as_str) != Some("plan"),
                             main_feed: &mut main_feed,
                             children: &mut children,
                             pending_spawns: &mut pending_spawns,
@@ -1959,6 +1982,7 @@ fn mime_for(path: &str) -> &'static str {
 /// What a posted turn carries besides its text (1.x folds model/variant
 /// into the prompt body; 2.x ignores them there — set on the session).
 struct TurnSpec<'a> {
+    agent: Option<&'a str>,
     model: Option<&'a (String, String)>,
     variant: Option<&'a str>,
     attachments: &'a [String],
@@ -1979,11 +2003,17 @@ async fn post_prompt(
     spec: TurnSpec<'_>,
 ) -> Result<(), HarnessError> {
     let TurnSpec {
+        agent,
         model,
         variant,
         attachments,
     } = spec;
     let protocol = server.protocol().await;
+    if agent == Some("plan") && protocol != Protocol::V1 {
+        return Err(HarnessError::Protocol(
+            "Plan mode is not available through this OpenCode server's integration".into(),
+        ));
+    }
     if let Some((name, arguments)) = zeron_proto::invocation::leading_command(prompt) {
         if commands.iter().any(|c| c.name == name) {
             if !attachments.is_empty() {
@@ -1993,7 +2023,7 @@ async fn post_prompt(
                 ));
             }
             // 1.x names the args `arguments`; 2.x `text`.
-            let (path, cmd_body) = match protocol {
+            let (path, mut cmd_body) = match protocol {
                 Protocol::V1 => (
                     format!("/session/{session_id}/command"),
                     json!({ "command": name, "arguments": arguments }),
@@ -2003,6 +2033,11 @@ async fn post_prompt(
                     json!({ "command": name, "text": arguments }),
                 ),
             };
+            if protocol == Protocol::V1
+                && let Some(agent) = agent
+            {
+                cmd_body["agent"] = agent.into();
+            }
             let server_base = server.base.clone();
             let auth = server.auth.clone();
             let dir_owned = dir.map(str::to_owned);
@@ -2036,12 +2071,15 @@ async fn post_prompt(
     }
     match protocol {
         Protocol::V1 => {
-            let body = prompt_body(
+            let mut body = prompt_body(
                 prompt,
                 model.map(|(provider, model)| (provider.as_str(), model.as_str())),
                 variant,
                 attachments,
             );
+            if let Some(agent) = agent {
+                body["agent"] = agent.into();
+            }
             let path = format!("/session/{session_id}/prompt_async");
             server.post_json(&path, dir, &body).await.map(|_| ())
         }
@@ -2188,6 +2226,26 @@ async fn handle_bus_event(ctx: BusCtx<'_>) -> BusOutcome {
         turn.note_activity();
     }
 
+    if kind == "todo.updated" && is_ours && props["todos"].is_array() {
+        let call = oc_tool_call("todowrite", props);
+        for event in [
+            AgentEvent::ToolCall {
+                id: zeron_proto::LIVE_PLAN_TOOL_ID.into(),
+                call,
+            },
+            AgentEvent::ToolResult {
+                id: zeron_proto::LIVE_PLAN_TOOL_ID.into(),
+                is_error: false,
+                output: None,
+                diff: None,
+            },
+        ] {
+            if !send(event_tx, event).await {
+                return BusOutcome::ConsumerGone;
+            }
+        }
+        return BusOutcome::Continue;
+    }
     match kind {
         "session.status" if is_ours => {
             let status = props.get("status").unwrap_or(&Value::Null);
@@ -2474,6 +2532,9 @@ async fn handle_bus_event(ctx: BusCtx<'_>) -> BusOutcome {
                 header: "Permission".into(),
                 question: format!("Allow this OpenCode request once? {}", props),
                 options: vec!["No".into(), "Yes".into()],
+                option_descriptions: Vec::new(),
+                allow_custom: false,
+                non_blocking: false,
                 multi_select: false,
             };
             tokio::spawn(async move {
@@ -3019,6 +3080,21 @@ fn map_questions(props: &Value) -> Vec<UserInputQuestion> {
                                     .collect()
                             })
                             .unwrap_or_default(),
+                        option_descriptions: q
+                            .get("options")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .map(|option| {
+                                option
+                                    .get("description")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_owned()
+                            })
+                            .collect(),
+                        allow_custom: q.get("custom").and_then(Value::as_bool).unwrap_or(true),
+                        non_blocking: false,
                         multi_select: q.get("multiple").and_then(Value::as_bool).unwrap_or(false),
                     })
                 })
@@ -3091,6 +3167,8 @@ fn oc_tool_call(name: &str, input: &Value) -> ToolCall {
                 .unwrap_or_default()
                 .iter()
                 .map(|t| TodoItem {
+                    id: None,
+                    status: zeron_proto::TodoStatus::from_wire(t["status"].as_str()),
                     text: t
                         .get("content")
                         .and_then(Value::as_str)
