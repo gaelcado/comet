@@ -430,7 +430,13 @@ impl UserInputQuestion {
 /// have exactly one valid answer, without unknown or duplicate question IDs.
 pub fn valid_input_answers(questions: &[UserInputQuestion], answers: &[UserInputAnswer]) -> bool {
     answers.is_empty()
-        || (answers.len() == questions.len()
+        || (valid_input_questions(questions)
+            && answers.len() == questions.len()
+            && answers.iter().enumerate().all(|(i, answer)| {
+                answers[..i]
+                    .iter()
+                    .all(|previous| previous.question_id != answer.question_id)
+            })
             && questions.iter().all(|question| {
                 answers
                     .iter()
@@ -438,6 +444,21 @@ pub fn valid_input_answers(questions: &[UserInputQuestion], answers: &[UserInput
                     .count()
                     == 1
             }))
+}
+
+/// IDs and choice labels are used as response keys, so they must be unambiguous.
+pub fn valid_input_questions(questions: &[UserInputQuestion]) -> bool {
+    !questions.is_empty()
+        && questions.iter().enumerate().all(|(i, question)| {
+            !question.id.trim().is_empty()
+                && questions[..i]
+                    .iter()
+                    .all(|previous| previous.id != question.id)
+                && (question.allow_custom || !question.options.is_empty())
+                && question.options.iter().enumerate().all(|(j, label)| {
+                    !label.trim().is_empty() && !question.options[..j].contains(label)
+                })
+        })
 }
 
 fn question_allows_custom() -> bool {
@@ -586,6 +607,58 @@ pub enum AgentEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_answers_reject_ambiguous_keys_and_preserve_request_constraints() {
+        let question: UserInputQuestion = serde_json::from_value(serde_json::json!({
+            "id":"q", "header":"Choice", "question":"Pick", "options":["A","B"],
+            "allowCustom":false
+        }))
+        .unwrap();
+        let answer = |id: &str, labels: &[&str]| UserInputAnswer {
+            question_id: id.into(),
+            labels: labels.iter().map(|s| (*s).into()).collect(),
+        };
+        assert!(valid_input_answers(
+            &[question.clone()],
+            &[answer("q", &["A"])]
+        ));
+        assert!(valid_input_answers(&[question.clone()], &[]));
+        for invalid in [
+            answer("wrong", &["A"]),
+            answer("q", &["custom"]),
+            answer("q", &["A", "B"]),
+            answer("q", &[]),
+        ] {
+            assert!(!valid_input_answers(&[question.clone()], &[invalid]));
+        }
+        // Duplicate native IDs must not let an unrelated answer satisfy the count.
+        assert!(!valid_input_answers(
+            &[question.clone(), question.clone()],
+            &[answer("q", &["A"]), answer("unknown", &["B"])]
+        ));
+        let mut malformed = question.clone();
+        malformed.options.push("A".into());
+        assert!(!valid_input_questions(&[malformed]));
+        let mut malformed = question.clone();
+        malformed.id = " ".into();
+        assert!(!valid_input_questions(&[malformed]));
+        let mut multi = question.clone();
+        multi.multi_select = true;
+        assert!(valid_input_answers(
+            &[multi.clone()],
+            &[answer("q", &["A", "B"])]
+        ));
+        assert!(!valid_input_answers(&[multi], &[answer("q", &["A", "A"])]));
+        let mut text = question;
+        text.options.clear();
+        text.allow_custom = true;
+        assert!(valid_input_answers(
+            &[text.clone()],
+            &[answer("q", &["Custom answer"])]
+        ));
+        assert!(!valid_input_answers(&[text], &[answer("q", &[" "])]));
+    }
 
     #[test]
     fn todo_states_preserve_legacy_documents_and_native_progress() {

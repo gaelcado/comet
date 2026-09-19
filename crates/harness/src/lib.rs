@@ -85,6 +85,12 @@ pub trait Harness: Send + Sync {
     fn authoritative_prompt_end(&self) -> bool {
         self.deterministic_turn_end()
     }
+    /// Reject request shapes that this harness can determine are invalid
+    /// without process startup, network access, or live capability discovery.
+    /// The engine calls this before it records or routes the user turn.
+    fn validate_request(&self, _request: &RunRequest) -> Result<(), HarnessError> {
+        Ok(())
+    }
     async fn models(&self) -> Result<Vec<Model>, HarnessError>;
     /// Slash commands the agent advertises (ACP `availableCommands`); empty
     /// for harnesses without them. May spawn a short-lived discovery process.
