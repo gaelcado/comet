@@ -18,7 +18,13 @@ impl QuestionTransport {
         match self {
             Self::Unavailable => false,
             Self::AcpOptionId => {
-                !question.allow_custom && !question.multi_select && !question.options.is_empty()
+                !question.non_blocking
+                    && !question.allow_custom
+                    && !question.multi_select
+                    && !question.options.is_empty()
+            }
+            Self::ClaudeControl | Self::OpenCodeHttp => {
+                !question.non_blocking && (question.allow_custom || !question.options.is_empty())
             }
             _ => question.allow_custom || !question.options.is_empty(),
         }
@@ -175,5 +181,31 @@ mod tests {
         assert!(!QuestionTransport::AcpOptionId.accepts(&question));
         assert!(QuestionTransport::CodexAppServer.accepts(&question));
         assert!(!QuestionTransport::Unavailable.accepts(&question));
+    }
+
+    #[test]
+    fn only_codex_supports_asynchronous_production_questions() {
+        let question: UserInputQuestion = serde_json::from_value(serde_json::json!({
+            "id": "q", "header": "Decision", "question": "Continue?",
+            "options": ["Yes", "No"], "allowCustom": false, "nonBlocking": true
+        }))
+        .unwrap();
+        for harness in [
+            HarnessId::ClaudeCode,
+            HarnessId::Codex,
+            HarnessId::Cursor,
+            HarnessId::Opencode,
+            HarnessId::Devin,
+            HarnessId::Grok,
+            HarnessId::Hermes,
+            HarnessId::Pi,
+            HarnessId::Antigravity,
+        ] {
+            assert_eq!(
+                for_harness(harness).questions.accepts(&question),
+                harness == HarnessId::Codex,
+                "unexpected asynchronous input contract for {harness:?}"
+            );
+        }
     }
 }
