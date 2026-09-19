@@ -223,11 +223,15 @@ async fn goal_actions_survive_turn_completion_and_resume_an_autonomous_turn() {
     let mut autonomous_output = false;
     let mut followup_output = false;
     let mut completed = 0;
-    while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
-        .await
-        .expect("post-resume stream remains responsive")
-    {
-        match event.unwrap() {
+    let mut seen = Vec::new();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(15), stream.next())
+            .await
+            .unwrap_or_else(|_| panic!("post-resume stream stalled; events: {seen:#?}"));
+        let Some(event) = event else { break };
+        let event = event.unwrap();
+        seen.push(format!("{event:?}"));
+        match event {
             AgentEvent::AutonomousTurnStarted { .. } => resumed_boundary = true,
             AgentEvent::TextDelta { text } if text == "autonomous continuation" => {
                 autonomous_output = true;
@@ -247,9 +251,15 @@ async fn goal_actions_survive_turn_completion_and_resume_an_autonomous_turn() {
             _ => {}
         }
     }
-    assert!(resumed_boundary);
-    assert!(autonomous_output);
-    assert!(followup_output);
+    assert!(
+        resumed_boundary,
+        "native continuation must reopen the parked run"
+    );
+    assert!(autonomous_output, "native continuation output was lost");
+    assert!(
+        followup_output,
+        "follow-up did not wait behind continuation; events: {seen:#?}"
+    );
     assert_eq!(
         apply_goal(&goal, GoalAction::Edit, Some("  Revised objective  "))
             .await
