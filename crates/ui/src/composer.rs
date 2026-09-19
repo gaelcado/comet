@@ -7490,14 +7490,8 @@ impl Composer {
     }
 
     fn available_modes(&self, cx: &App) -> Option<zeron_proto::ModelOption> {
-        let state = self.state.read(cx);
-        if state
-            .selected_chat
-            .as_ref()
-            .is_some_and(|chat| !state.chat_host_supports(chat, capabilities::AGENT_MODES_V1))
-        {
-            return None;
-        }
+        // Pickers owns the single effective-options gate used by both this
+        // rendered command catalog and the eventual Run request.
         self.pickers.read(cx).composer_modes(cx)
     }
 

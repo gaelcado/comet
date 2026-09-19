@@ -25,6 +25,7 @@ use gpui::{
 use zeron_engine::registry::HarnessDescriptor;
 use zeron_proto::{
     ChatConfig, FolderListing, HarnessId, Model, ReasoningLevel, RepoRef, SandboxLevel, Space,
+    capabilities,
 };
 use zeron_rpc::methods;
 
@@ -292,6 +293,24 @@ pub fn offered_options(
                     .is_some_and(|choice| option.choices.iter().any(|c| c.id == choice))
         })
     });
+    selections
+}
+
+/// Validate the effective send/render copy without rewriting persisted picks.
+/// Catalog changes can retire any option; an older host specifically cannot
+/// receive the agent-mode extension even if that choice remains in a chat row.
+fn effective_model_options(
+    model: Option<&Model>,
+    selections: serde_json::Map<String, serde_json::Value>,
+    supports_agent_modes: bool,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut selections = match model {
+        Some(model) => offered_options(model, selections),
+        None => selections,
+    };
+    if !supports_agent_modes {
+        selections.remove(zeron_proto::AGENT_MODE_OPTION);
+    }
     selections
 }
 
@@ -898,28 +917,43 @@ impl Pickers {
         }
     }
 
+    fn host_supports_agent_modes(&self, cx: &App) -> bool {
+        let state = self.state.read(cx);
+        if let Some(chat_id) = state.selected_chat.as_deref() {
+            state.chat_host_supports(chat_id, capabilities::AGENT_MODES_V1)
+        } else {
+            state
+                .effective_device_id()
+                .is_some_and(|device| state.device_supports(&device, capabilities::AGENT_MODES_V1))
+        }
+    }
+
     /// The explicit (non-default) option picks: the chat's persisted
     /// selections for existing chats, the remembered picks for the model the
     /// new-chat canvas resolves to (same id [`Self::resolved`] sends).
     fn explicit_options(&self, cx: &App) -> serde_json::Map<String, serde_json::Value> {
         if let Some(chat) = self.state.read(cx).selected_chat_row() {
-            return chat
+            let selections = chat
                 .config
                 .as_ref()
                 .map(|c| c.model_options.clone())
                 .unwrap_or_default();
+            return effective_model_options(
+                self.selected_model(cx),
+                selections,
+                self.host_supports_agent_modes(cx),
+            );
         }
         let Some(harness) = self.effective_harness(cx) else {
             return Default::default();
         };
-        match self.selected_model(cx) {
-            Some(model) => offered_options(
-                model,
-                self.defaults
-                    .model_options_for(harness, &model.id)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
+        let model = self.selected_model(cx);
+        let selections = match model {
+            Some(model) => self
+                .defaults
+                .model_options_for(harness, &model.id)
+                .cloned()
+                .unwrap_or_default(),
             // Catalog not loaded (or failed): the picks were validated for
             // this exact model when made, so they are safe to send as-is.
             None => self
@@ -927,7 +961,8 @@ impl Pickers {
                 .and_then(|id| self.defaults.model_options_for(harness, id))
                 .cloned()
                 .unwrap_or_default(),
-        }
+        };
+        effective_model_options(model, selections, self.host_supports_agent_modes(cx))
     }
 
     /// The catalog is loaded and offers nothing runnable — the no-agents
@@ -944,6 +979,9 @@ impl Pickers {
     /// `Mutate createChat`: concrete model + reasoning whenever the catalog is
     /// loaded (no "engine picks a default" passthrough).
     pub(crate) fn composer_modes(&self, cx: &App) -> Option<zeron_proto::ModelOption> {
+        if !self.host_supports_agent_modes(cx) {
+            return None;
+        }
         self.selected_model(cx)?
             .options
             .iter()
@@ -6400,6 +6438,232 @@ mod tests {
             let resolved = pickers.resolved(cx);
             assert_eq!(resolved.model.as_deref(), Some("opus"));
             assert_eq!(resolved.model_options.get("contextWindow"), Some(&one_m));
+        });
+    }
+
+    #[gpui::test]
+    fn existing_chat_options_follow_model_catalog_and_host_without_rewriting_saved_config(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let option = |id: &str, choice: &str| ModelOption {
+            id: id.into(),
+            label: id.into(),
+            choices: vec![ModelOptionChoice {
+                id: choice.into(),
+                label: choice.into(),
+            }],
+            default_choice: choice.into(),
+        };
+        let mut alpha = bare_model("alpha", "Alpha");
+        alpha.options = vec![
+            option("profile", "alpha"),
+            option("alphaOnly", "on"),
+            zeron_proto::agent_mode_option(HarnessId::ClaudeCode).unwrap(),
+        ];
+        let mut beta = bare_model("beta", "Beta");
+        beta.options = vec![option("profile", "beta"), option("betaOnly", "on")];
+        let saved = serde_json::json!({
+            "profile": "alpha",
+            "alphaOnly": "on",
+            "betaOnly": "on",
+            "removed": "stale",
+            "agentMode": "plan"
+        });
+        let state = cx.new(|_| {
+            let mut state = AppState::new();
+            state.selected_chat = Some("thread".into());
+            state.devices = vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": "fixture-device",
+                    "name": "Fixture",
+                    "platform": "macos",
+                    "lastSeenAt": null,
+                    "capabilities": ["agent-modes-v1"]
+                }))
+                .unwrap(),
+            ];
+            state.chats = vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": "thread",
+                    "deviceId": "fixture-device",
+                    "title": null,
+                    "archived": false,
+                    "cwd": "/fixture",
+                    "branch": null,
+                    "checkoutId": null,
+                    "config": {
+                        "harness": "claude-code",
+                        "model": "alpha",
+                        "reasoning": null,
+                        "modelOptions": saved,
+                        "sandbox": "workspace-write"
+                    },
+                    "lastMessagePreview": null,
+                    "lastMessageAt": null,
+                    "createdAt": chrono::Utc::now()
+                }))
+                .unwrap(),
+            ];
+            state
+        });
+        let pickers = cx.new(|cx| Pickers::new(state.clone(), cx));
+        pickers.update(cx, |pickers, _| {
+            pickers.models.insert(
+                HarnessId::ClaudeCode,
+                Loadable::Ready(vec![alpha.clone(), beta.clone()]),
+            );
+        });
+
+        pickers.read_with(cx, |pickers, cx| {
+            let resolved = pickers.resolved(cx);
+            assert_eq!(resolved.model.as_deref(), Some("alpha"));
+            assert_eq!(
+                resolved.model_options,
+                serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
+                    serde_json::json!({
+                        "profile": "alpha",
+                        "alphaOnly": "on",
+                        "agentMode": "plan"
+                    })
+                )
+                .unwrap()
+            );
+            assert!(pickers.composer_modes(cx).is_some());
+        });
+
+        // Once Alpha disappears, Beta becomes the selected catalog model and
+        // validates the old row against Beta's own option contract.
+        pickers.update(cx, |pickers, _| {
+            pickers
+                .models
+                .insert(HarnessId::ClaudeCode, Loadable::Ready(vec![beta.clone()]));
+        });
+        pickers.read_with(cx, |pickers, cx| {
+            let resolved = pickers.resolved(cx);
+            assert_eq!(resolved.model.as_deref(), Some("beta"));
+            assert_eq!(
+                resolved.model_options,
+                serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
+                    serde_json::json!({"betaOnly": "on"})
+                )
+                .unwrap()
+            );
+        });
+
+        // A catalog refresh can retire Beta's last matching option. The
+        // effective map updates immediately, without mutating the chat row.
+        beta.options.clear();
+        pickers.update(cx, |pickers, _| {
+            pickers
+                .models
+                .insert(HarnessId::ClaudeCode, Loadable::Ready(vec![beta]));
+        });
+        pickers.read_with(cx, |pickers, cx| {
+            assert!(pickers.resolved(cx).model_options.is_empty());
+        });
+        state.read_with(cx, |state, _| {
+            assert_eq!(
+                serde_json::Value::Object(
+                    state
+                        .selected_chat_row()
+                        .unwrap()
+                        .config
+                        .as_ref()
+                        .unwrap()
+                        .model_options
+                        .clone()
+                ),
+                saved
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn unsupported_host_removes_mode_from_render_and_send_effective_state(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut model = bare_model("alpha", "Alpha");
+        model.options = vec![
+            ModelOption {
+                id: "serviceTier".into(),
+                label: "Service tier".into(),
+                choices: vec![ModelOptionChoice {
+                    id: "fast".into(),
+                    label: "Fast".into(),
+                }],
+                default_choice: "fast".into(),
+            },
+            zeron_proto::agent_mode_option(HarnessId::ClaudeCode).unwrap(),
+        ];
+        let state = cx.new(|_| {
+            let mut state = AppState::new();
+            state.selected_chat = Some("thread".into());
+            state.devices = vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": "old-host",
+                    "name": "Old host",
+                    "platform": "macos",
+                    "lastSeenAt": null,
+                    "capabilities": []
+                }))
+                .unwrap(),
+            ];
+            state.chats = vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": "thread",
+                    "deviceId": "old-host",
+                    "title": null,
+                    "archived": false,
+                    "cwd": "/fixture",
+                    "branch": null,
+                    "checkoutId": null,
+                    "config": {
+                        "harness": "claude-code",
+                        "model": "alpha",
+                        "reasoning": null,
+                        "modelOptions": {"agentMode": "plan", "serviceTier": "fast"},
+                        "sandbox": "workspace-write"
+                    },
+                    "lastMessagePreview": null,
+                    "lastMessageAt": null,
+                    "createdAt": chrono::Utc::now()
+                }))
+                .unwrap(),
+            ];
+            state
+        });
+        let pickers = cx.new(|cx| Pickers::new(state.clone(), cx));
+        pickers.update(cx, |pickers, _| {
+            pickers
+                .models
+                .insert(HarnessId::ClaudeCode, Loadable::Ready(vec![model]));
+        });
+        pickers.read_with(cx, |pickers, cx| {
+            assert!(
+                pickers.composer_modes(cx).is_none(),
+                "the command UI must not advertise modes the host cannot run"
+            );
+            assert_eq!(
+                pickers.resolved(cx).model_options,
+                serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
+                    serde_json::json!({"serviceTier": "fast"})
+                )
+                .unwrap(),
+                "the same effective state must feed the Run request"
+            );
+        });
+        state.read_with(cx, |state, _| {
+            assert_eq!(
+                state
+                    .selected_chat_row()
+                    .unwrap()
+                    .config
+                    .as_ref()
+                    .unwrap()
+                    .model_options[zeron_proto::AGENT_MODE_OPTION],
+                "plan",
+                "capability filtering must not rewrite synced configuration"
+            );
         });
     }
 
