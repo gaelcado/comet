@@ -1,0 +1,62 @@
+{
+  "source_sha": "ce0d10afa70cbe249ac5edae5b819b4621b28cfc",
+  "binary_sha256": "7afcea37268d8976f7c71810ee782dc87455ad1d7ae58ddc171769db5d7c7bcb",
+  "captures": [
+    {
+      "file": "goal-paused.png",
+      "source_capture": "frosted/goal-native-paused-synthetic-host.png",
+      "width": 1680,
+      "height": 1480,
+      "sha256": "07d1d07c15abe199960b32ce37f24d27d0ea5956f6a52cd89a8a353debec554a"
+    },
+    {
+      "file": "goal-active.png",
+      "source_capture": "frosted/goal-native-resumed-synthetic-host.png",
+      "width": 1680,
+      "height": 1480,
+      "sha256": "04ae1d0f94a1f9ec3d444d52fe3d81cb2875d0fc82c9e39ebbe89bf254ae0f39"
+    },
+    {
+      "file": "goal-edited.png",
+      "source_capture": "frosted/goal-native-edited-synthetic-host.png",
+      "width": 1680,
+      "height": 1480,
+      "sha256": "291295981ea969b5531cab397a46a9ba58fc35dfc617e61bf93775908e355d9d"
+    },
+    {
+      "file": "question-dark.png",
+      "source_capture": "frosted/question-next-step-three-options-dark-840.png",
+      "width": 1680,
+      "height": 1632,
+      "sha256": "4bcc5fd10ac8d46d59b78d875dd1b874e8e1cbd5e6943d77e16304dca1299119"
+    },
+    {
+      "file": "question-light-opaque.png",
+      "source_capture": "opaque/question-next-step-three-options-light-440.png",
+      "width": 880,
+      "height": 1632,
+      "sha256": "13b9ced1b1b5760aaf4bbe6d371a6076611fcef7f56f4cbb0b22971f340dd08c"
+    },
+    {
+      "file": "goal-light-opaque.png",
+      "source_capture": "opaque/goal-active-light-opaque.png",
+      "width": 1680,
+      "height": 1480,
+      "sha256": "909763135986ff0d07ab199915b295c44f41cd1b98481c85235fb24648d66038"
+    },
+    {
+      "file": "stack-light-minimum.png",
+      "source_capture": "frosted/dense-stack-light-frosted-min.png",
+      "width": 880,
+      "height": 1040,
+      "sha256": "e4665e110eeada33766c831a4a4600770e07dd19fc688ae1141178e95ccd78d4"
+    },
+    {
+      "file": "stack-dark-reduced-motion.png",
+      "source_capture": "reduced-motion/dense-stack-dark-frosted-min.png",
+      "width": 880,
+      "height": 1040,
+      "sha256": "fb2b4ee53e73f774f9ac0deab7d3b54c3657f454822fecb5b43e5d011617fa72"
+    }
+  ]
+}
