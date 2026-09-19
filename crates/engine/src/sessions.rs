@@ -365,13 +365,6 @@ impl SessionsEngine {
         // cross-harness delivery before recording or routing the user turn.
         zeron_proto::invocation::validate_harness_invocations(&request.prompt, harness_id)
             .map_err(EngineError::Other)?;
-        // Every dispatched prompt is a turn — routed steer or fresh run alike.
-        self.note_turn_start(chat_id, &request.cwd);
-        // A short shared lease orders this dispatch against an already queued
-        // update writer. A new runtime shares it with the subprocess task so
-        // it survives `drive_run` until the child is reaped; a routed steer
-        // releases its short lease once accepted.
-        let execution_lease = Arc::new(self.inner.registry.execution_lease(harness_id).await);
         let routed = lock(&self.inner.runs).get(chat_id).map(|h| {
             (
                 h.run_id.clone(),
@@ -418,6 +411,7 @@ impl SessionsEngine {
             if accepted {
                 let handle = self.doc_handle(chat_id)?;
                 handle.write_user_message(&user_id, &request.prompt, now_ms())?;
+                self.note_turn_start(chat_id, &request.cwd);
                 if self.is_live(chat_id, &run_id) {
                     // Working BEFORE the lastMessageAt bump: both ride the
                     // workspace doc from this one peer, so causal order makes it
@@ -500,7 +494,7 @@ impl SessionsEngine {
         };
         let interrupt_token = CancellationToken::new();
         let controls = RunControls {
-            execution_lease: Some(execution_lease.clone()),
+            execution_lease: None,
             request_input,
             steering: steer_rx,
             interrupt: interrupt_token.clone(),
@@ -544,7 +538,6 @@ impl SessionsEngine {
             controls,
             engine_rx,
             cancel_rx,
-            execution_lease,
             RunResumeState {
                 user_message_id: user_id,
                 resume_injected,
@@ -1509,10 +1502,9 @@ async fn drive_run(
     harness: Arc<dyn Harness>,
     mut request: RunRequest,
     doc: crate::doc_host::DocWriter,
-    controls: RunControls,
+    mut controls: RunControls,
     mut engine_rx: mpsc::UnboundedReceiver<AgentEvent>,
     mut cancel_rx: watch::Receiver<bool>,
-    _execution_lease: Arc<tokio::sync::OwnedRwLockReadGuard<()>>,
     resume_state: RunResumeState,
 ) {
     let device_id = inner.device_id.clone();
@@ -1545,14 +1537,40 @@ async fn drive_run(
     } else {
         Ok(())
     };
+    // Waiting here keeps dispatch and the shared queue-flush watcher responsive.
+    // The pending-update marker still orders new subprocesses after installation.
+    // Share the lease with the adapter so child cleanup outlives this event loop.
+    let mut _execution_lease = None;
     let started = match prepared {
         Ok(()) => {
-            let mut wire_request = request;
-            if !matches!(harness_id, HarnessId::Cursor | HarnessId::Opencode) {
-                wire_request.prompt =
-                    zeron_proto::invocation::harness_prompt(&wire_request.prompt, harness_id);
+            let lease = tokio::select! {
+                biased;
+                _ = controls.interrupt.cancelled() => None,
+                lease = inner.registry.execution_lease(harness_id) => Some(Arc::new(lease)),
+            };
+            if let Some(lease) = lease {
+                _execution_lease = Some(lease.clone());
+                controls.execution_lease = Some(lease);
+                if let Some(listener) = inner.turn_listener.get() {
+                    listener(&chat_id, &request.cwd);
+                }
+                let mut wire_request = request;
+                if !matches!(harness_id, HarnessId::Cursor | HarnessId::Opencode) {
+                    wire_request.prompt =
+                        zeron_proto::invocation::harness_prompt(&wire_request.prompt, harness_id);
+                }
+                harness.run(wire_request, controls).await
+            } else {
+                Ok(futures::stream::once(async {
+                    Ok(AgentEvent::Done {
+                        status: DoneStatus::Interrupted,
+                        result: None,
+                        error: None,
+                        session_id: None,
+                    })
+                })
+                .boxed())
             }
-            harness.run(wire_request, controls).await
         }
         Err(error) => Err(error),
     };
