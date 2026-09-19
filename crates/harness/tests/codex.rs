@@ -1805,6 +1805,54 @@ async fn cold_goal_control_mutates_the_persisted_thread_without_resuming_it() {
 }
 
 #[tokio::test]
+async fn cold_resume_that_remains_budget_limited_settles_without_waiting_for_a_turn() {
+    let (controls, _steer, goal, token) = controls_with_goal("Yes");
+    let mut req = request("");
+    req.resume = Some("cold-goal-limited".into());
+    req.model_options.insert(
+        zeron_proto::GOAL_CONTROL_ONLY_OPTION.into(),
+        serde_json::Value::Bool(true),
+    );
+    let mut stream = harness().run(req, controls).await.unwrap();
+    let limited = apply_goal(&goal, GoalAction::Resume, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(limited.status, "budgetLimited");
+
+    let mut events = Vec::new();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("non-active Resume must settle immediately");
+        let Some(event) = event else { break };
+        let event = event.unwrap();
+        let done = matches!(event, AgentEvent::Done { .. });
+        events.push(event);
+        if done {
+            break;
+        }
+    }
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCall { call: ToolCall::Goal { status, .. }, .. }
+            if status == "budgetLimited"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Done {
+            status: DoneStatus::Completed,
+            ..
+        }
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AutonomousTurnStarted { .. } | AgentEvent::TextDelta { .. }
+    )));
+    token.cancel();
+}
+
+#[tokio::test]
 async fn native_plan_mode_uses_the_server_default_model_when_unset() {
     let mut req = request("scenario:plan");
     req.model = None;

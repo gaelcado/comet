@@ -26,6 +26,12 @@ has "$line" '"method":"initialized"' || exit 1
 
 # ---- thread start / resume -------------------------------------------------
 read -r line || exit 1
+if has "$line" '"method":"thread/goal/set"' && has "$line" '"threadId":"cold-goal-limited"'; then
+  has "$line" '"status":"active"' || exit 1
+  emit "{\"id\":$(rid "$line"),\"result\":{\"goal\":{\"objective\":\"limited goal\",\"status\":\"budgetLimited\",\"tokensUsed\":11721,\"tokenBudget\":1800}}}"
+  emit '{"method":"thread/goal/updated","params":{"threadId":"cold-goal-limited","goal":{"objective":"limited goal","status":"budgetLimited","tokensUsed":11721,"tokenBudget":1800}}}'
+  exec sleep 30
+fi
 if has "$line" '"method":"thread/goal/set"' && has "$line" '"threadId":"cold-goal"'; then
   has "$line" '"status":"paused"' || exit 1
   emit "{\"id\":$(rid "$line"),\"result\":{\"goal\":{\"objective\":\"persisted goal\",\"status\":\"paused\",\"tokensUsed\":7}}}"

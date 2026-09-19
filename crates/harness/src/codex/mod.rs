@@ -1965,7 +1965,12 @@ async fn run_session(session: Session) {
                         request.objective,
                         router.active.as_deref(),
                     ).await;
-                    if result.is_ok() && action == GoalAction::Resume && control_was_idle {
+                    let resume_activated = action == GoalAction::Resume
+                        && matches!(
+                            result.as_ref(),
+                            Ok(Some(goal)) if goal.status == "active"
+                        );
+                    if resume_activated && control_was_idle {
                         resume_activation_pending = true;
                         resume_activation_deadline = Some(
                             tokio::time::Instant::now() + std::time::Duration::from_secs(30),
@@ -1989,10 +1994,11 @@ async fn run_session(session: Session) {
                     }
                     if result.is_ok()
                         && control_only
-                        && action != GoalAction::Resume
+                        && (action != GoalAction::Resume || !resume_activated)
                         && control_was_idle
                         && (!activation_was_pending
-                            || matches!(action, GoalAction::Pause | GoalAction::Clear))
+                            || matches!(action, GoalAction::Pause | GoalAction::Clear)
+                            || (action == GoalAction::Resume && !resume_activated))
                     {
                         let _ = send(
                             &event_tx,
@@ -2017,7 +2023,8 @@ async fn run_session(session: Session) {
                         .await;
                     }
                     if result.is_ok()
-                        && matches!(action, GoalAction::Pause | GoalAction::Clear)
+                        && (matches!(action, GoalAction::Pause | GoalAction::Clear)
+                            || (action == GoalAction::Resume && !resume_activated))
                     {
                         resume_activation_pending = false;
                         resume_activation_deadline = None;
