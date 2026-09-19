@@ -9,7 +9,7 @@ prompt simulates a mode.
 
 | Harness | Plan / native modes | Persistent goal | User input above composer |
 | --- | --- | --- | --- |
-| Codex | Default requires `collaborationMode/list`; Plan also requires its advertised preset; Goal requires enabled `goals` | Only when `experimentalFeature/list` advertises enabled `goals`; `thread/goal/get,set` plus update/clear notifications | `item/tool/requestUserInput` (blocking or asynchronous), plus completed assistant-message questions |
+| Codex | Default requires `collaborationMode/list`; Plan also requires its advertised preset; Goal requires enabled `goals` | Only when `experimentalFeature/list` advertises enabled `goals`; `thread/goal/get,set,clear` plus update/clear notifications | `item/tool/requestUserInput` (blocking or asynchronous), plus completed assistant-message questions |
 | Claude Code | `--permission-mode plan`; explicit approval of `ExitPlanMode` | Not exposed | `AskUserQuestion` control request and plan approval |
 | Cursor | Pinned `@cursor/sdk@1.0.31`: `mode` on create and send, including resume | Not exposed | Not exposed: pinned public SDK has no answer channel; `askQuestion` remains disabled |
 | OpenCode | V1 `/agent` must advertise visible primary `build` and `plan` agents; V2 plan is not exposed by this integration | Not exposed | `question.asked` with reply/reject; explicit permissions while planning |
@@ -26,6 +26,9 @@ is included because the Rust contract is exhaustive over `HarnessId`.
 ACP mode IDs are opaque: `architect` is not rewritten as `plan`. Semantic mode
 configurations use a shared UI key but are sent through their original config ID.
 Grouped select choices are supported. Legacy modes use `session/set_mode`.
+When legacy modes exactly duplicate an advertised `thought_level` option (as in
+`pi-acp@0.0.33`), they remain reasoning choices and are not promoted to agent-mode
+slash commands. Independent opaque mode IDs remain intact.
 Missing or rejected explicit modes stop before prompting; native defaults are
 preserved instead of silently selecting a permissive mode. For agents advertising
 modes, permission requests go through the question tray. `switch_mode` requests
@@ -40,9 +43,15 @@ sessions can continue using the warm runtime.
 
 Codex fallback model lists intentionally contain no mode claims. Runtime discovery
 must establish Default and Plan support; Goal is offered only when the separate
-experimental feature catalog enables it. Selecting Goal creates a new active goal
-after no goal/completion, or resumes a non-active goal. Selecting Default or Plan
-pauses an active goal. The adapter consumes native goal update and clear events,
+experimental feature catalog enables it. Selecting Goal is a one-shot creation intent, not a saved model preference.
+It is consumed after the Run command is accepted and is never persisted into a
+new chat's configuration or model defaults. Ordinary messages and switching
+Build/Plan do not pause or resume a goal. Existing goals have explicit native
+Pause/Resume, Edit and Delete controls; both the local and owning engine need
+`goal-actions-v1`. Editing keeps the ordinary message draft intact. New goal
+creation while a message would be queued is rejected without losing the draft;
+queued messages do not yet carry per-message goal creation intent.
+The adapter consumes native goal update and clear events,
 but does not fabricate a goal when the feature is absent. Claude and Cursor add
 their versioned native mode options to their adapter model catalogs rather than
 discovering them per session. Claude's installed CLI supports the native plan
@@ -70,7 +79,7 @@ does not say whether the user has an account or could install the adapter.
 | Claude Code | `claude` installed | `2.1.273 (Claude Code)`; `--help` advertises `--permission-mode plan` |
 | Cursor | `cursor-agent`/`cursor` absent; managed SDK package not installed | Integration pins `@cursor/sdk@1.0.31`; published typings were inspected during implementation |
 | OpenCode | `opencode` installed | `1.18.31`; `agent list` advertised visible primary `build` and `plan` agents |
-| Devin | `devin` absent | Live ACP session discovery remains the authority when installed |
+| Devin | `devin` installed | `3000.10.31`; ACP help inspected; live ACP session discovery remains authoritative |
 | Grok | `grok` absent | Integration-managed package pin is `@xai-official/grok@1.0.4` |
 | Hermes | `hermes` installed | `0.21.3`; `hermes acp --version` also reported `0.21.3` |
 | Pi | `pi` and managed `pi-acp` installed | Pi `0.85.1`; integration adapter `pi-acp@0.0.33` |
@@ -112,8 +121,11 @@ successful completion.
   restarting or resuming the Claude process does not lose existing task state.
 - Cursor: `createPlan` and `updateTodos`, including camel-case `inProgress`.
 - OpenCode: `todowrite` and session-scoped `todo.updated`, including empty lists.
-- All five ACP harnesses: native `plan.entries` snapshots when emitted. No
-  checklist is inferred from arbitrary assistant text or slash-command names.
+- ACP transport can normalize native `plan.entries` snapshots, but that is not
+  proof that every adapter emits them. Installed Hermes maps its todo results to
+  those entries; installed `pi-acp@0.0.33` does not emit them. Devin, Grok and
+  Antigravity task emission remains unverified. No checklist is inferred from
+  arbitrary assistant text or slash-command names.
 
 The tray starts with a compact summary. Details expand without replacing the
 composer; goal status, plan prose, and task states remain independently visible.
@@ -139,7 +151,9 @@ outgoing requests share this capability gate.
 
 Question constraints travel with each request, rather than being guessed from a
 harness badge. The engine validates IDs, cardinality and allowed labels before
-resolving a pending request. Invalid responses leave it pending; an empty response
+resolving a pending request. The question header exposes explicit cancellation,
+which sends an empty answer list through the same durable outcome watch. A
+rejected cancellation restores the typed answer and choices. Invalid responses leave it pending; an empty response
 is cancellation. Impossible choice-only requests with no options cancel immediately.
 
 | Integration | Options | Custom text | Multiple choices | Descriptions | Non-blocking |
