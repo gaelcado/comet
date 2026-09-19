@@ -91,6 +91,30 @@ pub struct ModelOptionChoice {
     pub label: String,
 }
 
+pub const AGENT_MODE_OPTION: &str = "agentMode";
+
+pub fn agent_mode_option(harness: HarnessId) -> Option<ModelOption> {
+    let modes: &[(&str, &str)] = match harness {
+        HarnessId::Codex => &[("default", "Build"), ("plan", "Plan"), ("goal", "Goal")],
+        HarnessId::ClaudeCode | HarnessId::Opencode | HarnessId::Cursor => {
+            &[("default", "Build"), ("plan", "Plan")]
+        }
+        _ => return None,
+    };
+    Some(ModelOption {
+        id: AGENT_MODE_OPTION.into(),
+        label: "Mode".into(),
+        default_choice: "default".into(),
+        choices: modes
+            .iter()
+            .map(|(id, label)| ModelOptionChoice {
+                id: (*id).into(),
+                label: (*label).into(),
+            })
+            .collect(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunRequest {
@@ -149,11 +173,19 @@ pub struct WorktreeSpec {
 /// EXEMPT this id — it legitimately reappears in every segment for the whole
 /// life of a run.
 pub const LIVE_PLAN_TOOL_ID: &str = "acp-plan";
+pub const LIVE_GOAL_TOOL_ID: &str = "agent-goal";
+
+/// Session-scoped state may update again after a completed turn.
+pub fn is_live_activity(id: &str) -> bool {
+    matches!(id, LIVE_PLAN_TOOL_ID | LIVE_GOAL_TOOL_ID)
+}
 
 /// A decoded tool invocation, reduced to the fields each kind renders.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ToolCall {
+    /// Native context compaction, with completion carried by ToolResult.
+    Compaction {},
     Exec {
         command: String,
     },
@@ -193,9 +225,27 @@ pub enum ToolCall {
     WebSearch {
         query: String,
     },
+    /// Successful incremental task mutation, retained across process resumes.
+    #[serde(rename_all = "camelCase")]
+    TodoPatch {
+        task_id: String,
+        text: Option<String>,
+        status: Option<String>,
+    },
     Todo {
         #[serde(default)]
         items: Vec<TodoItem>,
+    },
+    Plan {
+        text: String,
+    },
+    Goal {
+        objective: String,
+        status: String,
+        #[serde(default)]
+        tokens_used: u64,
+        #[serde(default)]
+        token_budget: Option<u64>,
     },
     Mcp {
         server: String,
@@ -274,8 +324,45 @@ pub const SUBAGENT_INPUT_KEEP: [&str; 5] = [
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TodoItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Absent in older documents; `done` remains the compatibility completion bit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TodoStatus>,
     pub text: String,
     pub done: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Cancelled,
+    Blocked,
+}
+
+impl TodoStatus {
+    /// Preserve actionable native states; pending/completed retain the legacy
+    /// `done` representation so old peers and documents keep working.
+    pub fn from_wire(status: Option<&str>) -> Option<Self> {
+        match status {
+            Some("in_progress" | "inProgress" | "in-progress") => Some(Self::InProgress),
+            Some("cancelled" | "canceled" | "deleted") => Some(Self::Cancelled),
+            Some("blocked") => Some(Self::Blocked),
+            _ => None,
+        }
+    }
+}
+impl TodoItem {
+    pub fn state(&self) -> TodoStatus {
+        if self.done {
+            TodoStatus::Completed
+        } else {
+            self.status.unwrap_or(TodoStatus::Pending)
+        }
+    }
 }
 
 /// A slash command advertised by the agent (ACP `availableCommands`): typed as
@@ -309,8 +396,52 @@ pub struct UserInputQuestion {
     pub header: String,
     pub question: String,
     pub options: Vec<String>,
+    /// Optional descriptions, indexed identically to options.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub option_descriptions: Vec<String>,
     #[serde(default)]
     pub multi_select: bool,
+    /// Whether this request accepts an answer outside the advertised options.
+    /// Permission protocols are choice-only; ordinary questions may permit text.
+    #[serde(default = "question_allows_custom")]
+    pub allow_custom: bool,
+    /// The agent may keep working while this question remains answerable.
+    #[serde(default)]
+    pub non_blocking: bool,
+}
+
+impl UserInputQuestion {
+    pub fn accepts(&self, answer: &UserInputAnswer) -> bool {
+        answer.question_id == self.id
+            && !answer.labels.is_empty()
+            && (self.multi_select || answer.labels.len() == 1)
+            && answer.labels.iter().all(|label| {
+                !label.trim().is_empty() && (self.allow_custom || self.options.contains(label))
+            })
+            && answer
+                .labels
+                .iter()
+                .enumerate()
+                .all(|(i, label)| !answer.labels[..i].contains(label))
+    }
+}
+
+/// An empty response cancels the whole request. Otherwise every question must
+/// have exactly one valid answer, without unknown or duplicate question IDs.
+pub fn valid_input_answers(questions: &[UserInputQuestion], answers: &[UserInputAnswer]) -> bool {
+    answers.is_empty()
+        || (answers.len() == questions.len()
+            && questions.iter().all(|question| {
+                answers
+                    .iter()
+                    .filter(|answer| question.accepts(answer))
+                    .count()
+                    == 1
+            }))
+}
+
+fn question_allows_custom() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -455,6 +586,28 @@ pub enum AgentEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn todo_states_preserve_legacy_documents_and_native_progress() {
+        let old: TodoItem = serde_json::from_str(r#"{"text":"Task","done":true}"#).unwrap();
+        assert_eq!(old.state(), TodoStatus::Completed);
+        for wire in ["in_progress", "inProgress", "in-progress"] {
+            assert_eq!(
+                TodoStatus::from_wire(Some(wire)),
+                Some(TodoStatus::InProgress)
+            );
+        }
+        let item = TodoItem {
+            id: None,
+            text: "Task".into(),
+            done: false,
+            status: Some(TodoStatus::Cancelled),
+        };
+        assert_eq!(
+            serde_json::from_value::<TodoItem>(serde_json::to_value(&item).unwrap()).unwrap(),
+            item
+        );
+    }
 
     #[test]
     fn agent_event_round_trips() {
