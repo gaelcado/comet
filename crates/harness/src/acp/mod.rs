@@ -2602,6 +2602,19 @@ fn live_mode_capability(params: &Value, session_id: &str) -> Option<bool> {
     .then(|| advertises_modes(&params["update"]))
 }
 
+fn live_mode_state_changed(params: &Value, session_id: &str) -> bool {
+    if params.get("sessionId").and_then(Value::as_str) != Some(session_id) {
+        return false;
+    }
+    match params["update"]["sessionUpdate"].as_str() {
+        Some("current_mode_update") => true,
+        // Treat the whole config snapshot as authoritative even when it no
+        // longer contains a mode category: removal is the important case.
+        Some("config_option_update") => params["update"]["configOptions"].is_array(),
+        _ => false,
+    }
+}
+
 /// `session/new`. Agents that sign in from Settings never start a browser
 /// sign-in mid-chat; an auth_required answer points the user there instead.
 async fn new_session(
@@ -3153,6 +3166,16 @@ async fn run_session(session: Session) {
             return;
         }
     };
+    // ACP mode/config catalogs are live session state. The engine's warm
+    // mailbox carries prompt text only, so it cannot revalidate or reapply an
+    // explicit opaque mode after a live mode update. If one arrives, close the
+    // runtime after this turn; the next message resumes through setup, where
+    // the current catalog is authoritative and the exact native config id/value
+    // is validated and applied before prompting.
+    let has_explicit_mode = request
+        .model_options
+        .contains_key(zeron_proto::AGENT_MODE_OPTION);
+    let mut live_mode_changed = false;
 
     let mut assistant_message_id = new_message_id();
     if !send(
@@ -3345,6 +3368,15 @@ async fn run_session(session: Session) {
                 while let Ok(inc) = incoming.try_recv() {
                     match inc {
                         Incoming::Notification { method, params } => {
+                            if method == "session/update" {
+                                if let Some(advertised) =
+                                    live_mode_capability(&params, &session_id)
+                                {
+                                    honor_mode_permissions = advertised;
+                                }
+                                live_mode_changed |=
+                                    live_mode_state_changed(&params, &session_id);
+                            }
                             let events =
                                 session_update_events(&method, &params, &session_id, &mut subagents);
                             for ev in events {
@@ -3417,6 +3449,9 @@ async fn run_session(session: Session) {
                 if interrupted || res.is_err() {
                     break 'main;
                 }
+                if has_explicit_mode && live_mode_changed {
+                    break 'main;
+                }
                 // Persistent session: a queued steer becomes the next turn;
                 // otherwise stay alive for the mailbox — the caller owns
                 // teardown (mirrors the codex harness).
@@ -3459,6 +3494,9 @@ async fn run_session(session: Session) {
                         && let Some(advertised) = live_mode_capability(&params, &session_id)
                     {
                         honor_mode_permissions = advertised;
+                    }
+                    if method == "session/update" {
+                        live_mode_changed |= live_mode_state_changed(&params, &session_id);
                     }
                     // Wire traffic is a sign of life for the prompt-stall
                     // watchdog — EXCEPT session boilerplate: opencode emits
@@ -3637,6 +3675,15 @@ async fn run_session(session: Session) {
                         while let Ok(inc) = incoming.try_recv() {
                             match inc {
                                 Incoming::Notification { method, params } => {
+                                    if method == "session/update" {
+                                        if let Some(advertised) =
+                                            live_mode_capability(&params, &session_id)
+                                        {
+                                            honor_mode_permissions = advertised;
+                                        }
+                                        live_mode_changed |=
+                                            live_mode_state_changed(&params, &session_id);
+                                    }
                                     let events =
                                         session_update_events(&method, &params, &session_id, &mut subagents);
                                     for ev in events {
@@ -3833,6 +3880,9 @@ async fn run_session(session: Session) {
                 {
                     break 'main;
                 }
+                if has_explicit_mode && live_mode_changed {
+                    break 'main;
+                }
                 if let Some(text) = queued_steers.pop_front() {
                     let (prev, next) = rotate(&mut assistant_message_id);
                     if !send(
@@ -3869,6 +3919,14 @@ async fn run_session(session: Session) {
 
             steer = steering.recv(), if steering_open && !interrupted => match steer {
                 Some(msg) => {
+                    if turn.is_none() && has_explicit_mode && live_mode_changed {
+                        // Do not acknowledge a text-only warm turn after the
+                        // native mode surface changed. The engine retains its
+                        // routed-steer ledger and re-dispatches this message
+                        // when the stream closes, so setup can validate/apply
+                        // the selected opaque mode against current state.
+                        break 'main;
+                    }
                     // Same transform as the initial prompt: Claude's
                     // Ultrathink prefix rides every steer too.
                     let text = prompt_transform(request.reasoning, &msg.prompt);

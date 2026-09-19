@@ -201,6 +201,66 @@ async fn every_acp_harness_preserves_opaque_native_modes_on_resumed_sessions() {
 }
 
 #[tokio::test]
+async fn every_acp_harness_restarts_before_a_warm_turn_can_drift_modes() {
+    for harness in all_fixture_harnesses() {
+        let mut req = request("scenario:warm-mode-removal");
+        req.model = None;
+        req.resume = Some("opaque-mode".into());
+        req.model_options.insert(
+            zeron_proto::AGENT_MODE_OPTION.into(),
+            serde_json::json!("architect/native.v2"),
+        );
+        let (controls, steer, _token) = controls();
+        let stream = harness.run(req, controls).await.expect("run starts");
+        let events = tokio::time::timeout(Duration::from_secs(10), async move {
+            let mut events = Vec::new();
+            let mut stream = stream;
+            let mut steered_after_done = false;
+            while let Some(event) = stream.next().await {
+                let event = event.expect("ACP stream event");
+                if matches!(event, AgentEvent::Done { .. }) && !steered_after_done {
+                    // The native session just reported that it changed and
+                    // removed the selected opaque mode. A warm text-only turn
+                    // would lose that intent; closing the mailbox makes the
+                    // engine resume through authoritative setup instead.
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    let _ = steer
+                        .send(SteerMessage {
+                            prompt: "second turn".into(),
+                            message_id: None,
+                        })
+                        .await;
+                    steered_after_done = true;
+                }
+                events.push(event);
+            }
+            assert!(steered_after_done, "fixture never completed its first turn");
+            events
+        })
+        .await
+        .expect("mode-selected ACP runtime closes after its completed turn");
+
+        assert!(events.contains(&AgentEvent::TextDelta {
+            text: "first mode turn".into()
+        }));
+        assert!(
+            !events.iter().any(|event| {
+                matches!(event, AgentEvent::TextDelta { text } if text == "WRONG MODE WARM TURN")
+                    || matches!(event, AgentEvent::Steered { .. })
+            }),
+            "{:?} accepted a warm turn after native mode drift: {events:?}",
+            harness.id()
+        );
+        assert_eq!(
+            dones(&events),
+            vec![(DoneStatus::Completed, None)],
+            "{:?}",
+            harness.id()
+        );
+    }
+}
+
+#[tokio::test]
 async fn every_acp_harness_tracks_live_mode_discovery_for_permissions() {
     for harness in all_fixture_harnesses() {
         let (controls, seen) = answering_controls(Some("Allow once"));

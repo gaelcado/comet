@@ -331,6 +331,25 @@ case "$promptline" in
   emit "{\"id\":$pid,\"result\":{\"stopReason\":\"end_turn\"}}"
   ;;
 
+*scenario:warm-mode-removal*)
+  update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"first mode turn"}}'
+  emit "{\"id\":$pid,\"result\":{\"stopReason\":\"end_turn\"}}"
+  # The native session exits the selected opaque mode and then removes it
+  # from the live catalog after the turn has parked. A text-only warm steer would
+  # silently run in build; the adapter must close so the next dispatch resumes
+  # through authoritative setup instead.
+  sleep 0.1
+  update '{"sessionUpdate":"current_mode_update","currentModeId":"build"}'
+  update '{"sessionUpdate":"config_option_update","configOptions":[{"id":"execution-profile","name":"Execution profile","category":"mode","type":"select","currentValue":"build","options":[{"value":"build","name":"Build"}]}]}'
+  # A buggy warm runtime receives the follow-up as another session/prompt.
+  # Keep the fixture alive long enough to make that visible on its stream.
+  read -r unexpected || exit 0
+  if has "$unexpected" '"method":"session/prompt"'; then
+    update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"WRONG MODE WARM TURN"}}'
+    emit "{\"id\":$(rid "$unexpected"),\"result\":{\"stopReason\":\"end_turn\"}}"
+  fi
+  ;;
+
 *scenario:empty-mode-permission*)
   update '{"sessionUpdate":"config_option_update","configOptions":[{"id":"execution-profile","name":"Execution profile","category":"mode","type":"select","currentValue":"build","options":[{"value":"build","name":"Build"},{"value":"architect/native.v2","name":"Architect"}]}]}'
   emit "{\"id\":93,\"method\":\"session/request_permission\",\"params\":{\"sessionId\":\"$SID\",\"toolCall\":{\"toolCallId\":\"empty\",\"title\":\"Impossible choice\"},\"options\":[]}}"
