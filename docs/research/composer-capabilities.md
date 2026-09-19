@@ -27,8 +27,8 @@ ACP mode IDs are opaque: `architect` is not rewritten as `plan`. Semantic mode
 configurations use a shared UI key but are sent through their original config ID.
 Grouped select choices are supported. Legacy modes use `session/set_mode`.
 When legacy modes exactly duplicate an advertised `thought_level` option (as in
-`pi-acp@0.0.33`), they remain reasoning choices and are not promoted to agent-mode
-slash commands. Independent opaque mode IDs remain intact.
+`pi-acp@0.0.33`), they remain reasoning choices and are not promoted to agent
+modes. Independent opaque mode IDs remain intact.
 Missing or rejected explicit modes stop before prompting; native defaults are
 preserved instead of silently selecting a permissive mode. For agents advertising
 modes, permission requests go through the question tray. `switch_mode` requests
@@ -143,20 +143,19 @@ expansion and scroll state, and collapsed streaming plan text is not repeatedly
 parsed. Automated checks cover state projection, storage and animation math;
 live appearance and frame timing still require a focused preview.
 
-## Question contracts and command presentation
+## Question contracts and mode selection
 
-Mode choices are slash commands, not a permanent toolbar. Only choices advertised
+Mode choices appear in the existing model-options picker. Only choices advertised
 by the selected model are offered; remote hosts also need `agent-modes-v1`.
-Opaque ACP IDs survive unchanged. A provider's existing command wins its name;
-the local mode command then uses `/zeron:<name>`. Selecting one changes the selected mode from the next message onward and
-consumes only the command token, preserving the draft. Ordinary mode selections
-persist; Goal creation is the one-shot exception described above.
+Opaque ACP IDs survive unchanged. Selecting a choice changes the selected mode
+from the next message onward. Ordinary mode selections persist; Goal creation is
+the one-shot exception described above.
 
 Existing-chat selections and new-chat defaults use the same effective option
 filter: a loaded model catalog removes retired choices from the outgoing request,
 and a host without `agent-modes-v1` cannot receive a saved mode. Persisted choices
-remain available if the catalog later offers them again. Command presentation and
-outgoing requests share this capability gate.
+remain available if the catalog later offers them again. Outgoing requests use
+the same capability gate.
 
 Question constraints travel with each request, rather than being guessed from a
 harness badge. The engine validates IDs, cardinality and allowed labels before

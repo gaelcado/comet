@@ -23,52 +23,43 @@ select live text. See the [native regression recordings](../../docs/transcript-s
 ### Composer capabilities and floating activity
 
 `composer-questions.json` covers choice-only, options with custom text, multiple
-selection, text-only, non-blocking and long/Unicode questions. The same payloads
-feed the production Wizard regression tests and `composer-polish-fixture` native
-renderer (`appshots-fixture` feature). The runner also advances a two-page request,
-then returns to page one and captures its preserved typed answer.
+selection, text-only, non-blocking and long/Unicode questions as synthetic
+contract data. The `native-interactions-fixture` renderer uses focused hardcoded
+questions to exercise dense choices and two-page navigation, then returns to page
+one and captures its preserved typed answer.
 
 `composer-activity.json` covers no activity, plans, all task states, goals,
 authoritative empty task snapshots, overflowing plans and combined activity.
-The native runner captures collapsed/expanded states; projection tests consume
-the identical data. It also composes the combined activity payload with the
-long question and three queued messages from one synthetic Codex harness. It
-captures that densest supported glass stack at 440×520 and 840×960 in both light
-and dark appearances.
+Projection tests consume this data directly. The native runner uses an equivalent
+hardcoded plan/todo/goal payload with a long question and three queued messages
+from one synthetic Codex harness, and captures the dense dark stack at 440×520.
 
-The fixture defaults to an explicitly frosted surface. Set
-`ZERON_FIXTURE_SURFACE=opaque` for the opaque preference; unknown values fail
-instead of silently producing mislabeled evidence. Its keyboard case dispatches
-real Tab, Enter, Escape and Space keystrokes through the production focus and
-activity handlers. The `activity-motion-*-000ms`, `090ms`, and `250ms` frames
-show transition geometry at fixed checkpoints. In a reduced-motion run those
-checkpoints should all show the settled state. Static frames do not establish
-smooth frame pacing, which still requires a live preview or recording.
+The runner dispatches real number, Tab, Enter and Space keystrokes through the
+production question, focus and activity handlers. It captures the activity
+disclosure after a keyboard toggle. Static frames do not establish smooth frame
+pacing, which still requires a live preview or recording.
 
-The `next-step-three-options` question reproduces the reported layout. Goal
-scenes include active, paused, blocked, complete and limited states. The native
-interaction sequence uses an in-memory host restricted to the synthetic chat's
-`SetGoal` calls: production Enter/Space handlers pause, resume, cancel an edit,
-save an edit and delete the goal. Assertions check the exact action sequence
-and preservation of the ordinary message draft. This tests the UI/RPC boundary,
-not a hosted model turn; Codex protocol and engine recovery have separate tests.
+The native interaction sequence uses an in-memory host restricted to the
+synthetic chat's `SetGoal` calls: production Enter/Space handlers pause, resume,
+cancel an edit, save an edit and delete the goal. Assertions check the exact
+action sequence, rejected-update recovery and preservation of the ordinary
+message draft. This tests the UI/RPC boundary, not a hosted model turn; Codex
+protocol and engine recovery have separate tests.
 
 Relevant automated suites:
-- `cargo test -p zeron-ui --lib composer` — mode commands, question
-  constraints/paging, independent plans/todos/goals and interrupted motion.
+- `cargo test -p zeron-ui --lib` — model-option selection, question
+  constraints/paging and independent plans/todos/goals.
 - `cargo test -p zeron-harness --lib` and adapter integration fixtures under
   `crates/harness/tests` — discovery, native mode routing and question responses.
 - Engine `nonblocking_questions_and_goal_updates_survive_turn_completion` and
   document todo round-trip tests — persistence and post-turn activity.
 
 Build the native fixture with `cargo check -p zeron-ui --features appshots-fixture
---example composer-polish-fixture`. Launch/capture it only on an explicit preview
+--example native-interactions-fixture`. Launch/capture it only on an explicit preview
 request, with a dedicated output directory:
 
 ```sh
-ZERON_FIXTURE_SURFACE=frosted cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish-frosted
-ZERON_FIXTURE_SURFACE=opaque cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish-opaque
-ZERON_FIXTURE_SURFACE=frosted ZERON_FIXTURE_REDUCE_MOTION=1 cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish-reduced-motion
+cargo run -p zeron-ui --features appshots-fixture --example native-interactions-fixture -- /tmp/zeron-native-interactions
 ```
 
 Rendered fixtures are visual evidence, not live provider compatibility evidence.
@@ -82,14 +73,13 @@ by the native peer. Run `cargo test -p zeron-harness --test codex` and
 lifecycle and existing shimmer timing tests. These tests do not launch a preview.
 
 
-`composer-harnesses.json` provides nine separate visual acceptance scenes. Each
-selects one harness and uses only its supported input/activity shape: Codex goals,
-Claude/Cursor plan and task projections, OpenCode tasks/questions, and ACP
-permission choices. Pi has no task scene because its installed adapter does not
-emit plan entries. These synthetic scenes do not establish live account/provider
-round trips. Goal-only scenes additionally cover active, paused, blocked,
-complete, usage-limited and budget-limited states.
+`composer-harnesses.json` provides synthetic reference cases for the nine
+production harnesses. Each uses only its supported input/activity shape: Codex
+goals, Claude/Cursor plan and task projections, OpenCode tasks/questions, and ACP
+permission choices. Pi has no task case because its installed adapter does not
+emit plan entries. The native renderer does not load this catalog, and these
+cases do not establish live account/provider round trips. Goal-only cases cover
+active, paused, blocked, complete, usage-limited and budget-limited states.
 
-Normal window requests may be clamped by macOS; evidence manifests record actual
-pixel dimensions. Inspect the images for visual quality and control reachability;
-a successful fixture exit alone is not design acceptance.
+Inspect rendered images for visual quality and control reachability; a successful
+fixture exit alone is not design acceptance.
