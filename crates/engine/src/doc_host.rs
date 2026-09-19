@@ -498,6 +498,10 @@ pub struct ChatDocHandle {
     /// of short rows — so unlike the transcript mirror it publishes on every
     /// change without a dirty flag.
     queue_tx: watch::Sender<Vec<QueuedMessage>>,
+    /// General document-change feed shared with command outcome watches. This
+    /// is the receiver paired with the existing root subscription; retaining
+    /// it avoids a second Loro subscription or transcript-sized mirror.
+    changed_rx: watch::Receiver<u64>,
     /// Serializes everything that TAKES from the queue. Both the doc-change
     /// task and the turn-end status watcher call `drain_queue`, and nothing
     /// keeps those two apart: without this they interleave across the
@@ -604,6 +608,12 @@ impl ChatDocHandle {
         let rx = self.queue_tx.subscribe();
         self.publish_queue();
         rx
+    }
+
+    /// Cheap general document-change watch for narrow container reads.
+    pub fn watch_changes(&self) -> watch::Receiver<u64> {
+        self.touch();
+        self.changed_rx.clone()
     }
 
     fn publish_queue(&self) {
@@ -1327,6 +1337,7 @@ impl DocHost {
             transcript_import: Mutex::default(),
             transcript_history,
             queue_tx,
+            changed_rx: changed_rx.clone(),
             drain_lock: tokio::sync::Mutex::new(()),
             queue_paused: AtomicBool::new(recovered_queue_pending),
             mirror_dirty: AtomicBool::new(true),

@@ -44,6 +44,10 @@ pub mod methods {
     pub const LIST_SKILLS: &str = "ListSkills";
     pub const LIST_COMMANDS: &str = "ListCommands";
     pub const QUEUE_COMMAND: &str = "QueueCommand";
+    /// Durable outcome for one queued command. Params `{chatId, commandId}`;
+    /// streams the current `{commandId, status, resolution}` first, then each
+    /// outcome change, and ends after a terminal status.
+    pub const WATCH_COMMAND: &str = "WatchCommand";
     /// Peer-to-peer delivery fallback: the SENDER's engine forwards a queued
     /// command entry (client-minted id and all) straight over the device-room
     /// link when its chat2 rows can't reach the edge but the host's peer link
