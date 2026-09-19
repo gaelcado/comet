@@ -113,6 +113,23 @@ case "$turnline" in
   emit '{"method":"item/agentMessage/delta","params":{"delta":"blank question rejected"}}'
   emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
   ;;
+*scenario:native-question-resolved*)
+  emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
+  emit '{"method":"turn/started","params":{"threadId":"th-1","turn":{"id":"t-1"}}}'
+  emit '{"id":105,"method":"item/tool/requestUserInput","params":{"threadId":"th-1","turnId":"t-1","itemId":"q-expiring","isBlocking":false,"questions":[{"id":"native-expiring","header":"Choice","question":"Answer before timeout?","isOther":true,"isSecret":false,"options":null}],"autoResolutionMs":1}}'
+  tries=0
+  while [ ! -f .bridge-ready ] && [ "$tries" -lt 300 ]; do
+    tries=$((tries + 1))
+    sleep 0.01
+  done
+  [ -f .bridge-ready ] || { fail_turn "$tid" "bridge receiver was not established"; exit 0; }
+  emit '{"method":"serverRequest/resolved","params":{"threadId":"th-1","requestId":105}}'
+  emit '{"method":"item/agentMessage/delta","params":{"delta":"native request resolved"}}'
+  # Keep the server alive so the test observes native-resolution cancellation,
+  # rather than teardown incidentally dropping the response receiver.
+  sleep 1
+  emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
+  ;;
 *scenario:typed-question*|*scenario:closed-question*)
   emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
   emit '{"method":"turn/started","params":{"threadId":"th-1","turn":{"id":"t-1"}}}'
@@ -124,6 +141,17 @@ case "$turnline" in
     has "$answer" '"native-question":{"answers":["Build a feature"]}' || { fail_turn "$tid" "typed answer was lost"; exit 0; }
   fi
   emit '{"method":"item/agentMessage/delta","params":{"delta":"typed answer received"}}'
+  emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
+  ;;
+*scenario:async-message-question-teardown*)
+  emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
+  emit '{"method":"item/completed","params":{"item":{"id":"question-message","type":"agentMessage","text":"Choose next step","questions":[{"title":"What next?","options":["Review"]}]}}}'
+  tries=0
+  while [ ! -f .bridge-ready ] && [ "$tries" -lt 300 ]; do
+    tries=$((tries + 1))
+    sleep 0.01
+  done
+  [ -f .bridge-ready ] || { fail_turn "$tid" "assistant question receiver was not established"; exit 0; }
   emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
   ;;
 *scenario:async-message-question*)

@@ -266,34 +266,183 @@ async fn goal_actions_survive_turn_completion_and_resume_an_autonomous_turn() {
 }
 
 #[tokio::test]
-async fn native_question_shapes_reach_the_codex_transport() {
-    let (async_controls, _steer, _token) = controls("Review");
-    let events = run_to_end(
-        &harness(),
-        request("scenario:async-message-question"),
-        async_controls,
-    )
-    .await;
-    assert!(events.iter().any(|event| matches!(
-        event,
-        AgentEvent::TextDelta { text } if text == "async answer received"
-    )));
+async fn cold_goal_control_mutates_the_persisted_thread_without_resuming_it() {
+    let (controls, _steer, goal, token) = controls_with_goal("Yes");
+    let mut req = request("");
+    req.resume = Some("cold-goal".into());
+    req.model_options.insert(
+        zeron_proto::GOAL_CONTROL_ONLY_OPTION.into(),
+        serde_json::Value::Bool(true),
+    );
+    let mut stream = harness().run(req, controls).await.unwrap();
+    let paused = apply_goal(&goal, GoalAction::Pause, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(paused.objective, "persisted goal");
+    assert_eq!(paused.status, "paused");
 
-    let (typed_controls, _steer, _token) = controls("Build a feature");
-    let events = run_to_end(
-        &harness(),
-        request("scenario:typed-question"),
-        typed_controls,
-    )
-    .await;
+    let mut events = Vec::new();
+    while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .unwrap()
+    {
+        let event = event.unwrap();
+        let done = matches!(event, AgentEvent::Done { .. });
+        events.push(event);
+        if done {
+            break;
+        }
+    }
     assert!(events.iter().any(|event| matches!(
         event,
-        AgentEvent::TextDelta { text } if text == "typed answer received"
+        AgentEvent::SessionStarted { session_id, .. } if session_id == "cold-goal"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCall { call: ToolCall::Goal { status, .. }, .. } if status == "paused"
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::TextDelta { .. }))
+    );
+    token.cancel();
+}
+
+#[tokio::test]
+async fn cold_resume_that_remains_budget_limited_settles_without_waiting_for_a_turn() {
+    let (controls, _steer, goal, token) = controls_with_goal("Yes");
+    let mut req = request("");
+    req.resume = Some("cold-goal-limited".into());
+    req.model_options.insert(
+        zeron_proto::GOAL_CONTROL_ONLY_OPTION.into(),
+        serde_json::Value::Bool(true),
+    );
+    let mut stream = harness().run(req, controls).await.unwrap();
+    let limited = apply_goal(&goal, GoalAction::Resume, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(limited.status, "budgetLimited");
+
+    let mut events = Vec::new();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("non-active Resume must settle immediately");
+        let Some(event) = event else { break };
+        let event = event.unwrap();
+        let done = matches!(event, AgentEvent::Done { .. });
+        events.push(event);
+        if done {
+            break;
+        }
+    }
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCall { call: ToolCall::Goal { status, .. }, .. }
+            if status == "budgetLimited"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Done {
+            status: DoneStatus::Completed,
+            ..
+        }
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AutonomousTurnStarted { .. } | AgentEvent::TextDelta { .. }
+    )));
+    token.cancel();
+}
+
+#[tokio::test]
+async fn native_plan_mode_uses_the_server_default_model_when_unset() {
+    let mut req = request("scenario:plan");
+    req.model = None;
+    req.model_options
+        .insert(zeron_proto::AGENT_MODE_OPTION.into(), "plan".into());
+    let (controls, _steer, _token) = controls("Yes");
+    let events = run_to_end(&harness(), req, controls).await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Done {
+            status: DoneStatus::Completed,
+            ..
+        }
     )));
 }
 
 #[tokio::test]
-async fn blank_native_question_id_is_rejected_before_reaching_the_bridge() {
+async fn async_message_questions_deliver_answers_to_the_native_turn() {
+    let (controls, _steer, _token) = controls("Review");
+    let events = run_to_end(
+        &harness(),
+        request("scenario:async-message-question"),
+        controls,
+    )
+    .await;
+    assert!(
+        events.iter().any(|event| matches!(event,
+        AgentEvent::TextDelta { text } if text == "async answer received")),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn async_message_question_waiter_closes_on_run_teardown() {
+    let cwd = tempfile::tempdir().unwrap();
+    let bridge_ready = cwd.path().join(".bridge-ready");
+    let pending: Arc<Mutex<Option<oneshot::Sender<Vec<UserInputAnswer>>>>> =
+        Arc::new(Mutex::new(None));
+    let pending_for_bridge = Arc::clone(&pending);
+    let (_steer_tx, steer_rx) = mpsc::channel(1);
+    let controls = RunControls {
+        request_input: Box::new(move |_| {
+            let (tx, rx) = oneshot::channel();
+            *pending_for_bridge.lock().unwrap() = Some(tx);
+            std::fs::write(&bridge_ready, b"ready").unwrap();
+            rx
+        }),
+        steering: steer_rx,
+        goal_actions: mpsc::channel(1).1,
+        interrupt: CancellationToken::new(),
+    };
+    let mut req = request("scenario:async-message-question-teardown");
+    req.cwd = cwd.path().to_string_lossy().into_owned();
+    let events = run_to_end(&harness(), req, controls).await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Done {
+            status: DoneStatus::Completed,
+            ..
+        }
+    )));
+    assert!(
+        pending
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(oneshot::Sender::is_closed),
+        "run teardown must close unanswered assistant-question receivers"
+    );
+}
+
+#[tokio::test]
+async fn typed_question_answer_reaches_codex_native_response() {
+    let (controls, _steer, _token) = controls("Build a feature");
+    let events = run_to_end(&harness(), request("scenario:typed-question"), controls).await;
+    assert!(
+        events.iter().any(|event| matches!(event,
+        AgentEvent::TextDelta { text } if text == "typed answer received")),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn blank_native_question_id_is_rejected_with_the_original_rpc_id() {
     let (mut controls, _steer, _token) = controls("unused");
     controls.request_input =
         Box::new(|_| panic!("malformed native questions must not reach the UI bridge"));
@@ -302,6 +451,67 @@ async fn blank_native_question_id_is_rejected_before_reaching_the_bridge() {
         event,
         AgentEvent::TextDelta { text } if text == "blank question rejected"
     )));
+}
+
+#[tokio::test]
+async fn native_question_resolution_drops_only_its_response_receiver() {
+    let cwd = tempfile::tempdir().unwrap();
+    let bridge_ready = cwd.path().join(".bridge-ready");
+    let pending: Arc<Mutex<Option<oneshot::Sender<Vec<UserInputAnswer>>>>> =
+        Arc::new(Mutex::new(None));
+    let pending_for_bridge = Arc::clone(&pending);
+    let (steer_tx, steer_rx) = mpsc::channel(1);
+    let interrupt = CancellationToken::new();
+    let controls = RunControls {
+        request_input: Box::new(move |_| {
+            let (tx, rx) = oneshot::channel();
+            *pending_for_bridge.lock().unwrap() = Some(tx);
+            std::fs::write(&bridge_ready, b"ready").unwrap();
+            rx
+        }),
+        steering: steer_rx,
+        goal_actions: mpsc::channel(1).1,
+        interrupt,
+    };
+    let mut request = request("scenario:native-question-resolved");
+    request.cwd = cwd.path().to_string_lossy().into_owned();
+    let mut stream = harness().run(request, controls).await.unwrap();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(3), stream.next())
+            .await
+            .expect("fixture emitted marker")
+            .expect("stream remains open")
+            .expect("valid event");
+        if matches!(event, AgentEvent::TextDelta { ref text } if text == "native request resolved")
+        {
+            break;
+        }
+    }
+    assert!(
+        pending
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(oneshot::Sender::is_closed),
+        "serverRequest/resolved must cancel the matching bridge waiter"
+    );
+    drop(steer_tx);
+}
+
+#[tokio::test]
+async fn closed_question_channel_returns_a_native_error_not_empty_answers() {
+    let (mut controls, _steer, _token) = controls("unused");
+    controls.request_input = Box::new(|_| {
+        let (tx, rx) = oneshot::channel();
+        drop(tx);
+        rx
+    });
+    let events = run_to_end(&harness(), request("scenario:closed-question"), controls).await;
+    assert!(
+        events.iter().any(|event| matches!(event,
+        AgentEvent::TextDelta { text } if text == "typed answer received")),
+        "{events:?}"
+    );
 }
 
 #[tokio::test]
@@ -848,8 +1058,18 @@ async fn models_discovers_visible_catalog_with_pagination() {
     assert_eq!(tier.choices.len(), 2, "priority and fast dedupe");
 
     // A failed probe stays useful and includes the new model in the fallback.
+    // Use a local executable rather than relying on the platform-specific
+    // location of `false` (`/bin` on Linux, `/usr/bin` on macOS).
+    let dir = tempfile::tempdir().unwrap();
+    let failing_executable = dir.path().join("codex-failing-probe");
+    std::fs::write(&failing_executable, "#!/bin/sh\nexit 1\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&failing_executable, std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+    }
     let fallback = CodexHarness::new()
-        .with_executable("/bin/false")
+        .with_executable(failing_executable)
         .models()
         .await
         .expect("fallback models");
