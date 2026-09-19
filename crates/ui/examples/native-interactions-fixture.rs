@@ -273,10 +273,87 @@ fn dense_calls() -> Vec<zeron_proto::ToolCall> {
     .unwrap()
 }
 
+#[derive(Clone, Copy)]
+struct FixtureVariant {
+    appearance: appearance::AppearanceMode,
+    appearance_name: &'static str,
+    surface: zeron_theme::SurfacePreference,
+    surface_name: &'static str,
+    reduced_motion: bool,
+}
+
+fn fixture_options() -> anyhow::Result<(PathBuf, FixtureVariant)> {
+    let appearance = std::env::var("ZERON_FIXTURE_APPEARANCE")
+        .unwrap_or_else(|_| "dark".into())
+        .to_ascii_lowercase();
+    let surface = std::env::var("ZERON_FIXTURE_SURFACE")
+        .unwrap_or_else(|_| "frosted".into())
+        .to_ascii_lowercase();
+    let mut variant = FixtureVariant {
+        appearance: match appearance.as_str() {
+            "dark" => appearance::AppearanceMode::Dark,
+            "light" => appearance::AppearanceMode::Light,
+            value => anyhow::bail!(
+                "invalid ZERON_FIXTURE_APPEARANCE={value:?}; expected `dark` or `light`"
+            ),
+        },
+        appearance_name: if appearance == "light" {
+            "light"
+        } else {
+            "dark"
+        },
+        surface: match surface.as_str() {
+            "frosted" => zeron_theme::SurfacePreference::Frosted,
+            "opaque" => zeron_theme::SurfacePreference::Opaque,
+            value => anyhow::bail!(
+                "invalid ZERON_FIXTURE_SURFACE={value:?}; expected `frosted` or `opaque`"
+            ),
+        },
+        surface_name: if surface == "opaque" {
+            "opaque"
+        } else {
+            "frosted"
+        },
+        reduced_motion: std::env::var_os("ZERON_FIXTURE_REDUCE_MOTION").is_some(),
+    };
+    let mut output = None;
+    for argument in std::env::args().skip(1) {
+        match argument.as_str() {
+            "--dark" => {
+                variant.appearance = appearance::AppearanceMode::Dark;
+                variant.appearance_name = "dark";
+            }
+            "--light" => {
+                variant.appearance = appearance::AppearanceMode::Light;
+                variant.appearance_name = "light";
+            }
+            "--frosted" => {
+                variant.surface = zeron_theme::SurfacePreference::Frosted;
+                variant.surface_name = "frosted";
+            }
+            "--opaque" => {
+                variant.surface = zeron_theme::SurfacePreference::Opaque;
+                variant.surface_name = "opaque";
+            }
+            "--reduce-motion" => variant.reduced_motion = true,
+            "--standard-motion" => variant.reduced_motion = false,
+            value if value.starts_with('-') => anyhow::bail!("unknown fixture option {value:?}"),
+            value if output.is_none() => output = Some(PathBuf::from(value)),
+            value => anyhow::bail!("unexpected second output directory {value:?}"),
+        }
+    }
+    let output = output.ok_or_else(|| {
+        anyhow::anyhow!(
+            "usage: native-interactions-fixture OUTPUT_DIR [--dark|--light] [--frosted|--opaque] [--reduce-motion]"
+        )
+    })?;
+    Ok((output, variant))
+}
+
 fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let _guard = runtime.enter();
-    let output = PathBuf::from(std::env::args().nth(1).expect("output directory"));
+    let (output, variant) = fixture_options()?;
     std::fs::create_dir_all(&output)?;
     let temp = tempfile::tempdir()?;
     let data = temp.path().to_path_buf();
@@ -285,8 +362,10 @@ fn main() -> anyhow::Result<()> {
         .run(move |cx| {
             gpui_tokio::init(cx);
             gpui_base::init(cx);
-            let prefs = settings::UiSettings::default();
+            let mut prefs = settings::UiSettings::default();
+            prefs.surface = variant.surface;
             settings::init(prefs.clone(), data.clone(), cx);
+            motion::set_reduced_motion(cx, variant.reduced_motion);
             let fonts = typography::register_fonts(cx);
             typography::init(
                 prefs.ui_font_family.clone(),
@@ -300,7 +379,7 @@ fn main() -> anyhow::Result<()> {
             );
             theme_library::init(data.clone(), cx);
             appearance::init(
-                appearance::AppearanceMode::Dark,
+                variant.appearance,
                 prefs.theme_selection,
                 prefs.accent,
                 prefs.surface,
@@ -362,11 +441,15 @@ fn main() -> anyhow::Result<()> {
                                 .fixture_has_pending_question("fixture-question", cx)
                         );
                     })?;
+                    let dense_capture = format!(
+                        "native-dense-stack-{}-440.png",
+                        variant.appearance_name
+                    );
                     capture(
                         window.into(),
                         cx,
                         &output,
-                        "native-dense-stack-dark-440.png",
+                        &dense_capture,
                     )?;
 
                     let first_question = zeron_proto::UserInputQuestion {
@@ -668,6 +751,19 @@ fn main() -> anyhow::Result<()> {
                         cx,
                         &output,
                         "native-goal-deleted-synthetic-host.png",
+                    )?;
+                    std::fs::write(
+                        output.join("result.txt"),
+                        format!(
+                            "PASS: native composer interactions; appearance={}, surface={}, motion={}.\n",
+                            variant.appearance_name,
+                            variant.surface_name,
+                            if variant.reduced_motion {
+                                "reduced"
+                            } else {
+                                "standard"
+                            }
+                        ),
                     )?;
                     Ok(())
                 }
