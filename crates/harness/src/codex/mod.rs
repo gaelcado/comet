@@ -59,7 +59,7 @@ use zeron_proto::{
 
 use crate::jsonrpc::{Incoming, RpcClient};
 use crate::process::{Child, Command, Stdio};
-use crate::{Harness, HarnessError, RunControls};
+use crate::{Harness, HarnessError, RunControls, SteerMessage};
 use catalog::{REASONING_LEVELS, sandbox_mode, sandbox_policy_value, static_models, to_effort};
 use normalize::{
     ChildRoute, Phase, ReasoningStream, delta_text, item_id, item_type, notification_thread_id,
@@ -290,6 +290,41 @@ impl CodexHarness {
                 cursor = Some(next);
             }
 
+            // Capability discovery is authoritative, including feature enablement.
+            // A static model fallback must not promise experimental protocol support.
+            let modes = client
+                .request("collaborationMode/list", json!({}))
+                .await
+                .ok();
+            let mut goals_enabled = false;
+            let mut cursor: Option<String> = None;
+            let mut seen = HashSet::new();
+            loop {
+                let mut params = json!({"limit": 100});
+                if let Some(value) = &cursor {
+                    params["cursor"] = Value::String(value.clone());
+                }
+                let Ok(features) = client.request("experimentalFeature/list", params).await else {
+                    break;
+                };
+                goals_enabled |= features["data"].as_array().is_some_and(|items| {
+                    items
+                        .iter()
+                        .any(|f| f["name"] == "goals" && f["enabled"] == true)
+                });
+                let Some(next) = features["nextCursor"].as_str().filter(|s| !s.is_empty()) else {
+                    break;
+                };
+                if !seen.insert(next.to_owned()) {
+                    break;
+                }
+                cursor = Some(next.to_owned());
+            }
+            let mode = advertised_mode_option(modes.as_ref(), goals_enabled);
+            for model in &mut models {
+                model.options.extend(mode.clone());
+            }
+
             if let Some(default_id) = default_model_id
                 && let Some(index) = models.iter().position(|model| model.id == default_id)
                 && index != 0
@@ -306,6 +341,27 @@ impl CodexHarness {
             Err(_) => Err(HarnessError::Protocol("model discovery timed out".into())),
         }
     }
+}
+
+fn advertised_mode_option(
+    modes: Option<&Value>,
+    goals_enabled: bool,
+) -> Option<zeron_proto::ModelOption> {
+    let has = |mode: &str| {
+        modes
+            .and_then(|m| m["data"].as_array())
+            .is_some_and(|items| items.iter().any(|item| item["mode"] == mode))
+    };
+    if !has("default") {
+        return None;
+    }
+    let mut option = zeron_proto::agent_mode_option(HarnessId::Codex)?;
+    option.choices.retain(|choice| match choice.id.as_str() {
+        "plan" => has("plan"),
+        "goal" => goals_enabled,
+        _ => true,
+    });
+    (option.choices.len() > 1).then_some(option)
 }
 
 fn reasoning_level(value: &str) -> Option<ReasoningLevel> {
@@ -862,13 +918,61 @@ fn command_request(
     }
 }
 
-async fn start_turn(client: &RpcClient, params: Value) -> Result<String, HarnessError> {
+async fn start_turn(client: &RpcClient, mut params: Value) -> Result<String, HarnessError> {
     let text = params
         .pointer("/input/0/text")
         .and_then(Value::as_str)
         .unwrap_or_default();
     let thread_id = params["threadId"].as_str().unwrap_or_default();
     let native = command_request(text, thread_id)?;
+    let goal_mode = params
+        .as_object_mut()
+        .and_then(|p| p.remove("zeronGoalMode"))
+        .and_then(|value| value.as_bool())
+        .filter(|_| native.is_none());
+    if goal_mode == Some(false) {
+        // Older servers lack goal APIs; ordinary build/plan turns still work.
+        let thread_id = params["threadId"].clone();
+        if let Ok(current) = client
+            .request("thread/goal/get", json!({"threadId": thread_id}))
+            .await
+        {
+            if current["goal"]["status"].as_str() == Some("active") {
+                client
+                    .request(
+                        "thread/goal/set",
+                        json!({"threadId": thread_id, "status": "paused"}),
+                    )
+                    .await?;
+            }
+        }
+    }
+    if goal_mode == Some(true) {
+        let thread_id = params["threadId"].clone();
+        let current = client
+            .request("thread/goal/get", json!({"threadId": thread_id}))
+            .await?;
+        let status = current["goal"]["status"].as_str();
+        if status.is_none() || status == Some("complete") {
+            let objective = params
+                .pointer("/input/0/text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            client
+                .request(
+                    "thread/goal/set",
+                    json!({"threadId": thread_id, "objective": objective, "status": "active"}),
+                )
+                .await?;
+        } else if status != Some("active") {
+            client
+                .request(
+                    "thread/goal/set",
+                    json!({"threadId": thread_id, "status": "active"}),
+                )
+                .await?;
+        }
+    }
     if native.is_some()
         && params["input"]
             .as_array()
@@ -1071,6 +1175,29 @@ async fn run_session(session: Session) {
         // nothing renders and the UI's 45s staleness gate flips Working off
         // (user report: "not streaming, doesn't say it's working").
         p.insert("summary".into(), "auto".into());
+        {
+            let mode = request
+                .model_options
+                .get(zeron_proto::AGENT_MODE_OPTION)
+                .and_then(Value::as_str)
+                .unwrap_or("default");
+            if let Some(model) = &request.model
+                && request
+                    .model_options
+                    .contains_key(zeron_proto::AGENT_MODE_OPTION)
+            {
+                p.insert("collaborationMode".into(), json!({
+                    "mode": if mode == "plan" { "plan" } else { "default" },
+                    "settings": { "model": model, "reasoning_effort": effort, "developer_instructions": null },
+                }));
+            }
+            if request
+                .model_options
+                .contains_key(zeron_proto::AGENT_MODE_OPTION)
+            {
+                p.insert("zeronGoalMode".into(), (mode == "goal").into());
+            }
+        }
         if let Some(model) = &request.model {
             p.insert("model".into(), Value::String(model.clone()));
         }
@@ -1122,6 +1249,8 @@ async fn run_session(session: Session) {
     // Deltas seen per agent-message item, so a model that never streams
     // (item/completed only) still emits its text exactly once.
     let mut streamed_text: HashSet<String> = HashSet::new();
+    let mut plan_text: HashMap<String, String> = HashMap::new();
+    let (answer_tx, mut answer_rx) = mpsc::unbounded_channel::<SteerMessage>();
     let mut reasoning_streams: HashMap<String, ReasoningStream> = HashMap::new();
     // Token usage is held until the turn ends, emitted just before Done.
     let mut pending_usage: Option<AgentEvent> = None;
@@ -1169,7 +1298,11 @@ async fn run_session(session: Session) {
                     }
                 }
                 match method.as_str() {
-                    "turn/started" => router.note_started(turn_id(&params)),
+                    "turn/started" => {
+                        let id = turn_id(&params);
+                        if !router.is_completed(&id) { done_current = false; }
+                        router.note_started(id);
+                    }
 
                     "item/agentMessage/delta" => {
                         streamed_text.insert(item_id(&params));
@@ -1191,6 +1324,12 @@ async fn run_session(session: Session) {
                         }
                     }
 
+                    "item/plan/delta" => {
+                        let id = item_id(&params);
+                        let text = plan_text.entry(id.clone()).or_default();
+                        if let Some(delta) = delta_text(&params) { text.push_str(&delta); }
+                        if !send(&event_tx, AgentEvent::ToolCall { id, call: zeron_proto::ToolCall::Plan { text: text.clone() } }).await { break 'main; }
+                    }
                     "item/started" | "item/completed" => {
                         let phase = if method == "item/started" {
                             Phase::Started
@@ -1201,7 +1340,6 @@ async fn run_session(session: Session) {
                         if phase == Phase::Completed {
                             let output = match item_type(item) {
                                 "exitedReviewMode" => item.get("review").and_then(Value::as_str),
-                                "contextCompaction" => Some("Context compacted."),
                                 _ => None,
                             };
                             if let Some(text) = output
@@ -1210,6 +1348,25 @@ async fn run_session(session: Session) {
                         }
                         if matches!(item_type(item), "agentMessage" | "agent_message") {
                             if phase == Phase::Completed {
+                                if let Some(questions) = item.get("questions").and_then(Value::as_array).filter(|questions| !questions.is_empty()) {
+                                    let questions: Vec<UserInputQuestion> = questions.iter().map(|question| UserInputQuestion {
+                                        id: new_message_id(), header: "Question".into(),
+                                        question: question["title"].as_str().unwrap_or_default().into(),
+                                        options: question["options"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect(),
+                                        multi_select: false, option_descriptions: Vec::new(), allow_custom: true, non_blocking: true,
+                                    }).collect();
+                                    let ask = Arc::clone(&request_input);
+                                    let answers = answer_tx.clone();
+                                    tokio::spawn(async move {
+                                        let response = (ask)(questions.clone()).await.unwrap_or_default();
+                                        let lines: Vec<String> = questions.iter().filter_map(|question| response.iter()
+                                            .find(|answer| answer.question_id == question.id && !answer.labels.is_empty())
+                                            .map(|answer| format!("{}: {}", question.question, answer.labels.join(", ")))).collect();
+                                        if !lines.is_empty() {
+                                            let _ = answers.send(SteerMessage { prompt: format!("Answers to your questions:\n{}", lines.join("\n")), message_id: None });
+                                        }
+                                    });
+                                }
                                 // Fallback for non-streamed messages only.
                                 let id = item.get("id").and_then(Value::as_str).unwrap_or("");
                                 let text = item.get("text").and_then(Value::as_str).unwrap_or("");
@@ -1260,6 +1417,12 @@ async fn run_session(session: Session) {
                         }
                     }
 
+                    "turn/plan/updated" | "thread/goal/updated" | "thread/goal/cleared" => {
+                        for event in normalize::activity_events(&method, &params) {
+                            if !send(&event_tx, event).await { break 'main; }
+                        }
+                    }
+
                     "thread/tokenUsage/updated" => {
                         if let Some(usage) = normalize::context_usage_event(&params)
                             && !send(&event_tx, usage).await { break 'main; }
@@ -1274,6 +1437,7 @@ async fn run_session(session: Session) {
                         // Item ids never span turns; without this the set grew
                         // one entry per message for a persistent session's life.
                         streamed_text.clear();
+                        plan_text.clear();
                         if let Some(usage) = pending_usage.take()
                             && !send(&event_tx, usage).await
                         {
@@ -1419,7 +1583,9 @@ async fn run_session(session: Session) {
                 Some(Incoming::Eof) | None => break 'main,
             },
 
-            steer = steering.recv(), if steering_open && !interrupted => match steer {
+            steer = async {
+                tokio::select! { steer = steering.recv() => steer, answer = answer_rx.recv() => answer }
+            }, if steering_open && !interrupted => match steer {
                 Some(msg) => {
                     let text = msg.prompt;
                     // Native operations run at a turn boundary, never as text
@@ -1635,6 +1801,18 @@ fn handle_server_request(
     // question, never auto-approvable — route it to the input bridge and
     // answer keyed by question id, `{ answers: { <id>: { answers: [..] } } }`.
     if method == "item/tool/requestUserInput" {
+        if params["questions"].as_array().is_some_and(|questions| {
+            questions
+                .iter()
+                .any(|question| question["isSecret"] == true)
+        }) {
+            client.respond_error(
+                &id,
+                -32602,
+                "Secret input is not supported by this client; use an external credential flow",
+            );
+            return;
+        }
         let questions = user_input_questions(params);
         if questions.is_empty() {
             client.respond(&id, json!({ "answers": {} }));
@@ -1644,17 +1822,21 @@ fn handle_server_request(
         let request_input = Arc::clone(request_input);
         tokio::spawn(async move {
             let asked: Vec<UserInputQuestion> = questions.iter().map(|(_, q)| q.clone()).collect();
-            let answers = (request_input)(asked).await.unwrap_or_default();
-            let mut by_id = serde_json::Map::new();
-            for (wire_id, q) in &questions {
-                let labels: Vec<Value> = answers
-                    .iter()
-                    .find(|a| a.question_id == q.id)
-                    .map(|a| a.labels.iter().cloned().map(Value::String).collect())
-                    .unwrap_or_default();
-                by_id.insert(wire_id.clone(), json!({ "answers": labels }));
+            let answers = match (request_input)(asked).await {
+                Ok(answers) => answers,
+                Err(_) => {
+                    client.respond_error(
+                        &id,
+                        -32603,
+                        "The question response channel closed before an answer was delivered",
+                    );
+                    return;
+                }
+            };
+            match user_input_response(&questions, &answers) {
+                Ok(response) => client.respond(&id, response),
+                Err(message) => client.respond_error(&id, -32602, message),
             }
-            client.respond(&id, json!({ "answers": by_id }));
         });
         return;
     }
@@ -1697,6 +1879,33 @@ fn handle_server_request(
             json!({ "decision": if accept { "accept" } else { "decline" } }),
         );
     });
+}
+
+/// Keep UI question identity separate from native wire identity. Never turn an
+/// unknown/missing answer into a successful empty answer for the provider.
+fn user_input_response(
+    questions: &[(String, UserInputQuestion)],
+    answers: &[zeron_proto::UserInputAnswer],
+) -> Result<Value, &'static str> {
+    let asked: Vec<_> = questions
+        .iter()
+        .map(|(_, question)| question.clone())
+        .collect();
+    if !zeron_proto::valid_input_answers(&asked, answers) {
+        return Err("Invalid answer IDs, choices, or cardinality");
+    }
+    let by_id: serde_json::Map<String, Value> = questions
+        .iter()
+        .map(|(wire_id, question)| {
+            let labels = answers
+                .iter()
+                .find(|answer| answer.question_id == question.id)
+                .map(|answer| answer.labels.clone())
+                .unwrap_or_default();
+            (wire_id.clone(), json!({"answers": labels}))
+        })
+        .collect();
+    Ok(json!({"answers":by_id}))
 }
 
 /// Parse `item/tool/requestUserInput` questions into (wire id, question)
@@ -1747,6 +1956,25 @@ fn user_input_questions(params: &Value) -> Vec<(String, UserInputQuestion)> {
                             .into(),
                     })
                     .collect(),
+                option_descriptions: q
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|option| {
+                        option
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned()
+                    })
+                    .collect(),
+                allow_custom: q
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty)
+                    || q.get("isOther").and_then(Value::as_bool).unwrap_or(true),
+                non_blocking: params.get("isBlocking").and_then(Value::as_bool) == Some(false),
                 multi_select: ["multiSelect", "multi_select"]
                     .iter()
                     .find_map(|k| q.get(*k).and_then(Value::as_bool))
@@ -1800,6 +2028,9 @@ fn approval_question(method: &str, params: &Value) -> UserInputQuestion {
         header,
         question,
         options: vec!["Yes".into(), "No".into()],
+        option_descriptions: Vec::new(),
+        allow_custom: false,
+        non_blocking: false,
         multi_select: false,
     }
 }
@@ -1808,8 +2039,83 @@ use crate::{Signal, send_signal, shutdown_child};
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn question_answers_preserve_native_ids_and_never_silently_drop_text() {
+        let questions = user_input_questions(
+            &json!({"questions":[{"id":"native-id","question":"What next?","isOther":true,"options":[{"label":"Plan"}]}]}),
+        );
+        let answer = zeron_proto::UserInputAnswer {
+            question_id: questions[0].1.id.clone(),
+            labels: vec!["Build a feature with café 日本語".into()],
+        };
+        assert_eq!(
+            user_input_response(&questions, &[answer]).unwrap(),
+            json!({"answers":{"native-id":{"answers":["Build a feature with café 日本語"]}}})
+        );
+        assert!(
+            user_input_response(
+                &questions,
+                &[zeron_proto::UserInputAnswer {
+                    question_id: "wrong-id".into(),
+                    labels: vec!["Plan".into()]
+                }]
+            )
+            .is_err()
+        );
+        assert_eq!(
+            user_input_response(&questions, &[]).unwrap(),
+            json!({"answers":{"native-id":{"answers":[]}}})
+        );
+    }
+
+    #[test]
+    fn question_capability_contract() {
+        let mapped = user_input_questions(
+            &serde_json::json!({"questions":[{"id":"q","question":"Choose","isOther":false,"options":[{"label":"One","description":"First option"}]}]}),
+        );
+        assert!(!mapped[0].1.allow_custom);
+        assert_eq!(mapped[0].1.option_descriptions, ["First option"]);
+        assert!(
+            !approval_question(
+                "item/commandExecution/requestApproval",
+                &serde_json::json!({})
+            )
+            .allow_custom
+        );
+    }
+
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn modes_require_live_protocol_and_enabled_goal_feature() {
+        assert!(advertised_mode_option(None, true).is_none());
+        let modes = json!({"data":[{"mode":"default"},{"mode":"plan"}]});
+        let option = advertised_mode_option(Some(&modes), false).unwrap();
+        assert_eq!(
+            option
+                .choices
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["default", "plan"]
+        );
+        assert_eq!(
+            advertised_mode_option(Some(&modes), true)
+                .unwrap()
+                .choices
+                .len(),
+            3
+        );
+        assert!(
+            advertised_mode_option(Some(&json!({"data":[{"mode":"default"}]})), false).is_none()
+        );
+        assert!(catalog::static_models().iter().all(|m| {
+            m.options
+                .iter()
+                .all(|o| o.id != zeron_proto::AGENT_MODE_OPTION)
+        }));
+    }
 
     #[test]
     fn approval_questions_are_yes_no() {

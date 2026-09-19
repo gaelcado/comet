@@ -236,10 +236,14 @@ async fn happy_path_maps_deltas_items_usage_and_done() {
         call: ToolCall::Todo {
             items: vec![
                 TodoItem {
+                    id: None,
+                    status: None,
                     text: "a".into(),
                     done: true
                 },
                 TodoItem {
+                    id: None,
+                    status: None,
                     text: "b".into(),
                     done: false
                 },
@@ -615,6 +619,12 @@ async fn missing_binary_is_not_installed() {
 #[tokio::test]
 async fn models_discovers_visible_catalog_with_pagination() {
     let models = harness().models().await.expect("models");
+    assert!(models.iter().all(|model| {
+        model.options.iter().any(|option| {
+            option.id == zeron_proto::AGENT_MODE_OPTION
+                && option.choices.iter().any(|choice| choice.id == "goal")
+        })
+    }));
     assert_eq!(models.len(), 3);
     assert_eq!(models[0].id, "gpt-6-astra");
     assert_eq!(models[1].id, "gpt-5.6-terra");
@@ -1324,7 +1334,7 @@ async fn real_image_generation_smoke() {
 #[tokio::test]
 async fn native_commands_use_rpc_operations_and_render_results() {
     for (prompt, expected) in [
-        ("/compact", "Context compacted."),
+        ("/compact", ""),
         ("/review", "Review fixture result"),
         ("/review check error handling", "Review fixture result"),
     ] {
@@ -1335,11 +1345,21 @@ async fn native_commands_use_rpc_operations_and_render_results() {
         let mut stream = harness().run(req, controls).await.unwrap();
         let mut text = String::new();
         let mut complete = false;
+        let mut compact_id = None;
+        let mut compact_resolved = false;
         while let Some(event) = tokio::time::timeout(Duration::from_secs(5), stream.next())
             .await
             .unwrap()
         {
             match event.unwrap() {
+                AgentEvent::ToolCall {
+                    id,
+                    call: zeron_proto::ToolCall::Compaction {},
+                } => compact_id = Some(id),
+                AgentEvent::ToolResult { id, is_error, .. } if compact_id.as_ref() == Some(&id) => {
+                    assert!(!is_error);
+                    compact_resolved = true;
+                }
                 AgentEvent::TextDelta { text: delta } => text.push_str(&delta),
                 AgentEvent::Done { status, error, .. } => {
                     assert_eq!(status, DoneStatus::Completed, "{error:?}");
@@ -1349,6 +1369,9 @@ async fn native_commands_use_rpc_operations_and_render_results() {
             }
         }
         assert!(complete);
+        if prompt == "/compact" {
+            assert!(compact_id.is_some() && compact_resolved);
+        }
         assert_eq!(text, expected);
     }
 }
@@ -1527,4 +1550,88 @@ async fn ordinary_followup_cannot_overtake_a_queued_native_command() {
             "done"
         ]
     );
+}
+
+#[tokio::test]
+async fn native_plan_and_goal_modes_share_activity_and_question_bridge() {
+    for mode in ["plan", "goal"] {
+        let mut req = request(&format!("scenario:{mode}"));
+        req.model_options
+            .insert(zeron_proto::AGENT_MODE_OPTION.into(), mode.into());
+        let (controls, _steer, _token) = controls("Yes");
+        let events = run_to_end(&harness(), req, controls).await;
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::ToolCall {
+            call: ToolCall::Todo { items }, ..
+        } if items.len() == 2 && items[0].done && !items[1].done)),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::Done {
+                    status: DoneStatus::Completed,
+                    ..
+                }
+            )),
+            "{events:?}"
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                AgentEvent::Done {
+                    status: DoneStatus::Errored,
+                    ..
+                }
+            )),
+            "{events:?}"
+        );
+        if mode == "goal" {
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, AgentEvent::ToolCall {
+                call: ToolCall::Goal { status, tokens_used: 42, .. }, ..
+            } if status == "complete")),
+                "{events:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn async_message_questions_deliver_answers_to_the_native_turn() {
+    let (controls, _steer, _token) = controls("Review");
+    let events = run_to_end(
+        &harness(),
+        request("scenario:async-message-question"),
+        controls,
+    )
+    .await;
+    assert!(
+        events.iter().any(|event| matches!(event,
+        AgentEvent::TextDelta { text } if text == "async answer received")),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn typed_question_answer_reaches_codex_native_response() {
+    let (controls, _steer, _token) = controls("Build a feature");
+    let events = run_to_end(&harness(), request("scenario:typed-question"), controls).await;
+    assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "typed answer received")), "{events:?}");
+}
+
+#[tokio::test]
+async fn closed_question_channel_returns_a_native_error_not_empty_answers() {
+    let (mut controls, _steer, _token) = controls("unused");
+    controls.request_input = Box::new(|_| {
+        let (tx, rx) = oneshot::channel();
+        drop(tx);
+        rx
+    });
+    let events = run_to_end(&harness(), request("scenario:closed-question"), controls).await;
+    assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "typed answer received")), "{events:?}");
 }
