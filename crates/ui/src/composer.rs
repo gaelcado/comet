@@ -27,7 +27,9 @@ use unicode_segmentation::UnicodeSegmentation;
 #[path = "composer_activity.rs"]
 mod activity;
 
-use zeron_doc::{MessagePart, MessageRole, SessionCommandPayload, SessionMessageEntry};
+use zeron_doc::{
+    MessagePart, MessageRole, SessionCommandPayload, SessionCommandStatus, SessionMessageEntry,
+};
 use zeron_proto::{
     FileSearchMatch, HarnessId, RunRequest, SandboxLevel, SlashCommand, UserInputAnswer,
     UserInputQuestion, capabilities,
@@ -87,6 +89,8 @@ const WIZARD_CACHE_MAX: usize = 32;
 /// frame. Keep a wider bound for rapid cross-chat answering while ensuring a
 /// disconnected host cannot retain request ids indefinitely.
 const ANSWERED_REQUEST_MAX: usize = 64;
+const COMMAND_WATCH_RETRY_INITIAL: Duration = Duration::from_secs(1);
+const COMMAND_WATCH_RETRY_MAX: Duration = Duration::from_secs(15);
 
 /// Maximum scrollable heights for the three trays that may stack above the
 /// composer. The dense state deliberately stays below half the viewport so a
@@ -178,6 +182,36 @@ fn remove_answered_request(
 ) -> bool {
     order.retain(|candidate| candidate != key);
     answered.remove(key)
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandOutcomeFrame {
+    command_id: String,
+    status: SessionCommandStatus,
+    resolution: Option<String>,
+}
+
+fn answer_command_failure(status: SessionCommandStatus, resolution: Option<&str>) -> String {
+    let fallback = match status {
+        SessionCommandStatus::Rejected => "the answer was rejected",
+        SessionCommandStatus::Expired => "the answer expired before delivery",
+        SessionCommandStatus::Superseded => "the answer was superseded",
+        SessionCommandStatus::Cancelled => "the answer was cancelled",
+        SessionCommandStatus::Pending | SessionCommandStatus::Applied => {
+            "the answer could not be confirmed"
+        }
+    };
+    format!("Answer failed: {}", resolution.unwrap_or(fallback))
+}
+
+fn next_command_watch_retry(delay: Duration) -> Duration {
+    Duration::from_secs(
+        delay
+            .as_secs()
+            .saturating_mul(2)
+            .min(COMMAND_WATCH_RETRY_MAX.as_secs()),
+    )
 }
 /// The original floating selector rows use the same 20px chip height as the
 /// established-thread footer. Their surrounding rows own no plate or border.
@@ -8369,6 +8403,52 @@ impl Composer {
         }
     }
 
+    fn fail_wizard_submission(
+        &mut self,
+        chat_id: &str,
+        wizard: Wizard,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        let selected = self.state.read(cx).selected_chat.as_deref() == Some(chat_id);
+        self.restore_failed_wizard(chat_id, wizard, cx);
+        if selected {
+            self.failure = Some(message.into());
+            self.failure_key = Some(chat_id.to_owned());
+            cx.notify();
+        }
+    }
+
+    /// Apply one durable command outcome. Pending answers remain suppressed,
+    /// and Applied waits for the transcript's resolved input frame so stream
+    /// ordering cannot briefly remount the question. Every other terminal
+    /// state restores the exact submitted pages, picks, and typed answers.
+    fn apply_wizard_command_outcome(
+        &mut self,
+        chat_id: &str,
+        wizard: &Wizard,
+        status: SessionCommandStatus,
+        resolution: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match status {
+            SessionCommandStatus::Pending => false,
+            SessionCommandStatus::Applied => true,
+            SessionCommandStatus::Rejected
+            | SessionCommandStatus::Expired
+            | SessionCommandStatus::Superseded
+            | SessionCommandStatus::Cancelled => {
+                self.fail_wizard_submission(
+                    chat_id,
+                    wizard.clone(),
+                    answer_command_failure(status, resolution),
+                    cx,
+                );
+                true
+            }
+        }
+    }
+
     fn cache_current_wizard(&mut self, cx: &App) {
         let typed = self.input.read(cx).text().to_owned();
         let Some(wizard) = self.wizard.as_mut() else {
@@ -8515,42 +8595,150 @@ impl Composer {
             Err(_) => return,
         };
         // Keep each native response alive independently. A second asynchronous
-        // question may become visible before this command's acknowledgement.
+        // question may become visible before this command reaches a terminal
+        // ledger state.
         let task = cx.spawn(async move |this, cx| {
-            let result = engine.client().call(methods::QUEUE_COMMAND, params).await;
-            if let Err(err) = result {
+            let reply = match engine.client().call(methods::QUEUE_COMMAND, params).await {
+                Ok(reply) => reply,
+                Err(err) => {
+                    this.update(cx, |composer, cx| {
+                        composer.fail_wizard_submission(
+                            &failure_chat,
+                            wizard.clone(),
+                            format!("Answer failed: {err}"),
+                            cx,
+                        );
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            let Some(command_id) = reply
+                .get("commandId")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+            else {
                 this.update(cx, |composer, cx| {
-                    composer.failure = Some(format!("Answer failed: {err}").into());
-                    composer.failure_key = Some(failure_chat.clone());
-                    composer.restore_failed_wizard(&failure_chat, wizard.clone(), cx);
-                    cx.notify();
+                    composer.fail_wizard_submission(
+                        &failure_chat,
+                        wizard.clone(),
+                        "Answer status unavailable: the engine did not return a command id"
+                            .into(),
+                        cx,
+                    );
                 })
                 .ok();
                 return;
-            }
-            // Safety net against a dead-looking session: the command queued,
-            // but the host may still REJECT it (e.g. the run's resolver is
-            // gone). If the very same request is still the live pending input
-            // once the host has had ample time to execute and the resolved
-            // flag to sync back, the answer demonstrably didn't take —
-            // un-hide the panel instead of leaving the question unanswerable.
-            cx.background_executor().timer(Duration::from_secs(2)).await;
-            this.update(cx, |composer, cx| {
-                let transcript = composer.state.read(cx).transcript.clone();
-                let still_pending = pending_input_request(&transcript)
-                    .is_some_and(|(pending_id, _)| pending_id == request_id);
-                if still_pending {
-                    let released = remove_answered_request(
-                        &mut composer.answered_requests,
-                        &mut composer.answered_request_order,
-                        &answered_request_key(&failure_chat, &request_id),
-                    );
-                    if released && composer.current_key == failure_chat {
-                        cx.notify();
+            };
+
+            // A queued command can outlive a connection. Re-subscribe with the
+            // same durable id after transport gaps; a terminal frame is the
+            // only authority for retiring or restoring the captured wizard.
+            let mut retry_delay = COMMAND_WATCH_RETRY_INITIAL;
+            loop {
+                let mut subscription = match engine
+                    .client()
+                    .subscribe_checked(
+                        methods::WATCH_COMMAND,
+                        serde_json::json!({
+                            "chatId": failure_chat,
+                            "commandId": command_id,
+                        }),
+                    )
+                    .await
+                {
+                    Ok(subscription) => subscription,
+                    Err(RpcError::Transport(_) | RpcError::Closed) => {
+                        if this.update(cx, |_, _| {}).is_err() {
+                            return;
+                        }
+                        cx.background_executor().timer(retry_delay).await;
+                        retry_delay = next_command_watch_retry(retry_delay);
+                        continue;
+                    }
+                    Err(RpcError::UnknownMethod(_)) => {
+                        this.update(cx, |composer, cx| {
+                            composer.fail_wizard_submission(
+                                &failure_chat,
+                                wizard.clone(),
+                                "This engine cannot confirm answer delivery. Update it and retry."
+                                    .into(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                        return;
+                    }
+                    Err(err) => {
+                        this.update(cx, |composer, cx| {
+                            composer.fail_wizard_submission(
+                                &failure_chat,
+                                wizard.clone(),
+                                format!("Answer status unavailable: {err}"),
+                                cx,
+                            );
+                        })
+                        .ok();
+                        return;
+                    }
+                };
+
+                while let Some(value) = subscription.recv().await {
+                    let frame = match serde_json::from_value::<CommandOutcomeFrame>(value) {
+                        Ok(frame) if frame.command_id == command_id => frame,
+                        Ok(frame) => {
+                            this.update(cx, |composer, cx| {
+                                composer.fail_wizard_submission(
+                                    &failure_chat,
+                                    wizard.clone(),
+                                    format!(
+                                        "Answer status unavailable: expected command {command_id}, got {}",
+                                        frame.command_id
+                                    ),
+                                    cx,
+                                );
+                            })
+                            .ok();
+                            return;
+                        }
+                        Err(err) => {
+                            this.update(cx, |composer, cx| {
+                                composer.fail_wizard_submission(
+                                    &failure_chat,
+                                    wizard.clone(),
+                                    format!("Answer status unavailable: invalid command update ({err})"),
+                                    cx,
+                                );
+                            })
+                            .ok();
+                            return;
+                        }
+                    };
+                    retry_delay = COMMAND_WATCH_RETRY_INITIAL;
+                    let terminal = match this.update(cx, |composer, cx| {
+                        composer.apply_wizard_command_outcome(
+                            &failure_chat,
+                            &wizard,
+                            frame.status,
+                            frame.resolution.as_deref(),
+                            cx,
+                        )
+                    }) {
+                        Ok(terminal) => terminal,
+                        Err(_) => return,
+                    };
+                    if terminal {
+                        return;
                     }
                 }
-            })
-            .ok();
+
+                if this.update(cx, |_, _| {}).is_err() {
+                    return;
+                }
+                cx.background_executor().timer(retry_delay).await;
+                retry_delay = next_command_watch_retry(retry_delay);
+            }
         });
         // This command must outlive the currently visible wizard, but retaining
         // every completed handle would grow for the lifetime of the composer.
@@ -9854,6 +10042,61 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt as _;
+
+    struct WizardOutcomeRpc {
+        calls: std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+        reject: tokio::sync::watch::Receiver<bool>,
+    }
+
+    #[async_trait::async_trait]
+    impl zeron_rpc::RpcService for WizardOutcomeRpc {
+        async fn handle(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> Result<zeron_rpc::RpcReply, RpcError> {
+            self.calls.lock().unwrap().push((method.to_owned(), params));
+            match method {
+                methods::QUEUE_COMMAND => zeron_rpc::RpcReply::value(
+                    &serde_json::json!({ "commandId": "answer-command" }),
+                ),
+                methods::WATCH_COMMAND => {
+                    let reject = self.reject.clone();
+                    let stream =
+                        futures::stream::unfold((0_u8, reject), |(phase, mut reject)| async move {
+                            match phase {
+                                0 => Some((
+                                    serde_json::json!({
+                                        "commandId": "answer-command",
+                                        "status": "pending",
+                                        "resolution": null,
+                                    }),
+                                    (1, reject),
+                                )),
+                                1 => {
+                                    while !*reject.borrow() {
+                                        reject.changed().await.ok()?;
+                                    }
+                                    Some((
+                                        serde_json::json!({
+                                            "commandId": "answer-command",
+                                            "status": "rejected",
+                                            "resolution": "native resolver closed",
+                                        }),
+                                        (2, reject),
+                                    ))
+                                }
+                                _ => None,
+                            }
+                        })
+                        .boxed();
+                    Ok(zeron_rpc::RpcReply::Stream(stream))
+                }
+                other => Err(RpcError::UnknownMethod(other.into())),
+            }
+        }
+    }
 
     #[test]
     fn dense_trays_share_less_than_half_the_viewport() {
@@ -9886,6 +10129,17 @@ mod tests {
         assert_eq!(answered.len(), ANSWERED_REQUEST_MAX);
         assert_eq!(order.len(), ANSWERED_REQUEST_MAX);
         assert!(!answered.contains(&answered_request_key("chat", "request-0")));
+    }
+
+    #[test]
+    fn command_watch_retry_backoff_is_bounded() {
+        let mut delay = COMMAND_WATCH_RETRY_INITIAL;
+        let mut observed = Vec::new();
+        for _ in 0..6 {
+            observed.push(delay.as_secs());
+            delay = next_command_watch_retry(delay);
+        }
+        assert_eq!(observed, [1, 2, 4, 8, 15, 15]);
     }
 
     #[test]
@@ -13440,10 +13694,20 @@ mod tests {
                 answered_request_key("chat", "async"),
             );
 
-            composer.restore_failed_wizard("chat", failed, cx);
+            assert!(composer.apply_wizard_command_outcome(
+                "chat",
+                &failed,
+                SessionCommandStatus::Rejected,
+                Some("native resolver closed"),
+                cx,
+            ));
 
             assert_eq!(composer.wizard.as_ref().unwrap().request_id, "blocking");
             assert_eq!(composer.input.read(cx).text(), "Blocking draft");
+            assert_eq!(
+                composer.failure.as_deref(),
+                Some("Answer failed: native resolver closed")
+            );
             assert!(
                 composer
                     .wizard_cache
@@ -13470,6 +13734,291 @@ mod tests {
                     .unwrap()
                     .typed[0],
                 "Blocking draft"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn late_rejected_answer_recovers_across_chat_navigation(cx: &mut gpui::TestAppContext) {
+        let mut asynchronous = question("async", &[], false);
+        asynchronous.non_blocking = true;
+        let state = cx.new(|_| AppState::new());
+        state.update(cx, |state, _| state.selected_chat = Some("chat-b".into()));
+        let composer = cx.new(|cx| Composer::new(state.clone(), cx));
+
+        composer.update(cx, |composer, cx| {
+            let mut submitted = Wizard::new("async".into(), vec![asynchronous.clone()]);
+            submitted.set_typed("Keep my detailed answer".into());
+            store_answered_request(
+                &mut composer.answered_requests,
+                &mut composer.answered_request_order,
+                answered_request_key("chat-a", "async"),
+            );
+
+            assert!(composer.apply_wizard_command_outcome(
+                "chat-a",
+                &submitted,
+                SessionCommandStatus::Rejected,
+                Some("request no longer pending"),
+                cx,
+            ));
+            assert!(composer.failure.is_none(), "background chat stays quiet");
+            assert!(
+                !composer
+                    .answered_requests
+                    .contains(&answered_request_key("chat-a", "async"))
+            );
+            assert_eq!(
+                composer
+                    .wizard_cache
+                    .get(&answered_request_key("chat-a", "async"))
+                    .unwrap()
+                    .typed[0],
+                "Keep my detailed answer"
+            );
+
+            state.update(cx, |state, _| {
+                state.selected_chat = Some("chat-a".into());
+                state.transcript = vec![SessionMessageEntry {
+                    id: "async-entry".into(),
+                    role: MessageRole::Assistant,
+                    parts: vec![MessagePart::Input {
+                        id: "async-input".into(),
+                        request_id: "async".into(),
+                        questions: vec![asynchronous.clone()],
+                        resolved: false,
+                    }],
+                    created_at: 0,
+                    device_id: "device".into(),
+                    status: None,
+                    continuation_of: None,
+                }];
+            });
+            composer.on_state_changed(cx);
+            assert_eq!(composer.wizard.as_ref().unwrap().request_id, "async");
+            assert_eq!(composer.input.read(cx).text(), "Keep my detailed answer");
+        });
+    }
+
+    #[gpui::test]
+    fn pending_and_applied_answer_outcomes_wait_for_transcript_resolution(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut asynchronous = question("async", &[], false);
+        asynchronous.non_blocking = true;
+        let state = cx.new(|_| AppState::new());
+        state.update(cx, |state, _| {
+            state.selected_chat = Some("chat".into());
+            state.transcript = vec![SessionMessageEntry {
+                id: "async-entry".into(),
+                role: MessageRole::Assistant,
+                parts: vec![MessagePart::Input {
+                    id: "async-input".into(),
+                    request_id: "async".into(),
+                    questions: vec![asynchronous.clone()],
+                    resolved: false,
+                }],
+                created_at: 0,
+                device_id: "device".into(),
+                status: None,
+                continuation_of: None,
+            }];
+        });
+        let composer = cx.new(|cx| Composer::new(state.clone(), cx));
+        composer.update(cx, |composer, cx| {
+            let submitted = Wizard::new("async".into(), vec![asynchronous]);
+            let key = answered_request_key("chat", "async");
+            store_answered_request(
+                &mut composer.answered_requests,
+                &mut composer.answered_request_order,
+                key.clone(),
+            );
+
+            for _ in 0..3 {
+                assert!(!composer.apply_wizard_command_outcome(
+                    "chat",
+                    &submitted,
+                    SessionCommandStatus::Pending,
+                    None,
+                    cx,
+                ));
+            }
+            assert!(composer.answered_requests.contains(&key));
+            assert!(composer.wizard_cache.get(&key).is_none());
+
+            assert!(composer.apply_wizard_command_outcome(
+                "chat",
+                &submitted,
+                SessionCommandStatus::Applied,
+                None,
+                cx,
+            ));
+            composer.on_state_changed(cx);
+            assert!(
+                composer.wizard.is_none(),
+                "Applied must stay suppressed until its resolved transcript frame"
+            );
+            assert!(composer.answered_requests.contains(&key));
+
+            state.update(cx, |state, _| {
+                let MessagePart::Input { resolved, .. } = &mut state.transcript[0].parts[0] else {
+                    unreachable!()
+                };
+                *resolved = true;
+            });
+            composer.on_state_changed(cx);
+            assert!(!composer.answered_requests.contains(&key));
+            assert!(composer.wizard.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn durable_answer_watch_recovers_typed_wizard_after_cross_chat_rejection(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _runtime = runtime.enter();
+        let (reject_tx, reject_rx) = tokio::sync::watch::channel(false);
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let client = zeron_rpc::memory_client(std::sync::Arc::new(WizardOutcomeRpc {
+            calls: calls.clone(),
+            reject: reject_rx,
+        }));
+        let mut asynchronous = question("async", &[], false);
+        asynchronous.non_blocking = true;
+        let pending_entry = SessionMessageEntry {
+            id: "async-entry".into(),
+            role: MessageRole::Assistant,
+            parts: vec![MessagePart::Input {
+                id: "async-input".into(),
+                request_id: "async-request".into(),
+                questions: vec![asynchronous.clone()],
+                resolved: false,
+            }],
+            created_at: 0,
+            device_id: "device".into(),
+            status: None,
+            continuation_of: None,
+        };
+        let state = cx.new(|_| AppState::new());
+        state.update(cx, |state, _| {
+            state.set_test_engine(crate::state::EngineHandle::from_test_client(client));
+            state.selected_chat = Some("chat-a".into());
+            state.transcript = vec![pending_entry.clone()];
+        });
+        let composer = cx.new(|cx| Composer::new(state.clone(), cx));
+        composer.update(cx, |composer, cx| {
+            composer.input.update(cx, |input, cx| {
+                input.set_text("Keep the ordinary composer draft", cx)
+            });
+            composer.question_draft = Some(composer.input.read(cx).snapshot());
+            let mut submitted = Wizard::new("async-request".into(), vec![asynchronous.clone()]);
+            submitted.set_typed("Keep my detailed native answer".into());
+            let answers = submitted.answers();
+            composer.wizard = Some(submitted);
+            composer.sync_question_input(cx);
+            composer.wizard_finish(answers, cx);
+            assert_eq!(
+                composer.input.read(cx).text(),
+                "Keep the ordinary composer draft"
+            );
+        });
+
+        // Drive QueueCommand and the checked subscription without sleeping on
+        // the durable Pending state.
+        for _ in 0..100 {
+            cx.run_until_parked();
+            runtime.block_on(async { tokio::task::yield_now().await });
+            if calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(method, _)| method == methods::WATCH_COMMAND)
+            {
+                break;
+            }
+        }
+        let calls_snapshot = calls.lock().unwrap().clone();
+        let queue = calls_snapshot
+            .iter()
+            .find(|(method, _)| method == methods::QUEUE_COMMAND)
+            .expect("answer queued");
+        assert_eq!(queue.1["chatId"], "chat-a");
+        assert_eq!(queue.1["command"]["kind"], "respondInput");
+        assert_eq!(queue.1["command"]["requestId"], "async-request");
+        let watch = calls_snapshot
+            .iter()
+            .find(|(method, _)| method == methods::WATCH_COMMAND)
+            .expect("answer outcome watched");
+        assert_eq!(
+            watch.1,
+            serde_json::json!({
+                "chatId": "chat-a",
+                "commandId": "answer-command",
+            })
+        );
+
+        // Pending is durable, however long it lasts. Advancing beyond the old
+        // two-second heuristic must not unhide or discard the submitted state.
+        cx.executor().advance_clock(Duration::from_secs(3));
+        cx.run_until_parked();
+        composer.read_with(cx, |composer, _| {
+            assert!(composer.wizard.is_none());
+            assert!(
+                composer
+                    .answered_requests
+                    .contains(&answered_request_key("chat-a", "async-request"))
+            );
+        });
+
+        state.update(cx, |state, _| {
+            state.selected_chat = Some("chat-b".into());
+            state.transcript.clear();
+        });
+        composer.update(cx, |composer, cx| composer.on_state_changed(cx));
+        reject_tx.send(true).unwrap();
+        for _ in 0..100 {
+            cx.run_until_parked();
+            runtime.block_on(async { tokio::task::yield_now().await });
+            let recovered = composer.read_with(cx, |composer, _| {
+                composer
+                    .wizard_cache
+                    .contains_key(&answered_request_key("chat-a", "async-request"))
+            });
+            if recovered {
+                break;
+            }
+        }
+        composer.read_with(cx, |composer, _| {
+            assert!(
+                composer.failure.is_none(),
+                "background rejection stays quiet"
+            );
+            assert_eq!(composer.current_key, "chat-b");
+        });
+
+        state.update(cx, |state, _| {
+            state.selected_chat = Some("chat-a".into());
+            state.transcript = vec![pending_entry];
+        });
+        composer.update(cx, |composer, cx| {
+            composer.on_state_changed(cx);
+            assert_eq!(
+                composer.wizard.as_ref().unwrap().request_id,
+                "async-request"
+            );
+            assert_eq!(
+                composer.input.read(cx).text(),
+                "Keep my detailed native answer"
+            );
+            composer.wizard = None;
+            composer.restore_question_draft(cx);
+            assert_eq!(
+                composer.input.read(cx).text(),
+                "Keep the ordinary composer draft"
             );
         });
     }
