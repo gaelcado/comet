@@ -1415,6 +1415,29 @@ mod tests {
     }
 
     #[test]
+    fn todo_native_states_survive_document_storage() {
+        let doc = SessionDoc::init("todo-state").unwrap();
+        let mut entry = user_entry("tasks", "");
+        entry.role = MessageRole::Assistant;
+        let call = zeron_proto::ToolCall::Todo {
+            items: vec![zeron_proto::TodoItem {
+                id: None,
+                text: "Work".into(),
+                done: false,
+                status: Some(zeron_proto::TodoStatus::InProgress),
+            }],
+        };
+        entry.parts = vec![
+            serde_json::from_value(
+                serde_json::json!({"kind":"tool", "id":"plan", "call":call, "resolved":true}),
+            )
+            .unwrap(),
+        ];
+        doc.push_message(&entry).unwrap();
+        assert_eq!(doc.read_entries().unwrap()[0].parts, entry.parts);
+    }
+
+    #[test]
     fn round_trips_message_entries() {
         let doc = SessionDoc::init("chat-1").unwrap();
         doc.push_message(&user_entry("m1", "hello")).unwrap();
