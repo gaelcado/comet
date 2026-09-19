@@ -53,8 +53,9 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 
 use zeron_proto::{
-    AgentEvent, DoneStatus, HarnessId, Model, ModelOption, ModelOptionChoice, ReasoningLevel,
-    RunRequest, SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
+    AgentEvent, DoneStatus, GoalAction, GoalState, HarnessId, Model, ModelOption,
+    ModelOptionChoice, ReasoningLevel, RunRequest, SlashCommand, SteeringMode, UserInputAnswer,
+    UserInputQuestion,
 };
 
 use crate::jsonrpc::{Incoming, RpcClient};
@@ -956,23 +957,6 @@ async fn start_turn(client: &RpcClient, mut params: Value) -> Result<String, Har
         .and_then(|p| p.remove("zeronGoalMode"))
         .and_then(|value| value.as_bool())
         .filter(|_| native.is_none());
-    if goal_mode == Some(false) {
-        // Older servers lack goal APIs; ordinary build/plan turns still work.
-        let thread_id = params["threadId"].clone();
-        if let Ok(current) = client
-            .request("thread/goal/get", json!({"threadId": thread_id}))
-            .await
-        {
-            if current["goal"]["status"].as_str() == Some("active") {
-                client
-                    .request(
-                        "thread/goal/set",
-                        json!({"threadId": thread_id, "status": "paused"}),
-                    )
-                    .await?;
-            }
-        }
-    }
     if goal_mode == Some(true) {
         let thread_id = params["threadId"].clone();
         let current = client
@@ -987,17 +971,39 @@ async fn start_turn(client: &RpcClient, mut params: Value) -> Result<String, Har
             client
                 .request(
                     "thread/goal/set",
-                    json!({"threadId": thread_id, "objective": objective, "status": "active"}),
+                    json!({"threadId": thread_id, "objective": objective, "status": "paused"}),
                 )
                 .await?;
-        } else if status != Some("active") {
-            client
+            // Start the user's complete native input first (skills and future
+            // non-text inputs included), then arm autonomous continuation while
+            // that turn is busy. Setting a goal active on an idle thread starts
+            // a provider-generated turn immediately; doing it before this call
+            // would race or discard the original input.
+            let started = client.request("turn/start", params).await?;
+            let turn_id = started["turn"]["id"].as_str().unwrap_or("").to_owned();
+            if let Err(error) = client
                 .request(
                     "thread/goal/set",
                     json!({"threadId": thread_id, "status": "active"}),
                 )
-                .await?;
+                .await
+            {
+                if !turn_id.is_empty() {
+                    let _ = client
+                        .request(
+                            "turn/interrupt",
+                            json!({"threadId": thread_id, "turnId": turn_id}),
+                        )
+                        .await;
+                }
+                return Err(error);
+            }
+            return Ok(turn_id);
         }
+        return Err(HarnessError::Protocol(format!(
+            "A Codex goal is already {status}; use its Resume, Edit, or Clear control before creating another goal",
+            status = status.unwrap_or("active")
+        )));
     }
     if native.is_some()
         && params["input"]
@@ -1011,6 +1017,149 @@ async fn start_turn(client: &RpcClient, mut params: Value) -> Result<String, Har
     let (method, params) = native.unwrap_or(("turn/start", params));
     let started = client.request(method, params).await?;
     Ok(started["turn"]["id"].as_str().unwrap_or("").to_owned())
+}
+
+fn parse_goal(value: &Value) -> Result<GoalState, HarnessError> {
+    let goal = value.get("goal").unwrap_or(value);
+    let objective = goal
+        .get("objective")
+        .and_then(Value::as_str)
+        .ok_or_else(|| HarnessError::Protocol("Codex goal response has no objective".into()))?;
+    let status = goal
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| HarnessError::Protocol("Codex goal response has no status".into()))?;
+    Ok(GoalState {
+        objective: objective.to_owned(),
+        status: status.to_owned(),
+        tokens_used: goal
+            .get("tokensUsed")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        token_budget: goal.get("tokenBudget").and_then(Value::as_u64),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GoalNotificationEcho {
+    Updated(GoalState),
+    Cleared,
+}
+
+impl GoalNotificationEcho {
+    fn matches(&self, method: &str, params: &Value) -> bool {
+        match self {
+            Self::Updated(expected) => {
+                method == "thread/goal/updated"
+                    && parse_goal(params).as_ref().ok() == Some(expected)
+            }
+            Self::Cleared => method == "thread/goal/cleared",
+        }
+    }
+
+    fn activity(&self, thread_id: &str) -> (&'static str, Value) {
+        match self {
+            Self::Updated(goal) => (
+                "thread/goal/updated",
+                json!({
+                    "threadId": thread_id,
+                    "goal": {
+                        "objective": goal.objective.clone(),
+                        "status": goal.status.clone(),
+                        "tokensUsed": goal.tokens_used,
+                        "tokenBudget": goal.token_budget,
+                    },
+                }),
+            ),
+            Self::Cleared => (
+                "thread/goal/cleared",
+                json!({"threadId": thread_id, "goal": null}),
+            ),
+        }
+    }
+}
+
+async fn apply_goal_action(
+    client: &RpcClient,
+    thread_id: &str,
+    action: GoalAction,
+    objective: Option<String>,
+    active_turn: Option<&str>,
+) -> Result<Option<GoalState>, HarnessError> {
+    let response = match action {
+        GoalAction::Pause => {
+            let response = client
+                .request(
+                    "thread/goal/set",
+                    json!({"threadId": thread_id, "status": "paused"}),
+                )
+                .await?;
+            if let Some(turn_id) = active_turn {
+                // Pausing the persistent goal must also stop the current goal
+                // turn. Otherwise it can finish and enqueue another automatic
+                // continuation after the UI already says Paused.
+                if let Err(error) = client
+                    .request(
+                        "turn/interrupt",
+                        json!({"threadId": thread_id, "turnId": turn_id}),
+                    )
+                    .await
+                    && !error.to_string().contains("expected active turn id")
+                {
+                    return Err(error);
+                }
+            }
+            Some(parse_goal(&response)?)
+        }
+        GoalAction::Resume => {
+            let response = client
+                .request(
+                    "thread/goal/set",
+                    json!({"threadId": thread_id, "status": "active"}),
+                )
+                .await?;
+            // Setting an idle goal active is the provider's native resume: it
+            // schedules the next goal turn without injecting a user prompt.
+            Some(parse_goal(&response)?)
+        }
+        GoalAction::Edit => {
+            let objective = objective
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| HarnessError::Protocol("Goal objective cannot be empty".into()))?;
+            if objective.chars().count() > 4_000 {
+                return Err(HarnessError::Protocol(
+                    "Goal objective cannot exceed 4000 characters".into(),
+                ));
+            }
+            let response = client
+                .request(
+                    "thread/goal/set",
+                    json!({"threadId": thread_id, "objective": objective}),
+                )
+                .await?;
+            Some(parse_goal(&response)?)
+        }
+        GoalAction::Clear => {
+            client
+                .request("thread/goal/clear", json!({"threadId": thread_id}))
+                .await?;
+            if let Some(turn_id) = active_turn {
+                if let Err(error) = client
+                    .request(
+                        "turn/interrupt",
+                        json!({"threadId": thread_id, "turnId": turn_id}),
+                    )
+                    .await
+                    && !error.to_string().contains("expected active turn id")
+                {
+                    return Err(error);
+                }
+            }
+            None
+        }
+    };
+    Ok(response)
 }
 
 /// The per-run event loop: one task multiplexing app-server messages, the
@@ -1031,6 +1180,7 @@ async fn run_session(session: Session) {
     let RunControls {
         request_input,
         mut steering,
+        mut goal_actions,
         interrupt,
     } = controls;
     let request_input = Arc::new(request_input);
@@ -1053,6 +1203,11 @@ async fn run_session(session: Session) {
         .and_then(Value::as_str)
         .filter(|t| *t != "default")
         .map(str::to_owned);
+    let control_only = request
+        .model_options
+        .get(zeron_proto::GOAL_CONTROL_ONLY_OPTION)
+        .and_then(Value::as_bool)
+        == Some(true);
 
     let start_params = {
         let mut p = serde_json::Map::new();
@@ -1127,6 +1282,15 @@ async fn run_session(session: Session) {
                     overrides.insert(format!("mcp_servers.{name}.enabled"), false.into());
                 }
             }
+        }
+        if control_only {
+            let thread_id = request.resume.clone().ok_or_else(|| {
+                HarnessError::Protocol("Goal control requires a persisted Codex thread".into())
+            })?;
+            return Ok::<_, HarnessError>((
+                thread_id.clone(),
+                subagents::Subagents::new(thread_id),
+            ));
         }
         let thread = if let Some(resume) = &request.resume {
             let mut p = start_params.clone();
@@ -1216,12 +1380,6 @@ async fn run_session(session: Session) {
                     "settings": { "model": request.model.as_deref(), "reasoning_effort": effort, "developer_instructions": null },
                 }));
             }
-            if request
-                .model_options
-                .contains_key(zeron_proto::AGENT_MODE_OPTION)
-            {
-                p.insert("zeronGoalMode".into(), (mode == "goal").into());
-            }
         }
         if let Some(model) = &request.model {
             p.insert("model".into(), Value::String(model.clone()));
@@ -1254,19 +1412,30 @@ async fn run_session(session: Session) {
     }
 
     let mut router = TurnRouter::default();
-    match start_turn(&client, turn_params(&request.prompt)).await {
-        Ok(id) => router.adopt_started(id),
-        Err(e) => {
-            let _ = event_tx
-                .send(Ok(AgentEvent::Done {
-                    status: DoneStatus::Errored,
-                    result: None,
-                    error: Some(e.to_string()),
-                    session_id: Some(thread_id.clone()),
-                }))
-                .await;
-            shutdown_child(&mut child, kill_grace).await;
-            return;
+    if !control_only {
+        let mut initial_turn = turn_params(&request.prompt);
+        let fresh_goal = request
+            .model_options
+            .get(zeron_proto::FRESH_GOAL_OPTION)
+            .and_then(Value::as_bool)
+            == Some(true);
+        if fresh_goal {
+            initial_turn["zeronGoalMode"] = Value::Bool(true);
+        }
+        match start_turn(&client, initial_turn).await {
+            Ok(id) => router.adopt_started(id),
+            Err(e) => {
+                let _ = event_tx
+                    .send(Ok(AgentEvent::Done {
+                        status: DoneStatus::Errored,
+                        result: None,
+                        error: Some(e.to_string()),
+                        session_id: Some(thread_id.clone()),
+                    }))
+                    .await;
+                shutdown_child(&mut child, kill_grace).await;
+                return;
+            }
         }
     }
 
@@ -1291,16 +1460,24 @@ async fn run_session(session: Session) {
     // the run and must end with it.
     let mut assistant_question_waiters = Vec::<tokio::task::AbortHandle>::new();
     let mut steering_open = true;
+    let mut goal_actions_open = true;
     let mut interrupted = false;
     let mut interrupt_sent = false;
     // A Done has been emitted for the turn currently/last in flight.
-    let mut done_current = false;
-    let mut current_native = command_request(&request.prompt, &thread_id)
-        .ok()
-        .flatten()
-        .is_some();
+    let mut done_current = control_only;
+    let mut current_native = !control_only
+        && command_request(&request.prompt, &thread_id)
+            .ok()
+            .flatten()
+            .is_some();
     let mut done_after_interrupt = false;
     let mut escalation: Option<tokio::task::JoinHandle<()>> = None;
+    // Control-only mutations publish their authoritative response immediately.
+    // Suppress only the exact matching app-server echo, never an unrelated
+    // goal notification that happened to arrive next.
+    let mut goal_notification_echoes = VecDeque::<GoalNotificationEcho>::new();
+    let mut resume_activation_pending = false;
+    let mut resume_activation_deadline: Option<tokio::time::Instant> = None;
 
     'main: loop {
         tokio::select! {
@@ -1340,8 +1517,31 @@ async fn run_session(session: Session) {
                     }
                     "turn/started" => {
                         let id = turn_id(&params);
+                        let autonomous = done_current && !router.is_completed(&id);
+                        if autonomous {
+                            resume_activation_pending = false;
+                            resume_activation_deadline = None;
+                        }
                         if !router.is_completed(&id) { done_current = false; }
                         router.note_started(id);
+                        if autonomous {
+                            // Native Goal resume starts a provider-owned turn,
+                            // without a user prompt or `turn/start` response.
+                            // Publish a boundary so the parked engine reopens
+                            // immediately and cannot discard fast first output.
+                            let (prev, next) = rotate(&mut assistant_message_id);
+                            if !send(
+                                &event_tx,
+                                AgentEvent::AutonomousTurnStarted {
+                                    assistant_message_id: Some(prev),
+                                    next_assistant_message_id: Some(next),
+                                },
+                            )
+                            .await
+                            {
+                                break 'main;
+                            }
+                        }
                     }
 
                     "item/agentMessage/delta" => {
@@ -1459,8 +1659,42 @@ async fn run_session(session: Session) {
                     }
 
                     "turn/plan/updated" | "thread/goal/updated" | "thread/goal/cleared" => {
-                        for event in normalize::activity_events(&method, &params) {
-                            if !send(&event_tx, event).await { break 'main; }
+                        let matching_echo = goal_notification_echoes
+                            .iter()
+                            .position(|echo| echo.matches(&method, &params));
+                        if let Some(index) = matching_echo {
+                            goal_notification_echoes.remove(index);
+                            // The authoritative response was already emitted.
+                            // In particular, a delayed Pause echo must not
+                            // cancel a later Resume while its native turn is
+                            // still waiting to announce `turn/started`.
+                            continue;
+                        } else {
+                            for event in normalize::activity_events(&method, &params) {
+                                if !send(&event_tx, event).await { break 'main; }
+                            }
+                        }
+                        if resume_activation_pending
+                            && params
+                                .pointer("/goal/status")
+                                .and_then(Value::as_str)
+                                .is_some_and(|status| status != "active")
+                        {
+                            resume_activation_pending = false;
+                            resume_activation_deadline = None;
+                            if let Some(text) = queued_steers.pop_front()
+                                && !steer_as_new_turn(
+                                    &client,
+                                    turn_params(&text),
+                                    &mut router,
+                                    &event_tx,
+                                    &mut assistant_message_id,
+                                    &mut done_current,
+                                )
+                                .await
+                            {
+                                break 'main;
+                            }
                         }
                     }
 
@@ -1514,6 +1748,12 @@ async fn run_session(session: Session) {
                         }
                         if interrupted {
                             done_after_interrupt = true;
+                            break 'main;
+                        }
+                        if status == DoneStatus::Errored {
+                            // The engine stops consuming this run at the error.
+                            // Preserve queued user text for its durable orphan
+                            // redispatch instead of starting it invisibly here.
                             break 'main;
                         }
                         // Persistent session: a steer that lost the race with
@@ -1633,6 +1873,14 @@ async fn run_session(session: Session) {
             }, if steering_open && !interrupted => match steer {
                 Some(msg) => {
                     let text = msg.prompt;
+                    if resume_activation_pending {
+                        // `thread/goal/set {status:active}` replies before the
+                        // provider-owned turn announces `turn/started`. Keep a
+                        // user follow-up behind that boundary; starting a turn
+                        // here races the native continuation.
+                        queued_steers.push_back(text);
+                        continue 'main;
+                    }
                     // Native operations run at a turn boundary, never as text
                     // injected into an already running model turn. Later messages
                     // must stay behind queued commands: Steered acknowledgments
@@ -1703,6 +1951,115 @@ async fn run_session(session: Session) {
                         break 'main;
                     }
                 }
+            },
+
+            request = goal_actions.recv(), if goal_actions_open && !interrupted => match request {
+                Some(request) => {
+                    let action = request.action.clone();
+                    let control_was_idle = router.active.is_none() && done_current;
+                    let activation_was_pending = resume_activation_pending;
+                    let result = apply_goal_action(
+                        &client,
+                        &thread_id,
+                        request.action,
+                        request.objective,
+                        router.active.as_deref(),
+                    ).await;
+                    if result.is_ok() && action == GoalAction::Resume && control_was_idle {
+                        resume_activation_pending = true;
+                        resume_activation_deadline = Some(
+                            tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+                        );
+                    }
+                    let authoritative_echo = match result.as_ref() {
+                        Ok(Some(goal)) => Some(GoalNotificationEcho::Updated(goal.clone())),
+                        Ok(None) => Some(GoalNotificationEcho::Cleared),
+                        Err(_) => None,
+                    };
+                    if let Some(echo) = authoritative_echo {
+                        // Mutation responses are authoritative and can precede
+                        // or outlive notifications (notably Pause interrupting
+                        // the current turn). Publish every successful action
+                        // immediately, then suppress only its exact echo.
+                        let (method, params) = echo.activity(&thread_id);
+                        for event in normalize::activity_events(method, &params) {
+                            let _ = send(&event_tx, event).await;
+                        }
+                        goal_notification_echoes.push_back(echo);
+                    }
+                    if result.is_ok()
+                        && control_only
+                        && action != GoalAction::Resume
+                        && control_was_idle
+                        && (!activation_was_pending
+                            || matches!(action, GoalAction::Pause | GoalAction::Clear))
+                    {
+                        let _ = send(
+                            &event_tx,
+                            AgentEvent::Done {
+                                status: DoneStatus::Completed,
+                                result: Some(zeron_proto::GOAL_CONTROL_DONE_RESULT.into()),
+                                error: None,
+                                session_id: Some(thread_id.clone()),
+                            },
+                        )
+                        .await;
+                    } else if control_only && let Err(error) = &result {
+                        let _ = send(
+                            &event_tx,
+                            AgentEvent::Done {
+                                status: DoneStatus::Errored,
+                                result: Some(zeron_proto::GOAL_CONTROL_DONE_RESULT.into()),
+                                error: Some(error.to_string()),
+                                session_id: Some(thread_id.clone()),
+                            },
+                        )
+                        .await;
+                    }
+                    if result.is_ok()
+                        && matches!(action, GoalAction::Pause | GoalAction::Clear)
+                    {
+                        resume_activation_pending = false;
+                        resume_activation_deadline = None;
+                    }
+                    let _ = request.response.send(result);
+                }
+                None => goal_actions_open = false,
+            },
+
+            _ = tokio::time::sleep_until(
+                resume_activation_deadline.unwrap_or_else(tokio::time::Instant::now)
+            ), if resume_activation_deadline.is_some() => {
+                resume_activation_pending = false;
+                resume_activation_deadline = None;
+                // A successful active response promises a provider-owned turn.
+                // Starting queued user text after an arbitrary timeout can race
+                // a late native turn and acknowledge text the provider never
+                // consumed. Disarm the goal and let the engine's durable steer
+                // ledger redeliver that text in a fresh run instead.
+                let paused = client.request(
+                    "thread/goal/set",
+                    json!({"threadId": thread_id, "status": "paused"}),
+                ).await;
+                if let Ok(response) = &paused
+                    && let Ok(goal) = parse_goal(response)
+                {
+                    let echo = GoalNotificationEcho::Updated(goal);
+                    let (method, params) = echo.activity(&thread_id);
+                    for event in normalize::activity_events(method, &params) {
+                        let _ = send(&event_tx, event).await;
+                    }
+                }
+                let _ = send(
+                    &event_tx,
+                    AgentEvent::Done {
+                        status: DoneStatus::Errored,
+                        result: None,
+                        error: Some("Codex did not start the resumed goal turn".into()),
+                        session_id: Some(thread_id.clone()),
+                    },
+                ).await;
+                break 'main;
             },
 
             _ = interrupt.cancelled(), if !interrupt_sent => {

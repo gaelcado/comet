@@ -28,10 +28,10 @@ use zeron_doc::{
     DocError, MessagePart, MessageRole, MessageStatus, STREAM_COMMIT_MS, SegmentWriter, SessionDoc,
     SessionMessageEntry, fold_event_into_parts, sanitize_tool_call,
 };
-use zeron_harness::{CancellationToken, Harness, RunControls, SteerMessage};
+use zeron_harness::{CancellationToken, GoalActionRequest, Harness, RunControls, SteerMessage};
 use zeron_proto::{
-    AgentEvent, DoneStatus, HarnessId, RunRequest, Session, SessionStatus, UserInputAnswer,
-    UserInputQuestion,
+    AgentEvent, DoneStatus, GoalAction, GoalState, HarnessId, RunRequest, Session, SessionStatus,
+    UserInputAnswer, UserInputQuestion,
 };
 
 use crate::doc_host::{ChatDocHandle, DocHost};
@@ -112,13 +112,74 @@ struct RuntimeConfig {
     worktree: Option<zeron_proto::WorktreeSpec>,
 }
 
+fn is_goal_control_only(request: &RunRequest) -> bool {
+    request
+        .model_options
+        .get(zeron_proto::GOAL_CONTROL_ONLY_OPTION)
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
+fn boundary_acknowledges_user_steer(event: &AgentEvent) -> bool {
+    matches!(event, AgentEvent::Steered { .. })
+}
+
+fn is_goal_control_settle(event: &AgentEvent) -> bool {
+    matches!(event, AgentEvent::Done { result: Some(result), .. } if result == zeron_proto::GOAL_CONTROL_DONE_RESULT)
+}
+
+fn should_report_completion(control_settle: bool, status: DoneStatus) -> bool {
+    !control_settle && status == DoneStatus::Completed
+}
+
+fn public_agent_event(event: &AgentEvent) -> Option<AgentEvent> {
+    match event {
+        AgentEvent::AutonomousTurnStarted {
+            assistant_message_id,
+            next_assistant_message_id,
+        } => Some(AgentEvent::Steered {
+            assistant_message_id: assistant_message_id.clone(),
+            next_assistant_message_id: next_assistant_message_id.clone(),
+        }),
+        AgentEvent::Done {
+            result: Some(result),
+            ..
+        } if result == zeron_proto::GOAL_CONTROL_DONE_RESULT => None,
+        AgentEvent::Subagent {
+            parent_tool_use_id,
+            event,
+        } => Some(AgentEvent::Subagent {
+            parent_tool_use_id: parent_tool_use_id.clone(),
+            event: Box::new(public_agent_event(event)?),
+        }),
+        _ => Some(event.clone()),
+    }
+}
+
 impl RuntimeConfig {
     fn from_request(harness_id: HarnessId, request: &RunRequest) -> Self {
+        let mut model_options = request.model_options.clone();
+        model_options.remove(zeron_proto::FRESH_GOAL_OPTION);
+        model_options.remove(zeron_proto::GOAL_CONTROL_ONLY_OPTION);
+        if harness_id == HarnessId::Codex
+            && model_options
+                .get(zeron_proto::AGENT_MODE_OPTION)
+                .and_then(serde_json::Value::as_str)
+                == Some("goal")
+        {
+            // Goal creation runs Codex's native Default collaboration mode;
+            // the one-shot marker, rather than a sticky runtime mode, owns
+            // the goal lifecycle.
+            model_options.insert(
+                zeron_proto::AGENT_MODE_OPTION.into(),
+                serde_json::Value::String("default".into()),
+            );
+        }
         Self {
             harness_id,
             model: request.model.clone(),
             reasoning: request.reasoning,
-            model_options: request.model_options.clone(),
+            model_options,
             cwd: request.cwd.clone(),
             sandbox: request.sandbox,
             auto_approve: request.auto_approve,
@@ -127,7 +188,15 @@ impl RuntimeConfig {
     }
 
     fn can_route(&self, harness_id: HarnessId, request: &RunRequest) -> bool {
-        request.attachments.is_empty() && self == &Self::from_request(harness_id, request)
+        let fresh_goal = harness_id == HarnessId::Codex
+            && request
+                .model_options
+                .get(zeron_proto::FRESH_GOAL_OPTION)
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
+        !fresh_goal
+            && request.attachments.is_empty()
+            && self == &Self::from_request(harness_id, request)
     }
 }
 
@@ -136,6 +205,7 @@ struct RunHandle {
     steerable: bool,
     runtime_config: RuntimeConfig,
     steer_tx: mpsc::Sender<SteerMessage>,
+    goal_tx: mpsc::Sender<GoalActionRequest>,
     /// Harness-level cancellation (protocol interrupt + child teardown).
     interrupt_token: CancellationToken,
     /// Engine-level cancel: arms the run task's grace deadline so a harness that
@@ -409,6 +479,26 @@ impl SessionsEngine {
         mut message_id: Option<String>,
         startup_retry: bool,
     ) -> Result<String, EngineError> {
+        let control_only = is_goal_control_only(&request);
+        let fresh_goal = request
+            .model_options
+            .get(zeron_proto::FRESH_GOAL_OPTION)
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        let selected_goal = request
+            .model_options
+            .get(zeron_proto::AGENT_MODE_OPTION)
+            .and_then(serde_json::Value::as_str)
+            == Some("goal");
+        // Old persisted Goal picker values were sticky. Only an explicit,
+        // one-shot selection may create a new native goal; queued legacy
+        // snapshots and ordinary later messages degrade to Default.
+        if harness_id == HarnessId::Codex && selected_goal && !fresh_goal && !control_only {
+            request.model_options.insert(
+                zeron_proto::AGENT_MODE_OPTION.into(),
+                serde_json::Value::String("default".into()),
+            );
+        }
         // Project-less chats store cwd `~` (the creating device can't know the
         // host's home); expand it here, on the host, where the run spawns.
         request.cwd = expand_home(&request.cwd);
@@ -427,19 +517,45 @@ impl SessionsEngine {
         // Reject unsupported composer intent before acknowledging a queued
         // message, writing its user entry, or interrupting an existing runtime.
         let harness = self.inner.registry.resolve(harness_id)?;
+        if control_only && harness_id != HarnessId::Codex {
+            return Err(EngineError::Other(
+                "Goal control is only supported by the Codex harness".into(),
+            ));
+        }
         self.validate_request(chat_id, harness_id, &request)?;
+        if harness_id == HarnessId::Codex && selected_goal && fresh_goal {
+            // Goal is a one-shot creation intent. Consume the persisted picker
+            // mode only after this request is validated, while retaining the
+            // request's own snapshot for queue/drain and the current run.
+            self.inner.consume_goal_mode(chat_id);
+        }
         // Every dispatched prompt is a turn — routed steer or fresh run alike.
-        self.note_turn_start(chat_id, &request.cwd);
+        if !control_only {
+            self.note_turn_start(chat_id, &request.cwd);
+        }
         let routed = lock(&self.inner.runs).get(chat_id).map(|h| {
             (
                 h.run_id.clone(),
+                h.runtime_config.harness_id,
                 h.steerable,
                 h.runtime_config.can_route(harness_id, &request),
                 h.steer_tx.clone(),
                 h.routed_steers.clone(),
             )
         });
-        if let Some((run_id, steerable, same_runtime, steer_tx, ledger)) = routed {
+        if let Some((run_id, owner, steerable, same_runtime, steer_tx, ledger)) = routed {
+            if control_only {
+                // Another caller rehydrated the owner while this action was
+                // preparing. Reuse its native goal mailbox without creating a
+                // prompt boundary or replacing the process.
+                return if owner == HarnessId::Codex {
+                    Ok(run_id)
+                } else {
+                    Err(EngineError::Other(
+                        "Another agent is currently running in this chat".into(),
+                    ))
+                };
+            }
             let user_id = message_id.clone().unwrap_or_else(new_id);
             let accepted = if steerable && same_runtime {
                 // Warm dispatch uses the same mailbox as explicit steering.
@@ -512,12 +628,33 @@ impl SessionsEngine {
 
         let handle = self.doc_handle(chat_id)?;
         let user_id = message_id.unwrap_or_else(new_id);
-        handle.write_user_message(&user_id, &request.prompt, now_ms())?;
+        if !control_only {
+            handle.write_user_message(&user_id, &request.prompt, now_ms())?;
+        }
 
-        lock(&self.inner.last_requests).insert(chat_id.to_string(), request.clone());
+        let mut remembered_request = request.clone();
+        if remembered_request
+            .model_options
+            .get(zeron_proto::AGENT_MODE_OPTION)
+            .and_then(serde_json::Value::as_str)
+            == Some("goal")
+        {
+            remembered_request.model_options.insert(
+                zeron_proto::AGENT_MODE_OPTION.into(),
+                serde_json::Value::String("default".into()),
+            );
+        }
+        remembered_request
+            .model_options
+            .remove(zeron_proto::FRESH_GOAL_OPTION);
+        remembered_request
+            .model_options
+            .remove(zeron_proto::GOAL_CONTROL_ONLY_OPTION);
+        lock(&self.inner.last_requests).insert(chat_id.to_string(), remembered_request);
 
         let run_id = new_id();
         let (steer_tx, steer_rx) = mpsc::channel::<SteerMessage>(32);
+        let (goal_tx, goal_rx) = mpsc::channel::<GoalActionRequest>(4);
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let (engine_tx, engine_rx) = mpsc::unbounded_channel::<AgentEvent>();
         let pending_inputs: PendingInputs = Arc::new(Mutex::new(PendingInputState::default()));
@@ -576,6 +713,7 @@ impl SessionsEngine {
         let controls = RunControls {
             request_input,
             steering: steer_rx,
+            goal_actions: goal_rx,
             interrupt: interrupt_token.clone(),
         };
 
@@ -586,6 +724,7 @@ impl SessionsEngine {
                 steerable: harness.supports_steering(),
                 runtime_config: RuntimeConfig::from_request(harness_id, &request),
                 steer_tx,
+                goal_tx,
                 interrupt_token,
                 cancel: cancel_tx,
                 engine_tx,
@@ -596,14 +735,16 @@ impl SessionsEngine {
         self.set_status(chat_id, SessionStatus::Working, true);
         // AFTER Working (same causal-order guarantee as the steer path): the
         // lastMessageAt bump must never be observable ahead of the live run.
-        self.inner.note_message(chat_id, &request.prompt);
+        if !control_only {
+            self.inner.note_message(chat_id, &request.prompt);
+        }
 
         // Name the chat NOW, off the first prompt — not after the first
         // exchange completes ("called New session for a long time for no
         // reason"; the titler only needs the prompt and skips titled chats;
         // the Done-time call below stays as the retry for a failed
         // generation).
-        if let Some(titles) = self.inner.titles.get() {
+        if !control_only && let Some(titles) = self.inner.titles.get() {
             titles.maybe_generate(chat_id, harness_id, &request.prompt, &request.cwd);
         }
 
@@ -702,6 +843,85 @@ impl SessionsEngine {
         }
         self.inner.note_message(chat_id, prompt);
         Ok(SteerOutcome::Accepted)
+    }
+
+    /// Apply a provider-native persistent-goal lifecycle action to the warm
+    /// session that owns `chat_id`. Codex keeps that session parked between
+    /// turns, so pause/resume/edit/clear remain native operations after Done.
+    pub async fn set_goal(
+        &self,
+        chat_id: &str,
+        action: GoalAction,
+        objective: Option<String>,
+    ) -> Result<Option<GoalState>, EngineError> {
+        let host = self
+            .inner
+            .doc_host()
+            .ok_or_else(|| EngineError::Other("session documents are not ready".into()))?;
+        if host.harness_for(chat_id) != HarnessId::Codex {
+            return Err(EngineError::Other(
+                "This chat is no longer owned by the Codex harness".into(),
+            ));
+        }
+        let mut goal_tx = lock(&self.inner.runs)
+            .get(chat_id)
+            .filter(|run| run.runtime_config.harness_id == HarnessId::Codex)
+            .map(|run| run.goal_tx.clone());
+        if goal_tx.is_none() {
+            // Goal controls outlive the 30-minute warm child and the desktop
+            // process. Reopen a control-only app-server against the persisted
+            // Codex thread; this path writes no user message and starts no
+            // model turn unless the requested action is Resume.
+            let mut request = self
+                .last_request(chat_id)
+                .or_else(|| host.request_from_chat_row(chat_id, ""))
+                .ok_or_else(|| {
+                    EngineError::Other("No prior Codex run configuration is available".into())
+                })?;
+            request.cwd = expand_home(&request.cwd);
+            let session_id = self
+                .inner
+                .resume_for(chat_id, HarnessId::Codex, &request.cwd)
+                .ok_or_else(|| {
+                    EngineError::Other("No persisted Codex thread owns this goal".into())
+                })?;
+            request.prompt.clear();
+            request.harness = Some(HarnessId::Codex);
+            request.resume = Some(session_id);
+            request.attachments.clear();
+            request.model_options.remove(zeron_proto::FRESH_GOAL_OPTION);
+            request.model_options.insert(
+                zeron_proto::AGENT_MODE_OPTION.into(),
+                serde_json::Value::String("default".into()),
+            );
+            request.model_options.insert(
+                zeron_proto::GOAL_CONTROL_ONLY_OPTION.into(),
+                serde_json::Value::Bool(true),
+            );
+            self.dispatch(chat_id, HarnessId::Codex, request, None)
+                .await?;
+            goal_tx = lock(&self.inner.runs)
+                .get(chat_id)
+                .filter(|run| run.runtime_config.harness_id == HarnessId::Codex)
+                .map(|run| run.goal_tx.clone());
+        }
+        let goal_tx = goal_tx.ok_or_else(|| {
+            EngineError::Other("The Codex goal channel could not be opened".into())
+        })?;
+        let (response, result) = oneshot::channel();
+        goal_tx
+            .send(GoalActionRequest {
+                action,
+                objective,
+                response,
+            })
+            .await
+            .map_err(|_| EngineError::Other("The Codex goal channel is closed".into()))?;
+        tokio::time::timeout(std::time::Duration::from_secs(30), result)
+            .await
+            .map_err(|_| EngineError::Other("Codex goal update timed out".into()))?
+            .map_err(|_| EngineError::Other("The Codex goal response was dropped".into()))?
+            .map_err(EngineError::Harness)
     }
 
     /// Interrupt the live run, if any. The run settles with a synthetic
@@ -1036,7 +1256,14 @@ impl Inner {
     }
 
     fn publish(&self, chat_id: &str, event: &AgentEvent) -> u64 {
-        let seq = match self.journal.append(chat_id, event) {
+        // Provider-owned turn boundaries and control-run sentinels are engine
+        // implementation details. Normalize recursively at the single
+        // journal/broadcast boundary so old clients never receive a new wire
+        // variant and control-only mutations never look like model turns.
+        let Some(event) = public_agent_event(event) else {
+            return 0;
+        };
+        let seq = match self.journal.append(chat_id, &event) {
             Ok(seq) => seq,
             Err(err) => {
                 tracing::error!(chat = %chat_id, error = %err, "journal append failed");
@@ -1044,10 +1271,7 @@ impl Inner {
             }
         };
         if let Some(hub) = lock(&self.hubs).get(chat_id) {
-            let _ = hub.send(JournaledEvent {
-                seq,
-                event: event.clone(),
-            });
+            let _ = hub.send(JournaledEvent { seq, event });
         }
         seq
     }
@@ -1171,6 +1395,42 @@ impl Inner {
         }
         if let Some(ws) = self.workspace() {
             ws.note_message(chat_id, text);
+        }
+    }
+
+    fn consume_goal_mode(&self, chat_id: &str) {
+        if let Some(request) = lock(&self.last_requests).get_mut(chat_id)
+            && request
+                .model_options
+                .get(zeron_proto::AGENT_MODE_OPTION)
+                .and_then(serde_json::Value::as_str)
+                == Some("goal")
+        {
+            request.model_options.insert(
+                zeron_proto::AGENT_MODE_OPTION.into(),
+                serde_json::Value::String("default".into()),
+            );
+        }
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let Some(mut config) = workspace.chat_config(chat_id) else {
+            return;
+        };
+        if config
+            .model_options
+            .get(zeron_proto::AGENT_MODE_OPTION)
+            .and_then(serde_json::Value::as_str)
+            != Some("goal")
+        {
+            return;
+        }
+        config.model_options.insert(
+            zeron_proto::AGENT_MODE_OPTION.into(),
+            serde_json::Value::String("default".into()),
+        );
+        if let Err(error) = workspace.set_chat_config(chat_id, &config) {
+            tracing::warn!(%chat_id, %error, "failed to consume one-shot goal mode");
         }
     }
 
@@ -2069,7 +2329,9 @@ async fn drive_run(
             inner.publish(&chat_id, &event);
             let is_steer = matches!(
                 sub_event.as_ref(),
-                AgentEvent::UserMessage { .. } | AgentEvent::Steered { .. }
+                AgentEvent::UserMessage { .. }
+                    | AgentEvent::Steered { .. }
+                    | AgentEvent::AutonomousTurnStarted { .. }
             );
             if is_steer {
                 settled_subagents.remove(parent_tool_use_id);
@@ -2365,7 +2627,7 @@ async fn drive_run(
                 inner.set_status(&chat_id, SessionStatus::Working, true);
             } else {
                 match &event {
-                    AgentEvent::Steered { .. } => {
+                    AgentEvent::Steered { .. } | AgentEvent::AutonomousTurnStarted { .. } => {
                         idle_since = None;
                         inner.set_status(&chat_id, SessionStatus::Working, true);
                     }
@@ -2488,12 +2750,20 @@ async fn drive_run(
             return;
         }
 
-        // A steer boundary splits the assistant entry exactly where the fold resets.
-        if let AgentEvent::Steered {
-            next_assistant_message_id,
-            ..
-        } = &event
-        {
+        // User and provider-owned turn boundaries both split the assistant
+        // entry. Only the former confirms delivery of an accepted user steer.
+        let boundary = match &event {
+            AgentEvent::Steered {
+                next_assistant_message_id,
+                ..
+            } => Some(next_assistant_message_id),
+            AgentEvent::AutonomousTurnStarted {
+                next_assistant_message_id,
+                ..
+            } => Some(next_assistant_message_id),
+            _ => None,
+        };
+        if let Some(next_assistant_message_id) = boundary {
             inner.publish(&chat_id, &event);
             // A steer boundary means a real prompt owns the turn again — its
             // Done will come; the short self-continued window stands down.
@@ -2520,9 +2790,10 @@ async fn drive_run(
             inner.set_status(&chat_id, SessionStatus::Working, true);
             // The boundary confirms delivery of the oldest accepted steer —
             // retire its at-least-once ledger entry.
-            if let Some(h) = lock(&inner.runs)
-                .get(&chat_id)
-                .filter(|h| h.run_id == run_id)
+            if boundary_acknowledges_user_steer(&event)
+                && let Some(h) = lock(&inner.runs)
+                    .get(&chat_id)
+                    .filter(|h| h.run_id == run_id)
             {
                 lock(&h.routed_steers).pop_front();
             }
@@ -2645,7 +2916,10 @@ async fn drive_run(
             }
             // Exchange completed on an untitled chat → name it (fire-and-forget;
             // interrupted/errored turns never trigger naming).
-            if *status == DoneStatus::Completed
+            let report_completion =
+                should_report_completion(is_goal_control_settle(&event), *status);
+            if report_completion
+                && !user_prompt.is_empty()
                 && let Some(titles) = inner.titles.get()
             {
                 titles.maybe_generate(&chat_id, harness_id, &user_prompt, &run_cwd);
@@ -2654,11 +2928,9 @@ async fn drive_run(
             // the previous Done is an internal handoff, not a completion ping.
             // Ordinary queued rows are not in this ledger and still notify.
             let pending_steer = inner.has_pending_steers(&chat_id, &run_id);
-            let completed_turn = (*status == DoneStatus::Completed
-                && !interrupted
-                && turn_was_active
-                && !pending_steer)
-                .then(|| entry_id.clone());
+            let completed_turn =
+                (report_completion && !interrupted && turn_was_active && !pending_steer)
+                    .then(|| entry_id.clone());
             // PERSISTENT SESSION: a cleanly completed turn on a steerable
             // harness PARKS instead of ending — child + mailbox stay warm for
             // the next routed dispatch; per-turn state resets for it.
@@ -2884,8 +3156,11 @@ mod tests {
         assert_eq!(doc.read_entries().unwrap().len(), 4);
     }
 
-    use super::{RuntimeConfig, subagent_doc_id};
-    use zeron_proto::{HarnessId, RunRequest, SandboxLevel};
+    use super::{
+        RuntimeConfig, boundary_acknowledges_user_steer, is_goal_control_only,
+        is_goal_control_settle, public_agent_event, should_report_completion, subagent_doc_id,
+    };
+    use zeron_proto::{AgentEvent, DoneStatus, HarnessId, RunRequest, SandboxLevel};
 
     #[tokio::test]
     async fn generated_image_failure_is_sanitized_even_inside_subagents() {
@@ -2985,6 +3260,96 @@ mod tests {
 
         follow_up.attachments.push("/tmp/image.png".into());
         assert!(!config.can_route(HarnessId::Grok, &follow_up));
+    }
+
+    #[test]
+    fn fresh_codex_goal_is_one_shot_but_followups_keep_the_runtime() {
+        let mut fresh = request();
+        fresh.model = Some("gpt-5.6-sol".into());
+        fresh.model_options.insert(
+            zeron_proto::AGENT_MODE_OPTION.into(),
+            serde_json::Value::String("goal".into()),
+        );
+        fresh.model_options.insert(
+            zeron_proto::FRESH_GOAL_OPTION.into(),
+            serde_json::Value::Bool(true),
+        );
+        let config = RuntimeConfig::from_request(HarnessId::Codex, &fresh);
+        assert_eq!(
+            config
+                .model_options
+                .get(zeron_proto::AGENT_MODE_OPTION)
+                .and_then(serde_json::Value::as_str),
+            Some("default")
+        );
+        assert!(
+            !config
+                .model_options
+                .contains_key(zeron_proto::FRESH_GOAL_OPTION)
+        );
+        assert!(
+            !config.can_route(HarnessId::Codex, &fresh),
+            "fresh goal creation must reach start_turn instead of the text-only mailbox"
+        );
+
+        let mut ordinary = fresh;
+        ordinary.prompt = "ordinary follow-up".into();
+        ordinary
+            .model_options
+            .remove(zeron_proto::FRESH_GOAL_OPTION);
+        ordinary.model_options.insert(
+            zeron_proto::AGENT_MODE_OPTION.into(),
+            serde_json::Value::String("default".into()),
+        );
+        assert!(
+            config.can_route(HarnessId::Codex, &ordinary),
+            "ordinary follow-up should reuse the native goal owner"
+        );
+    }
+
+    #[test]
+    fn autonomous_boundaries_and_control_runs_do_not_report_user_completion() {
+        let autonomous = AgentEvent::AutonomousTurnStarted {
+            assistant_message_id: Some("previous".into()),
+            next_assistant_message_id: Some("next".into()),
+        };
+        let user = AgentEvent::Steered {
+            assistant_message_id: Some("previous".into()),
+            next_assistant_message_id: Some("next".into()),
+        };
+        assert!(!boundary_acknowledges_user_steer(&autonomous));
+        assert!(boundary_acknowledges_user_steer(&user));
+        assert!(matches!(
+            public_agent_event(&autonomous),
+            Some(AgentEvent::Steered { .. })
+        ));
+        let nested = AgentEvent::Subagent {
+            parent_tool_use_id: "parent".into(),
+            event: Box::new(autonomous.clone()),
+        };
+        assert!(matches!(
+            public_agent_event(&nested),
+            Some(AgentEvent::Subagent { event, .. })
+                if matches!(event.as_ref(), AgentEvent::Steered { .. })
+        ));
+
+        let mut control = request();
+        control.model_options.insert(
+            zeron_proto::GOAL_CONTROL_ONLY_OPTION.into(),
+            serde_json::Value::Bool(true),
+        );
+        assert!(is_goal_control_only(&control));
+        assert!(!should_report_completion(true, DoneStatus::Completed));
+        assert!(should_report_completion(false, DoneStatus::Completed));
+        assert!(!should_report_completion(false, DoneStatus::Errored));
+        let control_settle = AgentEvent::Done {
+            status: DoneStatus::Completed,
+            result: Some(zeron_proto::GOAL_CONTROL_DONE_RESULT.into()),
+            error: None,
+            session_id: Some("thread".into()),
+        };
+        assert!(is_goal_control_settle(&control_settle));
+        assert_eq!(public_agent_event(&control_settle), None);
     }
 
     #[test]

@@ -506,6 +506,7 @@ async fn run_session(session: Session) {
     let RunControls {
         request_input: _request_input,
         mut steering,
+        goal_actions: _goal_actions,
         interrupt,
     } = controls;
 

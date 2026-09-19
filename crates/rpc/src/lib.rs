@@ -43,6 +43,10 @@ pub mod methods {
     pub const LIST_MODELS: &str = "ListModels";
     pub const LIST_SKILLS: &str = "ListSkills";
     pub const LIST_COMMANDS: &str = "ListCommands";
+    /// Provider-native persistent goal lifecycle. Params
+    /// `{chatId, action, objective?, targetDeviceId?}`; returns `{goal}` where
+    /// clear yields null. Relay-forwardable to the chat's host device.
+    pub const SET_GOAL: &str = "SetGoal";
     pub const QUEUE_COMMAND: &str = "QueueCommand";
     pub const TAKE_PROJECT_ACTION_SETUP: &str = "TakeProjectActionSetup";
     /// Durable outcome for one queued command. Params `{chatId, commandId}`;

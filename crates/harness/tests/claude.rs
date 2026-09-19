@@ -72,6 +72,7 @@ fn controls(
             rx
         }),
         steering: steer_rx,
+        goal_actions: mpsc::channel(1).1,
         interrupt: token.clone(),
     };
     (controls, steer_tx, token)
@@ -303,6 +304,7 @@ async fn ask_user_question_round_trips_through_the_control_channel() {
             rx
         }),
         steering: steer_rx,
+        goal_actions: mpsc::channel(1).1,
         interrupt: token.clone(),
     };
     let events = run_to_end(&harness(), request("scenario:askuser"), controls).await;
@@ -350,6 +352,7 @@ async fn native_control_cancel_aborts_the_exact_question_waiter() {
             rx
         }),
         steering: steer_rx,
+        goal_actions: mpsc::channel(1).1,
         interrupt: CancellationToken::new(),
     };
     let mut req = request("scenario:askuser-cancel");
@@ -400,6 +403,7 @@ async fn run_teardown_aborts_unanswered_control_waiters() {
             rx
         }),
         steering: steer_rx,
+        goal_actions: mpsc::channel(1).1,
         interrupt: CancellationToken::new(),
     };
     let mut req = request("scenario:askuser-teardown");

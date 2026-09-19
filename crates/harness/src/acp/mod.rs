@@ -2200,6 +2200,7 @@ fn legacy_mode_option(session: &Value) -> Option<ModelOption> {
     if session["configOptions"]
         .as_array()
         .is_some_and(|options| options.iter().any(|o| o["category"] == "mode"))
+        || legacy_modes_mirror_thought_level(session)
     {
         return None;
     }
@@ -2223,6 +2224,38 @@ fn legacy_mode_option(session: &Value) -> Option<ModelOption> {
             .to_owned(),
         choices,
     })
+}
+
+/// Some adapters publish the same reasoning selector on both ACP's deprecated
+/// `modes` surface and the current `thought_level` config option. Treat the
+/// legacy surface as a duplicate only when its complete value set and current
+/// value match, so agents with independent opaque modes keep their native mode
+/// picker.
+fn legacy_modes_mirror_thought_level(session: &Value) -> bool {
+    let Some(modes) = session["modes"]["availableModes"].as_array() else {
+        return false;
+    };
+    let Some(thought) = session["configOptions"].as_array().and_then(|options| {
+        options
+            .iter()
+            .find(|option| option["category"] == "thought_level")
+    }) else {
+        return false;
+    };
+    let Some(thought_options) = thought["options"].as_array() else {
+        return false;
+    };
+    if modes.is_empty() || modes.len() != thought_options.len() {
+        return false;
+    }
+    let same_values = modes.iter().all(|mode| {
+        mode["id"].as_str().is_some_and(|id| {
+            thought_options
+                .iter()
+                .any(|option| option["value"].as_str() == Some(id))
+        })
+    });
+    same_values && session["modes"]["currentModeId"].as_str() == thought["currentValue"].as_str()
 }
 
 /// Validate explicit intent before any prompt; stale or rejected choices must
@@ -2915,6 +2948,7 @@ async fn run_session(session: Session) {
     let RunControls {
         request_input,
         mut steering,
+        goal_actions: _goal_actions,
         interrupt,
     } = controls;
     let request_input = std::sync::Arc::new(request_input);
@@ -4451,6 +4485,100 @@ mod tests {
             requested_mode_change(&grouped, &choices).unwrap(),
             requested_mode_change(&session, &choices).unwrap()
         );
+    }
+
+    #[test]
+    fn pi_thinking_modes_are_not_exposed_as_agent_modes() {
+        // pi-acp 0.0.33 mirrors its thinking selector onto both the deprecated
+        // ACP modes block and the current thought_level config option.
+        let thinking = ["off", "minimal", "low", "medium", "high", "xhigh"];
+        let session = json!({
+            "modes": {
+                "currentModeId": "medium",
+                "availableModes": thinking.map(|id| json!({
+                    "id": id,
+                    "name": format!("Thinking: {id}"),
+                    "description": null
+                }))
+            },
+            "models": {
+                "currentModelId": "openai/gpt-5.2-codex",
+                "availableModels": [{
+                    "modelId": "openai/gpt-5.2-codex",
+                    "name": "GPT-5.2 Codex"
+                }]
+            },
+            "configOptions": [{
+                "type": "select",
+                "id": "thought_level",
+                "category": "thought_level",
+                "name": "Thinking",
+                "currentValue": "medium",
+                "options": thinking.map(|value| json!({
+                    "value": value,
+                    "name": format!("Thinking: {value}"),
+                    "description": null
+                }))
+            }]
+        });
+
+        assert!(legacy_mode_option(&session).is_none());
+        assert!(!advertises_modes(&session));
+        let model = &models_from_session(&session, &[])[0];
+        assert_eq!(
+            model.reasoning_levels,
+            vec![
+                ReasoningLevel::Minimal,
+                ReasoningLevel::Low,
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+                ReasoningLevel::XHigh,
+            ]
+        );
+        assert!(
+            model
+                .options
+                .iter()
+                .all(|option| option.id != zeron_proto::AGENT_MODE_OPTION)
+        );
+    }
+
+    #[test]
+    fn independent_legacy_modes_survive_a_thought_level_option() {
+        let session = json!({
+            "modes": {
+                "currentModeId": "build",
+                "availableModes": [
+                    {"id": "architect", "name": "Plan"},
+                    {"id": "build", "name": "Build"}
+                ]
+            },
+            "models": {
+                "availableModels": [{"modelId": "x", "name": "X"}]
+            },
+            "configOptions": [{
+                "type": "select",
+                "id": "thought_level",
+                "category": "thought_level",
+                "name": "Thinking",
+                "currentValue": "high",
+                "options": [
+                    {"value": "low", "name": "Low"},
+                    {"value": "high", "name": "High"}
+                ]
+            }]
+        });
+
+        let mode = legacy_mode_option(&session).expect("independent agent mode");
+        assert_eq!(mode.default_choice, "build");
+        assert_eq!(
+            mode.choices
+                .iter()
+                .map(|choice| choice.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["architect", "build"]
+        );
+        assert!(advertises_modes(&session));
     }
 
     #[test]

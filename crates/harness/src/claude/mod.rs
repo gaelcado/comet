@@ -702,6 +702,7 @@ async fn run_session(session: Session) {
     let RunControls {
         request_input,
         mut steering,
+        goal_actions: _goal_actions,
         interrupt,
     } = controls;
     let request_input = Arc::new(request_input);

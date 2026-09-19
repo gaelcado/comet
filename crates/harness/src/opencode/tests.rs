@@ -253,6 +253,7 @@ impl TurnWire {
                     rx
                 }),
                 steering,
+                goal_actions: tokio::sync::mpsc::channel(1).1,
                 interrupt: interrupt.clone(),
             },
             request: serde_json::from_value(

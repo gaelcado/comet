@@ -92,6 +92,17 @@ pub struct ModelOptionChoice {
 }
 
 pub const AGENT_MODE_OPTION: &str = "agentMode";
+/// Engine/UI-only one-shot marker for a freshly selected Codex Goal mode.
+/// Harnesses consume this marker when building native requests; it must never
+/// be forwarded to a provider as a model option.
+pub const FRESH_GOAL_OPTION: &str = "zeronFreshGoal";
+/// Engine-only marker for reopening a Codex app-server solely to mutate a
+/// persisted goal. No user message or model turn is created by this request.
+pub const GOAL_CONTROL_ONLY_OPTION: &str = "zeronGoalControlOnly";
+/// Internal marker carried only from the Codex adapter into the engine so a
+/// control-only mutation can settle its transient run without announcing a
+/// completed model turn. The engine strips it before journal/broadcast output.
+pub const GOAL_CONTROL_DONE_RESULT: &str = "__zeron_goal_control_settled__";
 
 pub fn agent_mode_option(harness: HarnessId) -> Option<ModelOption> {
     let modes: &[(&str, &str)] = match harness {
@@ -178,6 +189,29 @@ pub struct WorktreeSpec {
 /// life of a run.
 pub const LIVE_PLAN_TOOL_ID: &str = "acp-plan";
 pub const LIVE_GOAL_TOOL_ID: &str = "agent-goal";
+
+/// A user-initiated lifecycle change for a provider-native persistent goal.
+/// Only adapters that advertise a goal capability may accept these actions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GoalAction {
+    Pause,
+    Resume,
+    Edit,
+    Clear,
+}
+
+/// Provider-native goal state returned by lifecycle mutations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalState {
+    pub objective: String,
+    pub status: String,
+    #[serde(default)]
+    pub tokens_used: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<u64>,
+}
 
 /// Session-scoped state may update again after a completed turn.
 pub fn is_live_activity(id: &str) -> bool {
@@ -573,6 +607,14 @@ pub enum AgentEvent {
     /// same child transcript even if the provider does not echo the user text.
     #[serde(rename_all = "camelCase")]
     Steered {
+        assistant_message_id: Option<String>,
+        next_assistant_message_id: Option<String>,
+    },
+    /// A provider-owned turn began without consuming a user message. This is
+    /// a transcript boundary like [`Self::Steered`], but must never acknowledge
+    /// or retire the engine's pending user-steer delivery ledger.
+    #[serde(rename_all = "camelCase")]
+    AutonomousTurnStarted {
         assistant_message_id: Option<String>,
         next_assistant_message_id: Option<String>,
     },

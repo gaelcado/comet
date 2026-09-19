@@ -26,6 +26,12 @@ has "$line" '"method":"initialized"' || exit 1
 
 # ---- thread start / resume -------------------------------------------------
 read -r line || exit 1
+if has "$line" '"method":"thread/goal/set"' && has "$line" '"threadId":"cold-goal"'; then
+  has "$line" '"status":"paused"' || exit 1
+  emit "{\"id\":$(rid "$line"),\"result\":{\"goal\":{\"objective\":\"persisted goal\",\"status\":\"paused\",\"tokensUsed\":7}}}"
+  emit '{"method":"thread/goal/updated","params":{"threadId":"cold-goal","goal":{"objective":"persisted goal","status":"paused","tokensUsed":7}}}'
+  exec sleep 30
+fi
 if has "$line" '"method":"config/read"'; then
   emit "{\"id\":$(rid "$line"),\"result\":{\"config\":{\"mcp_servers\":{\"test\":{\"enabled\":true}}}}}"
   read -r line || exit 1
@@ -81,9 +87,10 @@ if has "$turnline" '"method":"thread/goal/get"'; then
   emit "{\"id\":$(rid "$turnline"),\"result\":{\"goal\":null}}"
   read -r turnline || exit 1
   if has "$turnline" '"method":"thread/goal/set"'; then
-    has "$turnline" '"objective":"scenario:goal"' || exit 1
-    emit "{\"id\":$(rid "$turnline"),\"result\":{\"goal\":{\"objective\":\"scenario:goal\",\"status\":\"active\"}}}"
-    emit '{"method":"thread/goal/updated","params":{"threadId":"th-1","goal":{"objective":"scenario:goal","status":"active","tokensUsed":0,"tokenBudget":null}}}'
+    has "$turnline" '"objective":"scenario:goal' || exit 1
+    has "$turnline" '"status":"paused"' || exit 1
+    emit "{\"id\":$(rid "$turnline"),\"result\":{\"goal\":{\"objective\":\"scenario:goal\",\"status\":\"paused\"}}}"
+    emit '{"method":"thread/goal/updated","params":{"threadId":"th-1","goal":{"objective":"scenario:goal","status":"paused","tokensUsed":0,"tokenBudget":null}}}'
     read -r turnline || exit 1
   fi
 fi
@@ -175,8 +182,20 @@ case "$turnline" in
     has "$turnline" '"mode":"plan"' || { fail_turn "$tid" "missing native plan mode"; exit 0; }
   else
     has "$turnline" '"mode":"default"' || { fail_turn "$tid" "goal must use build mode"; exit 0; }
+    if has "$turnline" 'scenario:goal-rich'; then
+      has "$turnline" '"type":"skill"' || { fail_turn "$tid" "goal dropped native skill input"; exit 0; }
+      has "$turnline" '"path":"/repo/goal/SKILL.md"' || { fail_turn "$tid" "goal dropped skill path"; exit 0; }
+      has "$turnline" '[lib.rs](src/lib.rs)' || { fail_turn "$tid" "goal dropped file reference"; exit 0; }
+    fi
   fi
   emit "{\"id\":$tid,\"result\":{\"turn\":{\"id\":\"t-1\"}}}"
+  if has "$turnline" 'scenario:goal'; then
+    read -r activate || exit 1
+    has "$activate" '"method":"thread/goal/set"' || exit 1
+    has "$activate" '"status":"active"' || exit 1
+    emit "{\"id\":$(rid "$activate"),\"result\":{\"goal\":{\"objective\":\"scenario:goal\",\"status\":\"active\",\"tokensUsed\":0}}}"
+    emit '{"method":"thread/goal/updated","params":{"threadId":"th-1","goal":{"objective":"scenario:goal","status":"active","tokensUsed":0,"tokenBudget":null}}}'
+  fi
   emit '{"method":"turn/started","params":{"threadId":"th-1","turn":{"id":"t-1"}}}'
   emit '{"method":"turn/plan/updated","params":{"threadId":"th-1","plan":[{"step":"Inspect the project","status":"completed"},{"step":"Implement changes","status":"pending"}]}}'
   emit '{"method":"item/completed","params":{"item":{"id":"proposed-plan","type":"plan","text":"## Plan\nInspect, then implement."}}}'
@@ -184,10 +203,40 @@ case "$turnline" in
   emit '{"method":"item/agentMessage/delta","params":{"delta":"continuing while awaiting input"}}'
   read -r answer || exit 1
   has "$answer" '"choice":{"answers":["Yes"]}' || { fail_turn "$tid" "input answer missing"; exit 0; }
-  if has "$turnline" 'scenario:goal'; then
+  if has "$turnline" 'scenario:goal-lifecycle'; then
+    emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
+    read -r pause || exit 1
+    has "$pause" '"method":"thread/goal/set"' && has "$pause" '"status":"paused"' || exit 1
+    emit "{\"id\":$(rid "$pause"),\"result\":{\"goal\":{\"objective\":\"scenario:goal-lifecycle\",\"status\":\"paused\",\"tokensUsed\":42}}}"
+    emit '{"method":"thread/goal/updated","params":{"threadId":"th-1","goal":{"objective":"scenario:goal-lifecycle","status":"paused","tokensUsed":42}}}'
+    read -r resume || exit 1
+    has "$resume" '"method":"thread/goal/set"' && has "$resume" '"status":"active"' || exit 1
+    emit "{\"id\":$(rid "$resume"),\"result\":{\"goal\":{\"objective\":\"scenario:goal-lifecycle\",\"status\":\"active\",\"tokensUsed\":42}}}"
+    emit '{"method":"thread/goal/updated","params":{"threadId":"th-1","goal":{"objective":"scenario:goal-lifecycle","status":"active","tokensUsed":42}}}'
+    emit '{"method":"turn/started","params":{"threadId":"th-1","turn":{"id":"t-2"}}}'
+    emit '{"method":"item/agentMessage/delta","params":{"threadId":"th-1","delta":"autonomous continuation"}}'
+    emit '{"method":"turn/completed","params":{"threadId":"th-1","turn":{"id":"t-2","status":"completed"}}}'
+    read -r followup || exit 1
+    has "$followup" '"method":"turn/start"' && has "$followup" 'immediate follow-up' || exit 1
+    emit "{\"id\":$(rid "$followup"),\"result\":{\"turn\":{\"id\":\"t-3\"}}}"
+    emit '{"method":"turn/started","params":{"threadId":"th-1","turn":{"id":"t-3"}}}'
+    emit '{"method":"item/agentMessage/delta","params":{"threadId":"th-1","delta":"follow-up after continuation"}}'
+    emit '{"method":"turn/completed","params":{"threadId":"th-1","turn":{"id":"t-3","status":"completed"}}}'
+    read -r edit || exit 1
+    has "$edit" '"method":"thread/goal/set"' && has "$edit" '"objective":"Revised objective"' || exit 1
+    emit "{\"id\":$(rid "$edit"),\"result\":{\"goal\":{\"objective\":\"Revised objective\",\"status\":\"paused\",\"tokensUsed\":42}}}"
+    emit '{"method":"thread/goal/updated","params":{"threadId":"th-1","goal":{"objective":"Revised objective","status":"paused","tokensUsed":42}}}'
+    read -r clear || exit 1
+    has "$clear" '"method":"thread/goal/clear"' || exit 1
+    emit "{\"id\":$(rid "$clear"),\"result\":{}}"
+    emit '{"method":"thread/goal/cleared","params":{"threadId":"th-1","goal":null}}'
+    exec sleep 30
+  elif has "$turnline" 'scenario:goal'; then
     emit '{"method":"thread/goal/updated","params":{"threadId":"th-1","goal":{"objective":"scenario:goal","status":"complete","tokensUsed":42,"tokenBudget":null}}}'
+    emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
+  else
+    emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
   fi
-  emit '{"method":"turn/completed","params":{"turn":{"id":"t-1","status":"completed"}}}'
   ;;
 *scenario:native-skills*)
   for want in '"type":"skill"' '"path":"/repo/a b/SKILL.md"' '[lib.rs](src/lib.rs)'; do

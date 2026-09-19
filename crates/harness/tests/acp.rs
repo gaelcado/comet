@@ -71,6 +71,7 @@ fn controls() -> (RunControls, mpsc::Sender<SteerMessage>, CancellationToken) {
             rx
         }),
         steering: steer_rx,
+        goal_actions: mpsc::channel(1).1,
         interrupt: token.clone(),
     };
     (controls, steer_tx, token)
@@ -118,6 +119,7 @@ fn answering_controls(
             rx
         }),
         steering,
+        goal_actions: mpsc::channel(1).1,
         interrupt: CancellationToken::new(),
     };
     (controls, seen)
@@ -331,6 +333,7 @@ async fn every_acp_harness_cancels_pending_native_input_on_interrupt() {
                 rx
             }),
             steering,
+            goal_actions: mpsc::channel(1).1,
             interrupt: token,
         };
         let mut req = request("scenario:question-interrupt");

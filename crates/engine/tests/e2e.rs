@@ -2544,6 +2544,122 @@ async fn pending_steer_handoff_does_not_publish_a_completion() {
     }
 }
 
+/// A provider-owned turn may begin while a user steer is already accepted but
+/// still waiting behind that turn. Its transcript boundary must not confirm
+/// delivery of the user steer: if the child dies before a real `Steered`
+/// acknowledgement, the engine has to recover and dispatch that prompt again.
+#[tokio::test]
+async fn autonomous_boundary_does_not_retire_pending_user_steer() {
+    struct AutonomousThenExitHarness {
+        runs: std::sync::atomic::AtomicUsize,
+        prompts: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl Harness for AutonomousThenExitHarness {
+        fn id(&self) -> HarnessId {
+            HarnessId::Mock
+        }
+        fn display_name(&self) -> &str {
+            "Autonomous then exit"
+        }
+        fn supports_steering(&self) -> bool {
+            true
+        }
+        fn steering_mode(&self) -> SteeringMode {
+            SteeringMode::StepBoundary
+        }
+        fn reasoning_levels(&self) -> &[ReasoningLevel] {
+            &[]
+        }
+        async fn models(&self) -> Result<Vec<Model>, HarnessError> {
+            Ok(vec![])
+        }
+        async fn run(
+            &self,
+            request: RunRequest,
+            mut controls: RunControls,
+        ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
+            let run = self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.prompts.lock().unwrap().push(request.prompt);
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                if run == 0 {
+                    let _ = tx
+                        .send(Ok(AgentEvent::TextDelta {
+                            text: "opening response".into(),
+                        }))
+                        .await;
+                    // The engine records this accepted message in its recovery
+                    // ledger before the harness can receive it.
+                    let Some(_accepted_user_steer) = controls.steering.recv().await else {
+                        return;
+                    };
+                    let _ = tx
+                        .send(Ok(AgentEvent::AutonomousTurnStarted {
+                            assistant_message_id: Some("a-opening".into()),
+                            next_assistant_message_id: Some("a-autonomous".into()),
+                        }))
+                        .await;
+                    // Exit without a user-owned Steered boundary. The pending
+                    // steer must be claimed and redelivered by drive_run.
+                } else {
+                    let _ = tx
+                        .send(Ok(AgentEvent::TextDelta {
+                            text: "redelivered response".into(),
+                        }))
+                        .await;
+                    let _ = tx.send(Ok(done(DoneStatus::Completed))).await;
+                }
+            });
+            Ok(futures::stream::unfold(rx, |mut rx| async move {
+                rx.recv().await.map(|event| (event, rx))
+            })
+            .boxed())
+        }
+    }
+
+    let harness = Arc::new(AutonomousThenExitHarness {
+        runs: std::sync::atomic::AtomicUsize::new(0),
+        prompts: std::sync::Mutex::new(Vec::new()),
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let core = assemble(dir.path(), harness.clone());
+    let handle = core.doc_host.open(CHAT).unwrap();
+    queue_as_viewer(
+        handle.doc(),
+        "cmd-autonomous-ledger",
+        SessionCommandPayload::Run {
+            request: run_request("opening"),
+            message_id: "user-opening".into(),
+        },
+    );
+    wait_for(
+        || core.sessions.session_status(CHAT).map(|s| s.status) == Some(SessionStatus::Working),
+        "opening run",
+    )
+    .await;
+    assert_eq!(
+        core.sessions
+            .steer(CHAT, "must survive", Some("user-pending".into()))
+            .await
+            .unwrap(),
+        zeron_engine::sessions::SteerOutcome::Accepted
+    );
+
+    wait_for(
+        || harness.runs.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+        "pending steer to be redelivered after autonomous child exit",
+    )
+    .await;
+    assert_eq!(
+        harness.prompts.lock().unwrap().as_slice(),
+        ["opening", "must survive"],
+        "an autonomous boundary must not acknowledge the queued user steer"
+    );
+    core.shutdown().await;
+}
+
 /// Real drive_run + journal + Loro, with an isolated Codex source root.
 #[tokio::test]
 async fn generated_image_is_materialized_before_publication_and_survives_reopen() {

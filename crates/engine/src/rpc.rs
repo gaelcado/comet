@@ -63,7 +63,7 @@ use tokio::sync::watch;
 
 use zeron_doc::{MessagePart, SessionCommandPayload, SessionCommandStatus};
 use zeron_proto::{
-    ChatConfig, CreateWorktreeOutcome, EngineInfo, HarnessId, ProjectActionDraft, Space, ToolCall,
+    ChatConfig, CreateWorktreeOutcome, EngineInfo, GoalAction, HarnessId, ProjectActionDraft, Space, ToolCall,
     WorkspaceScope,
 };
 use zeron_rpc::{LinkCache, RpcError, RpcReply, RpcService, methods, parse_params};
@@ -101,6 +101,15 @@ struct ListModelsParams {
 struct SetHarnessEnabledParams {
     harness: HarnessId,
     enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetGoalParams {
+    chat_id: String,
+    action: GoalAction,
+    #[serde(default)]
+    objective: Option<String>,
 }
 
 async fn update_harness_enabled<F>(
@@ -1065,6 +1074,7 @@ fn forwardable(method: &str) -> bool {
             | methods::LIST_MODELS
             | methods::LIST_SKILLS
             | methods::LIST_COMMANDS
+            | methods::SET_GOAL
             | methods::QUEUE_COMMAND
             | methods::TAKE_PROJECT_ACTION_SETUP
             | methods::WATCH_COMMAND
@@ -1573,6 +1583,29 @@ impl RpcService for EngineRpc {
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&commands)
+            }
+            methods::SET_GOAL => {
+                let p: SetGoalParams = parse_params(params)?;
+                if matches!(p.action, GoalAction::Edit)
+                    && p.objective
+                        .as_deref()
+                        .is_none_or(|objective| objective.trim().is_empty())
+                {
+                    return Err(RpcError::BadParams(
+                        "edit requires a non-empty objective".into(),
+                    ));
+                }
+                if !matches!(p.action, GoalAction::Edit) && p.objective.is_some() {
+                    return Err(RpcError::BadParams(
+                        "objective is only valid for edit".into(),
+                    ));
+                }
+                let goal = self
+                    .sessions
+                    .set_goal(&p.chat_id, p.action, p.objective)
+                    .await
+                    .map_err(|error| RpcError::Failed(error.to_string()))?;
+                RpcReply::value(&serde_json::json!({ "goal": goal }))
             }
             methods::QUEUE_COMMAND => {
                 let p: QueueCommandParams = parse_params(params)?;
