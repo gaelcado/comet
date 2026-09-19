@@ -187,7 +187,14 @@ impl ClaudeHarness {
         if let Some(effort) = to_effort(request.reasoning, request.model.as_deref()) {
             cmd.args(["--effort", effort]);
         }
-        if request.auto_approve {
+        if request
+            .model_options
+            .get(zeron_proto::AGENT_MODE_OPTION)
+            .and_then(Value::as_str)
+            == Some("plan")
+        {
+            cmd.args(["--permission-mode", "plan"]);
+        } else if request.auto_approve {
             cmd.args([
                 "--permission-mode",
                 "bypassPermissions",
@@ -535,6 +542,11 @@ impl ClaudeHarness {
             event_tx,
             controls,
             reasoning: request.reasoning,
+            plan_mode: request
+                .model_options
+                .get(zeron_proto::AGENT_MODE_OPTION)
+                .and_then(Value::as_str)
+                == Some("plan"),
             interrupt_grace: self.interrupt_grace,
             kill_grace: self.kill_grace,
             stderr_tail,
@@ -659,6 +671,7 @@ struct Session {
     event_tx: mpsc::Sender<Result<AgentEvent, HarnessError>>,
     controls: RunControls,
     reasoning: Option<ReasoningLevel>,
+    plan_mode: bool,
     interrupt_grace: Duration,
     kill_grace: Duration,
     /// Rolling stderr tail for the crash message on an unexpected exit.
@@ -676,6 +689,7 @@ async fn run_session(session: Session) {
         event_tx,
         controls,
         reasoning,
+        plan_mode,
         interrupt_grace,
         kill_grace,
         stderr_tail,
@@ -686,6 +700,7 @@ async fn run_session(session: Session) {
         interrupt,
     } = controls;
     let request_input = Arc::new(request_input);
+    let plan_mode = Arc::new(std::sync::atomic::AtomicBool::new(plan_mode));
 
     let mut norm = Normalizer::new();
     let mut steering_open = true;
@@ -717,7 +732,7 @@ async fn run_session(session: Session) {
                             }));
                             let _ = stdin_tx.send(StdinMsg::Line(line));
                         } else {
-                            handle_control_request(req, &request_input, &stdin_tx);
+                            handle_control_request(req, &request_input, &stdin_tx, &plan_mode);
                         }
                         continue;
                     }
@@ -835,6 +850,7 @@ fn handle_control_request(
     req: ControlRequestFrame,
     request_input: &Arc<RequestInputFn>,
     stdin_tx: &mpsc::UnboundedSender<StdinMsg>,
+    plan_mode: &Arc<std::sync::atomic::AtomicBool>,
 ) {
     if req.request.subtype != "can_use_tool" {
         tracing::debug!(
@@ -843,8 +859,60 @@ fn handle_control_request(
         );
         return;
     }
+    if req.request.tool_name == "EnterPlanMode" {
+        plan_mode.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    if req.request.tool_name == "ExitPlanMode" {
+        let plan_mode = Arc::clone(plan_mode);
+        let request_input = Arc::clone(request_input);
+        let stdin_tx = stdin_tx.clone();
+        tokio::spawn(async move {
+            let question = UserInputQuestion {
+                id: "implement-plan".into(),
+                header: "Plan ready".into(),
+                question: req.request.input["plan"]
+                    .as_str()
+                    .map(|plan| format!("{plan}\n\nImplement this plan?"))
+                    .unwrap_or_else(|| "Implement this plan?".into()),
+                options: vec!["Implement plan".into(), "Keep planning".into()],
+                option_descriptions: Vec::new(),
+                allow_custom: true,
+                non_blocking: false,
+                multi_select: false,
+            };
+            let answers = (request_input)(vec![question]).await.unwrap_or_default();
+            let approved = answers.iter().any(|answer| {
+                answer.question_id == "implement-plan"
+                    && answer.labels.iter().any(|label| label == "Implement plan")
+            });
+            let response = if approved {
+                plan_mode.store(false, std::sync::atomic::Ordering::Relaxed);
+                allow_response(req.request.input)
+            } else {
+                let feedback = answers
+                    .iter()
+                    .flat_map(|answer| &answer.labels)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                serde_json::json!({"behavior": "deny", "message": format!("Keep planning; implementation is not approved. User feedback: {feedback}")})
+            };
+            let _ = stdin_tx.send(StdinMsg::Line(control_response_line(
+                &req.request_id,
+                response,
+            )));
+        });
+        return;
+    }
     if req.request.tool_name != "AskUserQuestion" {
-        let line = control_response_line(&req.request_id, allow_response(req.request.input));
+        let response = if plan_mode.load(std::sync::atomic::Ordering::Relaxed)
+            && req.request.tool_name != "EnterPlanMode"
+        {
+            serde_json::json!({"behavior": "deny", "message": "Stay in plan mode. Use permitted read-only tools until the user approves implementation."})
+        } else {
+            allow_response(req.request.input)
+        };
+        let line = control_response_line(&req.request_id, response);
         let _ = stdin_tx.send(StdinMsg::Line(line));
         return;
     }
@@ -885,6 +953,21 @@ fn parse_questions(input: &Value) -> Vec<UserInputQuestion> {
                 id: uuid::Uuid::new_v4().to_string(),
                 header: field(["header", "title"]).unwrap_or("Question").into(),
                 question: field(["question", "prompt"]).unwrap_or("").into(),
+                option_descriptions: q
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|option| {
+                        option
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned()
+                    })
+                    .collect(),
+                allow_custom: true,
+                non_blocking: false,
                 multi_select: ["multiSelect", "multi_select"]
                     .iter()
                     .find_map(|k| q.get(*k).and_then(Value::as_bool))
@@ -941,8 +1024,62 @@ fn updated_input_with_answers(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn question_capability_contract() {
+        let mapped = parse_questions(
+            &serde_json::json!({"questions":[{"question":"Choose","multiSelect":true,"options":[{"label":"One","description":"First option"}]}]}),
+        );
+        assert!(mapped[0].allow_custom && mapped[0].multi_select);
+        assert_eq!(mapped[0].option_descriptions, ["First option"]);
+    }
+
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn leaving_plan_mode_requires_an_explicit_answer() {
+        for (answer, expected) in [
+            ("Implement plan", "allow"),
+            ("Keep planning", "deny"),
+            ("", "deny"),
+        ] {
+            let request_input: Arc<RequestInputFn> =
+                Arc::new(Box::new(move |questions: Vec<UserInputQuestion>| {
+                    assert_eq!(questions[0].id, "implement-plan");
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    tx.send(vec![UserInputAnswer {
+                        question_id: "implement-plan".into(),
+                        labels: vec![answer.into()],
+                    }])
+                    .unwrap();
+                    rx
+                }));
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let req: ControlRequestFrame = serde_json::from_value(json!({
+                "request_id": "plan-exit", "request": {"subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": {"plan": "Make the change"}}
+            })).unwrap();
+            let plan = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            handle_control_request(req, &request_input, &tx, &plan);
+            let Some(StdinMsg::Line(line)) = rx.recv().await else {
+                panic!("response missing")
+            };
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["response"]["response"]["behavior"], expected);
+            assert_eq!(
+                plan.load(std::sync::atomic::Ordering::Relaxed),
+                expected == "deny"
+            );
+            let write: ControlRequestFrame = serde_json::from_value(json!({
+                "request_id": "write", "request": {"subtype": "can_use_tool", "tool_name": "Write", "input": {"file_path": "/tmp/example"}}
+            })).unwrap();
+            handle_control_request(write, &request_input, &tx, &plan);
+            let Some(StdinMsg::Line(line)) = rx.recv().await else {
+                panic!("response missing")
+            };
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["response"]["response"]["behavior"], expected);
+        }
+    }
 
     #[test]
     fn parses_questions_tolerantly() {

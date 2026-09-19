@@ -12,6 +12,21 @@ read -r first || exit 1
 emit() { printf '%s\n' "$1"; }
 
 case "$first" in
+*scenario:plan*)
+  mode=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --permission-mode) shift; mode="$1" ;;
+      --dangerously-skip-permissions) exit 1 ;;
+    esac
+    shift
+  done
+  [ "$mode" = "plan" ] || exit 1
+  emit '{"type":"control_request","request_id":"exit-plan","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","input":{"plan":"Inspect and implement."}}}'
+  read -r answer || exit 1
+  case "$answer" in *'"behavior":"allow"'*) ;; *) exit 1 ;; esac
+  emit '{"type":"result","subtype":"success","result":"Plan approved","session_id":"sess-plan"}'
+  ;;
 
 *scenario:title*)
   tools_off=false

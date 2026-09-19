@@ -747,3 +747,32 @@ async fn claude_skills_follow_native_availability_and_dollar_selection_keeps_arg
         "/review 123"
     );
 }
+
+#[tokio::test]
+async fn plan_mode_reaches_the_cli_and_implementation_uses_the_question_bridge() {
+    let mut req = request("scenario:plan");
+    req.model_options
+        .insert(zeron_proto::AGENT_MODE_OPTION.into(), "plan".into());
+    let (controls, _steer, _token) = controls("Implement plan");
+    let events = run_to_end(&harness(), req, controls).await;
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Done {
+                status: DoneStatus::Completed,
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Done {
+                status: DoneStatus::Errored,
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+}
