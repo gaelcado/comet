@@ -254,6 +254,9 @@ pub fn traits_summary(
     }
     if let Some(model) = model {
         for option in &model.options {
+            if option.id == zeron_proto::AGENT_MODE_OPTION {
+                continue;
+            }
             let choice_id = selections
                 .get(&option.id)
                 .and_then(|v| v.as_str())
@@ -940,6 +943,18 @@ impl Pickers {
     /// The fully-resolved config the composer threads into the Run request and
     /// `Mutate createChat`: concrete model + reasoning whenever the catalog is
     /// loaded (no "engine picks a default" passthrough).
+    pub(crate) fn composer_modes(&self, cx: &App) -> Option<zeron_proto::ModelOption> {
+        self.selected_model(cx)?
+            .options
+            .iter()
+            .find(|option| {
+                option.id == zeron_proto::AGENT_MODE_OPTION
+                    || (option.id == "mode"
+                        && option.choices.iter().any(|choice| choice.id == "plan"))
+            })
+            .cloned()
+    }
+
     pub fn resolved(&self, cx: &App) -> ResolvedRunConfig {
         ResolvedRunConfig {
             harness: self.effective_harness(cx),
@@ -1566,7 +1581,7 @@ impl Pickers {
         cx.notify();
     }
 
-    fn pick_option(
+    pub(crate) fn pick_option(
         &mut self,
         option_id: String,
         choice_id: String,
@@ -1840,15 +1855,26 @@ impl Pickers {
 
     /// Star/unstar a model and persist it with the sticky defaults.
     fn toggle_model_favorite(&mut self, harness: HarnessId, model: &str, cx: &mut Context<Self>) {
+        let keyboard_row = (self.compact_model_picker(cx) && self.compact_keyboard)
+            .then(|| self.model_rows(cx).get(self.active).cloned())
+            .flatten();
         self.defaults.toggle_favorite(harness, model);
         self.save_defaults();
         self.catalog_rev += 1;
-        // Starring REORDERS the list (stars float to the top / leave the
-        // favorites view) — re-home the keyboard highlight onto the SELECTED
-        // row so exactly one row reads highlighted afterwards. Following the
-        // starred row instead left its cursor wash next to the selected
-        // row's ring: "two highlighted rows" (user report, twice).
+        // Pointer interactions retain the selected-row highlight after sorting.
         self.active = self.selected_model_index(cx);
+        // Keyboard focus follows identity, independently of selection styling.
+        if let Some(row) = keyboard_row {
+            self.active = self
+                .model_rows(cx)
+                .iter()
+                .position(|candidate| {
+                    candidate.harness == row.harness && candidate.model.id == row.model.id
+                })
+                .unwrap_or(self.active);
+            self.model_scroll
+                .scroll_to_item(self.active, gpui::ScrollStrategy::Nearest);
+        }
         cx.notify();
     }
 
@@ -2325,6 +2351,20 @@ impl Pickers {
         // animation — keys must not drive a dying popover.
         if !self.open.is_open() {
             return;
+        }
+        if self.open_kind() == Some(PickerKind::HarnessModel) && self.compact_model_picker(cx) {
+            self.compact_keyboard = true;
+            if self.compact_model_list
+                && event.keystroke.modifiers.platform
+                && event.keystroke.modifiers.shift
+                && event.keystroke.key.eq_ignore_ascii_case("f")
+            {
+                if let Some(row) = self.model_rows(cx).get(self.active).cloned() {
+                    self.toggle_model_favorite(row.harness, &row.model.id, cx);
+                }
+                cx.stop_propagation();
+                return;
+            }
         }
         if self.setting_menu.is_some() {
             match event.keystroke.key.as_str() {
@@ -3974,7 +4014,7 @@ impl Pickers {
         if let Some(model) = self.selected_model(cx) {
             let selections = self.explicit_options(cx);
             for option in &model.options {
-                if option.choices.is_empty() {
+                if option.choices.is_empty() || option.id == zeron_proto::AGENT_MODE_OPTION {
                     continue;
                 }
                 let selected = selections
@@ -4464,7 +4504,13 @@ fn scoped_model_rows<'a>(
                 input_ix += 1;
             }
         }
-        ranked.sort_by_key(|(rank, unstarred, ix, _)| (*rank, *unstarred, *ix));
+        ranked.sort_by_key(|(rank, unstarred, ix, _)| {
+            if rail == ModelRail::All {
+                (*unstarred, *rank, *ix)
+            } else {
+                (*rank, *unstarred, *ix)
+            }
+        });
         return ranked.into_iter().map(|(_, _, _, row)| row).collect();
     }
     match rail {
@@ -4479,6 +4525,9 @@ fn scoped_model_rows<'a>(
                         rows.push(row(descriptor, model));
                     }
                 }
+            }
+            if rail == ModelRail::All {
+                rows.sort_by_key(|row| !is_favorite(row.harness, &row.model.id));
             }
             rows
         }
@@ -5592,14 +5641,14 @@ mod tests {
             .unwrap();
         cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
             .unwrap();
-        cx.simulate_keystrokes(handle.into(), "down enter");
+        cx.simulate_keystrokes(handle.into(), "down down enter");
         handle
             .read_with(cx, |picker, cx| {
                 assert_eq!(picker.compact_control, CompactControl::Fast);
                 assert_eq!(picker.resolved(cx).model_options["serviceTier"], "fast");
             })
             .unwrap();
-        cx.simulate_keystrokes(handle.into(), "down enter");
+        cx.simulate_keystrokes(handle.into(), "up enter");
         handle
             .read_with(cx, |picker, cx| {
                 assert_eq!(picker.compact_control, CompactControl::Reset);
@@ -5611,7 +5660,7 @@ mod tests {
                 );
             })
             .unwrap();
-        cx.simulate_keystrokes(handle.into(), "down home home");
+        cx.simulate_keystrokes(handle.into(), "down down home home");
         handle
             .read_with(cx, |picker, cx| {
                 assert_eq!(picker.effective_reasoning(cx), Some(ReasoningLevel::Low))
@@ -5635,6 +5684,37 @@ mod tests {
         cx.simulate_keystrokes(handle.into(), "escape tab enter");
         handle
             .read_with(cx, |picker, _| assert!(picker.compact_model_list))
+            .unwrap();
+        handle
+            .update(cx, |picker, _, cx| {
+                if let Some(Loadable::Ready(models)) = picker.models.get_mut(&HarnessId::Codex) {
+                    models.push(bare_model("other", "Other model"));
+                }
+                picker.catalog_rev += 1;
+                cx.notify();
+            })
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "down");
+        cx.simulate_keystrokes(handle.into(), "cmd-shift-f");
+        handle
+            .read_with(cx, |picker, cx| {
+                assert!(picker.defaults.is_favorite(HarnessId::Codex, "other"));
+                assert_eq!(picker.active, 0, "Favorite should move to the first row");
+                assert_eq!(picker.model_rows(cx)[picker.active].model.id, "other");
+                assert_eq!(picker.selected_model(cx).unwrap().id, "model");
+            })
+            .unwrap();
+        cx.simulate_keystrokes(handle.into(), "cmd-shift-f");
+        handle
+            .read_with(cx, |picker, cx| {
+                assert!(!picker.defaults.is_favorite(HarnessId::Codex, "other"));
+                assert!(!picker.defaults.is_favorite(HarnessId::Codex, "model"));
+                assert_eq!(
+                    picker.active, 1,
+                    "Focus must follow the unstarred model back"
+                );
+                assert_eq!(picker.model_rows(cx)[picker.active].model.id, "other");
+            })
             .unwrap();
         cx.simulate_keystrokes(handle.into(), "escape shift-tab");
         handle
@@ -6366,6 +6446,42 @@ mod tests {
     }
 
     #[test]
+    fn compact_all_models_keeps_favorites_first_in_catalog_and_search() {
+        let descriptors = vec![
+            descriptor(HarnessId::ClaudeCode, "Claude"),
+            descriptor(HarnessId::Codex, "Codex"),
+        ];
+        let claude = vec![
+            bare_model("plain-a", "Model A"),
+            bare_model("star-a", "My Model A"),
+        ];
+        let codex = vec![
+            bare_model("plain-b", "Model B"),
+            bare_model("star-b", "My Model B"),
+        ];
+        for query in ["", "model"] {
+            let rows = scoped_model_rows(
+                query,
+                ModelRail::All,
+                Some(HarnessId::Codex),
+                &descriptors,
+                |harness| match harness {
+                    HarnessId::ClaudeCode => Some(claude.as_slice()),
+                    HarnessId::Codex => Some(codex.as_slice()),
+                    _ => None,
+                },
+                |_, id| id.starts_with("star"),
+            );
+            assert_eq!(
+                rows.iter()
+                    .map(|row| row.model.id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["star-a", "star-b", "plain-a", "plain-b"]
+            );
+        }
+    }
+
+    #[test]
     fn favorites_tab_search_ranks_only_starred_rows() {
         let descriptors = vec![
             descriptor(HarnessId::ClaudeCode, "Claude Code"),
@@ -6966,8 +7082,33 @@ mod tests {
 }
 
 /// Catalog for the isolated native screenshot fixture; never used by the app.
-#[cfg(feature = "project-palette-fixture")]
+#[cfg(any(feature = "project-palette-fixture", feature = "appshots-fixture"))]
 impl Pickers {
+    pub(crate) fn fixture_compact_state(
+        &mut self,
+        models: bool,
+        fast: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fixture_model_catalog(cx);
+        if !self.defaults.is_favorite(HarnessId::Codex, "gpt-5.3-codex") {
+            self.defaults
+                .toggle_favorite(HarnessId::Codex, "gpt-5.3-codex");
+        }
+        self.state.update(cx, |state, _| state.selected_chat = None);
+        self.defaults
+            .model_options_mut(HarnessId::Codex, "gpt-5.4")
+            .insert(
+                "serviceTier".into(),
+                serde_json::json!(if fast { "fast" } else { "auto" }),
+            );
+        self.open_model_menu(window, cx);
+        if models {
+            self.show_compact_models(cx);
+        }
+    }
+
     pub(crate) fn fixture_model_catalog(&mut self, cx: &mut Context<Self>) {
         if matches!(self.models.get(&HarnessId::Codex), Some(Loadable::Ready(_))) {
             return;
@@ -6975,17 +7116,22 @@ impl Pickers {
         self.config.harness = Some(HarnessId::Codex);
         self.config.model = Some("gpt-5.4".into());
         self.harnesses = Loadable::Ready(serde_json::from_value(serde_json::json!([
-            {"id":"codex","name":"Codex","supportsSteering":true,"steeringMode":"step-boundary","reasoningLevels":[]}
+            {"id":"codex","name":"Codex","installed":true,"enabled":true,"supportsSteering":true,"steeringMode":"step-boundary","reasoningLevels":[]}
         ])).unwrap());
         self.models.insert(HarnessId::Codex, Loadable::Ready(serde_json::from_value(serde_json::json!([
             {"id":"gpt-5.4","label":"GPT-5.4","description":"For complex coding and reasoning", "reasoningLevels":["low","medium","high","xhigh"], "options":[
-                {"id":"context-window","label":"Context window","defaultChoice":"standard","choices":[{"id":"standard","label":"Standard"},{"id":"1m","label":"1M tokens"}]},
-                {"id":"service-tier","label":"Service tier","defaultChoice":"auto","choices":[{"id":"auto","label":"Standard"},{"id":"fast","label":"Fast"}]}
+                {"id":"contextWindow","label":"Context window","defaultChoice":"standard","choices":[{"id":"standard","label":"Standard"},{"id":"1m","label":"1M tokens"}]},
+                {"id":"serviceTier","label":"Service tier","defaultChoice":"auto","choices":[{"id":"auto","label":"Standard"},{"id":"fast","label":"Fast"}]}
             ]},
             {"id":"gpt-5.3-codex","label":"GPT-5.3 Codex","description":"Optimized for agentic coding"},
             {"id":"gpt-5.2","label":"GPT-5.2","description":"General purpose reasoning"},
             {"id":"gpt-5.1-codex-mini","label":"GPT-5.1 Codex Mini","description":"Fast, efficient coding"}
         ])).unwrap()));
+        if let Some(Loadable::Ready(models)) = self.models.get_mut(&HarnessId::Codex) {
+            models[0]
+                .options
+                .push(zeron_proto::agent_mode_option(HarnessId::Codex).unwrap());
+        }
         self.catalog_rev += 1;
         cx.notify();
     }

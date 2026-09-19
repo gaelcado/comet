@@ -30,6 +30,7 @@ pub(super) struct CompactMotion {
     drag_fraction: Option<f32>,
     energy_last_frame: Option<std::time::Instant>,
     energy_phase: f32,
+    energy: Option<ScalarTransition>,
     height: Option<ScalarTransition>,
     page: Option<bool>,
     reveal: Option<ScalarTransition>,
@@ -98,32 +99,55 @@ impl Pickers {
         let harness = row.harness;
         let model = row.model.id.clone();
         let label: SharedString = row.model.label.clone().into();
-        // Provider attribution remains available for catalogs with repeated model names.
-        let subtitle: SharedString = row
-            .model
-            .description
-            .as_deref()
-            .filter(|description| !description.eq_ignore_ascii_case(&row.harness_name))
-            .map(|description| format!("{} · {description}", row.harness_name))
-            .unwrap_or_else(|| row.harness_name.to_string())
-            .into();
+        let subtitle: SharedString = row.harness_name.clone();
+        let details: SharedString = match row.model.description.as_deref() {
+            Some(description) => format!(
+                "{} · {}\n{}",
+                row.model.label, row.harness_name, description
+            )
+            .into(),
+            None => format!("{} · {}", row.model.label, row.harness_name).into(),
+        };
+        let accessible_name = details.clone();
+        let favorite_hint: SharedString = format!(
+            "{} {} {}",
+            if favorite { "Remove" } else { "Add" },
+            row.model.label,
+            if favorite {
+                "from favorites"
+            } else {
+                "to favorites"
+            }
+        )
+        .into();
+        let favorite_tooltip: SharedString =
+            format!("{}\n⌘⇧F on the highlighted model", favorite_hint).into();
         let item = div()
             .id(("model-row", ix))
+            .role(gpui::Role::ListBoxOption)
+            .aria_label(accessible_name)
+            .aria_selected(selected)
+            .tooltip(move |_, cx| cx.new(|_| PickerHint(details.clone())).into())
+            .tooltip_show_delay(std::time::Duration::from_millis(500))
             .h(px(48.0))
             .px(px(8.0))
             .py(px(6.0))
             .rounded(px(popover::MENU_ITEM_RADIUS))
             .flex()
             .items_center()
-            .gap(px(10.0))
+            .gap(px(8.0))
             .cursor_pointer()
             .text_color(theme.text)
             .when(selected, |el| el.bg(crate::theme::card_selected_bg()))
             .when(!selected && self.active == ix, |el| {
                 el.bg(crate::theme::ink(0.05))
             })
+            .when(self.compact_keyboard && self.active == ix, |el| {
+                el.aria_active_descendant().shadow(focus_outline(&theme))
+            })
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                if *hovered && this.active != ix {
+                if *hovered && (this.active != ix || this.compact_keyboard) {
+                    this.compact_keyboard = false;
                     this.active = ix;
                     cx.notify();
                 }
@@ -138,7 +162,13 @@ impl Pickers {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(div().truncate().child(label))
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(crate::typography::ui_rems(12.0))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(label),
+                    )
                     .child(
                         div()
                             .truncate()
@@ -158,8 +188,15 @@ impl Pickers {
                 div()
                     .id(("model-star", ix))
                     .role(gpui::Role::Button)
-                    .aria_label("Toggle favorite model")
-                    .size(px(22.0))
+                    .aria_label(favorite_hint)
+                    .aria_toggled(if favorite {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .aria_keyshortcuts("Meta+Shift+F")
+                    .tooltip(move |_, cx| cx.new(|_| PickerHint(favorite_tooltip.clone())).into())
+                    .size(px(24.0))
                     .rounded(px(6.0))
                     .flex()
                     .items_center()
@@ -197,9 +234,10 @@ impl Pickers {
         self.setting_menu = None;
         self.compact_model_list = true;
         self.model_rail = ModelRail::All;
-        self.active = self.selected_model_index(cx);
+        // Open at the favorites group, even when the current model is further down.
+        self.active = 0;
         self.model_scroll
-            .scroll_to_item(self.active, gpui::ScrollStrategy::Nearest);
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
         self.focus_on_mount = true;
         cx.notify();
     }
@@ -265,7 +303,9 @@ impl Pickers {
         if self.harness_locked(cx) {
             self.update_chat_config(cx, |config| {
                 config.reasoning = None;
-                config.model_options.clear();
+                config
+                    .model_options
+                    .retain(|id, _| id == zeron_proto::AGENT_MODE_OPTION || id == "mode");
             });
         } else {
             self.config.reasoning = None;
@@ -274,7 +314,9 @@ impl Pickers {
                 self.effective_harness(cx),
                 self.selected_model(cx).map(|m| m.id.clone()),
             ) {
-                self.defaults.model_options_mut(harness, &model).clear();
+                self.defaults
+                    .model_options_mut(harness, &model)
+                    .retain(|id, _| id == zeron_proto::AGENT_MODE_OPTION || id == "mode");
             }
             self.save_defaults();
         }
@@ -308,11 +350,10 @@ impl Pickers {
     }
 
     fn compact_controls(&self, cx: &App) -> Vec<CompactControl> {
-        let mut controls = vec![CompactControl::Model];
+        let mut controls = vec![CompactControl::Model, CompactControl::Reset];
         if self.compact_fast_choice(cx).is_some() {
             controls.push(CompactControl::Fast);
         }
-        controls.push(CompactControl::Reset);
         if !self.trait_ladder(cx).is_empty() {
             controls.push(CompactControl::Effort);
         }
@@ -343,10 +384,10 @@ impl Pickers {
             .filter(|g| Self::compact_option_visible(&g.id))
             .count();
         let panel_height =
-            54.0 + if self.trait_ladder(cx).is_empty() {
+            40.0 + if self.trait_ladder(cx).is_empty() {
                 0.0
             } else {
-                44.0
+                42.0
             } + if options == 0 {
                 0.0
             } else {
@@ -538,9 +579,12 @@ impl Pickers {
                     }),
             );
         if failed {
+            let error: SharedString = status.error.clone().unwrap_or_default().into();
             row = row
                 .role(gpui::Role::Button)
                 .aria_label(SharedString::from(format!("Retry {} models", status.name)))
+                .aria_description(error.clone())
+                .tooltip(move |_, cx| cx.new(|_| PickerHint(error.clone())).into())
                 .on_click(cx.listener(move |this, _, _, cx| this.ensure_models(harness, true, cx)))
                 .child(div().text_color(theme.accent).child("Retry"));
         }
@@ -572,44 +616,21 @@ impl Pickers {
             .map(reasoning_label)
             .unwrap_or("Default")
             .into();
+        let model_hint: SharedString = format!("Change model\n{}", label).into();
+        let model_accessible: SharedString =
+            format!("{} · {} · Change model", effort, label).into();
         let mut header = div()
-            .h(px(44.0))
+            .h(px(30.0))
             .flex_none()
             .flex()
             .items_center()
             .gap(px(2.0));
-        if let Some((option, choice, default, fast)) = self.compact_fast_choice(cx) {
-            header = header.child(
-                popover::menu_row(&theme, fast, "compact-fast")
-                    .id("compact-fast")
-                    .role(gpui::Role::Button)
-                    .aria_label("Toggle fast mode")
-                    .size(px(26.0))
-                    .p(px(6.0))
-                    .flex_none()
-                    .when(
-                        self.compact_keyboard && self.compact_control == CompactControl::Fast,
-                        |el| el.bg(theme.accent.opacity(0.16)),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.compact_keyboard = false;
-                        this.pick_option(option.clone(), choice.clone(), default, cx);
-                    }))
-                    .child(
-                        crate::icons::icon(crate::icons::FAST_TIER)
-                            .size(px(14.0))
-                            .text_color(if fast { theme.accent } else { theme.text_muted }),
-                    ),
-            );
-        }
-        if self.compact_fast_choice(cx).is_none() {
-            header = header.child(div().size(px(26.0)).flex_none());
-        }
         header = header.child(
             div()
                 .id("compact-select-model")
                 .role(gpui::Role::Button)
-                .aria_label("Select model")
+                .aria_label(model_accessible)
+                .tooltip(move |_, cx| cx.new(|_| PickerHint(model_hint.clone())).into())
                 .h_full()
                 .flex_1()
                 .min_w_0()
@@ -618,12 +639,12 @@ impl Pickers {
                 .flex()
                 .flex_col()
                 .justify_center()
-                .items_center()
+                .items_start()
                 .gap(px(2.0))
                 .cursor_pointer()
                 .when(
                     self.compact_keyboard && self.compact_control == CompactControl::Model,
-                    |el| el.bg(theme.accent.opacity(0.10)),
+                    |el| el.aria_active_descendant().shadow(focus_outline(&theme)),
                 )
                 .hover(|s| s.bg(crate::theme::ink(0.05)))
                 .on_click(cx.listener(|this, _, _, cx| {
@@ -636,42 +657,40 @@ impl Pickers {
                         .items_center()
                         .gap(px(4.0))
                         .text_size(crate::typography::ui_rems(12.0))
-                        .text_color(if levels.is_empty() {
-                            theme.text
-                        } else {
-                            theme.accent
-                        })
-                        .child(if levels.is_empty() {
-                            SharedString::from("Select model")
-                        } else {
-                            effort.clone()
-                        })
+                        .text_color(theme.text)
+                        .child("Models")
                         .child(
                             crate::icons::icon(crate::icons::ALT_ARROW_RIGHT)
                                 .size(px(11.0))
                                 .text_color(theme.text_muted),
                         ),
-                )
-                .child(
-                    div()
-                        .max_w_full()
-                        .truncate()
-                        .text_size(crate::typography::ui_rems(11.0))
-                        .text_color(theme.text_muted)
-                        .child(label),
                 ),
         );
+        if !levels.is_empty() {
+            header = header.child(
+                div()
+                    .flex_none()
+                    .px(px(6.0))
+                    .text_size(crate::typography::ui_rems(12.0))
+                    .text_color(theme.text_muted)
+                    .child(effort.clone()),
+            );
+        }
         header = header.child(
             popover::menu_row(&theme, false, "compact-reset")
                 .id("compact-reset")
                 .role(gpui::Role::Button)
                 .aria_label("Reset model options")
+                .tooltip(|_, cx| {
+                    cx.new(|_| PickerHint("Reset reasoning and model options to defaults".into()))
+                        .into()
+                })
                 .size(px(26.0))
                 .p(px(6.0))
                 .flex_none()
                 .when(
                     self.compact_keyboard && self.compact_control == CompactControl::Reset,
-                    |el| el.bg(theme.accent.opacity(0.16)),
+                    |el| el.aria_active_descendant().shadow(focus_outline(&theme)),
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.compact_keyboard = false;
@@ -683,6 +702,48 @@ impl Pickers {
                         .text_color(theme.text_muted),
                 ),
         );
+        if let Some((option, choice, default, fast)) = self.compact_fast_choice(cx) {
+            header = header.child(
+                popover::menu_row(&theme, fast, "compact-fast")
+                    .id("compact-fast")
+                    .role(gpui::Role::Button)
+                    .aria_label("Fast mode")
+                    .aria_toggled(if fast {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| {
+                            PickerHint(
+                                if fast {
+                                    "Fast mode on · Turn off"
+                                } else {
+                                    "Fast mode off · Turn on"
+                                }
+                                .into(),
+                            )
+                        })
+                        .into()
+                    })
+                    .size(px(26.0))
+                    .p(px(6.0))
+                    .flex_none()
+                    .when(
+                        self.compact_keyboard && self.compact_control == CompactControl::Fast,
+                        |el| el.aria_active_descendant().shadow(focus_outline(&theme)),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.compact_keyboard = false;
+                        this.pick_option(option.clone(), choice.clone(), default, cx);
+                    }))
+                    .child(
+                        crate::icons::icon(crate::icons::FAST_TIER)
+                            .size(px(14.0))
+                            .text_color(if fast { theme.accent } else { theme.text_muted }),
+                    ),
+            );
+        }
         let mut panel = div()
             .p(px(popover::CARD_INSET))
             .flex()
@@ -712,9 +773,20 @@ impl Pickers {
             if moving {
                 window.request_animation_frame();
             }
-            let energy = ((fraction - 0.15) / 0.85).clamp(0.0, 1.0);
+            let fast = self
+                .compact_fast_choice(cx)
+                .is_some_and(|(_, _, _, fast)| fast);
             let reduced = cx.reduce_motion();
             let now = std::time::Instant::now();
+            let (energy, energizing) = ScalarTransition::sample(
+                &mut self.compact_motion.energy,
+                fast_energy(fraction, fast),
+                now,
+                reduced || !fast,
+            );
+            if energizing {
+                window.request_animation_frame();
+            }
             let dt = self
                 .compact_motion
                 .energy_last_frame
@@ -722,12 +794,14 @@ impl Pickers {
                 .map(|last| now.duration_since(last).as_secs_f32().min(0.05))
                 .unwrap_or(0.0);
             // Integrate velocity: changing effort must not jump the trail phase.
-            if !reduced {
+            let animate_energy =
+                fast && !reduced && window.is_window_active() && self.open.is_open();
+            if animate_energy {
                 self.compact_motion.energy_phase =
                     (self.compact_motion.energy_phase + dt * (0.35 + energy * 0.85)).fract();
             }
             let phase = self.compact_motion.energy_phase;
-            if energy > 0.0 && !reduced {
+            if energy > 0.0 && animate_energy {
                 window.request_animation_frame();
             }
             let (press, pressing) = ScalarTransition::sample(
@@ -745,8 +819,15 @@ impl Pickers {
             let slider = div()
                 .id("compact-effort-slider")
                 .role(gpui::Role::Slider)
+                .when(self.compact_keyboard && self.compact_control == CompactControl::Effort, |el| el.aria_active_descendant())
                 .aria_label("Reasoning effort")
                 .aria_value(effort.clone())
+                .aria_numeric_value(selected as f64)
+                .aria_min_numeric_value(0.0)
+                .aria_max_numeric_value(levels.len().saturating_sub(1) as f64)
+                .aria_numeric_value_step(1.0)
+                .aria_orientation(gpui::Orientation::Horizontal)
+                .aria_description("Use Left and Right to adjust reasoning; Home and End select the first and last levels")
                 .relative()
                 .h(px(38.0))
                 .cursor_pointer()
@@ -773,9 +854,11 @@ impl Pickers {
                             window.on_mouse_event(move |_: &gpui::MouseUpEvent, phase, _, cx| {
                                 if phase == gpui::DispatchPhase::Bubble {
                                     let _ = release.update(cx, |this, cx| {
-                                        this.effort_dragging = false;
-                                        this.compact_motion.drag_fraction = None;
-                                        cx.notify();
+                                        if this.effort_dragging {
+                                            this.effort_dragging = false;
+                                            this.compact_motion.drag_fraction = None;
+                                            cx.notify();
+                                        }
                                     });
                                 }
                             });
@@ -812,36 +895,49 @@ impl Pickers {
                         .left(px(THUMB_INSET))
                         .right(px(THUMB_INSET))
                         .top(px((38.0 - thumb_size) / 2.0))
-                        .child(
+                        .child(crate::frost::frosted(thumb_size / 2.0, 4.0,
                             div()
                                 .absolute()
                                 .left(gpui::relative(fraction))
                                 .ml(px(-thumb_size / 2.0))
                                 .size(px(thumb_size))
                                 .rounded_full()
-                                .bg(if theme.appearance.is_dark() {
-                                    theme.text
-                                } else {
-                                    theme.on_solid
-                                })
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .shadow(vec![gpui::BoxShadow {
-                                    color: theme.accent.opacity(0.12 + energy * 0.32),
-                                    offset: gpui::point(px(0.0), px(0.0)),
-                                    blur_radius: px(3.0 + energy * 13.0),
-                                    spread_radius: px(energy * 2.0),
-                                    inset: false,
-                                }])
+                                .bg(gpui::linear_gradient(
+                                    155.0,
+                                    gpui::linear_color_stop(crate::theme::grey(255).opacity(0.72), 0.0),
+                                    gpui::linear_color_stop(theme.accent.blend(crate::theme::grey(255).opacity(0.55)).opacity(0.38), 1.0),
+                                ))
+                                .shadow(vec![
+                                    gpui::BoxShadow {
+                                        color: crate::theme::grey(0).opacity(0.20),
+                                        offset: gpui::point(px(0.0), px(2.0)),
+                                        blur_radius: px(5.0),
+                                        spread_radius: px(0.0),
+                                        inset: false,
+                                    },
+                                    gpui::BoxShadow {
+                                        color: crate::theme::grey(255).opacity(0.66),
+                                        offset: gpui::point(px(0.0), px(1.0)),
+                                        blur_radius: px(1.5),
+                                        spread_radius: px(0.0),
+                                        inset: true,
+                                    },
+                                    gpui::BoxShadow {
+                                        color: theme.accent.opacity(0.14 + energy * 0.20),
+                                        offset: gpui::point(px(0.0), px(1.0)),
+                                        blur_radius: px(5.0 + energy * 9.0),
+                                        spread_radius: px(0.0),
+                                        inset: false,
+                                    },
+                                ])
                                 .when(
                                     self.compact_keyboard
                                         && self.compact_control == CompactControl::Effort,
                                     |el| el.border_2().border_color(theme.text),
                                 ),
-                        ),
+                        )),
                 );
-            panel = panel.child(div().px(px(8.0)).pt(px(6.0)).child(slider));
+            panel = panel.child(div().px(px(8.0)).pt(px(4.0)).child(slider));
         }
         let option_count = self
             .setting_groups(cx)
@@ -862,8 +958,9 @@ impl Pickers {
                             .child(popover::faded_menu_list(
                                 &self.menu_scroll,
                                 popover::menu_scroll_list("compact-options", &self.menu_scroll)
-                                    .max_h(px(64.0_f32
-                                        .min((self.menu_geometry().height - 103.0).max(0.0))))
+                                    .max_h(px(
+                                        64.0_f32.min((self.menu_geometry().height - 87.0).max(0.0))
+                                    ))
                                     .child(options),
                             ))
                             .children(scrollbar),
@@ -911,8 +1008,10 @@ fn effort_track(
             };
             paint(window, rect(0.0, 7.0, width, 24.0), 12.0, rail.into());
             let fill_width = (center + THUMB_INSET).min(width);
-            let start = accent.opacity(0.5 + fraction * 0.4);
-            let hot = accent.blend(light.opacity(energy * 0.32));
+            let start = accent.opacity(0.28 + fraction * 0.22);
+            let hot = accent
+                .blend(light.opacity(0.08 + energy * 0.20))
+                .opacity(0.66 + fraction * 0.22);
             paint(
                 window,
                 rect(0.0, 7.0, fill_width, 24.0),
@@ -924,22 +1023,62 @@ fn effort_track(
                 )
                 .into(),
             );
+            // A translucent meniscus follows the same capsule geometry as the
+            // liquid beneath it. Vertical lighting gives depth without another
+            // continuously running animation or an opaque white handle.
+            paint(
+                window,
+                rect(1.0, 8.0, (width - 2.0).max(0.0), 22.0),
+                11.0,
+                gpui::linear_gradient(
+                    180.0,
+                    gpui::linear_color_stop(light.opacity(0.19), 0.0),
+                    gpui::linear_color_stop(light.opacity(0.0), 1.0),
+                )
+                .into(),
+            );
+            paint(
+                window,
+                rect(12.0, 8.0, (fill_width - 24.0).max(0.0), 1.0),
+                0.5,
+                gpui::linear_gradient(
+                    90.0,
+                    gpui::linear_color_stop(light.opacity(0.06), 0.0),
+                    gpui::linear_color_stop(light.opacity(0.30 + fraction * 0.12), 1.0),
+                )
+                .into(),
+            );
             // Deterministic, soft-ended streaks stay inside the straight section of
             // the capsule. Intensity changes their visibility, length and speed.
             if !reduced && energy > 0.0 {
                 let run = (center - THUMB_INSET).max(0.0);
-                for i in 0..10 {
+                for i in 0..12 {
                     let seed = i as f32;
                     let phase = (time + seed * 0.618034).fract();
                     let envelope = (std::f32::consts::PI * phase).sin().powi(2);
-                    let density = (energy * 10.0 - seed).clamp(0.0, 1.0);
+                    let density = (energy * 12.0 - seed).clamp(0.0, 1.0);
                     let x = THUMB_INSET + run * phase;
                     let length = (5.0 + energy * 18.0) * envelope;
                     let length = length.min((center - x).max(0.0));
                     if length > 0.5 {
+                        let y = 11.0 + (i * 11 % 17) as f32;
+                        let alpha = density * envelope;
+                        // A soft tail underneath a crisp core, with a small leading glint.
                         paint(
                             window,
-                            rect(x, 12.0 + (i * 7 % 14) as f32, length, 1.2),
+                            rect(x, y - 1.0, length, 3.2),
+                            1.6,
+                            light.opacity(alpha * 0.12).into(),
+                        );
+                        paint(
+                            window,
+                            rect(x + length - 0.8, y - 0.3, 1.6, 1.8),
+                            0.8,
+                            light.opacity(alpha * 0.7).into(),
+                        );
+                        paint(
+                            window,
+                            rect(x, y, length, 1.2),
                             0.6,
                             gpui::linear_gradient(
                                 90.0,
@@ -974,6 +1113,14 @@ fn effort_track(
     .absolute()
     .inset_0()
     .into_any_element()
+}
+
+fn fast_energy(fraction: f32, fast: bool) -> f32 {
+    if fast {
+        0.25 + 0.75 * fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 fn effort_fraction(x: f32, width: f32) -> f32 {
@@ -1013,6 +1160,15 @@ mod tests {
     }
 
     #[test]
+    fn trails_require_fast_mode_at_every_effort() {
+        for fraction in [0.0, 0.2, 0.5, 0.8, 1.0] {
+            assert_eq!(fast_energy(fraction, false), 0.0);
+            assert!(fast_energy(fraction, true) > 0.0);
+        }
+        assert!(fast_energy(1.0, true) > fast_energy(0.0, true));
+    }
+
+    #[test]
     fn continuous_drag_and_stops_share_inset_geometry() {
         let width = 228.0;
         for count in 2..=8 {
@@ -1036,5 +1192,30 @@ mod tests {
         assert_eq!(effort_index(-20.0, 200.0, 5), Some(0));
         assert_eq!(effort_index(100.0, 200.0, 5), Some(2));
         assert_eq!(effort_index(250.0, 200.0, 5), Some(4));
+    }
+}
+
+fn focus_outline(theme: &Theme) -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: theme.text.opacity(0.8),
+        offset: gpui::point(px(0.0), px(0.0)),
+        blur_radius: px(0.0),
+        spread_radius: px(2.0),
+        inset: true,
+    }]
+}
+
+struct PickerHint(SharedString);
+impl Render for PickerHint {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx).for_popup();
+        let card = popover::popover_card(&theme)
+            .max_w(px(320.0))
+            .p(px(8.0))
+            .text_size(crate::typography::ui_rems(12.0))
+            .line_height(px(17.0))
+            .text_color(theme.text)
+            .child(self.0.clone());
+        crate::frost::frosted(popover::CARD_RADIUS, crate::frost::MENU_BLUR, card)
     }
 }
