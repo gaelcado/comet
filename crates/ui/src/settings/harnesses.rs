@@ -382,7 +382,11 @@ impl HarnessesPage {
                     }
                     if this
                         .update(cx, |page, cx| {
-                            page.updates = Loadable::Error("Reconnecting to device…".into());
+                            if !matches!(page.updates, Loadable::Error(_)) {
+                                page.updates = Loadable::Error(
+                                    "Connection closed. Reconnecting to device…".into(),
+                                );
+                            }
                             cx.notify();
                         })
                         .is_err()
@@ -799,13 +803,13 @@ impl HarnessesPage {
                     HarnessId::Cursor => meta.push(
                         div()
                             .text_color(theme.text_muted.opacity(0.65))
-                            .child("Cursor SDK 1.0.28 · Managed by Zeron")
+                            .child("Cursor SDK · Managed by Zeron")
                             .into_any_element(),
                     ),
                     HarnessId::Pi => meta.push(
                         div()
                             .text_color(theme.text_muted.opacity(0.65))
-                            .child("pi-acp bridge 0.0.33 · Managed by Zeron")
+                            .child("pi-acp bridge · Managed by Zeron")
                             .into_any_element(),
                     ),
                     _ => {}
@@ -1152,6 +1156,27 @@ impl Render for HarnessesPage {
             .error
             .clone()
             .map(|message| widgets::error_strip(&theme, message).into_any_element());
+        let update_error = match &self.updates {
+            Loadable::Error(message) => Some(
+                div()
+                    .child(widgets::error_strip(
+                        &theme,
+                        format!("Agent updates: {message}"),
+                    ))
+                    .child(
+                        widgets::ghost_action(&theme)
+                            .id("harness-updates-retry")
+                            .mt(px(8.0))
+                            .on_click(cx.listener(|page, _, _, cx| {
+                                page.load(cx);
+                                cx.notify();
+                            }))
+                            .child("Retry updates"),
+                    )
+                    .into_any_element(),
+            ),
+            _ => None,
+        };
         let switcher = self.render_device_switcher(&theme, cx);
 
         let can_control = self.can_control_updates(cx);
@@ -1209,6 +1234,7 @@ impl Render for HarnessesPage {
 
                                 )
                                 .children(error)
+                                .children(update_error)
                                 .child(body),
                         ),
                 )
