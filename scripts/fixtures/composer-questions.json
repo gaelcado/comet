@@ -106,5 +106,26 @@
       "multiSelect": false,
       "nonBlocking": false
     }
+  },
+  {
+    "name": "next-step-three-options",
+    "question": {
+      "id": "next-step-three-options",
+      "header": "Next step",
+      "question": "What would you like to work on?",
+      "options": [
+        "Plan a change (Recommended)",
+        "Inspect the repo",
+        "Ask a question"
+      ],
+      "optionDescriptions": [
+        "Explore the project and produce an implementation-ready plan.",
+        "Review the codebase and report relevant findings.",
+        "Get an explanation or recommendation."
+      ],
+      "allowCustom": true,
+      "multiSelect": false,
+      "nonBlocking": false
+    }
   }
 ]

@@ -5205,7 +5205,7 @@ fn with_mode_commands(
             rows.push(InvocationCandidate {
                 agent_mode: Some((mode.id.clone(), choice.id)),
                 workspace_command: None,
-                description: format!("Use {} for the next message", choice.label),
+                description: format!("Switch to {}", choice.label),
                 invocation: zeron_proto::invocation::Invocation::Command { name: name.clone() },
                 name,
                 input_hint: None,
@@ -5503,6 +5503,17 @@ pub struct Composer {
     activity_motion: activity::ActivityMotion,
     activity_focus: FocusHandle,
     activity_plan: Option<(String, crate::markdown::BlockTree)>,
+    /// Goal editing deliberately owns a separate input entity so opening the
+    /// inline editor can never borrow, clear, or replace the message draft.
+    goal_input: Entity<ComposerInput>,
+    goal_edit_chat: Option<String>,
+    goal_action_focuses: HashMap<&'static str, FocusHandle>,
+    /// One mutation per chat may be in flight while the user navigates. The
+    /// RPC tasks are detached so switching chats cannot cancel a host write.
+    goal_pending: HashMap<String, SharedString>,
+    /// Host-acknowledged state shown until the document notification catches
+    /// up or advances beyond the snapshot that preceded the mutation.
+    goal_overrides: HashMap<String, activity::GoalOverride>,
     question_scroll: gpui::ScrollHandle,
     pub(crate) queue_full_preview: Option<Task<()>>,
     pub(crate) queue_previews: HashMap<(String, String), crate::queue::QueuePreview>,
@@ -5565,6 +5576,7 @@ pub struct Composer {
     _pickers_observe: Subscription,
     _picker_focus: Subscription,
     _input_events: Subscription,
+    _goal_input_events: Subscription,
 }
 
 impl EventEmitter<ComposerEvent> for Composer {}
@@ -5632,6 +5644,22 @@ impl Composer {
             input.enable_mentions();
             input
         });
+        let goal_input = cx.new(|cx| {
+            let mut input = ComposerInput::new("Edit goal objective…", cx);
+            input.text_size = 12.0;
+            input.configured_line_height = 18.0;
+            input
+        });
+        let goal_action_focuses = [
+            "goal-lifecycle",
+            "goal-edit",
+            "goal-save",
+            "goal-cancel",
+            "goal-clear",
+        ]
+        .into_iter()
+        .map(|id| (id, cx.focus_handle().tab_stop(true)))
+        .collect();
         let pickers = cx.new(|cx| Pickers::new(state.clone(), cx));
         // The footer toolbar (checkout kind + ref picker) is rendered INLINE
         // by the composer from picker state — a pickers-side notify (refs
@@ -5688,6 +5716,18 @@ impl Composer {
             }
             ComposerInputEvent::PastedPaths(paths) => this.add_paths(paths.clone(), cx),
         });
+        let goal_input_events =
+            cx.subscribe(&goal_input, |this: &mut Self, _, event, cx| match event {
+                ComposerInputEvent::Submitted => this.submit_goal_edit(cx),
+                ComposerInputEvent::Edited | ComposerInputEvent::ViewportChanged => cx.notify(),
+                ComposerInputEvent::ModifiedSubmitted
+                | ComposerInputEvent::CursorMoved
+                | ComposerInputEvent::MentionNavigate(_)
+                | ComposerInputEvent::MentionAccept
+                | ComposerInputEvent::MentionDismiss
+                | ComposerInputEvent::PastedImages(_)
+                | ComposerInputEvent::PastedPaths(_) => {}
+            });
         cx.observe_global::<crate::settings::SettingsStore>(|this, cx| {
             this.on_input_edited(cx);
         })
@@ -5750,6 +5790,11 @@ impl Composer {
             activity_motion: activity::ActivityMotion::default(),
             activity_focus: cx.focus_handle().tab_stop(true),
             activity_plan: None,
+            goal_input,
+            goal_edit_chat: None,
+            goal_action_focuses,
+            goal_pending: HashMap::new(),
+            goal_overrides: HashMap::new(),
             question_scroll: gpui::ScrollHandle::new(),
             queue_full_preview: None,
             queue_previews: HashMap::new(),
@@ -5781,6 +5826,7 @@ impl Composer {
             _pickers_observe: pickers_observe,
             _picker_focus: picker_focus,
             _input_events: input_events,
+            _goal_input_events: goal_input_events,
         };
         // Dev knob: pre-stage attachments (drop/paste can't be synthesized on
         // a rig) — `ZERON_ATTACH=/path/a.png[,/path/b.png]`, and
@@ -7359,6 +7405,7 @@ impl Composer {
             self.activity_motion = activity::ActivityMotion::default();
             self.activity_plan = None;
             self.activity_scroll.set_offset(point(px(0.0), px(0.0)));
+            self.goal_edit_chat = None;
             self.question_scroll.set_offset(point(px(0.0), px(0.0)));
             self.queue_scroll.set_offset(point(px(0.0), px(0.0)));
             // `failure` deliberately survives navigation: chat-scoped
@@ -7673,6 +7720,22 @@ impl Composer {
         // Fully-resolved model/reasoning/options — concrete values (chat config
         // or defaults), so the engine never has to guess a "default".
         let resolved = self.pickers.read(cx).resolved(cx);
+        let fresh_goal = resolved
+            .model_options
+            .get("zeronFreshGoal")
+            .and_then(|v| v.as_bool())
+            == Some(true);
+        if queue && fresh_goal {
+            self.failure = Some(
+                "Start a new goal after the current turn finishes. Your draft is preserved.".into(),
+            );
+            self.failure_key = Some(chat_id);
+            cx.notify();
+            return;
+        }
+        let goal_selection = fresh_goal
+            .then(|| self.pickers.read(cx).goal_selection(cx))
+            .flatten();
         let existing_cwd = self
             .state
             .read(cx)
@@ -8340,6 +8403,11 @@ impl Composer {
             }
             this.update(cx, |composer, cx| {
                 composer.sending = false;
+                if result.is_ok() {
+                    if let Some(selection) = &goal_selection {
+                        composer.pickers.update(cx, |picker, cx| picker.consume_goal_selection(selection, cx));
+                    }
+                }
                 composer
                     .state
                     .update(cx, |s, _| s.end_upload_progress());
@@ -8632,6 +8700,18 @@ impl Composer {
         }
     }
 
+    /// Cancel the whole native request through the same durable response path.
+    /// Capture the visible page first so a rejected cancellation restores the
+    /// user's exact draft instead of the last subscription tick's snapshot.
+    fn wizard_cancel(&mut self, cx: &mut Context<Self>) {
+        let typed = self.input.read(cx).text().to_owned();
+        let Some(wizard) = self.wizard.as_mut() else {
+            return;
+        };
+        wizard.set_typed(typed);
+        self.wizard_finish(Vec::new(), cx);
+    }
+
     /// Submit RespondInput and retire the panel.
     fn wizard_finish(&mut self, answers: Vec<UserInputAnswer>, cx: &mut Context<Self>) {
         let Some(engine) = self.state.read(cx).engine().cloned() else {
@@ -8887,6 +8967,30 @@ impl Composer {
         let last = page + 1 >= wizard.questions.len();
         let typed_empty = self.input.read(cx).is_empty();
         let can_advance = wizard.page_has_pick() || (question.allow_custom && !typed_empty);
+        // The answer field keeps the ordinary compact pill at one line, then
+        // grows with the measured rich-text content. At the cap, the input's
+        // own scroll/caret machinery takes over instead of clipping the text.
+        const ANSWER_PAD_V: f32 = 24.0;
+        let answer_input_height = self
+            .input
+            .read(cx)
+            .measured_content_height()
+            .clamp(INPUT_LINE_HEIGHT, TEXTAREA_MAX - ANSWER_PAD_V);
+        let answer_height =
+            (answer_input_height + ANSWER_PAD_V + PILL_BORDER_V).max(COMPACT_TOTAL_HEIGHT);
+        self.input.update(cx, |input, cx| {
+            if input.viewport_height != Some(answer_input_height)
+                || input.settled_viewport_height != Some(answer_input_height)
+                || input.resizing
+                || input.overflow_top_padding != 0.0
+            {
+                input.viewport_height = Some(answer_input_height);
+                input.settled_viewport_height = Some(answer_input_height);
+                input.resizing = false;
+                input.overflow_top_padding = 0.0;
+                cx.notify();
+            }
+        });
 
         let options = question.options.iter().enumerate().map(|(ix, label)| {
             // Selection reads on the row only while no typed override exists
@@ -8914,24 +9018,20 @@ impl Composer {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(12.0))
-                .px(px(14.0))
-                .py(px(10.0))
+                .gap(px(8.0))
+                .px(px(8.0))
+                .py(px(6.0))
                 .rounded(px(8.0))
-                .border_1()
-                .border_color(if picked {
-                    crate::theme::ink(0.16)
-                } else {
-                    gpui::transparent_black()
-                })
-                // zeron question-panel.tsx option rows: `transition-colors`.
+                // Options are rows within one shared tray surface, like the
+                // queue. Selection is carried by the compact control and a
+                // quiet wash instead of a stack of raised, bordered cards.
                 .bg(if picked {
-                    crate::theme::ink(0.09)
+                    crate::theme::ink(0.07)
                 } else {
                     motion::hover_blend(
                         &format!("wizard-option-{ix}"),
-                        crate::theme::ink(0.025),
-                        crate::theme::ink(0.06),
+                        gpui::transparent_black(),
+                        crate::theme::ink(0.045),
                     )
                 })
                 .on_hover(motion::hover_listener(format!("wizard-option-{ix}")))
@@ -8945,15 +9045,35 @@ impl Composer {
                 }))
                 .child(
                     div()
+                        .size(px(16.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(if question.multi_select { 4.0 } else { 8.0 }))
+                        .border_1()
+                        .border_color(if picked {
+                            theme.text.opacity(0.9)
+                        } else {
+                            theme.text_muted.opacity(0.45)
+                        })
+                        .when(picked, |el| el.bg(theme.text))
+                        .when(picked, |el| {
+                            el.child(
+                                crate::icons::icon(crate::icons::CHECK)
+                                    .size(px(10.0))
+                                    .text_color(theme.bg),
+                            )
+                        }),
+                )
+                .child(
+                    div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(crate::typography::ui_rems(13.5))
+                        .text_size(crate::typography::ui_rems(13.0))
+                        .line_height(px(17.0))
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(if picked {
-                            theme.text
-                        } else {
-                            theme.text.opacity(0.9)
-                        })
+                        .text_color(theme.text.opacity(if picked { 1.0 } else { 0.9 }))
                         .child(SharedString::from(label.clone()))
                         .when_some(
                             question
@@ -8963,9 +9083,10 @@ impl Composer {
                             |row, description| {
                                 row.child(
                                     div()
-                                        .mt(px(3.0))
+                                        .mt(px(1.0))
                                         .font_weight(gpui::FontWeight::NORMAL)
-                                        .text_size(crate::typography::ui_rems(12.0))
+                                        .text_size(crate::typography::ui_rems(11.5))
+                                        .line_height(px(15.0))
                                         .text_color(theme.text_muted)
                                         .child(SharedString::from(description.clone())),
                                 )
@@ -8974,61 +9095,115 @@ impl Composer {
                 )
                 .when(ix < 9, |el| {
                     el.child(
-                        // Number kbd chip: `size-[22px] rounded-md text-[11px]`.
                         div()
                             .flex_none()
-                            .size(px(22.0))
+                            .size(px(20.0))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded(px(6.0))
-                            .bg(if picked {
-                                crate::theme::ink(0.16)
-                            } else {
-                                crate::theme::ink(0.05)
-                            })
-                            .text_size(crate::typography::ui_rems(11.0))
-                            .text_color(if picked {
-                                theme.text
-                            } else {
-                                theme.text_muted.opacity(0.6)
-                            })
+                            .rounded(px(5.0))
+                            .border_1()
+                            .border_color(theme.border.opacity(0.7))
+                            .text_size(crate::typography::ui_rems(10.5))
+                            .text_color(theme.text_muted.opacity(0.65))
                             .child(SharedString::from(format!("{}", ix + 1))),
                     )
                 })
         });
 
+        let cancel = div()
+            .id("wizard-cancel")
+            .role(Role::Button)
+            .aria_label("Cancel question")
+            .size(px(24.0))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .text_color(theme.text_muted)
+            .bg(motion::hover_blend(
+                "wizard-cancel",
+                gpui::transparent_black(),
+                crate::theme::ink(0.07),
+            ))
+            .on_hover(motion::hover_listener("wizard-cancel"))
+            .cursor_pointer()
+            .tab_index(0)
+            .focus_visible({
+                let accent = theme.accent;
+                move |s| {
+                    s.shadow(vec![gpui::BoxShadow {
+                        color: accent,
+                        offset: point(px(0.0), px(0.0)),
+                        blur_radius: px(0.0),
+                        spread_radius: px(2.0),
+                        inset: false,
+                    }])
+                }
+            })
+            .tooltip(|_, cx| {
+                cx.new(|_| AppshotActionTooltip("Cancel question".into()))
+                    .into()
+            })
+            .on_click(cx.listener(|this, _, _, cx| this.wizard_cancel(cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.wizard_cancel(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                crate::icons::icon(crate::icons::CLOSE)
+                    .size(px(12.0))
+                    .text_color(theme.text_muted),
+            );
+
         let question_body = div()
-            .p(px(8.0))
+            .px(px(8.0))
+            .pt(px(8.0))
+            .pb(px(6.0))
             .flex()
             .flex_col()
-            .gap(px(8.0))
+            .gap(px(5.0))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .text_size(crate::typography::ui_rems(12.0))
-                    .text_color(theme.text_muted)
+                    .text_size(crate::typography::ui_rems(11.0))
+                    .line_height(px(14.0))
+                    .text_color(theme.text_faint)
                     .child(SharedString::from(question.header.clone()))
-                    .when(wizard.questions.len() > 1, |el| {
-                        el.child(SharedString::from(counter))
-                    }),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .when(wizard.questions.len() > 1, |el| {
+                                el.child(SharedString::from(counter))
+                            })
+                            .child(cancel),
+                    ),
             )
             .child(
                 div()
-                    .text_size(crate::typography::ui_rems(14.0))
+                    .text_size(crate::typography::ui_rems(13.5))
+                    .line_height(px(18.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(theme.text)
                     .child(SharedString::from(question.question.clone())),
             )
             .when(question.multi_select, |el| {
                 el.child(
                     div()
+                        .text_size(crate::typography::ui_rems(11.0))
+                        .line_height(px(14.0))
                         .text_color(theme.text_muted)
-                        .child("Select one or more options."),
+                        .child("Choose any that apply."),
                 )
             })
-            .child(div().flex().flex_col().gap(px(4.0)).children(options));
+            .child(div().flex().flex_col().gap(px(1.0)).children(options));
         let questions = crate::edge_fade::edge_faded(
             Theme::TRANSCRIPT_FADE_BAND,
             true,
@@ -9041,6 +9216,119 @@ impl Composer {
                 .child(question_body),
         )
         .fade_overflow_y(&self.question_scroll);
+        // Match the ordinary composer edge rather than introducing a second
+        // answer-card material. The action stays circular and in the same
+        // bottom-right position as Send; its label remains available to AT.
+        let answer_border = if theme.is_frost() {
+            match theme.appearance {
+                crate::theme::Appearance::Dark => gpui::hsla(210.0 / 360.0, 0.18, 0.78, 0.09),
+                crate::theme::Appearance::Light => gpui::hsla(210.0 / 360.0, 0.18, 0.32, 0.10),
+            }
+        } else {
+            theme.border
+        };
+        let advance_label = if last {
+            "Submit answer"
+        } else {
+            "Next question"
+        };
+        let advance = div()
+            .id("wizard-submit")
+            .role(Role::Button)
+            .aria_label(advance_label)
+            .size(px(28.0))
+            .flex_none()
+            .rounded_full()
+            .bg(theme.text)
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(!can_advance, |el| el.opacity(0.35))
+            .when(can_advance, |el| {
+                el.tab_index(0)
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.85))
+                    .focus_visible({
+                        let accent = theme.accent;
+                        move |s| {
+                            s.shadow(vec![gpui::BoxShadow {
+                                color: accent,
+                                offset: point(px(0.0), px(0.0)),
+                                blur_radius: px(0.0),
+                                spread_radius: px(2.0),
+                                inset: false,
+                            }])
+                        }
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| this.wizard_advance(cx)))
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.wizard_advance(cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+            })
+            .child(
+                crate::icons::icon(crate::icons::ARROW_UP)
+                    .size(px(14.0))
+                    .text_color(theme.bg),
+            );
+        let answer = div()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    window.focus(&this.input.focus_handle(cx), cx);
+                }),
+            )
+            .h(px(answer_height))
+            .rounded(px(COMPOSER_RADIUS))
+            .border_1()
+            .border_color(answer_border)
+            .when(theme.is_frost(), |el| el.bg(theme.composer_sidebar_tint()))
+            .when(!theme.is_frost(), |el| {
+                el.bg(theme.input_glass_bg()).shadow_lg()
+            })
+            .flex()
+            .items_center()
+            .when(page > 0, |el| {
+                el.child(
+                    crate::popover::btn_ghost(&theme, "Back", "wizard-back")
+                        .id("wizard-back")
+                        .role(Role::Button)
+                        .aria_label("Previous question")
+                        .ml(px(8.0))
+                        .px(px(8.0))
+                        .py(px(5.0))
+                        .tab_index(0)
+                        .focus_visible({
+                            let accent = theme.accent;
+                            move |s| {
+                                s.shadow(vec![gpui::BoxShadow {
+                                    color: accent,
+                                    offset: point(px(0.0), px(0.0)),
+                                    blur_radius: px(0.0),
+                                    spread_radius: px(2.0),
+                                    inset: false,
+                                }])
+                            }
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| this.wizard_back(cx)))
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                this.wizard_back(cx);
+                                cx.stop_propagation();
+                            }
+                        })),
+                )
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px(px(if page > 0 { 8.0 } else { 16.0 }))
+                    .child(self.input.clone()),
+            )
+            .child(div().flex_none().pl(px(12.0)).pr(px(12.0)).child(advance));
         div()
             .id("question-panel")
             .track_focus(&self.wizard_focus)
@@ -9052,110 +9340,20 @@ impl Composer {
             .child(
                 div()
                     .mx(px(QUEUE_SIDE_INSET))
+                    // These siblings have no column gap: tuck exactly the
+                    // queue overlap behind the answer pill. The tray's bottom
+                    // border is opened below so frost cannot reveal a square
+                    // edge through the translucent composer.
                     .mb(px(-QUEUE_COMPOSER_OVERLAP))
                     .child(crate::frost::frosted(
                         crate::queue::PANEL_RADIUS,
                         crate::frost::MENU_BLUR,
-                        crate::queue::queue_panel_surface(&theme).child(questions),
+                        crate::queue::queue_panel_surface(&theme)
+                            .border_b(px(0.0))
+                            .child(questions),
                     )),
             )
-            .child(
-                div()
-                    .rounded(px(COMPOSER_RADIUS))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.input_glass_bg())
-                    .when(!theme.is_frost(), |el| el.shadow_lg())
-                    .p(px(16.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .child(self.input.clone())
-                    .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .child(if page > 0 {
-                                crate::popover::btn_ghost(&theme, "Back", "wizard-back")
-                                    .id("wizard-back")
-                                    .role(Role::Button)
-                                    .aria_label("Previous question")
-                                    .tab_index(0)
-                                    .focus_visible({
-                                        let accent = theme.accent;
-                                        move |s| {
-                                            s.shadow(vec![gpui::BoxShadow {
-                                                color: accent,
-                                                offset: point(px(0.0), px(0.0)),
-                                                blur_radius: px(0.0),
-                                                spread_radius: px(2.0),
-                                                inset: false,
-                                            }])
-                                        }
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| this.wizard_back(cx)))
-                                    .on_key_down(cx.listener(
-                                        |this, event: &KeyDownEvent, _, cx| {
-                                            if matches!(
-                                                event.keystroke.key.as_str(),
-                                                "enter" | "space"
-                                            ) {
-                                                this.wizard_back(cx);
-                                                cx.stop_propagation();
-                                            }
-                                        },
-                                    ))
-                                    .into_any_element()
-                            } else {
-                                gpui::Empty.into_any_element()
-                            })
-                            .child(
-                                crate::popover::btn_primary(
-                                    &theme,
-                                    if last { "Submit" } else { "Next" },
-                                )
-                                .id("wizard-submit")
-                                .role(Role::Button)
-                                .aria_label(if last {
-                                    "Submit answer"
-                                } else {
-                                    "Next question"
-                                })
-                                .px(px(16.0))
-                                .when(!can_advance, |el| el.opacity(0.4))
-                                .when(can_advance, |el| {
-                                    el.tab_index(0)
-                                        .focus_visible({
-                                            let accent = theme.accent;
-                                            move |s| {
-                                                s.shadow(vec![gpui::BoxShadow {
-                                                    color: accent,
-                                                    offset: point(px(0.0), px(0.0)),
-                                                    blur_radius: px(0.0),
-                                                    spread_radius: px(2.0),
-                                                    inset: false,
-                                                }])
-                                            }
-                                        })
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.wizard_advance(cx)),
-                                        )
-                                        .on_key_down(cx.listener(
-                                            |this, event: &KeyDownEvent, _, cx| {
-                                                if matches!(
-                                                    event.keystroke.key.as_str(),
-                                                    "enter" | "space"
-                                                ) {
-                                                    this.wizard_advance(cx);
-                                                    cx.stop_propagation();
-                                                }
-                                            },
-                                        ))
-                                }),
-                            ),
-                    ),
-            )
+            .child(crate::frost::frosted(COMPOSER_RADIUS, 16.0, answer))
             .into_any_element()
     }
 
@@ -10919,6 +11117,185 @@ mod tests {
         // written its frame into the channel by the time the executor parks.
         cx.run_until_parked();
         assert!(server_in.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn fresh_goal_during_a_live_run_preserves_the_draft_and_one_shot_intent(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        struct GoalCatalogRpc {
+            calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl zeron_rpc::RpcService for GoalCatalogRpc {
+            async fn handle(
+                &self,
+                method: &str,
+                _params: serde_json::Value,
+            ) -> Result<zeron_rpc::RpcReply, RpcError> {
+                self.calls.lock().unwrap().push(method.to_owned());
+                match method {
+                    methods::LIST_HARNESSES => zeron_rpc::RpcReply::value(&serde_json::json!([{
+                        "id": "codex",
+                        "name": "Codex",
+                        "installed": true,
+                        "enabled": true,
+                        "supportsSteering": true,
+                        "steeringMode": "step-boundary",
+                        "reasoningLevels": []
+                    }])),
+                    methods::LIST_MODELS => zeron_rpc::RpcReply::value(&serde_json::json!([{
+                        "id": "alpha",
+                        "label": "Alpha",
+                        "description": "Goal-capable test model",
+                        "reasoningLevels": [],
+                        "options": [zeron_proto::agent_mode_option(HarnessId::Codex).unwrap()]
+                    }])),
+                    other => Err(RpcError::UnknownMethod(other.into())),
+                }
+            }
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _runtime = runtime.enter();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let client = zeron_rpc::memory_client(std::sync::Arc::new(GoalCatalogRpc {
+            calls: calls.clone(),
+        }));
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, _, cx| {
+                composer.state.update(cx, |state, cx| {
+                    state.set_test_engine(crate::state::EngineHandle::from_test_client(client));
+                    state.devices = vec![
+                        serde_json::from_value(serde_json::json!({
+                            "id": "fixture-device",
+                            "name": "Fixture",
+                            "platform": "macos",
+                            "lastSeenAt": null,
+                            "capabilities": ["agent-modes-v1", "goal-actions-v1"]
+                        }))
+                        .unwrap(),
+                    ];
+                    state.chats = vec![
+                        serde_json::from_value(serde_json::json!({
+                            "id": "goal-chat",
+                            "deviceId": "fixture-device",
+                            "title": null,
+                            "archived": false,
+                            "cwd": "/fixture",
+                            "branch": null,
+                            "checkoutId": null,
+                            "config": {
+                                "harness": "codex",
+                                "model": "alpha",
+                                "reasoning": null,
+                                "modelOptions": {"agentMode": "goal"},
+                                "sandbox": "workspace-write"
+                            },
+                            "lastMessagePreview": null,
+                            "lastMessageAt": null,
+                            "createdAt": chrono::Utc::now()
+                        }))
+                        .unwrap(),
+                    ];
+                    state.selected_chat = Some("goal-chat".into());
+                    state.begin_pending_send("goal-chat", "active-turn", chrono::Utc::now());
+                    cx.notify();
+                });
+                composer.on_state_changed(cx);
+            })
+            .unwrap();
+
+        for _ in 0..20 {
+            cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            cx.run_until_parked();
+            runtime.block_on(async { tokio::task::yield_now().await });
+            if handle
+                .read_with(cx, |composer, cx| composer.available_modes(cx).is_some())
+                .unwrap()
+            {
+                break;
+            }
+        }
+
+        handle
+            .update(cx, |composer, _, cx| {
+                assert!(composer.available_modes(cx).is_some());
+                let initial = composer.pickers.read(cx).resolved(cx);
+                assert!(
+                    !initial.model_options.contains_key("zeronFreshGoal")
+                        && !initial
+                            .model_options
+                            .contains_key(zeron_proto::AGENT_MODE_OPTION),
+                    "a legacy saved Goal mode must not select Goal for an ordinary follow-up"
+                );
+
+                composer.pickers.update(cx, |picker, cx| {
+                    picker.pick_option(
+                        zeron_proto::AGENT_MODE_OPTION.into(),
+                        "goal".into(),
+                        false,
+                        cx,
+                    )
+                });
+                composer.input.update(cx, |input, cx| {
+                    input.set_text("Build the durable queue redesign", cx)
+                });
+                assert_eq!(composer.button_mode(cx), SendButtonMode::Queue);
+                calls.lock().unwrap().clear();
+
+                composer.on_submit(cx);
+
+                assert_eq!(
+                    composer.input.read(cx).text(),
+                    "Build the durable queue redesign"
+                );
+                assert_eq!(
+                    composer.failure.as_deref(),
+                    Some(
+                        "Start a new goal after the current turn finishes. Your draft is preserved."
+                    )
+                );
+                assert_eq!(composer.failure_key.as_deref(), Some("goal-chat"));
+                assert!(composer.state.read(cx).queue.is_empty());
+                let selection = composer
+                    .pickers
+                    .read(cx)
+                    .goal_selection(cx)
+                    .expect("the rejected queued send must preserve Goal intent");
+                assert_eq!(
+                    composer.pickers.read(cx).resolved(cx).model_options["zeronFreshGoal"],
+                    true
+                );
+
+                composer.pickers.update(cx, |picker, cx| {
+                    picker.consume_goal_selection(&selection, cx)
+                });
+                let followup = composer.pickers.read(cx).resolved(cx);
+                assert!(
+                    !followup.model_options.contains_key("zeronFreshGoal")
+                        && !followup
+                            .model_options
+                            .contains_key(zeron_proto::AGENT_MODE_OPTION),
+                    "the next ordinary follow-up must remain out of Goal mode"
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(
+            !calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|method| method == methods::QUEUE_COMMAND),
+            "a fresh Goal must never be enqueued as an ordinary text command"
+        );
     }
 
     #[gpui::test]
@@ -13954,6 +14331,92 @@ mod tests {
     }
 
     #[gpui::test]
+    fn cancelling_uses_empty_answers_and_rejection_restores_the_typed_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _runtime = runtime.enter();
+        let (reject_tx, reject_rx) = tokio::sync::watch::channel(false);
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let client = zeron_rpc::memory_client(std::sync::Arc::new(WizardOutcomeRpc {
+            calls: calls.clone(),
+            reject: reject_rx,
+        }));
+        let native_question = question("cancel-question", &[], false);
+        let state = cx.new(|_| AppState::new());
+        state.update(cx, |state, _| {
+            state.set_test_engine(crate::state::EngineHandle::from_test_client(client));
+            state.selected_chat = Some("chat".into());
+            state.transcript = vec![SessionMessageEntry {
+                id: "cancel-entry".into(),
+                role: MessageRole::Assistant,
+                parts: vec![MessagePart::Input {
+                    id: "cancel-input".into(),
+                    request_id: "cancel-request".into(),
+                    questions: vec![native_question.clone()],
+                    resolved: false,
+                }],
+                created_at: 0,
+                device_id: "device".into(),
+                status: None,
+                continuation_of: None,
+            }];
+        });
+        let composer = cx.new(|cx| Composer::new(state, cx));
+        composer.update(cx, |composer, cx| {
+            composer.wizard = Some(Wizard::new("cancel-request".into(), vec![native_question]));
+            composer.input.update(cx, |input, cx| {
+                input.set_text("Do not lose this paragraph", cx)
+            });
+            composer.wizard_cancel(cx);
+            assert!(composer.wizard.is_none());
+        });
+
+        for _ in 0..100 {
+            cx.run_until_parked();
+            runtime.block_on(async { tokio::task::yield_now().await });
+            if calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(method, _)| method == methods::WATCH_COMMAND)
+            {
+                break;
+            }
+        }
+        let calls_snapshot = calls.lock().unwrap().clone();
+        let queue = calls_snapshot
+            .iter()
+            .find(|(method, _)| method == methods::QUEUE_COMMAND)
+            .expect("cancellation queued");
+        assert_eq!(queue.1["command"]["kind"], "respondInput");
+        assert_eq!(queue.1["command"]["answers"], serde_json::json!([]));
+
+        reject_tx.send(true).unwrap();
+        for _ in 0..100 {
+            cx.run_until_parked();
+            runtime.block_on(async { tokio::task::yield_now().await });
+            if composer.read_with(cx, |composer, _| composer.wizard.is_some()) {
+                break;
+            }
+        }
+        composer.read_with(cx, |composer, app| {
+            assert_eq!(
+                composer.wizard.as_ref().unwrap().request_id,
+                "cancel-request"
+            );
+            assert_eq!(
+                composer.input.read(app).text(),
+                "Do not lose this paragraph"
+            );
+            assert!(composer.failure.is_some());
+        });
+    }
+
+    #[gpui::test]
     fn durable_answer_watch_recovers_typed_wizard_after_cross_chat_rejection(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -14583,6 +15046,54 @@ impl Composer {
             input.read_only = false;
             input.set_text("", cx);
         });
+        cx.notify();
+    }
+
+    /// Select exactly one provider for a synthetic native acceptance scene.
+    pub fn fixture_harness(&mut self, harness: HarnessId, cx: &mut Context<Self>) {
+        if harness == HarnessId::Codex {
+            // Supply the same native Goal mode advertisement that production
+            // receives from Codex model discovery. Other fixture harnesses
+            // remain limited to their real, provider-specific scenes.
+            self.pickers
+                .update(cx, |pickers, cx| pickers.fixture_model_catalog(cx));
+        }
+        self.state.update(cx, |state, cx| {
+            if let Some(chat) = state
+                .chats
+                .iter_mut()
+                .find(|chat| chat.id == "composer-fixture")
+            {
+                if let Some(config) = chat.config.as_mut() {
+                    config.harness = harness;
+                }
+            }
+            cx.notify();
+        });
+        self.on_state_changed(cx);
+        cx.notify();
+    }
+
+    /// Evidence hooks expose text/focus only; lifecycle actions continue to
+    /// run through the rendered controls and production SetGoal RPC path.
+    pub fn fixture_message_draft(&self, cx: &App) -> String {
+        self.input.read(cx).text().to_owned()
+    }
+
+    pub fn fixture_goal_edit_state(&self, window: &Window, cx: &App) -> (bool, bool) {
+        (
+            self.goal_edit_chat.is_some(),
+            self.goal_input.focus_handle(cx).is_focused(window),
+        )
+    }
+
+    pub fn fixture_goal_edit_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        assert!(
+            self.goal_edit_chat.is_some(),
+            "goal edit text requires the native edit control to be open"
+        );
+        self.goal_input
+            .update(cx, |input, cx| input.set_text(text, cx));
         cx.notify();
     }
 

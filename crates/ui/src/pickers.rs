@@ -176,7 +176,19 @@ impl ResolvedRunConfig {
             harness: self.harness?,
             model: self.model.clone(),
             reasoning: self.reasoning,
-            model_options: self.model_options.clone(),
+            model_options: {
+                let mut options = self.model_options.clone();
+                options.remove("zeronFreshGoal");
+                if self.harness == Some(HarnessId::Codex)
+                    && options
+                        .get(zeron_proto::AGENT_MODE_OPTION)
+                        .and_then(|v| v.as_str())
+                        == Some("goal")
+                {
+                    options.remove(zeron_proto::AGENT_MODE_OPTION);
+                }
+                options
+            },
             sandbox: SandboxLevel::WorkspaceWrite,
         })
     }
@@ -544,6 +556,9 @@ pub struct Pickers {
     /// Sticky last-used picks (zeron `zeron.composer.defaults:v1`): seeds the
     /// new-chat chips and is rewritten on every new-chat pick.
     defaults: ComposerDefaults,
+    /// Goal is an explicit next-send intent, never a sticky model preference.
+    pending_goals: HashMap<String, u64>,
+    goal_generation: u64,
     /// Where [`Self::defaults`] persists (`{data_dir}/composer-defaults.json`);
     /// `None` before bootstrap stamps the state (writes are skipped).
     data_dir: Option<PathBuf>,
@@ -763,6 +778,8 @@ impl Pickers {
             effort_bounds: None,
             config: DraftConfig::default(),
             defaults,
+            pending_goals: HashMap::new(),
+            goal_generation: 0,
             data_dir,
             draft_owner,
             open,
@@ -932,6 +949,59 @@ impl Pickers {
     /// selections for existing chats, the remembered picks for the model the
     /// new-chat canvas resolves to (same id [`Self::resolved`] sends).
     fn explicit_options(&self, cx: &App) -> serde_json::Map<String, serde_json::Value> {
+        let mut options = self.stored_options(cx);
+        options.remove("zeronFreshGoal");
+        if self.effective_harness(cx) == Some(HarnessId::Codex) {
+            // Older builds saved Goal as a sticky mode. Never turn an ordinary
+            // message into a new goal after completion, deletion or relaunch.
+            if options
+                .get(zeron_proto::AGENT_MODE_OPTION)
+                .and_then(|v| v.as_str())
+                == Some("goal")
+            {
+                options.remove(zeron_proto::AGENT_MODE_OPTION);
+            }
+            let key = self
+                .state
+                .read(cx)
+                .selected_chat
+                .clone()
+                .unwrap_or_default();
+            if self.pending_goals.contains_key(&key)
+                && self
+                    .composer_modes(cx)
+                    .is_some_and(|mode| mode.choices.iter().any(|choice| choice.id == "goal"))
+            {
+                options.insert(zeron_proto::AGENT_MODE_OPTION.into(), "goal".into());
+            }
+        }
+        options
+    }
+
+    pub(crate) fn goal_selection(&self, cx: &App) -> Option<(String, u64)> {
+        let key = self
+            .state
+            .read(cx)
+            .selected_chat
+            .clone()
+            .unwrap_or_default();
+        self.pending_goals
+            .get(&key)
+            .map(|generation| (key, *generation))
+    }
+
+    pub(crate) fn consume_goal_selection(
+        &mut self,
+        selection: &(String, u64),
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending_goals.get(&selection.0) == Some(&selection.1) {
+            self.pending_goals.remove(&selection.0);
+            cx.notify();
+        }
+    }
+
+    fn stored_options(&self, cx: &App) -> serde_json::Map<String, serde_json::Value> {
         if let Some(chat) = self.state.read(cx).selected_chat_row() {
             let selections = chat
                 .config
@@ -991,6 +1061,21 @@ impl Pickers {
                         && option.choices.iter().any(|choice| choice.id == "plan"))
             })
             .cloned()
+            .map(|mut mode| {
+                if self.effective_harness(cx) == Some(HarnessId::Codex) {
+                    let state = self.state.read(cx);
+                    let supported = match state.selected_chat.as_deref() {
+                        Some(chat) => state.chat_host_supports(chat, capabilities::GOAL_ACTIONS_V1),
+                        None => state.effective_device_id().is_some_and(|device| {
+                            state.device_supports(&device, capabilities::GOAL_ACTIONS_V1)
+                        }),
+                    };
+                    if !supported {
+                        mode.choices.retain(|choice| choice.id != "goal");
+                    }
+                }
+                mode
+            })
     }
 
     pub fn resolved(&self, cx: &App) -> ResolvedRunConfig {
@@ -1002,7 +1087,18 @@ impl Pickers {
                 // Catalog not loaded (offline): still send the id we know.
                 .or_else(|| self.effective_model_id(cx).map(str::to_string)),
             reasoning: self.effective_reasoning(cx),
-            model_options: self.explicit_options(cx),
+            model_options: {
+                let mut options = self.explicit_options(cx);
+                if self.effective_harness(cx) == Some(HarnessId::Codex)
+                    && options
+                        .get(zeron_proto::AGENT_MODE_OPTION)
+                        .and_then(|v| v.as_str())
+                        == Some("goal")
+                {
+                    options.insert("zeronFreshGoal".into(), true.into());
+                }
+                options
+            },
         }
     }
 
@@ -1626,6 +1722,23 @@ impl Pickers {
         default: bool,
         cx: &mut Context<Self>,
     ) {
+        if option_id == zeron_proto::AGENT_MODE_OPTION
+            && self.effective_harness(cx) == Some(HarnessId::Codex)
+        {
+            let key = self
+                .state
+                .read(cx)
+                .selected_chat
+                .clone()
+                .unwrap_or_default();
+            if choice_id == "goal" && !default {
+                self.goal_generation = self.goal_generation.wrapping_add(1);
+                self.pending_goals.insert(key, self.goal_generation);
+                cx.notify();
+                return;
+            }
+            self.pending_goals.remove(&key);
+        }
         if self.state.read(cx).selected_chat.is_some() {
             self.update_chat_config(cx, move |config| {
                 if default {
@@ -6574,6 +6687,98 @@ mod tests {
                         .clone()
                 ),
                 saved
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn goal_selection_is_one_shot_chat_scoped_and_never_saved(cx: &mut gpui::TestAppContext) {
+        let state = cx.new(|_| {
+            let mut state = AppState::new();
+            state.selected_chat = Some("first".into());
+            state.devices =
+                vec![serde_json::from_value(serde_json::json!({
+                "id":"fixture-device", "name":"Fixture", "platform":"macos", "lastSeenAt":null,
+                "capabilities":["agent-modes-v1", "goal-actions-v1"]
+            })).unwrap()];
+            state.chats = ["first", "second"]
+                .into_iter()
+                .map(|id| {
+                    serde_json::from_value(serde_json::json!({
+                "id":id, "deviceId":"fixture-device", "title":null, "archived":false,
+                "cwd":"/fixture", "branch":null, "checkoutId":null,
+                "config":{"harness":"codex", "model":"alpha", "reasoning":null,
+                    "modelOptions":{"agentMode":"goal"}, "sandbox":"workspace-write"},
+                "lastMessagePreview":null, "lastMessageAt":null, "createdAt":chrono::Utc::now()
+            })).unwrap()
+                })
+                .collect();
+            state
+        });
+        let pickers = cx.new(|cx| Pickers::new(state.clone(), cx));
+        pickers.update(cx, |picker, cx| {
+            let mut model = bare_model("alpha", "Alpha");
+            model.options = vec![zeron_proto::agent_mode_option(HarnessId::Codex).unwrap()];
+            picker
+                .models
+                .insert(HarnessId::Codex, Loadable::Ready(vec![model]));
+            assert!(
+                !picker
+                    .resolved(cx)
+                    .model_options
+                    .contains_key("zeronFreshGoal"),
+                "legacy sticky Goal must not create another goal"
+            );
+            picker.pick_option(
+                zeron_proto::AGENT_MODE_OPTION.into(),
+                "goal".into(),
+                false,
+                cx,
+            );
+            let first = picker.goal_selection(cx).unwrap();
+            let run = picker.resolved(cx);
+            assert_eq!(run.model_options["zeronFreshGoal"], true);
+            let stored = run.chat_config().unwrap();
+            assert!(!stored.model_options.contains_key("zeronFreshGoal"));
+            assert!(
+                !stored
+                    .model_options
+                    .contains_key(zeron_proto::AGENT_MODE_OPTION)
+            );
+            picker
+                .state
+                .update(cx, |state, _| state.selected_chat = Some("second".into()));
+            assert!(
+                !picker
+                    .resolved(cx)
+                    .model_options
+                    .contains_key("zeronFreshGoal"),
+                "one chat's selection must not leak"
+            );
+            picker
+                .state
+                .update(cx, |state, _| state.selected_chat = Some("first".into()));
+            picker.pick_option(
+                zeron_proto::AGENT_MODE_OPTION.into(),
+                "goal".into(),
+                false,
+                cx,
+            );
+            let newer = picker.goal_selection(cx).unwrap();
+            picker.consume_goal_selection(&first, cx);
+            assert!(
+                picker
+                    .resolved(cx)
+                    .model_options
+                    .contains_key("zeronFreshGoal"),
+                "late acceptance must not clear a newer selection"
+            );
+            picker.consume_goal_selection(&newer, cx);
+            assert!(
+                !picker
+                    .resolved(cx)
+                    .model_options
+                    .contains_key("zeronFreshGoal")
             );
         });
     }

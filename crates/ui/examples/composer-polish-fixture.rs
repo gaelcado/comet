@@ -1,11 +1,124 @@
 //! Isolated native evidence for production completion controls and rich composer.
+use async_trait::async_trait;
 use gpui::{
     AppContext, AsyncApp, Bounds, Context, Entity, Focusable, Render, Window, WindowBounds,
     WindowOptions, div, prelude::*, px, size,
 };
-use std::{ops::Range, path::PathBuf, time::Duration};
+use std::{
+    ops::Range,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use zeron_theme::SurfacePreference;
 use zeron_ui::*;
+
+#[derive(Clone)]
+struct SyntheticGoalHost {
+    inner: Arc<Mutex<SyntheticGoalState>>,
+}
+
+struct SyntheticGoalState {
+    goal: Option<zeron_proto::GoalState>,
+    actions: Vec<zeron_proto::GoalAction>,
+}
+
+impl SyntheticGoalHost {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(SyntheticGoalState {
+                goal: None,
+                actions: Vec::new(),
+            })),
+        }
+    }
+
+    fn reset(&self, status: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.goal = Some(zeron_proto::GoalState {
+            objective: "Test the goal tool.".into(),
+            status: status.into(),
+            tokens_used: 4_200,
+            token_budget: Some(24_000),
+        });
+        inner.actions.clear();
+    }
+
+    fn actions(&self) -> Vec<zeron_proto::GoalAction> {
+        self.inner.lock().unwrap().actions.clone()
+    }
+
+    fn goal(&self) -> Option<zeron_proto::GoalState> {
+        self.inner.lock().unwrap().goal.clone()
+    }
+}
+
+#[async_trait]
+impl zeron_rpc::RpcService for SyntheticGoalHost {
+    async fn handle(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<zeron_rpc::RpcReply, zeron_rpc::RpcError> {
+        if method != zeron_rpc::methods::SET_GOAL {
+            return Err(zeron_rpc::RpcError::UnknownMethod(method.into()));
+        }
+        if params.get("chatId").and_then(serde_json::Value::as_str) != Some("composer-fixture")
+            || params
+                .get("targetDeviceId")
+                .and_then(serde_json::Value::as_str)
+                != Some("fixture-device")
+        {
+            return Err(zeron_rpc::RpcError::BadParams(
+                "synthetic goal host only accepts its fixture chat and device".into(),
+            ));
+        }
+        let action: zeron_proto::GoalAction = serde_json::from_value(
+            params
+                .get("action")
+                .cloned()
+                .ok_or_else(|| zeron_rpc::RpcError::BadParams("missing action".into()))?,
+        )
+        .map_err(|error| zeron_rpc::RpcError::BadParams(error.to_string()))?;
+        let objective = params
+            .get("objective")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let mut inner = self.inner.lock().unwrap();
+        match action {
+            zeron_proto::GoalAction::Pause => {
+                let goal = inner
+                    .goal
+                    .as_mut()
+                    .ok_or_else(|| zeron_rpc::RpcError::Failed("no active goal".into()))?;
+                goal.status = "paused".into();
+            }
+            zeron_proto::GoalAction::Resume => {
+                let goal = inner
+                    .goal
+                    .as_mut()
+                    .ok_or_else(|| zeron_rpc::RpcError::Failed("no paused goal".into()))?;
+                goal.status = "active".into();
+            }
+            zeron_proto::GoalAction::Edit => {
+                let goal = inner
+                    .goal
+                    .as_mut()
+                    .ok_or_else(|| zeron_rpc::RpcError::Failed("no goal to edit".into()))?;
+                goal.objective = objective.ok_or_else(|| {
+                    zeron_rpc::RpcError::BadParams("edit requires a non-empty objective".into())
+                })?;
+            }
+            zeron_proto::GoalAction::Clear => inner.goal = None,
+        }
+        inner.actions.push(action);
+        Ok(zeron_rpc::RpcReply::Value(serde_json::json!({
+            "goal": inner.goal.clone()
+        })))
+    }
+}
 
 struct Fixture {
     composer: Entity<composer::Composer>,
@@ -209,6 +322,23 @@ async fn pause_for(cx: &mut AsyncApp, milliseconds: u64) {
         .await;
 }
 
+async fn wait_for_goal_actions(
+    host: &SyntheticGoalHost,
+    expected: &[zeron_proto::GoalAction],
+    cx: &mut AsyncApp,
+) {
+    for _ in 0..40 {
+        if host.actions() == expected {
+            return;
+        }
+        pause_for(cx, 25).await;
+    }
+    panic!(
+        "synthetic SetGoal actions did not settle: expected {expected:?}, got {:?}",
+        host.actions()
+    );
+}
+
 async fn wheel_to_bottom(
     window: gpui::WindowHandle<Fixture>,
     target: &'static str,
@@ -310,6 +440,9 @@ fn main() -> anyhow::Result<()> {
         theme_library::init(data.clone(), cx);
         appearance::init(appearance::AppearanceMode::Dark, prefs.theme_selection, prefs.accent, prefs.surface, cx);
         composer::init(cx, prefs.composer_send_behavior);
+        let goal_host = SyntheticGoalHost::new();
+        let goal_client = zeron_rpc::memory_client(Arc::new(goal_host.clone()));
+        let goal_engine = state::EngineHandle::from_goal_fixture_client(goal_client);
         let state = cx.new(|_| state::AppState::new());
         let composer = cx.new(|cx| composer::Composer::new(state.clone(), cx));
         let agents = cx.new(|cx| settings::harnesses::HarnessesPage::new(state.clone(), cx));
@@ -646,6 +779,208 @@ fn main() -> anyhow::Result<()> {
             }).unwrap();
             pause(cx).await;
             capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("keyboard-activity-space-expanded-{surface_name}.png"))).unwrap(); }).unwrap();
+
+            // Install the synthetic RPC boundary only for native goal scenes.
+            // Earlier settings/composer evidence remains an engine-free fixture
+            // and therefore cannot issue unrelated discovery calls to this host.
+            state.update(cx, |state, _| {
+                state.set_goal_fixture_engine(goal_engine.clone())
+            });
+
+            // Reproduce the reported goal-only shape, including its persistent
+            // controls when collapsed and each native terminal/paused status.
+            for status in ["active", "paused", "blocked", "complete", "usageLimited", "budgetLimited"] {
+                for light in [false, true] {
+                    cx.update(|cx| appearance::set_mode(if light { appearance::AppearanceMode::Light } else { appearance::AppearanceMode::Dark }, cx));
+                    window.update(cx, |view, w, cx| {
+                        view.title = "Goal controls";
+                        view.settings = false;
+                        view.composer.update(cx, |composer, cx| {
+                            composer.fixture_activity(vec![serde_json::from_value(serde_json::json!({
+                                "kind": "goal", "objective": "Test the goal tool.", "status": status,
+                                "tokensUsed": 4200, "tokenBudget": 24000
+                            })).unwrap()], false, cx);
+                            composer.fixture_harness(zeron_proto::HarnessId::Codex, cx);
+                        });
+                        w.resize(size(px(840.), px(740.)));
+                        cx.notify();
+                    }).unwrap();
+                    pause(cx).await;
+                    let capture_window: gpui::AnyWindowHandle = window.into();
+                    let name = format!("goal-{status}-{}-{surface_name}.png", if light { "light" } else { "dark" });
+                    capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
+                }
+            }
+
+            // Drive the rendered native controls through their production
+            // focus/key handlers and the real RPC client. The in-memory host
+            // above is deliberately only a fake provider boundary: it accepts
+            // SetGoal and nothing else, so this cannot accidentally exercise a
+            // real Codex/provider/model turn.
+            const GOAL_DRAFT: &str = "Keep this message draft while I manage the goal.";
+            goal_host.reset("active");
+            cx.update(|cx| appearance::set_mode(appearance::AppearanceMode::Dark, cx));
+            window.update(cx, |view, w, cx| {
+                view.title = "Goal controls · synthetic SetGoal host";
+                view.settings = false;
+                view.composer.update(cx, |composer, cx| {
+                    composer.fixture_activity(vec![serde_json::from_value(serde_json::json!({
+                        "kind": "goal", "objective": "Test the goal tool.", "status": "active",
+                        "tokensUsed": 4200, "tokenBudget": 24000
+                    })).unwrap()], false, cx);
+                    composer.fixture_harness(zeron_proto::HarnessId::Codex, cx);
+                    composer.fixture_rich_draft(GOAL_DRAFT, cx);
+                    assert!(composer.fixture_focus_goal_control("goal-lifecycle", w, cx));
+                });
+                w.resize(size(px(840.), px(740.)));
+                w.activate_window();
+                cx.notify();
+            }).unwrap();
+            pause(cx).await;
+            let capture_window: gpui::AnyWindowHandle = window.into();
+            capture_window.update(cx, |_, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx));
+            }).unwrap();
+            wait_for_goal_actions(&goal_host, &[zeron_proto::GoalAction::Pause], cx).await;
+            window.update(cx, |view, _, cx| {
+                assert_eq!(view.composer.read(cx).fixture_message_draft(cx), GOAL_DRAFT);
+                assert_eq!(goal_host.goal().unwrap().status, "paused");
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join("goal-native-paused-synthetic-host.png")).unwrap(); }).unwrap();
+
+            window.update(cx, |view, w, cx| {
+                assert!(view.composer.update(cx, |composer, cx| composer.fixture_focus_goal_control("goal-lifecycle", w, cx)));
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("space").unwrap(), cx));
+            }).unwrap();
+            wait_for_goal_actions(
+                &goal_host,
+                &[zeron_proto::GoalAction::Pause, zeron_proto::GoalAction::Resume],
+                cx,
+            ).await;
+            window.update(cx, |view, _, cx| {
+                assert_eq!(view.composer.read(cx).fixture_message_draft(cx), GOAL_DRAFT);
+                assert_eq!(goal_host.goal().unwrap().status, "active");
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join("goal-native-resumed-synthetic-host.png")).unwrap(); }).unwrap();
+
+            window.update(cx, |view, w, cx| {
+                assert!(view.composer.update(cx, |composer, cx| composer.fixture_focus_goal_control("goal-edit", w, cx)));
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx));
+            }).unwrap();
+            window.update(cx, |view, w, cx| {
+                let (editing, focused) = view.composer.read(cx).fixture_goal_edit_state(w, cx);
+                assert!(editing && focused, "native Edit must focus its objective field");
+                view.composer.update(cx, |composer, cx| {
+                    composer.fixture_goal_edit_text("Discard this edit", cx)
+                });
+                assert_eq!(view.composer.read(cx).fixture_message_draft(cx), GOAL_DRAFT);
+                assert!(view.composer.update(cx, |composer, cx| composer.fixture_focus_goal_control("goal-cancel", w, cx)));
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("space").unwrap(), cx));
+            }).unwrap();
+            pause(cx).await;
+            assert_eq!(
+                goal_host.actions(),
+                vec![zeron_proto::GoalAction::Pause, zeron_proto::GoalAction::Resume],
+                "Cancel must remain local and must not send SetGoal"
+            );
+            window.update(cx, |view, w, cx| {
+                assert!(!view.composer.read(cx).fixture_goal_edit_state(w, cx).0);
+                assert_eq!(view.composer.read(cx).fixture_message_draft(cx), GOAL_DRAFT);
+            }).unwrap();
+            assert_eq!(goal_host.goal().unwrap().objective, "Test the goal tool.");
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join("goal-native-edit-cancelled-synthetic-host.png")).unwrap(); }).unwrap();
+
+            window.update(cx, |view, w, cx| {
+                assert!(view.composer.update(cx, |composer, cx| composer.fixture_focus_goal_control("goal-edit", w, cx)));
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx));
+            }).unwrap();
+            window.update(cx, |view, w, cx| {
+                let (editing, focused) = view.composer.read(cx).fixture_goal_edit_state(w, cx);
+                assert!(editing && focused);
+                view.composer.update(cx, |composer, cx| {
+                    composer.fixture_goal_edit_text("Ship the polished native controls", cx)
+                });
+            }).unwrap();
+            // Enter is handled by the real goal ComposerInput subscription.
+            capture_window.update(cx, |_, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx));
+            }).unwrap();
+            wait_for_goal_actions(
+                &goal_host,
+                &[
+                    zeron_proto::GoalAction::Pause,
+                    zeron_proto::GoalAction::Resume,
+                    zeron_proto::GoalAction::Edit,
+                ],
+                cx,
+            ).await;
+            window.update(cx, |view, w, cx| {
+                assert!(!view.composer.read(cx).fixture_goal_edit_state(w, cx).0);
+                assert_eq!(view.composer.read(cx).fixture_message_draft(cx), GOAL_DRAFT);
+            }).unwrap();
+            assert_eq!(
+                goal_host.goal().unwrap().objective,
+                "Ship the polished native controls"
+            );
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join("goal-native-edited-synthetic-host.png")).unwrap(); }).unwrap();
+
+            window.update(cx, |view, w, cx| {
+                assert!(view.composer.update(cx, |composer, cx| composer.fixture_focus_goal_control("goal-clear", w, cx)));
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| {
+                assert!(w.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx));
+            }).unwrap();
+            wait_for_goal_actions(
+                &goal_host,
+                &[
+                    zeron_proto::GoalAction::Pause,
+                    zeron_proto::GoalAction::Resume,
+                    zeron_proto::GoalAction::Edit,
+                    zeron_proto::GoalAction::Clear,
+                ],
+                cx,
+            ).await;
+            assert!(goal_host.goal().is_none());
+            window.update(cx, |view, _, cx| {
+                assert_eq!(view.composer.read(cx).fixture_message_draft(cx), GOAL_DRAFT);
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join("goal-native-deleted-synthetic-host.png")).unwrap(); }).unwrap();
+
+            // Provider-shaped scenes: one selected harness, only the native
+            // activity/input forms that its adapter actually supports. These
+            // are visual acceptance evidence, not live-provider test claims.
+            let harness_cases: serde_json::Value = serde_json::from_str(include_str!("../../../scripts/fixtures/composer-harnesses.json")).unwrap();
+            for case in harness_cases.as_array().unwrap() {
+                for light in [false, true] {
+                    cx.update(|cx| appearance::set_mode(if light { appearance::AppearanceMode::Light } else { appearance::AppearanceMode::Dark }, cx));
+                    window.update(cx, |view, w, cx| {
+                        view.title = "Native harness activity";
+                        view.settings = false;
+                        view.composer.update(cx, |composer, cx| {
+                            composer.fixture_activity(serde_json::from_value(case["calls"].clone()).unwrap(), false, cx);
+                            if !case["question"].is_null() {
+                                composer.fixture_question(serde_json::from_value(case["question"].clone()).unwrap(), cx);
+                            }
+                            composer.fixture_queue(&["Run the focused checks"], cx);
+                            composer.fixture_harness(serde_json::from_value(case["harness"].clone()).unwrap(), cx);
+                        });
+                        w.resize(size(px(840.), px(740.)));
+                        cx.notify();
+                    }).unwrap();
+                    pause(cx).await;
+                    let capture_window: gpui::AnyWindowHandle = window.into();
+                    let name = format!("harness-{}-{}-{surface_name}.png", case["harness"].as_str().unwrap(), if light { "light" } else { "dark" });
+                    capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
+                }
+            }
 
             for (models, fast, name) in [(false, false, "compact-standard"), (false, true, "compact-fast"), (true, false, "compact-favorites")] {
                 window.update(cx, |view, w, cx| {
