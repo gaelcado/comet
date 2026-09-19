@@ -14043,6 +14043,14 @@ impl Composer {
         cx.notify();
     }
 
+    /// Read-only evidence hook for driving the real disclosure keyboard handlers.
+    pub fn fixture_activity_keyboard_state(&self, window: &Window) -> (bool, bool) {
+        (
+            self.activity_focus.is_focused(window),
+            self.activity_expanded,
+        )
+    }
+
     pub fn fixture_compact_picker(
         &mut self,
         window: &mut Window,
