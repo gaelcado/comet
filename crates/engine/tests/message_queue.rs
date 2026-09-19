@@ -94,10 +94,10 @@ impl Harness for HeldHarness {
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
         self.prompts.lock().unwrap().push(request.prompt.clone());
         self.requests.lock().unwrap().push(request.clone());
-        if self.asks {
+        let answer = if self.asks {
             // Only the engine can mint a request id it will honour, so the
             // question has to go through controls rather than the stream.
-            let _answer = (controls.request_input)(vec![UserInputQuestion {
+            Some((controls.request_input)(vec![UserInputQuestion {
                 id: "q1".into(),
                 header: "Choose".into(),
                 question: "which one?".into(),
@@ -106,8 +106,10 @@ impl Harness for HeldHarness {
                 allow_custom: true,
                 non_blocking: false,
                 multi_select: false,
-            }]);
-        }
+            }]))
+        } else {
+            None
+        };
         let mut finish = self.finish.subscribe();
         let mut steering = controls.steering;
         let started = futures::stream::iter(vec![Ok(AgentEvent::SessionStarted {
@@ -119,6 +121,9 @@ impl Harness for HeldHarness {
             assistant_message_id: format!("a-{}", request.prompt),
         })]);
         let done = futures::stream::once(async move {
+            // A real waiting harness retains its response receiver. Dropping it
+            // would withdraw the native question before this turn can park.
+            let _pending_answer = answer;
             loop {
                 tokio::select! {
                     _ = finish.recv() => {

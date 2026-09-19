@@ -3192,11 +3192,6 @@ impl DocHost {
                 SteerOutcome::NotSteerable => {}
             }
         }
-        // Same reading of "busy" as the drain: a turn parked on a question is
-        // still a turn, and it has to be stopped before this one starts.
-        if send == QueueSend::Interrupt && sessions.turn_in_flight(chat_id) {
-            sessions.interrupt(chat_id).await?;
-        }
         let previous = sessions.last_request(chat_id);
         let request = self
             .request_from_chat_row(chat_id, &prompt)
@@ -3217,6 +3212,12 @@ impl DocHost {
         request.resume = None; // dispatch re-derives the harness session
         request.attachments = item.attachments.clone();
         let harness = self.harness_for_request(chat_id, &request);
+        sessions.validate_request(chat_id, harness, &request)?;
+        // Validate before cancelling the predecessor: an unsupported queued
+        // command must leave both its queue row and the current turn intact.
+        if send == QueueSend::Interrupt && sessions.turn_in_flight(chat_id) {
+            sessions.interrupt(chat_id).await?;
+        }
         self.dispatch_with_source_context(&sessions, chat_id, harness, request, Some(message_id))
             .await?;
         Ok(())
