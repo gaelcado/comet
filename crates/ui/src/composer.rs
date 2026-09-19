@@ -7,7 +7,7 @@
 //! pending-input detection) lives in free functions/structs with unit tests;
 //! the gpui element only feeds them measurements.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -80,6 +80,105 @@ const QUEUE_SIDE_INSET: f32 = 16.0;
 /// The composer covers the tray's lower padding so the queue reads as emerging
 /// from behind it instead of as a separate rounded pill.
 pub(crate) const QUEUE_COMPOSER_OVERLAP: f32 = 18.0;
+/// Retain enough displaced requests for realistic cross-chat navigation while
+/// preventing resolved chats that are never revisited from growing forever.
+const WIZARD_CACHE_MAX: usize = 32;
+/// Local suppression normally lasts only until the next resolved document
+/// frame. Keep a wider bound for rapid cross-chat answering while ensuring a
+/// disconnected host cannot retain request ids indefinitely.
+const ANSWERED_REQUEST_MAX: usize = 64;
+
+/// Maximum scrollable heights for the three trays that may stack above the
+/// composer. The dense state deliberately stays below half the viewport so a
+/// small window retains transcript context and the answer controls.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ComposerTrayLimits {
+    activity: f32,
+    question: f32,
+    queue: f32,
+}
+
+fn composer_tray_limits(
+    viewport_height: f32,
+    has_question: bool,
+    has_queue: bool,
+) -> ComposerTrayLimits {
+    let (activity, question, queue) = match (has_question, has_queue) {
+        (true, true) => (0.12, 0.22, 0.14),
+        (true, false) => (0.14, 0.35, 0.0),
+        (false, true) => (0.14, 0.0, 0.30),
+        (false, false) => (0.25, 0.0, 0.0),
+    };
+    ComposerTrayLimits {
+        activity: viewport_height * activity,
+        question: viewport_height * question,
+        queue: viewport_height * queue,
+    }
+}
+
+fn answered_request_key(chat_id: &str, request_id: &str) -> (String, String) {
+    (chat_id.to_owned(), request_id.to_owned())
+}
+
+fn store_cached_wizard(
+    cache: &mut HashMap<(String, String), Wizard>,
+    order: &mut VecDeque<(String, String)>,
+    key: (String, String),
+    wizard: Wizard,
+) {
+    order.retain(|candidate| candidate != &key);
+    cache.insert(key.clone(), wizard);
+    order.push_back(key);
+    while cache.len() > WIZARD_CACHE_MAX {
+        let Some(oldest) = order.pop_front() else {
+            break;
+        };
+        cache.remove(&oldest);
+    }
+}
+
+fn take_cached_wizard(
+    cache: &mut HashMap<(String, String), Wizard>,
+    order: &mut VecDeque<(String, String)>,
+    key: &(String, String),
+) -> Option<Wizard> {
+    order.retain(|candidate| candidate != key);
+    cache.remove(key)
+}
+
+fn remove_cached_wizard(
+    cache: &mut HashMap<(String, String), Wizard>,
+    order: &mut VecDeque<(String, String)>,
+    key: &(String, String),
+) {
+    order.retain(|candidate| candidate != key);
+    cache.remove(key);
+}
+
+fn store_answered_request(
+    answered: &mut HashSet<(String, String)>,
+    order: &mut VecDeque<(String, String)>,
+    key: (String, String),
+) {
+    order.retain(|candidate| candidate != &key);
+    answered.insert(key.clone());
+    order.push_back(key);
+    while answered.len() > ANSWERED_REQUEST_MAX {
+        let Some(oldest) = order.pop_front() else {
+            break;
+        };
+        answered.remove(&oldest);
+    }
+}
+
+fn remove_answered_request(
+    answered: &mut HashSet<(String, String)>,
+    order: &mut VecDeque<(String, String)>,
+    key: &(String, String),
+) -> bool {
+    order.retain(|candidate| candidate != key);
+    answered.remove(key)
+}
 /// The original floating selector rows use the same 20px chip height as the
 /// established-thread footer. Their surrounding rows own no plate or border.
 const NEW_THREAD_SELECTOR_ROW_HEIGHT: f32 = 20.0;
@@ -614,12 +713,10 @@ fn wizard_escape_goes_back(key: &str, input_focused: bool, input_empty: bool) ->
 
 /// Serve unresolved questions in transcript order, including nonblocking agent
 /// questions whose assistant has already continued into a newer entry.
-pub fn pending_input_request(
+fn pending_input_request_matching(
     transcript: &[SessionMessageEntry],
+    mut include: impl FnMut(&str) -> bool,
 ) -> Option<(String, Vec<UserInputQuestion>)> {
-    let latest = transcript
-        .iter()
-        .rposition(|entry| entry.role == MessageRole::Assistant)?;
     let resolved: HashSet<&str> = transcript
         .iter()
         .flat_map(|entry| &entry.parts)
@@ -632,27 +729,77 @@ pub fn pending_input_request(
             _ => None,
         })
         .collect();
+
+    // A blocking request suspends the run and must outrank asynchronous
+    // questions that arrive around it. Search backwards, ignoring entries
+    // made only of asynchronous requests; ordinary later assistant output
+    // still supersedes a stale blocking request from an earlier run.
+    for entry in transcript
+        .iter()
+        .rev()
+        .filter(|entry| entry.role == MessageRole::Assistant)
+    {
+        let blocking = entry.parts.iter().find_map(|part| match part {
+            MessagePart::Input {
+                request_id,
+                questions,
+                resolved: false,
+                ..
+            } if !questions.is_empty()
+                && !resolved.contains(request_id.as_str())
+                && questions.iter().any(|question| !question.non_blocking) =>
+            {
+                Some((request_id, questions))
+            }
+            _ => None,
+        });
+        if let Some((request_id, questions)) = blocking {
+            if include(request_id) {
+                return Some((request_id.clone(), questions.clone()));
+            }
+            break;
+        }
+        let asynchronous_only = !entry.parts.is_empty()
+            && entry.parts.iter().all(|part| {
+                matches!(
+                    part,
+                    MessagePart::Input { questions, .. }
+                        if !questions.is_empty()
+                            && questions.iter().all(|question| question.non_blocking)
+                )
+            });
+        if !asynchronous_only && !entry.parts.is_empty() {
+            break;
+        }
+    }
+
+    // Once blocking input is answered, resume nonblocking requests in
+    // transcript order so locally typed pages are not starved by newer ones.
     transcript
         .iter()
-        .enumerate()
-        .filter(|(_, entry)| entry.role == MessageRole::Assistant)
-        .find_map(|(index, entry)| {
-            entry.parts.iter().find_map(|part| match part {
-                MessagePart::Input {
-                    request_id,
-                    questions,
-                    resolved: false,
-                    ..
-                } if !questions.is_empty()
-                    && !resolved.contains(request_id.as_str())
-                    && (index == latest
-                        || questions.iter().all(|question| question.non_blocking)) =>
-                {
-                    Some((request_id.clone(), questions.clone()))
-                }
-                _ => None,
-            })
+        .filter(|entry| entry.role == MessageRole::Assistant)
+        .flat_map(|entry| &entry.parts)
+        .find_map(|part| match part {
+            MessagePart::Input {
+                request_id,
+                questions,
+                resolved: false,
+                ..
+            } if !questions.is_empty()
+                && !resolved.contains(request_id.as_str())
+                && questions.iter().all(|question| question.non_blocking)
+                && include(request_id) =>
+            {
+                Some((request_id.clone(), questions.clone()))
+            }
+            _ => None,
         })
+}
+
+pub fn pending_input_request(
+    transcript: &[SessionMessageEntry],
+) -> Option<(String, Vec<UserInputQuestion>)> {
+    pending_input_request_matching(transcript, |_| true)
 }
 
 /// Whether the transcript shows `request_id` explicitly resolved (here or on
@@ -5283,11 +5430,17 @@ pub struct Composer {
     /// visible trace of a failed send (2026-08-19).
     failure_key: Option<String>,
     wizard: Option<Wizard>,
+    /// In-progress pages for requests temporarily displaced by a blocking
+    /// question or by conversation navigation.
+    wizard_cache: HashMap<(String, String), Wizard>,
+    wizard_cache_order: VecDeque<(String, String)>,
     question_draft: Option<EditSnapshot>,
     wizard_focus: FocusHandle,
-    /// Requests already answered locally (suppresses the panel until the doc
-    /// frame marks them resolved).
-    answered_requests: HashSet<String>,
+    /// Locally answered requests, scoped by chat because native providers may
+    /// reuse short request ids after a restart or in another conversation.
+    /// Suppresses the panel until the document marks them resolved.
+    answered_requests: HashSet<(String, String)>,
+    answered_request_order: VecDeque<(String, String)>,
     advance_task: Option<Task<()>>,
     send_task: Option<Task<()>>,
     /// The queued message being edited in the composer (see
@@ -5325,11 +5478,6 @@ pub struct Composer {
     /// Whether the modifier overlay should currently reveal the queue hint.
     /// The shell owns modifier tracking and clears this on window deactivation.
     queue_shortcut_revealed: bool,
-    /// Interrupt/answer commands get their own slot: assigning `send_task`
-    /// DROPPED an in-flight send future mid-upload — no banner, no cleanup,
-    /// `sending` stuck true forever (2026-08-19 incident, "press Stop while
-    /// a send grinds" shape).
-    action_task: Option<Task<()>>,
     /// Chats whose durable Interrupt command has been accepted or is still
     /// being queued. Kept independently so stopping one chat cannot replace
     /// another chat's request when the user navigates quickly.
@@ -5537,11 +5685,13 @@ impl Composer {
             launching_new_chat: false,
             failure: None,
             wizard: None,
+            wizard_cache: HashMap::new(),
+            wizard_cache_order: VecDeque::new(),
             question_draft: None,
             wizard_focus: cx.focus_handle(),
             answered_requests: HashSet::new(),
+            answered_request_order: VecDeque::new(),
             failure_key: None,
-            action_task: None,
             advance_task: None,
             send_task: None,
             interrupting: HashSet::new(),
@@ -6658,9 +6808,10 @@ impl Composer {
             }
         }
         let context = format!(
-            "{}:{preferences:?}:{include_skills}:{commands_allowed}:{}:{params}",
+            "{}:{preferences:?}:{include_skills}:{commands_allowed}:{}:{params}:{:?}",
             if skill { "skill" } else { "command" },
             self.completion_connection_context(cx),
+            self.available_modes(cx),
         );
         let context_changed = self.slash.context != context;
         if !context_changed
@@ -7084,16 +7235,36 @@ impl Composer {
             .retain(|chat_id, _| self.interrupting.contains(chat_id));
 
         let editing_id = self.editing_queued.clone();
-        let (key, pending, edited_row_exists) = {
+        let (key, pending, edited_row_exists, resolved_requests) = {
             let s = self.state.read(cx);
+            let key = s.selected_chat.clone().unwrap_or_default();
+            let pending = pending_input_request_matching(&s.transcript, |request_id| {
+                !self
+                    .answered_requests
+                    .iter()
+                    .any(|(chat, request)| chat == &key && request == request_id)
+            });
             (
-                s.selected_chat.clone().unwrap_or_default(),
-                pending_input_request(&s.transcript),
+                key,
+                pending,
                 editing_id
                     .as_ref()
                     .is_none_or(|id| s.queue.iter().any(|item| item.id == *id)),
+                s.transcript
+                    .iter()
+                    .flat_map(|entry| &entry.parts)
+                    .filter_map(|part| match part {
+                        MessagePart::Input {
+                            request_id,
+                            resolved: true,
+                            ..
+                        } => Some(request_id.clone()),
+                        _ => None,
+                    })
+                    .collect::<HashSet<_>>(),
             )
         };
+        self.prune_resolved_request_state(&key, &resolved_requests);
 
         // A queue edit belongs to exactly one visible row. Navigation or a
         // remote drain/removal cancels it instead of leaving a focused but
@@ -7128,6 +7299,7 @@ impl Composer {
 
         // Return the borrowed draft before saving it under the previous chat.
         if key != self.current_key {
+            self.cache_current_wizard(cx);
             self.restore_question_draft(cx);
         }
         // Draft swap on chat navigation — the input entity itself survives.
@@ -7144,6 +7316,17 @@ impl Composer {
             }
             let draft = self.drafts.get(&key).cloned().unwrap_or_default();
             self.current_key = key;
+            // Every tray is conversation-scoped. Reset before the next render
+            // so a freshly selected chat cannot inherit another chat's reveal
+            // height or scroll position for even one frame.
+            self.activity_chat = (!self.current_key.is_empty()).then(|| self.current_key.clone());
+            self.activity_expanded = false;
+            self.activity_height = 0.0;
+            self.activity_motion = activity::ActivityMotion::default();
+            self.activity_plan = None;
+            self.activity_scroll.set_offset(point(px(0.0), px(0.0)));
+            self.question_scroll.set_offset(point(px(0.0), px(0.0)));
+            self.queue_scroll.set_offset(point(px(0.0), px(0.0)));
             // `failure` deliberately survives navigation: chat-scoped
             // failures render only under their own chat (see `failure_key`),
             // so switching away and back must not erase the one visible
@@ -7192,17 +7375,25 @@ impl Composer {
         }
         // Question panel lifecycle (wizard state cached per request id).
         match pending {
-            Some((request_id, questions)) if !self.answered_requests.contains(&request_id) => {
+            Some((request_id, questions)) => {
                 let same = self
                     .wizard
                     .as_ref()
                     .is_some_and(|w| w.request_id == request_id);
                 if !same {
+                    self.cache_current_wizard(cx);
                     self.reset_mention(None, cx);
                     if self.question_draft.is_none() {
                         self.question_draft = Some(self.input.read(cx).snapshot());
                     }
-                    self.wizard = Some(Wizard::new(request_id, questions));
+                    let key = answered_request_key(&self.current_key, &request_id);
+                    self.wizard = take_cached_wizard(
+                        &mut self.wizard_cache,
+                        &mut self.wizard_cache_order,
+                        &key,
+                    )
+                    .filter(|wizard| wizard.questions == questions)
+                    .or_else(|| Some(Wizard::new(request_id, questions)));
                     self.question_scroll.set_offset(point(px(0.0), px(0.0)));
                     self.advance_task = None;
                     // The shared input becomes the panel's free-text override.
@@ -7223,8 +7414,16 @@ impl Composer {
                     let transcript = self.state.read(cx).transcript.clone();
                     let released = input_request_resolved(&transcript, &wizard.request_id)
                         || (!transcript.is_empty()
-                            && !self.answered_requests.contains(&wizard.request_id));
+                            && !self.answered_requests.contains(&answered_request_key(
+                                &self.current_key,
+                                &wizard.request_id,
+                            )));
                     if released {
+                        remove_cached_wizard(
+                            &mut self.wizard_cache,
+                            &mut self.wizard_cache_order,
+                            &answered_request_key(&self.current_key, &wizard.request_id),
+                        );
                         self.wizard = None;
                         self.restore_question_draft(cx);
                         self.advance_task = None;
@@ -7236,6 +7435,9 @@ impl Composer {
                 }
             }
         }
+        // Displacing a request above may have cached it in the same update
+        // that delivered its resolved frame.
+        self.prune_resolved_request_state(&self.current_key.clone(), &resolved_requests);
         let input_context = message_input_context(self.wizard.is_some());
         let read_only = self
             .wizard
@@ -8221,6 +8423,53 @@ impl Composer {
 
     // ---- wizard glue ----
 
+    fn prune_resolved_request_state(&mut self, chat_id: &str, resolved_requests: &HashSet<String>) {
+        for request_id in resolved_requests {
+            let key = answered_request_key(chat_id, request_id);
+            remove_cached_wizard(&mut self.wizard_cache, &mut self.wizard_cache_order, &key);
+            remove_answered_request(
+                &mut self.answered_requests,
+                &mut self.answered_request_order,
+                &key,
+            );
+        }
+    }
+
+    fn restore_failed_wizard(&mut self, chat_id: &str, wizard: Wizard, cx: &mut Context<Self>) {
+        let key = answered_request_key(chat_id, &wizard.request_id);
+        remove_answered_request(
+            &mut self.answered_requests,
+            &mut self.answered_request_order,
+            &key,
+        );
+        store_cached_wizard(
+            &mut self.wizard_cache,
+            &mut self.wizard_cache_order,
+            key,
+            wizard,
+        );
+        if self.current_key == chat_id {
+            // Re-run normal arbitration: a blocking request remains visible,
+            // while an otherwise-unmasked failed request is restored from the
+            // cache with its page, picks, and typed answer intact.
+            self.on_state_changed(cx);
+        }
+    }
+
+    fn cache_current_wizard(&mut self, cx: &App) {
+        let typed = self.input.read(cx).text().to_owned();
+        let Some(wizard) = self.wizard.as_mut() else {
+            return;
+        };
+        wizard.set_typed(typed);
+        store_cached_wizard(
+            &mut self.wizard_cache,
+            &mut self.wizard_cache_order,
+            answered_request_key(&self.current_key, &wizard.request_id),
+            wizard.clone(),
+        );
+    }
+
     fn restore_question_draft(&mut self, cx: &mut Context<Self>) {
         if let Some(draft) = self.question_draft.take() {
             self.input.update(cx, |input, cx| {
@@ -8323,7 +8572,17 @@ impl Composer {
             return;
         };
         self.advance_task = None;
-        self.answered_requests.insert(wizard.request_id.clone());
+        let answer_key = answered_request_key(&chat_id, &wizard.request_id);
+        remove_cached_wizard(
+            &mut self.wizard_cache,
+            &mut self.wizard_cache_order,
+            &answer_key,
+        );
+        store_answered_request(
+            &mut self.answered_requests,
+            &mut self.answered_request_order,
+            answer_key.clone(),
+        );
         self.input.update(cx, |input, cx| {
             input.set_text("", cx);
             // The panel borrowed the composer input; hand back its identity.
@@ -8342,20 +8601,15 @@ impl Composer {
             Ok(value) => serde_json::json!({ "chatId": chat_id, "command": value }),
             Err(_) => return,
         };
-        // `action_task`, NOT `send_task` — see `interrupt`.
-        self.action_task = Some(cx.spawn(async move |this, cx| {
+        // Keep each native response alive independently. A second asynchronous
+        // question may become visible before this command's acknowledgement.
+        let task = cx.spawn(async move |this, cx| {
             let result = engine.client().call(methods::QUEUE_COMMAND, params).await;
             if let Err(err) = result {
                 this.update(cx, |composer, cx| {
                     composer.failure = Some(format!("Answer failed: {err}").into());
                     composer.failure_key = Some(failure_chat.clone());
-                    // Do not replace another conversation's draft on a late failure.
-                    composer.answered_requests.remove(&request_id);
-                    if composer.current_key == failure_chat {
-                        composer.question_draft = Some(composer.input.read(cx).snapshot());
-                        composer.wizard = Some(wizard.clone());
-                        composer.sync_question_input(cx);
-                    }
+                    composer.restore_failed_wizard(&failure_chat, wizard.clone(), cx);
                     cx.notify();
                 })
                 .ok();
@@ -8372,12 +8626,27 @@ impl Composer {
                 let transcript = composer.state.read(cx).transcript.clone();
                 let still_pending = pending_input_request(&transcript)
                     .is_some_and(|(pending_id, _)| pending_id == request_id);
-                if still_pending && composer.answered_requests.remove(&request_id) {
-                    cx.notify();
+                if still_pending {
+                    let released = remove_answered_request(
+                        &mut composer.answered_requests,
+                        &mut composer.answered_request_order,
+                        &answered_request_key(&failure_chat, &request_id),
+                    );
+                    if released && composer.current_key == failure_chat {
+                        cx.notify();
+                    }
                 }
             })
             .ok();
-        }));
+        });
+        // This command must outlive the currently visible wizard, but retaining
+        // every completed handle would grow for the lifetime of the composer.
+        // Detaching keeps the independent submission alive and lets GPUI retire
+        // its allocation as soon as the future completes.
+        task.detach();
+        // Locally answered nonblocking requests are skipped immediately; do not
+        // wait for the document's resolved frame before mounting the next one.
+        self.on_state_changed(cx);
         cx.notify();
     }
 
@@ -8418,7 +8687,12 @@ impl Composer {
 
     /// Agent questions share the activity tray above the composer. The existing
     /// input remains the free-text answer, with the wizard's paging and shortcuts.
-    fn render_wizard(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_wizard(
+        &mut self,
+        max_height: Pixels,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let theme = Theme::of(cx).clone();
         let Some(wizard) = self.wizard.clone() else {
             return gpui::Empty.into_any_element();
@@ -8436,11 +8710,25 @@ impl Composer {
             // Selection reads on the row only while no typed override exists
             // (typed answers win — zeron question-panel.tsx `isSel`).
             let picked = wizard.is_picked(ix) && (question.multi_select || typed_empty);
+            let focus_accent = theme.accent;
             div()
                 .id(("wizard-option", ix))
                 .role(Role::Button)
                 .aria_label(SharedString::from(label.clone()))
                 .aria_toggled(picked.into())
+                .when(ix < 9, |el| {
+                    el.aria_keyshortcuts(SharedString::from(format!("{}", ix + 1)))
+                })
+                .tab_index(0)
+                .focus_visible(move |s| {
+                    s.shadow(vec![gpui::BoxShadow {
+                        color: focus_accent,
+                        offset: point(px(0.0), px(0.0)),
+                        blur_radius: px(0.0),
+                        spread_radius: px(2.0),
+                        inset: true,
+                    }])
+                })
                 .flex()
                 .flex_row()
                 .items_center()
@@ -8467,6 +8755,12 @@ impl Composer {
                 .on_hover(motion::hover_listener(format!("wizard-option-{ix}")))
                 .cursor_pointer()
                 .on_click(cx.listener(move |this, _, _, cx| this.wizard_select(ix, cx)))
+                .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.wizard_select(ix, cx);
+                        cx.stop_propagation();
+                    }
+                }))
                 .child(
                     div()
                         .flex_1()
@@ -8559,7 +8853,7 @@ impl Composer {
             true,
             div()
                 .id("composer-question-rows")
-                .max_h(window.viewport_size().height * 0.35)
+                .max_h(max_height)
                 .overflow_y_scroll()
                 .track_scroll(&self.question_scroll)
                 .child(question_body),
@@ -8603,7 +8897,33 @@ impl Composer {
                             .child(if page > 0 {
                                 crate::popover::btn_ghost(&theme, "Back", "wizard-back")
                                     .id("wizard-back")
+                                    .role(Role::Button)
+                                    .aria_label("Previous question")
+                                    .tab_index(0)
+                                    .focus_visible({
+                                        let accent = theme.accent;
+                                        move |s| {
+                                            s.shadow(vec![gpui::BoxShadow {
+                                                color: accent,
+                                                offset: point(px(0.0), px(0.0)),
+                                                blur_radius: px(0.0),
+                                                spread_radius: px(2.0),
+                                                inset: false,
+                                            }])
+                                        }
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| this.wizard_back(cx)))
+                                    .on_key_down(cx.listener(
+                                        |this, event: &KeyDownEvent, _, cx| {
+                                            if matches!(
+                                                event.keystroke.key.as_str(),
+                                                "enter" | "space"
+                                            ) {
+                                                this.wizard_back(cx);
+                                                cx.stop_propagation();
+                                            }
+                                        },
+                                    ))
                                     .into_any_element()
                             } else {
                                 gpui::Empty.into_any_element()
@@ -8614,9 +8934,43 @@ impl Composer {
                                     if last { "Submit" } else { "Next" },
                                 )
                                 .id("wizard-submit")
+                                .role(Role::Button)
+                                .aria_label(if last {
+                                    "Submit answer"
+                                } else {
+                                    "Next question"
+                                })
                                 .px(px(16.0))
                                 .when(!can_advance, |el| el.opacity(0.4))
-                                .on_click(cx.listener(|this, _, _, cx| this.wizard_advance(cx))),
+                                .when(can_advance, |el| {
+                                    el.tab_index(0)
+                                        .focus_visible({
+                                            let accent = theme.accent;
+                                            move |s| {
+                                                s.shadow(vec![gpui::BoxShadow {
+                                                    color: accent,
+                                                    offset: point(px(0.0), px(0.0)),
+                                                    blur_radius: px(0.0),
+                                                    spread_radius: px(2.0),
+                                                    inset: false,
+                                                }])
+                                            }
+                                        })
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.wizard_advance(cx)),
+                                        )
+                                        .on_key_down(cx.listener(
+                                            |this, event: &KeyDownEvent, _, cx| {
+                                                if matches!(
+                                                    event.keystroke.key.as_str(),
+                                                    "enter" | "space"
+                                                ) {
+                                                    this.wizard_advance(cx);
+                                                    cx.stop_propagation();
+                                                }
+                                            },
+                                        ))
+                                }),
                             ),
                     ),
             )
@@ -8937,19 +9291,21 @@ impl Render for Composer {
                 ))
             });
 
+        let has_queue = !self.state.read(cx).queue.is_empty();
+        let tray_limits = composer_tray_limits(
+            f32::from(window.viewport_size().height),
+            wizard_active,
+            has_queue,
+        );
         let container = container.when_some(self.render_agent_activity(window, cx), |el, panel| {
             el.child(panel)
         });
 
-        if wizard_active {
-            let wizard = self.render_wizard(window, cx);
-            return container.child(motion::fade_quick("composer-wizard", div().child(wizard)));
-        }
-
         // What is waiting to be sent, stacked directly above the box it was
         // typed in — the queue is a property of this composer, not a panel
         // somewhere else.
-        let show_queue_latest_shortcut = self.queue_shortcut_revealed
+        let show_queue_latest_shortcut = !wizard_active
+            && self.queue_shortcut_revealed
             && self.editing_queued.is_none()
             && !self.pickers.read(cx).is_open()
             && !composer_has_content(
@@ -8958,7 +9314,12 @@ impl Render for Composer {
                 self.staged_comments(cx).len(),
             );
         let container = container.when_some(
-            self.render_queue_panel(show_queue_latest_shortcut, window, cx),
+            self.render_queue_panel(
+                show_queue_latest_shortcut,
+                px(tray_limits.queue),
+                window,
+                cx,
+            ),
             |el, panel| {
                 el.child(motion::fade_quick(
                     "composer-queue",
@@ -8985,6 +9346,11 @@ impl Render for Composer {
                 }
             }))
         });
+
+        if wizard_active {
+            let wizard = self.render_wizard(px(tray_limits.question), window, cx);
+            return container.child(motion::fade_quick("composer-wizard", div().child(wizard)));
+        }
 
         // Route coordination must not force an established thread into the
         // two-row layout. Short drafts keep the original skinny composer.
@@ -9576,6 +9942,116 @@ impl Render for Composer {
 mod tests {
     use super::*;
 
+    #[test]
+    fn dense_trays_share_less_than_half_the_viewport() {
+        let limits = composer_tray_limits(600.0, true, true);
+        assert_eq!(limits.activity, 72.0);
+        assert_eq!(limits.question, 132.0);
+        assert_eq!(limits.queue, 84.0);
+        assert!(limits.activity + limits.question + limits.queue <= 600.0 * 0.48);
+
+        let question_only = composer_tray_limits(600.0, true, false);
+        assert_eq!(question_only.question, 210.0);
+        assert_eq!(question_only.queue, 0.0);
+    }
+
+    #[test]
+    fn answered_native_request_ids_are_scoped_to_their_chat() {
+        assert_ne!(
+            answered_request_key("chat-a", "request-1"),
+            answered_request_key("chat-b", "request-1")
+        );
+        let mut answered = HashSet::new();
+        let mut order = VecDeque::new();
+        for index in 0..ANSWERED_REQUEST_MAX + 2 {
+            store_answered_request(
+                &mut answered,
+                &mut order,
+                answered_request_key("chat", &format!("request-{index}")),
+            );
+        }
+        assert_eq!(answered.len(), ANSWERED_REQUEST_MAX);
+        assert_eq!(order.len(), ANSWERED_REQUEST_MAX);
+        assert!(!answered.contains(&answered_request_key("chat", "request-0")));
+    }
+
+    #[test]
+    fn displaced_wizard_cache_is_bounded_and_keeps_recent_navigation_state() {
+        let mut cache = HashMap::new();
+        let mut order = VecDeque::new();
+        for index in 0..WIZARD_CACHE_MAX + 3 {
+            let request_id = format!("request-{index}");
+            store_cached_wizard(
+                &mut cache,
+                &mut order,
+                answered_request_key("chat", &request_id),
+                Wizard::new(request_id, vec![]),
+            );
+        }
+        assert_eq!(cache.len(), WIZARD_CACHE_MAX);
+        assert_eq!(order.len(), WIZARD_CACHE_MAX);
+        assert!(!cache.contains_key(&answered_request_key("chat", "request-0")));
+        let newest = answered_request_key("chat", &format!("request-{}", WIZARD_CACHE_MAX + 2));
+        assert_eq!(
+            take_cached_wizard(&mut cache, &mut order, &newest)
+                .unwrap()
+                .request_id,
+            newest.1.clone()
+        );
+        assert!(!order.contains(&newest));
+    }
+
+    #[gpui::test]
+    fn resolved_frames_prune_selected_chat_request_state(cx: &mut gpui::TestAppContext) {
+        let state = cx.new(|_| AppState::new());
+        state.update(cx, |state, _| {
+            state.selected_chat = Some("chat-a".into());
+            state.transcript = vec![SessionMessageEntry {
+                id: "entry".into(),
+                role: MessageRole::Assistant,
+                parts: vec![MessagePart::Input {
+                    id: "input".into(),
+                    request_id: "resolved".into(),
+                    questions: vec![],
+                    resolved: true,
+                }],
+                created_at: 0,
+                device_id: "device".into(),
+                status: None,
+                continuation_of: None,
+            }];
+        });
+        let composer = cx.new(|cx| Composer::new(state, cx));
+        composer.update(cx, |composer, cx| {
+            for chat in ["chat-a", "chat-b"] {
+                store_cached_wizard(
+                    &mut composer.wizard_cache,
+                    &mut composer.wizard_cache_order,
+                    answered_request_key(chat, "resolved"),
+                    Wizard::new("resolved".into(), vec![]),
+                );
+                store_answered_request(
+                    &mut composer.answered_requests,
+                    &mut composer.answered_request_order,
+                    answered_request_key(chat, "resolved"),
+                );
+            }
+
+            composer.on_state_changed(cx);
+
+            let selected = answered_request_key("chat-a", "resolved");
+            let other = answered_request_key("chat-b", "resolved");
+            assert!(!composer.wizard_cache.contains_key(&selected));
+            assert!(!composer.wizard_cache_order.contains(&selected));
+            assert!(!composer.answered_requests.contains(&selected));
+            assert!(!composer.answered_request_order.contains(&selected));
+            assert!(composer.wizard_cache.contains_key(&other));
+            assert!(composer.wizard_cache_order.contains(&other));
+            assert!(composer.answered_requests.contains(&other));
+            assert!(composer.answered_request_order.contains(&other));
+        });
+    }
+
     fn composer_focus_window(
         cx: &mut gpui::TestAppContext,
     ) -> (tempfile::TempDir, gpui::WindowHandle<Composer>) {
@@ -9600,6 +10076,38 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
             .unwrap();
         (dir, window)
+    }
+
+    #[gpui::test]
+    fn conversation_switch_resets_every_tray_viewport(cx: &mut gpui::TestAppContext) {
+        let (_dir, handle) = composer_focus_window(cx);
+        handle
+            .update(cx, |composer, _, cx| {
+                composer.current_key = "chat-a".into();
+                composer.activity_chat = Some("chat-a".into());
+                composer.activity_expanded = true;
+                composer.activity_height = 180.0;
+                composer
+                    .activity_scroll
+                    .set_offset(point(px(0.0), px(-80.0)));
+                composer
+                    .question_scroll
+                    .set_offset(point(px(0.0), px(-60.0)));
+                composer.queue_scroll.set_offset(point(px(0.0), px(-40.0)));
+                composer.state.update(cx, |state, _| {
+                    state.selected_chat = Some("chat-b".into());
+                });
+                composer.on_state_changed(cx);
+
+                assert_eq!(composer.current_key, "chat-b");
+                assert_eq!(composer.activity_chat.as_deref(), Some("chat-b"));
+                assert!(!composer.activity_expanded);
+                assert_eq!(composer.activity_height, 0.0);
+                assert_eq!(composer.activity_scroll.offset().y, px(0.0));
+                assert_eq!(composer.question_scroll.offset().y, px(0.0));
+                assert_eq!(composer.queue_scroll.offset().y, px(0.0));
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -12805,8 +13313,8 @@ mod tests {
     }
 
     #[test]
-    fn mode_commands_follow_catalogs_for_every_harness_and_preserve_opaque_ids() {
-        for harness in [
+    fn mode_commands_follow_all_nine_production_harnesses_and_preserve_opaque_ids() {
+        let production_harnesses = [
             HarnessId::ClaudeCode,
             HarnessId::Codex,
             HarnessId::Cursor,
@@ -12816,8 +13324,12 @@ mod tests {
             HarnessId::Hermes,
             HarnessId::Pi,
             HarnessId::Antigravity,
-            HarnessId::Mock,
-        ] {
+        ];
+        assert_eq!(production_harnesses.len(), 9);
+        for harness in production_harnesses
+            .into_iter()
+            .chain(std::iter::once(HarnessId::Mock))
+        {
             let mut rows = with_workspace_commands(Vec::new(), true);
             with_mode_commands(&mut rows, zeron_proto::agent_mode_option(harness));
             for command in rows.iter().filter(|row| row.agent_mode.is_some()) {
@@ -12917,6 +13429,135 @@ mod tests {
             composer.restore_question_draft(cx);
             assert!(!composer.input.read(cx).read_only);
             assert_eq!(composer.input.read(cx).text(), "**Keep this draft**");
+        });
+    }
+
+    #[gpui::test]
+    fn displaced_question_restores_its_page_and_typed_answer(cx: &mut gpui::TestAppContext) {
+        let state = cx.new(|_| AppState::new());
+        let composer = cx.new(|cx| Composer::new(state, cx));
+        composer.update(cx, |composer, cx| {
+            composer.current_key = "chat".into();
+            composer.wizard = Some(Wizard::new(
+                "async".into(),
+                vec![
+                    question("first", &["One"], false),
+                    question("second", &[], false),
+                ],
+            ));
+            composer.wizard.as_mut().unwrap().select(0);
+            composer.wizard.as_mut().unwrap().advance();
+            composer
+                .input
+                .update(cx, |input, cx| input.set_text("Saved page answer", cx));
+            composer.cache_current_wizard(cx);
+
+            composer.wizard = Some(Wizard::new(
+                "blocking".into(),
+                vec![question("approval", &["Continue"], false)],
+            ));
+            composer.sync_question_input(cx);
+            composer.cache_current_wizard(cx);
+
+            composer.wizard = take_cached_wizard(
+                &mut composer.wizard_cache,
+                &mut composer.wizard_cache_order,
+                &answered_request_key("chat", "async"),
+            );
+            composer.sync_question_input(cx);
+            let restored = composer.wizard.as_ref().unwrap();
+            assert_eq!(restored.page, 1);
+            assert_eq!(restored.picked[0], vec![0]);
+            assert_eq!(composer.input.read(cx).text(), "Saved page answer");
+        });
+    }
+
+    #[gpui::test]
+    fn failed_async_answer_respects_blocking_priority_and_preserves_both_drafts(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut asynchronous = question("async", &[], false);
+        asynchronous.non_blocking = true;
+        let blocking = question("blocking", &[], false);
+        let state = cx.new(|_| AppState::new());
+        state.update(cx, |state, _| {
+            state.selected_chat = Some("chat".into());
+            state.transcript = vec![
+                SessionMessageEntry {
+                    id: "async-entry".into(),
+                    role: MessageRole::Assistant,
+                    parts: vec![MessagePart::Input {
+                        id: "async-input".into(),
+                        request_id: "async".into(),
+                        questions: vec![asynchronous.clone()],
+                        resolved: false,
+                    }],
+                    created_at: 0,
+                    device_id: "device".into(),
+                    status: None,
+                    continuation_of: None,
+                },
+                SessionMessageEntry {
+                    id: "blocking-entry".into(),
+                    role: MessageRole::Assistant,
+                    parts: vec![MessagePart::Input {
+                        id: "blocking-input".into(),
+                        request_id: "blocking".into(),
+                        questions: vec![blocking.clone()],
+                        resolved: false,
+                    }],
+                    created_at: 1,
+                    device_id: "device".into(),
+                    status: None,
+                    continuation_of: None,
+                },
+            ];
+        });
+        let composer = cx.new(|cx| Composer::new(state, cx));
+        composer.update(cx, |composer, cx| {
+            composer.wizard = Some(Wizard::new("blocking".into(), vec![blocking]));
+            composer
+                .input
+                .update(cx, |input, cx| input.set_text("Blocking draft", cx));
+            let mut failed = Wizard::new("async".into(), vec![asynchronous]);
+            failed.set_typed("Retry this answer".into());
+            store_answered_request(
+                &mut composer.answered_requests,
+                &mut composer.answered_request_order,
+                answered_request_key("chat", "async"),
+            );
+
+            composer.restore_failed_wizard("chat", failed, cx);
+
+            assert_eq!(composer.wizard.as_ref().unwrap().request_id, "blocking");
+            assert_eq!(composer.input.read(cx).text(), "Blocking draft");
+            assert!(
+                composer
+                    .wizard_cache
+                    .contains_key(&answered_request_key("chat", "async"))
+            );
+            assert!(
+                !composer
+                    .answered_requests
+                    .contains(&answered_request_key("chat", "async"))
+            );
+
+            store_answered_request(
+                &mut composer.answered_requests,
+                &mut composer.answered_request_order,
+                answered_request_key("chat", "blocking"),
+            );
+            composer.on_state_changed(cx);
+            assert_eq!(composer.wizard.as_ref().unwrap().request_id, "async");
+            assert_eq!(composer.input.read(cx).text(), "Retry this answer");
+            assert_eq!(
+                composer
+                    .wizard_cache
+                    .get(&answered_request_key("chat", "blocking"))
+                    .unwrap()
+                    .typed[0],
+                "Blocking draft"
+            );
         });
     }
 
@@ -13174,6 +13815,60 @@ mod tests {
             pending_input_request(&t).map(|(id, _)| id),
             Some("r1".into())
         );
+        let mut next_question = question("q2", &["b"], false);
+        next_question.non_blocking = true;
+        t.push(entry(
+            Some(MessageStatus::Complete),
+            vec![MessagePart::Input {
+                id: "in-r2".into(),
+                request_id: "r2".into(),
+                questions: vec![next_question],
+                resolved: false,
+            }],
+        ));
+        assert_eq!(
+            pending_input_request_matching(&t, |request_id| request_id != "r1").map(|(id, _)| id),
+            Some("r2".into()),
+            "locally answered nonblocking requests must not hide the next question"
+        );
+        t.push(entry(
+            Some(MessageStatus::Streaming),
+            vec![MessagePart::Input {
+                id: "in-r3".into(),
+                request_id: "r3".into(),
+                questions: vec![question("blocking", &["continue"], false)],
+                resolved: false,
+            }],
+        ));
+        assert_eq!(
+            pending_input_request(&t).map(|(id, _)| id),
+            Some("r3".into()),
+            "the active blocking request outranks older asynchronous questions"
+        );
+        let mut newest_question = question("q4", &["c"], false);
+        newest_question.non_blocking = true;
+        t.push(entry(
+            Some(MessageStatus::Complete),
+            vec![MessagePart::Input {
+                id: "in-r4".into(),
+                request_id: "r4".into(),
+                questions: vec![newest_question],
+                resolved: false,
+            }],
+        ));
+        assert_eq!(
+            pending_input_request(&t).map(|(id, _)| id),
+            Some("r3".into()),
+            "a newer asynchronous request must not mask blocking input"
+        );
+        assert_eq!(
+            pending_input_request_matching(&t, |request_id| {
+                request_id != "r1" && request_id != "r3"
+            })
+            .map(|(id, _)| id),
+            Some("r2".into()),
+            "the asynchronous queue resumes after the blocking request"
+        );
         // Resolved part → no panel.
         let resolved = MessagePart::Input {
             id: "in-r1".into(),
@@ -13308,6 +14003,27 @@ impl Composer {
         self.current_key = "composer-fixture".into();
         self.state.update(cx, |state, cx| {
             state.selected_chat = Some("composer-fixture".into());
+            state.chats = vec![serde_json::from_value(serde_json::json!({
+                "id": "composer-fixture",
+                "deviceId": "fixture-device",
+                "title": "Codex composer fixture",
+                "archived": false,
+                "cwd": "/fixture",
+                "branch": "fixture",
+                "checkoutId": "fixture-checkout",
+                "lastMessagePreview": null,
+                "lastMessageAt": null,
+                "createdAt": chrono::Utc::now(),
+                "config": {
+                    "harness": HarnessId::Codex,
+                    "model": null,
+                    "reasoning": null,
+                    "modelOptions": {},
+                    "sandbox": SandboxLevel::WorkspaceWrite
+                }
+            }))
+            .expect("valid Codex composer fixture chat")];
+            state.queue.clear();
             state.transcript = vec![SessionMessageEntry {
                 id: "fixture-entry".into(), role: MessageRole::Assistant, created_at: 0,
                 device_id: "fixture".into(), status: None, continuation_of: None,
@@ -13344,6 +14060,43 @@ impl Composer {
     pub fn fixture_question(&mut self, question: UserInputQuestion, cx: &mut Context<Self>) {
         self.wizard = Some(Wizard::new("fixture-question".into(), vec![question]));
         self.sync_question_input(cx);
+        cx.notify();
+    }
+
+    pub fn fixture_paginated_question(
+        &mut self,
+        questions: Vec<UserInputQuestion>,
+        cx: &mut Context<Self>,
+    ) {
+        self.wizard = Some(Wizard::new("fixture-question-pages".into(), questions));
+        self.sync_question_input(cx);
+        self.input.update(cx, |input, cx| {
+            input.set_text("Keep this typed answer when I return", cx)
+        });
+        self.wizard_advance(cx);
+        cx.notify();
+    }
+
+    pub fn fixture_question_back(&mut self, cx: &mut Context<Self>) {
+        self.wizard_back(cx);
+    }
+
+    pub fn fixture_queue(&mut self, messages: &[&str], cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.queue = messages
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    zeron_doc::QueuedMessage::new(
+                        format!("fixture-queue-{index}"),
+                        *text,
+                        "fixture-device",
+                    )
+                })
+                .collect();
+            cx.notify();
+        });
+        self.queue_scroll.set_offset(point(px(0.0), px(0.0)));
         cx.notify();
     }
 
