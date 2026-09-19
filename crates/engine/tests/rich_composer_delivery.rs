@@ -529,6 +529,99 @@ async fn preflight_sees_the_remembered_session_on_fresh_and_warm_followups() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejected_recovered_answer_keeps_its_question_open_for_retry() {
+    use zeron_doc::{
+        MessageStatus, SessionCommandPayload, SessionCommandStatus, SessionMessageEntry,
+    };
+    let (_tmp, core, harness, mut rx) = setup(HarnessId::Codex).await;
+    let handle = core.doc_host.open(CHAT).unwrap();
+    handle
+        .doc()
+        .push_message(&SessionMessageEntry {
+            id: "settled-question".into(),
+            role: MessageRole::Assistant,
+            parts: vec![MessagePart::Input {
+                id: "question-part".into(),
+                request_id: "orphan-question".into(),
+                questions: vec![zeron_proto::UserInputQuestion {
+                    id: "q1".into(),
+                    header: "Choice".into(),
+                    question: "Continue?".into(),
+                    options: vec!["Yes".into()],
+                    option_descriptions: vec![],
+                    allow_custom: false,
+                    non_blocking: false,
+                    multi_select: false,
+                }],
+                resolved: false,
+            }],
+            created_at: 0,
+            device_id: core.device_id.clone(),
+            status: Some(MessageStatus::Complete),
+            continuation_of: None,
+        })
+        .unwrap();
+    let answer = || SessionCommandPayload::RespondInput {
+        request_id: "orphan-question".into(),
+        answers: vec![zeron_proto::UserInputAnswer {
+            question_id: "q1".into(),
+            labels: vec!["Yes".into()],
+        }],
+    };
+    harness.reject_request.store(true, Ordering::SeqCst);
+    let command = core.doc_host.queue_command(CHAT, answer()).unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(status) = handle
+                .doc()
+                .read_commands()
+                .unwrap()
+                .into_iter()
+                .find(|entry| entry.id == command && entry.status != SessionCommandStatus::Pending)
+                .map(|entry| entry.status)
+            {
+                break status;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(status, SessionCommandStatus::Rejected);
+    let entries = handle.doc().read_entries().unwrap();
+    assert_eq!(
+        entries.len(),
+        1,
+        "a rejected answer must not write a user turn"
+    );
+    assert!(matches!(
+        &entries[0].parts[0],
+        MessagePart::Input {
+            resolved: false,
+            ..
+        }
+    ));
+    assert!(
+        rx.try_recv().is_err(),
+        "rejection must not start the harness"
+    );
+
+    harness.reject_request.store(false, Ordering::SeqCst);
+    core.doc_host.queue_command(CHAT, answer()).unwrap();
+    let Delivery::Run(run) = receive(&mut rx).await else {
+        panic!("retry must start the recovered turn")
+    };
+    assert!(run.prompt.contains("Yes"));
+    assert!(handle.doc().read_entries().unwrap().iter().any(|entry| {
+        entry
+            .parts
+            .iter()
+            .any(|part| matches!(part, MessagePart::Input { resolved: true, .. }))
+    }));
+    core.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_session_resume_is_scoped_to_the_selected_harness() {
     let tmp = tempfile::tempdir().unwrap();
     let (delivery, mut rx) = mpsc::unbounded_channel();

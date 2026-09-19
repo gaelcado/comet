@@ -4340,11 +4340,14 @@ impl DocHost {
                 request.prompt = respond_input_prompt(&questions, answers);
                 request.resume = None; // dispatch re-derives the harness session
                 request.attachments = Vec::new();
+                let harness = self.harness_for_request(chat_id, &request);
+                // Stale mode/configuration can reject a recovered answer too.
+                // Keep the question available until its new turn is valid.
+                sessions.validate_request(chat_id, harness, &request)?;
                 if let Err(err) = handle.doc.resolve_input(request_id) {
                     tracing::warn!(chat = %chat_id, request = %request_id, error = %err,
                         "orphaned input resolve failed");
                 }
-                let harness = self.harness_for_request(chat_id, &request);
                 self.dispatch_with_source_context(sessions, chat_id, harness, request, None)
                     .await?;
                 Ok((
