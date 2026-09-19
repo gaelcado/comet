@@ -87,8 +87,16 @@ does not say whether the user has an account or could install the adapter.
 
 The managed `claude-agent-acp@0.66.0` and `codex-acp@1.1.14` packages also
 exist locally, but they are not the production Claude/Codex transports in this
-contract; those harnesses use their native integrations. No sign-in, browser,
-hosted model turn, or credential-content read was performed.
+contract; those harnesses use their native integrations. The inventory probes
+made no hosted model turns. No sign-in or credential-content read was performed.
+
+A separate, bounded live Codex 0.154 app-server check used a read-only temporary
+workspace and the installed default model (`gpt-6-astra`). Paused goal creation,
+editing and Resume produced an automatic turn, the requested short reply and a
+native `complete` goal update. A smaller-budget check reached `budgetLimited`;
+the native budget includes input context, not only generated text. Synthetic
+goals were cleared and their threads archived. These are direct protocol checks,
+not end-to-end UI checks or evidence for other providers' live accounts.
 
 - Published Cursor SDK 1.0.31 package: `options.d.ts`, `agent.d.ts`, and
   `createPlan` tool delta types. [Official SDK documentation](https://cursor.com/docs/sdk/typescript).
