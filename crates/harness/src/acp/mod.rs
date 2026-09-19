@@ -2537,10 +2537,7 @@ fn handle_server_request_live(
         client.respond(&id, json!({ "outcome": { "outcome": "cancelled" } }));
         return Vec::new();
     }
-    if !honor_mode_permissions
-        && !user_question
-        && params["toolCall"]["kind"] != "switch_mode"
-    {
+    if !honor_mode_permissions && !user_question && params["toolCall"]["kind"] != "switch_mode" {
         return handle_server_request(client, id, method, params);
     }
     let names = permission_option_labels(&options);
