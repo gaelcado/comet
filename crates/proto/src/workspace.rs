@@ -97,6 +97,7 @@ mod tests {
                 "cursorSdkVersion": "1.0.31",
                 "capabilities": [
                     "agent-modes-v1",
+                    "goal-actions-v1",
                     "message-queue-v1",
                     "message-queue-actions-v1",
                     "message-queue-attachments-v1",
