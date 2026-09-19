@@ -54,6 +54,11 @@ fn controls() -> (RunControls, mpsc::Sender<SteerMessage>, CancellationToken) {
     let token = CancellationToken::new();
     let controls = RunControls {
         request_input: Box::new(move |questions| {
+            assert!(
+                questions
+                    .iter()
+                    .all(|question| !question.allow_custom && !question.multi_select)
+            );
             let (tx, rx) = oneshot::channel();
             let answers: Vec<UserInputAnswer> = questions
                 .iter()
@@ -93,6 +98,31 @@ fn dones(events: &[AgentEvent]) -> Vec<(DoneStatus, Option<String>)> {
             _ => None,
         })
         .collect()
+}
+
+#[tokio::test]
+async fn plan_exit_requires_the_shared_question_bridge() {
+    let (mut control, steer, _) = controls();
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = asked.clone();
+    control.request_input = Box::new(move |questions| {
+        assert_eq!(questions[0].question, "Implement the plan?");
+        seen.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (tx, rx) = oneshot::channel();
+        tx.send(vec![UserInputAnswer {
+            question_id: questions[0].id.clone(),
+            labels: vec!["Yes".into()],
+        }])
+        .unwrap();
+        rx
+    });
+    drop(steer);
+    let events = run_to_end(&harness(), request("scenario:plan-exit"), control).await;
+    assert!(asked.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(events.contains(&AgentEvent::TextDelta {
+        text: "approved plan".into()
+    }));
+    assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
 }
 
 #[tokio::test]
@@ -196,10 +226,14 @@ async fn happy_path_maps_chunks_tools_diffs_plans_and_commands() {
         call: ToolCall::Todo {
             items: vec![
                 TodoItem {
+                    id: None,
+                    status: None,
                     text: "read".into(),
                     done: true
                 },
                 TodoItem {
+                    id: None,
+                    status: Some(zeron_proto::TodoStatus::InProgress),
                     text: "fix".into(),
                     done: false
                 },
@@ -730,15 +764,46 @@ fn antigravity_descriptor_surface_matches_registry_expectations() {
 }
 
 #[tokio::test]
-async fn antigravity_runs_the_picked_effort_variant_unattended() {
+async fn antigravity_runs_the_picked_effort_variant_in_the_advertised_mode() {
     let events = antigravity_config_sets("gemini-3.7-flash", Some(ReasoningLevel::Medium)).await;
     assert!(
         events.contains(&AgentEvent::TextDelta {
-            text: "sets:model=gemini-3.7-flash-medium;mode=yolo;".into()
+            text: "sets:model=gemini-3.7-flash-medium;".into()
         }),
         "{events:?}"
     );
     assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+}
+
+#[tokio::test]
+async fn rejected_native_mode_never_falls_back_to_execution() {
+    let workspace = tempfile::Builder::new()
+        .prefix("reject-mode")
+        .tempdir()
+        .unwrap();
+    let mut req = request("hi");
+    req.model = Some("gemini-3.7-flash".into());
+    req.cwd = workspace.path().display().to_string();
+    req.model_options.insert(
+        zeron_proto::AGENT_MODE_OPTION.into(),
+        serde_json::json!("auto_edit"),
+    );
+    let (controls, _steer, _token) = controls();
+    let events = run_to_end(&antigravity_harness(), req, controls).await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::TextDelta { .. }))
+    );
+    let done = dones(&events);
+    assert_eq!(done[0].0, DoneStatus::Errored);
+    assert!(
+        done[0]
+            .1
+            .as_deref()
+            .unwrap()
+            .contains("rejected requested mode")
+    );
 }
 
 #[tokio::test]
@@ -777,14 +842,14 @@ async fn antigravity_clamps_to_an_offered_level_and_keeps_saved_variant_ids() {
     let clamped = antigravity_config_sets("gemini-3.1-pro", Some(ReasoningLevel::Medium)).await;
     assert!(
         clamped.contains(&AgentEvent::TextDelta {
-            text: "sets:model=gemini-pro-agent;mode=yolo;".into()
+            text: "sets:model=gemini-pro-agent;".into()
         }),
         "{clamped:?}"
     );
     let saved = antigravity_config_sets("gemini-3.7-flash-low", Some(ReasoningLevel::High)).await;
     assert!(
         saved.contains(&AgentEvent::TextDelta {
-            text: "sets:model=gemini-3.7-flash-low;mode=yolo;".into()
+            text: "sets:model=gemini-3.7-flash-low;".into()
         }),
         "{saved:?}"
     );
