@@ -4310,6 +4310,16 @@ impl DocHost {
                         Some("no pending input request".into()),
                     ));
                 };
+                if !zeron_proto::valid_input_answers(&questions, answers) {
+                    return Ok((
+                        SessionCommandStatus::Rejected,
+                        Some("answers do not match the requested question choices".into()),
+                    ));
+                }
+                if answers.is_empty() {
+                    handle.doc.resolve_input(request_id)?;
+                    return Ok((SessionCommandStatus::Applied, None));
+                }
                 // The run died under the question (engine restart, crash).
                 // The question is still open in the doc and the command is
                 // durable, so honor it anyway — stamp the part resolved and

@@ -55,7 +55,12 @@ pub enum SteerOutcome {
     NotSteerable,
 }
 
-type PendingInputs = Arc<Mutex<HashMap<String, oneshot::Sender<Vec<UserInputAnswer>>>>>;
+struct PendingInput {
+    questions: Vec<UserInputQuestion>,
+    sender: oneshot::Sender<Vec<UserInputAnswer>>,
+    non_blocking: bool,
+}
+type PendingInputs = Arc<Mutex<HashMap<String, PendingInput>>>;
 
 /// A harness-native session id plus the cwd it was created under. Harness
 /// session stores are cwd-scoped (claude keys conversations by project
@@ -464,12 +469,39 @@ impl SessionsEngine {
         // Input bridge: the harness asks questions; we mint the request id, park the
         // resolver for `respond_input`, and surface the event through the run pipeline.
         let request_input = {
+            let contract = zeron_harness::interaction_contract::for_harness(harness_id);
             let pending = pending_inputs.clone();
             let engine_tx = engine_tx.clone();
             Box::new(move |questions: Vec<UserInputQuestion>| {
                 let (tx, rx) = oneshot::channel();
+                if questions.is_empty() {
+                    let _ = tx.send(Vec::new());
+                    return rx;
+                }
+                if questions
+                    .iter()
+                    .any(|question| !contract.questions.accepts(question))
+                {
+                    tracing::warn!(?harness_id, transport = ?contract.questions, "unsupported native question shape");
+                    let _ = engine_tx.send(AgentEvent::Error {
+                        message:
+                            "This agent integration cannot reply to the requested question format."
+                                .into(),
+                    });
+                    // Closing the channel is a transport failure, not a user cancellation.
+                    drop(tx);
+                    return rx;
+                }
                 let request_id = new_id();
-                lock(&pending).insert(request_id.clone(), tx);
+                let non_blocking = questions.iter().all(|question| question.non_blocking);
+                lock(&pending).insert(
+                    request_id.clone(),
+                    PendingInput {
+                        questions: questions.clone(),
+                        sender: tx,
+                        non_blocking,
+                    },
+                );
                 let _ = engine_tx.send(AgentEvent::InputRequested {
                     request_id,
                     questions,
@@ -621,7 +653,7 @@ impl SessionsEngine {
         // Unpark questions before harness teardown, which can await them.
         let parked: Vec<_> = lock(&pending).drain().map(|(_, tx)| tx).collect();
         for tx in parked {
-            let _ = tx.send(Vec::new());
+            let _ = tx.sender.send(Vec::new());
         }
         // Harness-level interrupt (protocol + child teardown) …
         token.cancel();
@@ -649,10 +681,20 @@ impl SessionsEngine {
         let Some((pending, engine_tx)) = target else {
             return Ok(false);
         };
-        let Some(resolver) = lock(&pending).remove(request_id) else {
+        let mut pending = lock(&pending);
+        let Some(request) = pending.get(request_id) else {
             return Ok(false);
         };
-        let _ = resolver.send(answers);
+        // Empty is the existing cancellation contract. Invalid replies leave
+        // the request pending so a corrected response can still be submitted.
+        if !zeron_proto::valid_input_answers(&request.questions, &answers) {
+            return Err(EngineError::Other(
+                "Answers do not match the requested question choices".into(),
+            ));
+        }
+        let resolver = pending.remove(request_id).unwrap();
+        drop(pending);
+        let _ = resolver.sender.send(answers);
         let _ = engine_tx.send(AgentEvent::InputResolved {
             request_id: request_id.to_string(),
         });
@@ -1780,7 +1822,7 @@ async fn drive_run(
                     && steerable
                     && !folded.iter().any(|p| match p {
                         MessagePart::Tool { id, resolved: false, .. } => {
-                            id != zeron_proto::LIVE_PLAN_TOOL_ID
+                            !zeron_proto::is_live_activity(id)
                         }
                         MessagePart::Input { resolved: false, .. } => true,
                         _ => false,
@@ -2030,6 +2072,53 @@ async fn drive_run(
             }
             continue;
         }
+        if let AgentEvent::InputResolved { request_id } = &event {
+            if !folded.iter().any(|part| matches!(part, MessagePart::Input { request_id: id, .. } if id == request_id)) {
+                if let Err(error) = doc_ref.resolve_input(request_id) {
+                    tracing::warn!(%chat_id, %error, "resolve previous input failed");
+                }
+                inner.publish(&chat_id, &event);
+                continue;
+            }
+        }
+        // Native activity snapshots and asynchronous questions can arrive after Done.
+        // Persist these snapshots without manufacturing another working turn.
+        if idle_since.is_some()
+            && (matches!(
+                &event,
+                AgentEvent::ToolCall { id, call }
+                    if zeron_proto::is_live_activity(id)
+                        || (matches!(call, zeron_proto::ToolCall::TodoPatch { .. } | zeron_proto::ToolCall::Plan { .. }) && !seen_tools.contains(id))
+            ) || matches!(&event, AgentEvent::InputRequested { questions, .. } if questions.iter().all(|q| q.non_blocking)))
+        {
+            let mut activity = Vec::new();
+            fold_event_into_parts(&mut activity, &event);
+            if let AgentEvent::ToolCall { id, .. } = &event {
+                seen_tools.insert(id.clone());
+                fold_event_into_parts(
+                    &mut activity,
+                    &AgentEvent::ToolResult {
+                        id: id.clone(),
+                        is_error: false,
+                        output: None,
+                        diff: None,
+                    },
+                );
+            }
+            if let Err(error) = finish_segment(
+                doc_ref,
+                None,
+                &new_id(),
+                &device_id,
+                now_ms(),
+                &activity,
+                MessageStatus::Complete,
+            ) {
+                tracing::warn!(%chat_id, %error, "persist parked activity failed");
+            }
+            inner.publish(&chat_id, &event);
+            continue;
+        }
         // PARKED: a steer boundary, a terminal Done, or SELF-CONTINUED OUTPUT
         // re-opens the session; everything else stays gated. The ACP child
         // keeps forwarding `session/update` frames after a turn completes,
@@ -2065,7 +2154,7 @@ async fn drive_run(
                 ) || matches!(
                     &event,
                     AgentEvent::ToolCall { id, .. }
-                        if id == zeron_proto::LIVE_PLAN_TOOL_ID || !seen_tools.contains(id)
+                        if zeron_proto::is_live_activity(id) || !seen_tools.contains(id)
                 ));
             if self_continued {
                 tracing::info!(
@@ -2097,7 +2186,7 @@ async fn drive_run(
                             .get(&chat_id)
                             .and_then(|h| lock(&h.pending_inputs).remove(request_id));
                         if let Some(tx) = resolver {
-                            let _ = tx.send(Vec::new());
+                            let _ = tx.sender.send(Vec::new());
                         }
                         tracing::debug!(chat = %chat_id, "parked session: post-turn input request auto-declined");
                         continue;
@@ -2134,8 +2223,8 @@ async fn drive_run(
             // treating its reappearance after a park/steer reset as a stale
             // echo dropped the todo list for the rest of the run — from the
             // first boundary on, plans never rendered again.
-            AgentEvent::ToolCall { id, .. } if id == zeron_proto::LIVE_PLAN_TOOL_ID => {}
-            AgentEvent::ToolResult { id, .. } if id == zeron_proto::LIVE_PLAN_TOOL_ID => {}
+            AgentEvent::ToolCall { id, .. } if zeron_proto::is_live_activity(id) => {}
+            AgentEvent::ToolResult { id, .. } if zeron_proto::is_live_activity(id) => {}
             AgentEvent::ToolCall { id, .. } => {
                 if !in_segment(&folded, id) && seen_tools.contains(id) {
                     continue;
@@ -2259,10 +2348,10 @@ async fn drive_run(
             } => {
                 inner.remember_harness_session(&chat_id, session_id, &run_cwd);
             }
-            AgentEvent::InputRequested { .. } => {
-                // Known-id guaranteed: the unknown-id twin was dropped above,
-                // before the parked gate.
-                inner.set_status(&chat_id, SessionStatus::AwaitingInput, false);
+            AgentEvent::InputRequested { questions, .. } => {
+                if questions.iter().any(|question| !question.non_blocking) {
+                    inner.set_status(&chat_id, SessionStatus::AwaitingInput, false);
+                }
             }
             AgentEvent::InputResolved { .. } => {
                 inner.set_status(&chat_id, SessionStatus::Working, false);
@@ -2286,19 +2375,23 @@ async fn drive_run(
         }
 
         if let AgentEvent::Done { status, .. } = &event {
-            // A question still pending at turn end can never be legitimately
-            // answered (its turn is over): drain the resolvers NOW, or a late
-            // `respond_input` finds one, emits InputResolved, and un-parks
-            // the session into Working with no turn behind it — stranded
-            // Working, timer forever, reaper disarmed. Empty answers unblock
-            // the harness-side bridge like an interrupt does.
+            // Blocking requests expire with their turn. Native asynchronous
+            // requests remain answerable while this persistent session is parked.
             let pending = lock(&inner.runs)
                 .get(&chat_id)
                 .filter(|h| h.run_id == run_id)
                 .map(|h| h.pending_inputs.clone());
             if let Some(pending) = pending {
-                for (_, tx) in lock(&pending).drain() {
-                    let _ = tx.send(Vec::new());
+                let mut pending = lock(&pending);
+                let expired: Vec<_> = pending
+                    .iter()
+                    .filter(|(_, input)| !input.non_blocking || *status != DoneStatus::Completed)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in expired {
+                    if let Some(input) = pending.remove(&id) {
+                        let _ = input.sender.send(Vec::new());
+                    }
                 }
             }
             let message_status = match status {

@@ -102,6 +102,9 @@ impl Harness for HeldHarness {
                 header: "Choose".into(),
                 question: "which one?".into(),
                 options: vec!["a".into(), "b".into()],
+                option_descriptions: Vec::new(),
+                allow_custom: true,
+                non_blocking: false,
                 multi_select: false,
             }]);
         }

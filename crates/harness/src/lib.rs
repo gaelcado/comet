@@ -135,6 +135,7 @@ pub mod claude;
 pub mod codex;
 pub mod cursor;
 pub(crate) mod executable;
+pub mod interaction_contract;
 pub(crate) mod jsonrpc;
 pub mod mock;
 pub mod opencode;

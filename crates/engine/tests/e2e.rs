@@ -1064,6 +1064,9 @@ async fn respond_input_resolves_pending_question() {
                     header: "Pick".into(),
                     question: "Which one?".into(),
                     options: vec!["a".into(), "b".into()],
+                    option_descriptions: Vec::new(),
+                    allow_custom: false,
+                    non_blocking: false,
                     multi_select: false,
                 }])
                 .await
@@ -1135,6 +1138,28 @@ async fn respond_input_resolves_pending_question() {
             })
         })
         .unwrap();
+    for (question_id, labels) in [
+        ("q1", vec!["custom"]),
+        ("unknown", vec!["a"]),
+        ("q1", vec!["a", "b"]),
+    ] {
+        assert!(
+            core.sessions
+                .respond_input(
+                    CHAT,
+                    &request_id,
+                    vec![zeron_proto::UserInputAnswer {
+                        question_id: question_id.into(),
+                        labels: labels.into_iter().map(str::to_owned).collect(),
+                    }]
+                )
+                .is_err()
+        );
+    }
+    assert_eq!(
+        core.sessions.session_status(CHAT).unwrap().status,
+        SessionStatus::AwaitingInput
+    );
     queue_as_viewer(
         handle.doc(),
         "cmd-answer-1",
@@ -1217,6 +1242,9 @@ async fn wrong_id_respond_is_rejected_and_correct_answer_still_resumes() {
                     header: "Pick".into(),
                     question: "Which one?".into(),
                     options: vec!["a".into(), "b".into()],
+                    option_descriptions: Vec::new(),
+                    allow_custom: true,
+                    non_blocking: false,
                     multi_select: false,
                 }])
                 .await
@@ -1408,6 +1436,9 @@ async fn interrupt_unblocks_a_run_awaiting_input() {
                         header: "Pick".into(),
                         question: "Which one?".into(),
                         options: vec!["a".into(), "b".into()],
+                        option_descriptions: Vec::new(),
+                        allow_custom: true,
+                        non_blocking: false,
                         multi_select: false,
                     }])
                     .await;
@@ -1555,6 +1586,9 @@ async fn harness_emitted_input_twin_is_dropped_and_answer_resumes() {
                     header: "Pick".into(),
                     question: "Which one?".into(),
                     options: vec!["a".into(), "b".into()],
+                    option_descriptions: Vec::new(),
+                    allow_custom: true,
+                    non_blocking: false,
                     multi_select: false,
                 };
                 // The pre-fix Claude/Codex shape: surface the question under
@@ -2693,4 +2727,201 @@ async fn real_image_generation_profile_smoke() {
             .contains("generated_images/")
     );
     core.sessions.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nonblocking_questions_and_goal_updates_survive_turn_completion() {
+    struct ActivityHarness(Arc<std::sync::Mutex<Vec<zeron_proto::UserInputAnswer>>>);
+    #[async_trait]
+    impl Harness for ActivityHarness {
+        fn id(&self) -> HarnessId {
+            HarnessId::Mock
+        }
+        fn display_name(&self) -> &str {
+            "Activity"
+        }
+        fn supports_steering(&self) -> bool {
+            true
+        }
+        fn steering_mode(&self) -> SteeringMode {
+            SteeringMode::StepBoundary
+        }
+        fn reasoning_levels(&self) -> &[ReasoningLevel] {
+            &[]
+        }
+        async fn models(&self) -> Result<Vec<Model>, HarnessError> {
+            Ok(vec![])
+        }
+        async fn run(
+            &self,
+            _: RunRequest,
+            controls: RunControls,
+        ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
+            let answers = self.0.clone();
+            let (tx, rx) = tokio::sync::mpsc::channel(16);
+            tokio::spawn(async move {
+                tx.send(Ok(AgentEvent::TextDelta {
+                    text: "Turn finished".into(),
+                }))
+                .await
+                .unwrap();
+                tx.send(Ok(done(DoneStatus::Completed))).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                tx.send(Ok(AgentEvent::ToolCall {
+                    id: zeron_proto::LIVE_GOAL_TOOL_ID.into(),
+                    call: ToolCall::Goal {
+                        objective: "Ship it".into(),
+                        status: "complete".into(),
+                        tokens_used: 42,
+                        token_budget: None,
+                    },
+                }))
+                .await
+                .unwrap();
+                tx.send(Ok(AgentEvent::ToolCall {
+                    id: zeron_proto::LIVE_PLAN_TOOL_ID.into(),
+                    call: ToolCall::Todo {
+                        items: vec![zeron_proto::TodoItem {
+                            id: Some("1".into()),
+                            text: "Verify".into(),
+                            done: false,
+                            status: None,
+                        }],
+                    },
+                }))
+                .await
+                .unwrap();
+                tx.send(Ok(AgentEvent::ToolCall {
+                    id: "late-task-update".into(),
+                    call: ToolCall::TodoPatch {
+                        task_id: "1".into(),
+                        text: None,
+                        status: Some("completed".into()),
+                    },
+                }))
+                .await
+                .unwrap();
+                tx.send(Ok(AgentEvent::ToolCall {
+                    id: "late-plan".into(),
+                    call: ToolCall::Plan {
+                        text: "Final plan".into(),
+                    },
+                }))
+                .await
+                .unwrap();
+                let response = (controls.request_input)(vec![zeron_proto::UserInputQuestion {
+                    id: "q-late".into(),
+                    header: "Next".into(),
+                    question: "What next?".into(),
+                    options: vec!["Review".into()],
+                    multi_select: false,
+                    option_descriptions: Vec::new(),
+                    allow_custom: true,
+                    non_blocking: true,
+                }])
+                .await
+                .unwrap();
+                *answers.lock().unwrap() = response;
+                controls.interrupt.cancelled().await;
+            });
+            Ok(futures::stream::unfold(rx, |mut rx| async move {
+                rx.recv().await.map(|event| (event, rx))
+            })
+            .boxed())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let answers = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let core = assemble(dir.path(), Arc::new(ActivityHarness(answers.clone())));
+    let handle = core.doc_host.open(CHAT).unwrap();
+    queue_as_viewer(
+        handle.doc(),
+        "activity-run",
+        SessionCommandPayload::Run {
+            request: run_request("Work"),
+            message_id: "activity-message".into(),
+        },
+    );
+    wait_for(
+        || {
+            entries_now(&core).iter().any(|entry| {
+                entry.parts.iter().any(|part| {
+                    matches!(
+                        part,
+                        MessagePart::Input {
+                            resolved: false,
+                            ..
+                        }
+                    )
+                })
+            })
+        },
+        "late question persisted",
+    )
+    .await;
+    assert_eq!(
+        core.sessions.session_status(CHAT).unwrap().status,
+        SessionStatus::Idle
+    );
+    let entries = entries_now(&core);
+    assert!(entries.iter().any(|entry| entry.parts.iter().any(|part|
+        matches!(part, MessagePart::Tool { call: ToolCall::Goal { status, .. }, .. } if status == "complete"))));
+    assert!(
+        entries
+            .iter()
+            .flat_map(|entry| &entry.parts)
+            .any(|part| matches!(
+                part,
+                MessagePart::Tool {
+                    call: ToolCall::Todo { .. },
+                    resolved: true,
+                    ..
+                }
+            ))
+    );
+    assert!(
+        entries
+            .iter()
+            .flat_map(|entry| &entry.parts)
+            .any(|part| matches!(
+                part,
+                MessagePart::Tool {
+                    call: ToolCall::TodoPatch { .. },
+                    resolved: true,
+                    ..
+                }
+            ))
+    );
+    let request_id = entries
+        .iter()
+        .flat_map(|entry| &entry.parts)
+        .find_map(|part| match part {
+            MessagePart::Input { request_id, .. } => Some(request_id.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        core.sessions
+            .respond_input(
+                CHAT,
+                &request_id,
+                vec![zeron_proto::UserInputAnswer {
+                    question_id: "q-late".into(),
+                    labels: vec!["Review".into()],
+                }]
+            )
+            .unwrap()
+    );
+    wait_for(
+        || !answers.lock().unwrap().is_empty(),
+        "late answer reaches harness",
+    )
+    .await;
+    wait_for(|| entries_now(&core).iter().any(|entry| entry.parts.iter().any(|part|
+        matches!(part, MessagePart::Input { request_id: id, resolved: true, .. } if id == &request_id))), "late question resolved").await;
+    assert_eq!(
+        core.sessions.session_status(CHAT).unwrap().status,
+        SessionStatus::Idle
+    );
+    core.sessions.interrupt(CHAT).await.unwrap();
 }
