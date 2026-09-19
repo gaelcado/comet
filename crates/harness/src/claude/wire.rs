@@ -126,6 +126,8 @@ pub(crate) struct ContentBlock {
     #[serde(default)]
     pub tool_use_id: String,
     #[serde(default)]
+    pub content: Value,
+    #[serde(default)]
     pub is_error: Option<bool>,
 }
 
