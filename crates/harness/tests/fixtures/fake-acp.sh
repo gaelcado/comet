@@ -230,6 +230,13 @@ case "$promptline" in
   emit "{\"id\":$pid,\"result\":{\"stopReason\":\"end_turn\"}}"
   ;;
 
+*scenario:plan-exit*)
+  emit "{\"id\":77,\"method\":\"session/request_permission\",\"params\":{\"sessionId\":\"$SID\",\"toolCall\":{\"toolCallId\":\"exit\",\"kind\":\"switch_mode\",\"title\":\"Implement the plan?\"},\"options\":[{\"optionId\":\"yes\",\"name\":\"Yes\",\"kind\":\"allow_once\"},{\"optionId\":\"no\",\"name\":\"No\",\"kind\":\"reject_once\"}]}}"
+  read -r reply || exit 1
+  has "$reply" '"optionId":"yes"' || exit 1
+  update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"approved plan"}}'
+  emit "{\"id\":$pid,\"result\":{\"stopReason\":\"end_turn\"}}"
+  ;;
 *scenario:permission*)
   emit "{\"id\":77,\"method\":\"session/request_permission\",\"params\":{\"sessionId\":\"$SID\",\"toolCall\":{\"toolCallId\":\"t1\"},\"options\":[{\"optionId\":\"once\",\"name\":\"Allow once\",\"kind\":\"allow_once\"},{\"optionId\":\"always\",\"name\":\"Always allow\",\"kind\":\"allow_always\"},{\"optionId\":\"no\",\"name\":\"Reject\",\"kind\":\"reject_once\"}]}}"
   read -r ans || exit 1

@@ -1423,10 +1423,17 @@ fn models_from_session(session_response: &Value, catalog: &[Model]) -> Vec<Model
                 .collect()
         })
         .unwrap_or_default();
-    let wire_options: Vec<ModelOption> = config_options
+    let mut wire_options: Vec<ModelOption> = config_options
         .iter()
         .filter_map(trait_from_config_option)
         .collect();
+
+    if !wire_options
+        .iter()
+        .any(|o| o.id == zeron_proto::AGENT_MODE_OPTION)
+    {
+        wire_options.extend(legacy_mode_option(session_response));
+    }
 
     let exact = |id: &str| catalog.iter().find(|m| norm_id(&m.id) == norm_id(id));
     // Family-alias catalog row: the claude adapter advertises bare aliases
@@ -1546,24 +1553,47 @@ fn models_from_session(session_response: &Value, catalog: &[Model]) -> Vec<Model
                 id,
                 m.get("name").and_then(Value::as_str),
                 m.get("description").and_then(Value::as_str),
-                exact(id).map(|k| k.options.clone()).unwrap_or_default(),
+                {
+                    let mut options = exact(id).map(|k| k.options.clone()).unwrap_or_default();
+                    options.retain(|o| o.id != zeron_proto::AGENT_MODE_OPTION);
+                    for option in &wire_options {
+                        options.retain(|o| o.id != option.id);
+                        options.push(option.clone());
+                    }
+                    options
+                },
             ))
         })
         .collect()
 }
 
-/// A session config option surfaced as a Traits-dropdown section. Mode is
-/// zeron's own (forced to the no-prompts choice), model rides the model rows,
+/// A session config option surfaced in the composer. Native modes use the
+/// shared agentMode key, model rides the model rows,
 /// and thought_level is the Reasoning ladder — everything else the agent
 /// advertises (fast mode, collaboration mode, agent persona, …) passes
 /// through. `currentValue` doubles as the default: it is the state the
 /// session opens in. Booleans render as an off/on select, mirroring the
 /// catalogs (zeron never declares the boolean config capability, so adapters
 /// send selects, but handle the shape defensively).
+fn config_choices(option: &Value) -> Vec<&Value> {
+    option["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|choice| {
+            if let Some(group) = choice["options"].as_array() {
+                group.iter().collect::<Vec<_>>()
+            } else {
+                vec![choice]
+            }
+        })
+        .collect()
+}
+
 fn trait_from_config_option(option: &Value) -> Option<ModelOption> {
     if matches!(
         option.get("category").and_then(Value::as_str),
-        Some("mode" | "model" | "thought_level")
+        Some("model" | "thought_level")
     ) {
         return None;
     }
@@ -1571,10 +1601,8 @@ fn trait_from_config_option(option: &Value) -> Option<ModelOption> {
     let label = option.get("name").and_then(Value::as_str).unwrap_or(id);
     match option.get("type").and_then(Value::as_str)? {
         "select" => {
-            let choices: Vec<ModelOptionChoice> = option
-                .get("options")
-                .and_then(Value::as_array)?
-                .iter()
+            let choices: Vec<ModelOptionChoice> = config_choices(option)
+                .into_iter()
                 .filter_map(|c| {
                     let id = c.get("value").and_then(Value::as_str)?;
                     Some(ModelOptionChoice {
@@ -1593,7 +1621,11 @@ fn trait_from_config_option(option: &Value) -> Option<ModelOption> {
                 .map(str::to_owned)
                 .or_else(|| choices.first().map(|c| c.id.clone()))?;
             (choices.len() > 1).then(|| ModelOption {
-                id: id.to_owned(),
+                id: if option["category"] == "mode" {
+                    zeron_proto::AGENT_MODE_OPTION.to_owned()
+                } else {
+                    id.to_owned()
+                },
                 label: label.to_owned(),
                 choices,
                 default_choice,
@@ -2096,12 +2128,8 @@ fn config_option_sets(
         let kind = option.get("type").and_then(Value::as_str).unwrap_or("");
         let category = option.get("category").and_then(Value::as_str);
         let current = option.get("currentValue");
-        let available: Vec<&str> = option
-            .get("options")
-            .and_then(Value::as_array)
-            .map(|a| a.as_slice())
-            .unwrap_or_default()
-            .iter()
+        let available: Vec<&str> = config_choices(option)
+            .into_iter()
             .filter_map(|o| o.get("value").and_then(Value::as_str))
             .collect();
 
@@ -2109,32 +2137,14 @@ fn config_option_sets(
             ("select", Some("model")) => model
                 .and_then(|m| pick_model_value(m, &available, context_1m))
                 .map(Value::String),
-            // Unattended parity with the retired custom adapters (claude
-            // bypassPermissions / codex approvalPolicy never): pick the
-            // no-prompts mode when the agent offers one. claude-agent-acp
-            // calls it `bypassPermissions`, codex-acp `agent-full-access`
-            // (approvalPolicy "never" + danger-full-access sandbox), Devin
-            // `bypass`. Cursor instead exposes agent/plan/ask — those arrive
-            // as a Traits "Mode" option and win when the run selected one.
+            // Preserve the advertised current mode unless the user selects one.
+            // Switching to bypass here would contradict the composer selection.
             ("select", Some("mode")) => model_options
-                .get("mode")
+                .get(zeron_proto::AGENT_MODE_OPTION)
+                .or_else(|| model_options.get(config_id))
                 .and_then(Value::as_str)
                 .filter(|c| available.contains(c))
-                .map(|c| Value::String(c.to_owned()))
-                .or_else(|| {
-                    [
-                        "bypassPermissions",
-                        "bypass_permissions",
-                        "bypass",
-                        "yolo",
-                        "agent-full-access",
-                        "danger-full-access",
-                        "full-access",
-                    ]
-                    .into_iter()
-                    .find(|v| available.contains(v))
-                    .map(|v| Value::String(v.to_owned()))
-                }),
+                .map(|c| Value::String(c.to_owned())),
             ("select", Some("thought_level")) => efforts
                 .iter()
                 .find(|c| available.contains(*c))
@@ -2172,6 +2182,72 @@ fn config_option_sets(
         }
     }
     sets
+}
+
+/// ACP mode IDs are opaque. Preserve the agent's labels and choices rather
+/// than guessing which names mean plan, build or goal.
+fn legacy_mode_option(session: &Value) -> Option<ModelOption> {
+    if session["configOptions"]
+        .as_array()
+        .is_some_and(|options| options.iter().any(|o| o["category"] == "mode"))
+    {
+        return None;
+    }
+    let modes = &session["modes"];
+    let choices: Vec<ModelOptionChoice> = modes["availableModes"]
+        .as_array()?
+        .iter()
+        .filter_map(|mode| {
+            Some(ModelOptionChoice {
+                id: mode["id"].as_str()?.to_owned(),
+                label: mode["name"].as_str()?.to_owned(),
+            })
+        })
+        .collect();
+    (!choices.is_empty()).then(|| ModelOption {
+        id: zeron_proto::AGENT_MODE_OPTION.into(),
+        label: "Mode".into(),
+        default_choice: modes["currentModeId"]
+            .as_str()
+            .unwrap_or(&choices[0].id)
+            .to_owned(),
+        choices,
+    })
+}
+
+/// Validate explicit intent before any prompt; stale or rejected choices must
+/// never silently run with the agent's default permissions.
+fn requested_mode_change(
+    session: &Value,
+    options: &serde_json::Map<String, Value>,
+) -> Result<Option<(String, String)>, HarnessError> {
+    let Some(wanted) = options.get(zeron_proto::AGENT_MODE_OPTION) else {
+        return Ok(None);
+    };
+    let wanted = wanted
+        .as_str()
+        .ok_or_else(|| HarnessError::Protocol("Invalid agent mode".into()))?;
+    if let Some(config) = session["configOptions"]
+        .as_array()
+        .and_then(|options| options.iter().find(|o| o["category"] == "mode"))
+    {
+        let mode = trait_from_config_option(config);
+        if !mode.is_some_and(|m| m.choices.iter().any(|c| c.id == wanted)) {
+            return Err(HarnessError::Protocol(format!(
+                "Agent does not advertise mode {wanted}"
+            )));
+        }
+        return Ok(Some((
+            config["id"].as_str().unwrap_or_default().into(),
+            wanted.into(),
+        )));
+    }
+    if !legacy_mode_option(session).is_some_and(|m| m.choices.iter().any(|c| c.id == wanted)) {
+        return Err(HarnessError::Protocol(format!(
+            "Agent does not advertise mode {wanted}"
+        )));
+    }
+    Ok(Some((String::new(), wanted.into())))
 }
 
 /// Per-agent subagent correlation: Devin maps tagged ACP updates inline
@@ -2316,6 +2392,10 @@ fn handle_server_request(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            if params["toolCall"]["kind"] == "switch_mode" || is_user_question(&options) {
+                client.respond(&id, json!({"outcome": {"outcome": "cancelled"}}));
+                return Vec::new();
+            }
             match preferred_allow_option(&options) {
                 Some(option_id) => client.respond(
                     &id,
@@ -2355,8 +2435,9 @@ fn is_user_question(options: &[Value]) -> bool {
     })
 }
 
-/// The live-run request handler: tool permissions auto-accept like
-/// [`handle_server_request`], but question-shaped requests block on the
+/// Native mode permissions, mode exits and question-shaped requests use the
+/// input bridge. Only agents without modes retain unattended permissions.
+/// Questions block on the
 /// engine's input bridge (in a subtask so the message loop keeps flowing)
 /// and answer with the option whose name matches the chosen label. A dropped
 /// resolver degrades to `cancelled` — never a silent allow.
@@ -2366,6 +2447,7 @@ fn handle_server_request_live(
     method: &str,
     params: &Value,
     request_input: &std::sync::Arc<RequestInputFn>,
+    honor_mode_permissions: bool,
 ) -> Vec<AgentEvent> {
     if method != "session/request_permission" {
         return handle_server_request(client, id, method, params);
@@ -2375,7 +2457,10 @@ fn handle_server_request_live(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    if !is_user_question(&options) {
+    if !honor_mode_permissions
+        && !is_user_question(&options)
+        && params["toolCall"]["kind"] != "switch_mode"
+    {
         return handle_server_request(client, id, method, params);
     }
     let names: Vec<String> = options
@@ -2397,6 +2482,9 @@ fn handle_server_request_live(
             .unwrap_or("The agent needs your input.")
             .to_owned(),
         options: names.clone(),
+        option_descriptions: Vec::new(),
+        allow_custom: false,
+        non_blocking: false,
         multi_select: false,
     };
     let client = client.clone();
@@ -2845,6 +2933,19 @@ async fn run_session(session: Session) {
         // runs.
         let efforts = effort_values(request.reasoning, request.model.as_deref());
         let options_snapshot = session_response;
+        let requested_mode = requested_mode_change(&options_snapshot, &request.model_options)?;
+        if let Some((config_id, mode)) = &requested_mode
+            && config_id.is_empty()
+            && options_snapshot["modes"]["currentModeId"].as_str() != Some(mode)
+        {
+            request_draining(
+                &client,
+                &mut incoming,
+                "session/set_mode",
+                json!({"sessionId": session_id, "modeId": mode}),
+            )
+            .await?;
+        }
         for (config_id, payload) in config_option_sets(
             &options_snapshot,
             requested_model.as_deref(),
@@ -2867,6 +2968,14 @@ async fn run_session(session: Session) {
             )
             .await
             {
+                if requested_mode
+                    .as_ref()
+                    .is_some_and(|(id, _)| id == &config_id)
+                {
+                    return Err(HarnessError::Protocol(format!(
+                        "Agent rejected requested mode: {e}"
+                    )));
+                }
                 if matches!(harness, HarnessId::Antigravity | HarnessId::Devin)
                     && requested_model.is_some()
                     && is_model_config_option(&options_snapshot, &config_id)
@@ -2882,13 +2991,18 @@ async fn run_session(session: Session) {
                 );
             }
         }
-        Ok::<(String, bool, Vec<SlashCommand>), HarnessError>((
+        let honor_mode_permissions = legacy_mode_option(&options_snapshot).is_some()
+            || options_snapshot["configOptions"]
+                .as_array()
+                .is_some_and(|opts| opts.iter().any(|o| o["category"] == "mode"));
+        Ok::<(String, bool, Vec<SlashCommand>, bool), HarnessError>((
             session_id,
             steer_ext,
             init_commands,
+            honor_mode_permissions,
         ))
     };
-    let (session_id, steer_ext, init_commands) = tokio::select! {
+    let (session_id, steer_ext, init_commands, honor_mode_permissions) = tokio::select! {
         res = tokio::time::timeout(handshake_timeout, setup) => {
             let res = res.unwrap_or_else(|_| {
                 // A hung handshake (agent waiting on a login it can never
@@ -3161,6 +3275,7 @@ async fn run_session(session: Session) {
                                 &method,
                                 &params,
                                 &request_input,
+                                honor_mode_permissions,
                             ) {
                                 if !send(&event_tx, ev).await {
                                     consumer_gone = true;
@@ -3333,6 +3448,7 @@ async fn run_session(session: Session) {
                         &method,
                         &params,
                         &request_input,
+                        honor_mode_permissions,
                     ) {
                         if !send(&event_tx, ev).await {
                             break 'main;
@@ -3442,6 +3558,7 @@ async fn run_session(session: Session) {
                                         &method,
                                         &params,
                                         &request_input,
+                                        honor_mode_permissions,
                                     ) {
                                         if !send(&event_tx, ev).await {
                                             consumer_gone = true;
@@ -4133,6 +4250,64 @@ mod tests {
     }
 
     #[test]
+    fn native_modes_preserve_opaque_ids_and_reject_stale_intent() {
+        let session = json!({"modes":{"currentModeId":"code", "availableModes":[
+            {"id":"architect", "name":"Plan"}, {"id":"code", "name":"Build"}]},
+            "models":{"availableModels":[{"modelId":"x", "name":"X"}]}});
+        let mut choices = serde_json::Map::new();
+        choices.insert(zeron_proto::AGENT_MODE_OPTION.into(), json!("architect"));
+        assert_eq!(
+            requested_mode_change(&session, &choices).unwrap(),
+            Some((String::new(), "architect".into()))
+        );
+        assert_eq!(
+            models_from_session(&session, &[])[0].options[0].choices[0].id,
+            "architect"
+        );
+        choices.insert(zeron_proto::AGENT_MODE_OPTION.into(), json!("goal"));
+        assert!(requested_mode_change(&session, &choices).is_err());
+        assert!(requested_mode_change(&json!({}), &choices).is_err());
+        let config = json!({"id":"execution-style", "name":"Mode", "category":"mode", "type":"select", "currentValue":"code",
+            "options":[{"value":"code", "name":"Build"},{"value":"architect","name":"Plan"}]});
+        let session = json!({"configOptions":[config]});
+        choices.insert(zeron_proto::AGENT_MODE_OPTION.into(), json!("architect"));
+        assert_eq!(
+            requested_mode_change(&session, &choices).unwrap(),
+            Some(("execution-style".into(), "architect".into()))
+        );
+        assert_eq!(
+            config_option_sets(&session, None, &[], &choices),
+            vec![("execution-style".into(), json!({"value":"architect"}))]
+        );
+        let mut grouped = session.clone();
+        grouped["configOptions"][0]["options"] = json!([{"group":"modes", "name":"Modes", "options": session["configOptions"][0]["options"]}]);
+        assert_eq!(
+            config_option_sets(&grouped, None, &[], &choices),
+            config_option_sets(&session, None, &[], &choices)
+        );
+        assert_eq!(
+            requested_mode_change(&grouped, &choices).unwrap(),
+            requested_mode_change(&session, &choices).unwrap()
+        );
+    }
+
+    #[test]
+    fn advertised_plan_mode_is_exposed_and_sent_to_the_native_config() {
+        let option = serde_json::json!({"id":"mode", "name":"Mode", "category":"mode", "type":"select", "currentValue":"agent",
+            "options":[{"value":"agent","name":"Build"},{"value":"plan","name":"Plan"}]});
+        let mode = trait_from_config_option(&option).unwrap();
+        assert_eq!(mode.choices[1].id, "plan");
+        let session = serde_json::json!({"configOptions":[option]});
+        let mut choices = serde_json::Map::new();
+        choices.insert("mode".into(), serde_json::json!("plan"));
+        let sets = config_option_sets(&session, None, &[], &choices);
+        assert!(
+            sets.iter()
+                .any(|(id, value)| id == "mode" && value["value"] == "plan")
+        );
+    }
+
+    #[test]
     fn config_option_sets_map_model_effort_and_model_options() {
         let response = json!({
             "sessionId": "s-1",
@@ -4346,9 +4521,9 @@ mod tests {
                 .iter()
                 .map(|o| o.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["fast-mode"]
+            vec![zeron_proto::AGENT_MODE_OPTION, "fast-mode"]
         );
-        assert_eq!(models[0].options[0].default_choice, "off");
+        assert_eq!(models[0].options[1].default_choice, "off");
     }
 
     #[test]
@@ -4516,7 +4691,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_config_option_prefers_a_no_prompt_mode_per_adapter_naming() {
+    fn mode_config_preserves_the_advertised_default() {
         let codex = json!({
             "sessionId": "s-1",
             "configOptions": [{
@@ -4534,7 +4709,7 @@ mod tests {
         let no_opts = serde_json::Map::new();
         assert_eq!(
             config_option_sets(&codex, None, &[], &no_opts),
-            vec![("mode".to_owned(), json!({ "value": "agent-full-access" }))]
+            Vec::<(String, Value)>::new()
         );
     }
 

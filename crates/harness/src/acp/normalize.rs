@@ -404,6 +404,8 @@ pub(crate) fn map_update(update: &Value) -> Vec<AgentEvent> {
                 .unwrap_or_default()
                 .iter()
                 .map(|e| TodoItem {
+                    id: None,
+                    status: zeron_proto::TodoStatus::from_wire(e["status"].as_str()),
                     text: str_field(e, "content"),
                     done: e.get("status").and_then(Value::as_str) == Some("completed"),
                 })
@@ -660,10 +662,14 @@ mod tests {
                 call: ToolCall::Todo {
                     items: vec![
                         TodoItem {
+                            id: None,
+                            status: None,
                             text: "read code".into(),
                             done: true
                         },
                         TodoItem {
+                            id: None,
+                            status: Some(zeron_proto::TodoStatus::InProgress),
                             text: "write fix".into(),
                             done: false
                         },
