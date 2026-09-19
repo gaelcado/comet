@@ -1,7 +1,7 @@
 //! The composer: a hand-rolled multiline text input (adapted from gpui's
 //! `examples/input.rs`), the compact↔expanded flip, the Send/Queue/Stop morph,
 //! optimistic send with failure recovery, per-chat drafts, and the question
-//! wizard that replaces the composer while a run awaits input.
+//! wizard docked above the shared composer input while questions await answers.
 //!
 //! Pure decision logic (flip, auto-grow math, button morph, wizard reducer,
 //! pending-input detection) lives in free functions/structs with unit tests;
@@ -23,6 +23,9 @@ use gpui::{
     prelude::*, px, quad, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
+
+#[path = "composer_activity.rs"]
+mod activity;
 
 use zeron_doc::{MessagePart, MessageRole, SessionCommandPayload, SessionMessageEntry};
 use zeron_proto::{
@@ -609,33 +612,44 @@ fn wizard_escape_goes_back(key: &str, input_focused: bool, input_empty: bool) ->
     key == "escape" && (!input_focused || input_empty)
 }
 
-/// Find the unresolved input request the panel should serve, if any: an
-/// unresolved input part on the LAST assistant entry — regardless of the
-/// entry's run status. The question stays answerable until the user actually
-/// answers it (user requirement): a run that died under its question (engine
-/// restart reaping it) leaves an aborted entry whose answer the engine
-/// delivers as a resumed turn (`RespondInput`'s dead-run fallback). A newer
-/// assistant entry supersedes an unanswered question. Assistant-entry-scoped,
-/// not last-entry: a steer prompt sent while the agent waits appends a USER
-/// entry after the streaming assistant entry, and a last-entry-only read made
-/// the QuestionPanel vanish exactly when the user typed (earlier forensics;
-/// matches the original composer.tsx, which reads the live-assistant fold —
-/// rebuilt from replay even after the run died).
+/// Serve unresolved questions in transcript order, including nonblocking agent
+/// questions whose assistant has already continued into a newer entry.
 pub fn pending_input_request(
     transcript: &[SessionMessageEntry],
 ) -> Option<(String, Vec<UserInputQuestion>)> {
+    let latest = transcript
+        .iter()
+        .rposition(|entry| entry.role == MessageRole::Assistant)?;
+    let resolved: HashSet<&str> = transcript
+        .iter()
+        .flat_map(|entry| &entry.parts)
+        .filter_map(|part| match part {
+            MessagePart::Input {
+                request_id,
+                resolved: true,
+                ..
+            } => Some(request_id.as_str()),
+            _ => None,
+        })
+        .collect();
     transcript
         .iter()
-        .rev()
-        .find(|entry| entry.role == MessageRole::Assistant)
-        .and_then(|entry| {
+        .enumerate()
+        .filter(|(_, entry)| entry.role == MessageRole::Assistant)
+        .find_map(|(index, entry)| {
             entry.parts.iter().find_map(|part| match part {
                 MessagePart::Input {
                     request_id,
                     questions,
                     resolved: false,
                     ..
-                } => Some((request_id.clone(), questions.clone())),
+                } if !questions.is_empty()
+                    && !resolved.contains(request_id.as_str())
+                    && (index == latest
+                        || questions.iter().all(|question| question.non_blocking)) =>
+                {
+                    Some((request_id.clone(), questions.clone()))
+                }
                 _ => None,
             })
         })
@@ -749,6 +763,9 @@ impl Wizard {
     }
 
     pub fn set_typed(&mut self, text: String) {
+        if !self.current().is_some_and(|q| q.allow_custom) {
+            return;
+        }
         if let Some(slot) = self.typed.get_mut(self.page) {
             *slot = text;
         }
@@ -756,6 +773,13 @@ impl Wizard {
 
     /// Explicit submit / auto-advance landing.
     pub fn advance(&mut self) -> WizardStep {
+        if !self.page_has_pick()
+            && !self
+                .current()
+                .is_some_and(|q| q.allow_custom && self.typed[self.page].trim().len() > 0)
+        {
+            return WizardStep::Stay;
+        }
         if self.page + 1 < self.questions.len() {
             self.page += 1;
             WizardStep::Stay
@@ -774,26 +798,28 @@ impl Wizard {
         }
     }
 
-    /// Answers per question: free text overrides picked labels.
+    /// Custom text replaces a single choice, or supplements multiple choices.
     pub fn answers(&self) -> Vec<UserInputAnswer> {
         self.questions
             .iter()
             .enumerate()
             .map(|(ix, q)| {
                 let typed = self.typed.get(ix).map(|s| s.trim()).unwrap_or("");
-                let labels = if !typed.is_empty() {
-                    vec![typed.to_string()]
-                } else {
-                    self.picked
-                        .get(ix)
-                        .map(|picked| {
-                            picked
-                                .iter()
-                                .filter_map(|&p| q.options.get(p).cloned())
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                };
+                let mut labels: Vec<String> = self
+                    .picked
+                    .get(ix)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|&p| q.options.get(p).cloned())
+                    .collect();
+                if q.allow_custom && !typed.is_empty() {
+                    if !q.multi_select {
+                        labels.clear();
+                    }
+                    if !labels.iter().any(|label| label == typed) {
+                        labels.push(typed.to_owned());
+                    }
+                }
                 UserInputAnswer {
                     question_id: q.id.clone(),
                     labels,
@@ -4971,10 +4997,34 @@ fn with_workspace_commands(
             name,
             description: description.into(),
             input_hint: None,
+            agent_mode: None,
             workspace_command: Some(command),
         });
     }
     rows
+}
+
+fn with_mode_commands(
+    rows: &mut Vec<InvocationCandidate>,
+    modes: Option<zeron_proto::ModelOption>,
+) {
+    rows.retain(|row| row.agent_mode.is_none());
+    if let Some(mode) = modes {
+        for choice in mode.choices {
+            let mut name = choice.label.to_lowercase().replace(' ', "-");
+            while rows.iter().any(|row| row.name == name) {
+                name = format!("zeron:{name}");
+            }
+            rows.push(InvocationCandidate {
+                agent_mode: Some((mode.id.clone(), choice.id)),
+                workspace_command: None,
+                description: format!("Use {} for the next message", choice.label),
+                invocation: zeron_proto::invocation::Invocation::Command { name: name.clone() },
+                name,
+                input_hint: None,
+            });
+        }
+    }
 }
 
 fn workspace_command_for_text(
@@ -4993,6 +5043,7 @@ fn workspace_command_for_text(
 
 #[derive(Debug, Clone)]
 struct InvocationCandidate {
+    agent_mode: Option<(String, String)>,
     workspace_command: Option<WorkspaceCommand>,
     name: String,
     description: String,
@@ -5091,6 +5142,7 @@ fn invocation_candidates(
     commands
         .into_iter()
         .map(|c| InvocationCandidate {
+            agent_mode: None,
             workspace_command: None,
             input_hint: c.input_hint,
             name: c.name.clone(),
@@ -5102,6 +5154,7 @@ fn invocation_candidates(
                 .into_iter()
                 .filter(|s| s.enabled)
                 .map(|s| InvocationCandidate {
+                    agent_mode: None,
                     workspace_command: None,
                     input_hint: None,
                     name: s.name.clone(),
@@ -5224,6 +5277,7 @@ pub struct Composer {
     /// visible trace of a failed send (2026-08-19).
     failure_key: Option<String>,
     wizard: Option<Wizard>,
+    question_draft: Option<EditSnapshot>,
     wizard_focus: FocusHandle,
     /// Requests already answered locally (suppresses the panel until the doc
     /// frame marks them resolved).
@@ -5249,6 +5303,14 @@ pub struct Composer {
     /// Live drag over the queue panel: which row, and where it would land.
     pub(crate) queue_drag: Option<crate::queue::QueueDragState>,
     pub(crate) queue_scroll: gpui::ScrollHandle,
+    activity_scroll: gpui::ScrollHandle,
+    activity_chat: Option<String>,
+    activity_expanded: bool,
+    activity_height: f32,
+    activity_motion: activity::ActivityMotion,
+    activity_focus: FocusHandle,
+    activity_plan: Option<(String, crate::markdown::BlockTree)>,
+    question_scroll: gpui::ScrollHandle,
     pub(crate) queue_full_preview: Option<Task<()>>,
     pub(crate) queue_previews: HashMap<(String, String), crate::queue::QueuePreview>,
     /// Rows awaiting a host-authoritative removal acknowledgement. They stay
@@ -5469,6 +5531,7 @@ impl Composer {
             launching_new_chat: false,
             failure: None,
             wizard: None,
+            question_draft: None,
             wizard_focus: cx.focus_handle(),
             answered_requests: HashSet::new(),
             failure_key: None,
@@ -5490,6 +5553,14 @@ impl Composer {
             focus_pending: true,
             queue_drag: None,
             queue_scroll: gpui::ScrollHandle::new(),
+            activity_scroll: gpui::ScrollHandle::new(),
+            activity_chat: None,
+            activity_expanded: false,
+            activity_height: 0.0,
+            activity_motion: activity::ActivityMotion::default(),
+            activity_focus: cx.focus_handle().tab_stop(true),
+            activity_plan: None,
+            question_scroll: gpui::ScrollHandle::new(),
             queue_full_preview: None,
             queue_previews: HashMap::new(),
             queue_removing: HashSet::new(),
@@ -6254,7 +6325,12 @@ impl Composer {
     }
 
     fn on_input_edited(&mut self, cx: &mut Context<Self>) {
-        if self.wizard.is_some() {
+        if let Some(wizard) = self.wizard.as_mut() {
+            let text = self.input.read(cx).text().to_owned();
+            if !text.trim().is_empty() {
+                self.advance_task = None;
+            }
+            wizard.set_typed(text);
             if self.mention.token.is_some() || self.mention_task.is_some() {
                 self.reset_mention(None, cx);
             }
@@ -6720,6 +6796,14 @@ impl Composer {
 
     /// Re-rank the cached list for the current query (pure local filter).
     fn refilter_slash(&mut self, cx: &mut Context<Self>) {
+        let modes = self.available_modes(cx);
+        if !self.slash.skill {
+            let rows = self
+                .slash_cache
+                .entry(self.slash.context.clone())
+                .or_default();
+            with_mode_commands(rows, modes);
+        }
         let query = self
             .slash
             .token
@@ -6780,6 +6864,10 @@ impl Composer {
         else {
             return;
         };
+        if let Some((option, value)) = command.agent_mode {
+            self.execute_mode_command(option, value, token.range, cx);
+            return;
+        }
         if let Some(action) = command.workspace_command {
             self.execute_workspace_command(action, token.range, cx);
             return;
@@ -7032,6 +7120,10 @@ impl Composer {
             self.clear_queue_edit(cx);
         }
 
+        // Return the borrowed draft before saving it under the previous chat.
+        if key != self.current_key {
+            self.restore_question_draft(cx);
+        }
         // Draft swap on chat navigation — the input entity itself survives.
         if key != self.current_key {
             let new_thread_launch =
@@ -7101,12 +7193,14 @@ impl Composer {
                     .is_some_and(|w| w.request_id == request_id);
                 if !same {
                     self.reset_mention(None, cx);
+                    if self.question_draft.is_none() {
+                        self.question_draft = Some(self.input.read(cx).snapshot());
+                    }
                     self.wizard = Some(Wizard::new(request_id, questions));
+                    self.question_scroll.set_offset(point(px(0.0), px(0.0)));
                     self.advance_task = None;
                     // The shared input becomes the panel's free-text override.
-                    self.input.update(cx, |input, cx| {
-                        input.set_placeholder("Type your own answer, or pick an option above", cx)
-                    });
+                    self.sync_question_input(cx);
                 }
             }
             _ => {
@@ -7126,16 +7220,26 @@ impl Composer {
                             && !self.answered_requests.contains(&wizard.request_id));
                     if released {
                         self.wizard = None;
+                        self.restore_question_draft(cx);
                         self.advance_task = None;
-                        self.input
-                            .update(cx, |input, cx| input.set_placeholder("Do anything…", cx));
+                        self.input.update(cx, |input, cx| {
+                            input.read_only = false;
+                            input.set_placeholder("Do anything…", cx);
+                        });
                     }
                 }
             }
         }
         let input_context = message_input_context(self.wizard.is_some());
-        self.input
-            .update(cx, |input, cx| input.set_key_context(input_context, cx));
+        let read_only = self
+            .wizard
+            .as_ref()
+            .and_then(Wizard::current)
+            .is_some_and(|q| !q.allow_custom);
+        self.input.update(cx, |input, cx| {
+            input.read_only = read_only;
+            input.set_key_context(input_context, cx);
+        });
         self.on_input_edited(cx);
         cx.notify();
     }
@@ -7183,6 +7287,40 @@ impl Composer {
         send_button_mode(self.run_live(cx), has_text)
     }
 
+    fn available_modes(&self, cx: &App) -> Option<zeron_proto::ModelOption> {
+        let state = self.state.read(cx);
+        if state
+            .selected_chat
+            .as_ref()
+            .is_some_and(|chat| !state.chat_host_supports(chat, capabilities::AGENT_MODES_V1))
+        {
+            return None;
+        }
+        self.pickers.read(cx).composer_modes(cx)
+    }
+
+    fn execute_mode_command(
+        &mut self,
+        option: String,
+        value: String,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.available_modes(cx).is_some_and(|mode| {
+            mode.id == option && mode.choices.iter().any(|choice| choice.id == value)
+        }) {
+            self.reset_slash(None, cx);
+            return;
+        }
+        self.pickers.update(cx, |picker, cx| {
+            picker.pick_option(option, value, false, cx)
+        });
+        self.input
+            .update(cx, |input, cx| input.remove_completion_token(range, cx));
+        self.reset_slash(None, cx);
+        cx.notify();
+    }
+
     fn execute_workspace_command(
         &mut self,
         command: WorkspaceCommand,
@@ -7216,6 +7354,18 @@ impl Composer {
         // Leading indentation distinguishes literal Markdown from native commands
         // and skill invocations. Only the empty-content check may trim the draft.
         let text = self.input.read(cx).text().to_string();
+        if let Some((option, value)) = self
+            .slash_cache
+            .get(&self.slash.context)
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| text.trim_end() == format!("/{}", row.name))
+            })
+            .and_then(|row| row.agent_mode.clone())
+        {
+            self.execute_mode_command(option, value, 0..text.len(), cx);
+            return;
+        }
         if let Some(action) = self
             .slash_cache
             .get(&self.slash.context)
@@ -7990,22 +8140,47 @@ impl Composer {
 
     // ---- wizard glue ----
 
+    fn restore_question_draft(&mut self, cx: &mut Context<Self>) {
+        if let Some(draft) = self.question_draft.take() {
+            self.input.update(cx, |input, cx| {
+                input.read_only = false;
+                input.restore(draft, cx);
+            });
+        }
+    }
+
+    fn sync_question_input(&mut self, cx: &mut Context<Self>) {
+        let question = self.wizard.as_ref().and_then(Wizard::current);
+        let allow_custom = question.is_none_or(|q| q.allow_custom);
+        let placeholder = match question {
+            Some(q) if !q.allow_custom && q.multi_select => "Choose options above",
+            Some(q) if !q.allow_custom => "Choose an option above",
+            Some(q) if q.options.is_empty() => "Type your answer",
+            Some(q) if q.multi_select => "Choose options above, or add your own answer",
+            _ => "Type your own answer, or pick an option above",
+        };
+        let text = self
+            .wizard
+            .as_ref()
+            .and_then(|w| w.typed.get(w.page))
+            .cloned()
+            .unwrap_or_default();
+        self.input.update(cx, |input, cx| {
+            input.read_only = !allow_custom;
+            input.set_text(&text, cx);
+            input.set_placeholder(placeholder, cx);
+        });
+    }
+
     fn wizard_select(&mut self, option_ix: usize, cx: &mut Context<Self>) {
         let Some(wizard) = self.wizard.as_mut() else {
             return;
         };
         let step = wizard.select(option_ix);
-        let has_pick = wizard.page_has_pick();
-        self.input.update(cx, |input, cx| {
-            input.set_placeholder(
-                if has_pick {
-                    "Type your own answer, or leave this blank to use the selected option"
-                } else {
-                    "Type your own answer, or pick an option above"
-                },
-                cx,
-            )
-        });
+        if !wizard.current().is_some_and(|q| q.multi_select) {
+            wizard.set_typed(String::new());
+            self.input.update(cx, |input, cx| input.set_text("", cx));
+        }
         match step {
             WizardStep::AutoAdvance => self.schedule_auto_advance(cx),
             WizardStep::Done(answers) => self.wizard_finish(answers, cx),
@@ -8025,28 +8200,44 @@ impl Composer {
     }
 
     fn wizard_advance(&mut self, cx: &mut Context<Self>) {
+        // Mouse Submit, keyboard Enter and auto-advance must use the same
+        // snapshot; an Edited subscription may not have run before a click.
+        let typed = self.input.read(cx).text().to_owned();
         let Some(wizard) = self.wizard.as_mut() else {
             return;
         };
+        wizard.set_typed(typed);
         match wizard.advance() {
             WizardStep::Done(answers) => self.wizard_finish(answers, cx),
             _ => {
+                self.question_scroll.set_offset(point(px(0.0), px(0.0)));
                 // Moving on: clear the shared free-text input for the next page.
-                self.input.update(cx, |input, cx| input.set_text("", cx));
+                self.sync_question_input(cx);
                 cx.notify();
             }
         }
     }
 
     fn wizard_back(&mut self, cx: &mut Context<Self>) {
+        self.advance_task = None;
         if let Some(wizard) = self.wizard.as_mut() {
             wizard.back();
+            self.sync_question_input(cx);
+            self.question_scroll.set_offset(point(px(0.0), px(0.0)));
             cx.notify();
         }
     }
 
     /// Submit RespondInput and retire the panel.
     fn wizard_finish(&mut self, answers: Vec<UserInputAnswer>, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            self.failure = Some("Reconnect to send your answer".into());
+            cx.notify();
+            return;
+        };
+        let Some(chat_id) = self.state.read(cx).selected_chat.clone() else {
+            return;
+        };
         let Some(wizard) = self.wizard.take() else {
             return;
         };
@@ -8055,15 +8246,11 @@ impl Composer {
         self.input.update(cx, |input, cx| {
             input.set_text("", cx);
             // The panel borrowed the composer input; hand back its identity.
+            input.read_only = false;
             input.set_placeholder("Do anything…", cx);
             input.set_key_context(MESSAGE_COMPOSER_CONTEXT, cx);
         });
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            return;
-        };
-        let Some(chat_id) = self.state.read(cx).selected_chat.clone() else {
-            return;
-        };
+        self.restore_question_draft(cx);
         let request_id = wizard.request_id.clone();
         let command = SessionCommandPayload::RespondInput {
             request_id: request_id.clone(),
@@ -8080,9 +8267,14 @@ impl Composer {
             if let Err(err) = result {
                 this.update(cx, |composer, cx| {
                     composer.failure = Some(format!("Answer failed: {err}").into());
-                    composer.failure_key = Some(failure_chat);
-                    // The answer never left this device — put the panel back.
+                    composer.failure_key = Some(failure_chat.clone());
+                    // Do not replace another conversation's draft on a late failure.
                     composer.answered_requests.remove(&request_id);
+                    if composer.current_key == failure_chat {
+                        composer.question_draft = Some(composer.input.read(cx).snapshot());
+                        composer.wizard = Some(wizard.clone());
+                        composer.sync_question_input(cx);
+                    }
                     cx.notify();
                 })
                 .ok();
@@ -8143,12 +8335,9 @@ impl Composer {
 
     // ---- render pieces ----
 
-    /// The agent-asked-a-question panel (zeron question-panel.tsx), rendered in
-    /// place of the composer: the same floating-pill chrome (`rounded-[26px]
-    /// border-white/[0.08] bg-white/[0.03] shadow-xl`), uppercase header +
-    /// "1/3" counter chip, option rows with number kbd chips, a free-text
-    /// override over a hairline, and Back / Next-Submit footer.
-    fn render_wizard(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// Agent questions share the activity tray above the composer. The existing
+    /// input remains the free-text answer, with the wizard's paging and shortcuts.
+    fn render_wizard(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = Theme::of(cx).clone();
         let Some(wizard) = self.wizard.clone() else {
             return gpui::Empty.into_any_element();
@@ -8160,21 +8349,24 @@ impl Composer {
         let page = wizard.page;
         let last = page + 1 >= wizard.questions.len();
         let typed_empty = self.input.read(cx).is_empty();
-        let can_advance = wizard.page_has_pick() || !typed_empty;
+        let can_advance = wizard.page_has_pick() || (question.allow_custom && !typed_empty);
 
         let options = question.options.iter().enumerate().map(|(ix, label)| {
             // Selection reads on the row only while no typed override exists
             // (typed answers win — zeron question-panel.tsx `isSel`).
-            let picked = wizard.is_picked(ix) && typed_empty;
+            let picked = wizard.is_picked(ix) && (question.multi_select || typed_empty);
             div()
                 .id(("wizard-option", ix))
+                .role(Role::Button)
+                .aria_label(SharedString::from(label.clone()))
+                .aria_toggled(picked.into())
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap(px(12.0))
                 .px(px(14.0))
                 .py(px(10.0))
-                .rounded(px(12.0))
+                .rounded(px(8.0))
                 .border_1()
                 .border_color(if picked {
                     crate::theme::ink(0.16)
@@ -8205,7 +8397,23 @@ impl Composer {
                         } else {
                             theme.text.opacity(0.9)
                         })
-                        .child(SharedString::from(label.clone())),
+                        .child(SharedString::from(label.clone()))
+                        .when_some(
+                            question
+                                .option_descriptions
+                                .get(ix)
+                                .filter(|description| !description.is_empty()),
+                            |row, description| {
+                                row.child(
+                                    div()
+                                        .mt(px(3.0))
+                                        .font_weight(gpui::FontWeight::NORMAL)
+                                        .text_size(crate::typography::ui_rems(12.0))
+                                        .text_color(theme.text_muted)
+                                        .child(SharedString::from(description.clone())),
+                                )
+                            },
+                        ),
                 )
                 .when(ix < 9, |el| {
                     el.child(
@@ -8233,119 +8441,102 @@ impl Composer {
                 })
         });
 
+        let question_body = div()
+            .p(px(8.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_size(crate::typography::ui_rems(12.0))
+                    .text_color(theme.text_muted)
+                    .child(SharedString::from(question.header.clone()))
+                    .when(wizard.questions.len() > 1, |el| {
+                        el.child(SharedString::from(counter))
+                    }),
+            )
+            .child(
+                div()
+                    .text_size(crate::typography::ui_rems(14.0))
+                    .text_color(theme.text)
+                    .child(SharedString::from(question.question.clone())),
+            )
+            .when(question.multi_select, |el| {
+                el.child(
+                    div()
+                        .text_color(theme.text_muted)
+                        .child("Select one or more options."),
+                )
+            })
+            .child(div().flex().flex_col().gap(px(4.0)).children(options));
+        let questions = crate::edge_fade::edge_faded(
+            Theme::TRANSCRIPT_FADE_BAND,
+            true,
+            true,
+            div()
+                .id("composer-question-rows")
+                .max_h(window.viewport_size().height * 0.35)
+                .overflow_y_scroll()
+                .track_scroll(&self.question_scroll)
+                .child(question_body),
+        )
+        .fade_overflow_y(&self.question_scroll);
         div()
             .id("question-panel")
             .track_focus(&self.wizard_focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.on_wizard_key(event, window, cx)
             }))
-            .rounded(px(COMPOSER_RADIUS))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.input_glass_bg())
-            .when(!theme.is_frost(), |el| el.shadow_lg())
             .flex()
             .flex_col()
             .child(
                 div()
-                    .px(px(16.0))
-                    .pt(px(16.0))
-                    .flex()
-                    .flex_col()
-                    // Header: tracked uppercase + counter chip when paged.
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(10.0))
-                            .child(
-                                div()
-                                    .text_size(crate::typography::ui_rems(10.5))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(theme.text_muted.opacity(0.6))
-                                    .child(SharedString::from(crate::popover::tracked_upper(
-                                        &question.header,
-                                    ))),
-                            )
-                            .when(wizard.questions.len() > 1, |el| {
-                                el.child(
-                                    div()
-                                        .h(px(20.0))
-                                        .px(px(6.0))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(px(6.0))
-                                        .bg(crate::theme::ink(0.06))
-                                        .text_size(crate::typography::ui_rems(10.0))
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(theme.text_muted.opacity(0.6))
-                                        .child(SharedString::from(counter)),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .mt(px(6.0))
-                            .text_size(crate::typography::ui_rems(15.0))
-                            .line_height(px(20.0))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(SharedString::from(question.question.clone())),
-                    )
-                    .when(question.multi_select, |el| {
-                        el.child(
-                            div()
-                                .mt(px(4.0))
-                                .text_size(crate::typography::ui_rems(12.0))
-                                .text_color(theme.text_muted.opacity(0.65))
-                                .child(SharedString::from("Select one or more options.")),
-                        )
-                    })
-                    .child(
-                        div()
-                            .mt(px(12.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.0))
-                            .children(options),
-                    )
-                    // Free-text override over a hairline (shares the composer
-                    // input entity).
-                    .child(
-                        div()
-                            .mt(px(12.0))
-                            .border_t_1()
-                            .border_color(crate::theme::hairline(0.06))
-                            .pt(px(12.0))
-                            .pb(px(4.0))
-                            .px(px(4.0))
-                            .child(self.input.clone()),
-                    ),
+                    .mx(px(QUEUE_SIDE_INSET))
+                    .mb(px(-QUEUE_COMPOSER_OVERLAP))
+                    .child(crate::frost::frosted(
+                        crate::queue::PANEL_RADIUS,
+                        crate::frost::MENU_BLUR,
+                        crate::queue::queue_panel_surface(&theme).child(questions),
+                    )),
             )
             .child(
                 div()
+                    .rounded(px(COMPOSER_RADIUS))
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.input_glass_bg())
+                    .when(!theme.is_frost(), |el| el.shadow_lg())
+                    .p(px(16.0))
                     .flex()
-                    .flex_row()
-                    .justify_between()
-                    .items_center()
-                    .px(px(16.0))
-                    .pb(px(16.0))
-                    .pt(px(4.0))
-                    .child(if page > 0 {
-                        crate::popover::btn_ghost(&theme, "Back", "wizard-back")
-                            .id("wizard-back")
-                            .on_click(cx.listener(|this, _, _, cx| this.wizard_back(cx)))
-                            .into_any_element()
-                    } else {
-                        gpui::Empty.into_any_element()
-                    })
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(self.input.clone())
                     .child(
-                        crate::popover::btn_primary(&theme, if last { "Submit" } else { "Next" })
-                            .id("wizard-submit")
-                            .px(px(16.0))
-                            .when(!can_advance, |el| el.opacity(0.4))
-                            .on_click(cx.listener(|this, _, _, cx| this.wizard_advance(cx))),
+                        div()
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .child(if page > 0 {
+                                crate::popover::btn_ghost(&theme, "Back", "wizard-back")
+                                    .id("wizard-back")
+                                    .on_click(cx.listener(|this, _, _, cx| this.wizard_back(cx)))
+                                    .into_any_element()
+                            } else {
+                                gpui::Empty.into_any_element()
+                            })
+                            .child(
+                                crate::popover::btn_primary(
+                                    &theme,
+                                    if last { "Submit" } else { "Next" },
+                                )
+                                .id("wizard-submit")
+                                .px(px(16.0))
+                                .when(!can_advance, |el| el.opacity(0.4))
+                                .on_click(cx.listener(|this, _, _, cx| this.wizard_advance(cx))),
+                            ),
                     ),
             )
             .into_any_element()
@@ -8665,8 +8856,12 @@ impl Render for Composer {
                 ))
             });
 
+        let container = container.when_some(self.render_agent_activity(window, cx), |el, panel| {
+            el.child(panel)
+        });
+
         if wizard_active {
-            let wizard = self.render_wizard(cx);
+            let wizard = self.render_wizard(window, cx);
             return container.child(motion::fade_quick("composer-wizard", div().child(wizard)));
         }
 
@@ -9734,6 +9929,7 @@ mod tests {
                             name: "review".into(),
                             description: String::new(),
                             input_hint: None,
+                            agent_mode: None,
                             workspace_command: None,
                             invocation: invocation.clone(),
                         }],
@@ -11792,6 +11988,9 @@ mod tests {
             header: "Header".into(),
             question: format!("Question {id}"),
             options: options.iter().map(|s| s.to_string()).collect(),
+            option_descriptions: Vec::new(),
+            allow_custom: true,
+            non_blocking: false,
             multi_select: multi,
         }
     }
@@ -12525,6 +12724,166 @@ mod tests {
     }
 
     #[test]
+    fn mode_commands_follow_catalogs_for_every_harness_and_preserve_opaque_ids() {
+        for harness in [
+            HarnessId::ClaudeCode,
+            HarnessId::Codex,
+            HarnessId::Cursor,
+            HarnessId::Opencode,
+            HarnessId::Devin,
+            HarnessId::Grok,
+            HarnessId::Hermes,
+            HarnessId::Pi,
+            HarnessId::Antigravity,
+            HarnessId::Mock,
+        ] {
+            let mut rows = with_workspace_commands(Vec::new(), true);
+            with_mode_commands(&mut rows, zeron_proto::agent_mode_option(harness));
+            for command in rows.iter().filter(|row| row.agent_mode.is_some()) {
+                assert!(command.workspace_command.is_none());
+                let (option, value) = command.agent_mode.as_ref().unwrap();
+                let advertised = zeron_proto::agent_mode_option(harness).unwrap();
+                assert_eq!(option, &advertised.id);
+                assert!(advertised.choices.iter().any(|choice| &choice.id == value));
+            }
+            with_mode_commands(&mut rows, None);
+            assert!(
+                rows.iter().all(|row| row.agent_mode.is_none()),
+                "a stale catalog must remove mode commands"
+            );
+        }
+        let mut rows = Vec::new();
+        let mode = zeron_proto::ModelOption {
+            id: "agentMode".into(),
+            label: "Mode".into(),
+            default_choice: "agent:42".into(),
+            choices: vec![zeron_proto::ModelOptionChoice {
+                id: "agent:42".into(),
+                label: "Plan".into(),
+            }],
+        };
+        with_mode_commands(&mut rows, Some(mode.clone()));
+        assert_eq!(rows[0].name, "plan");
+        assert_eq!(rows[0].agent_mode.as_ref().unwrap().1, "agent:42");
+        with_mode_commands(&mut rows, Some(mode));
+        assert_eq!(rows.len(), 1, "refresh never duplicates commands");
+    }
+
+    #[gpui::test]
+    fn question_submit_button_snapshots_editor_before_edit_notifications(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let state = cx.new(|_| AppState::new());
+        let composer = cx.new(|cx| Composer::new(state, cx));
+        composer.update(cx, |composer, cx| {
+            composer.wizard = Some(Wizard::new(
+                "req".into(),
+                vec![
+                    question("first", &["Plan"], false),
+                    question("second", &[], false),
+                ],
+            ));
+            composer.input.update(cx, |input, cx| {
+                input.set_text("Build a feature with café 日本語", cx)
+            });
+            // Same update: deliberately do not yield to the Edited observer.
+            composer.wizard_advance(cx);
+            let wizard = composer.wizard.as_ref().unwrap();
+            assert_eq!(wizard.page, 1);
+            assert_eq!(
+                wizard.answers()[0].labels,
+                ["Build a feature with café 日本語"]
+            );
+            composer.wizard_back(cx);
+            assert_eq!(
+                composer.input.read(cx).text(),
+                "Build a feature with café 日本語"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn question_pages_restore_constraints_answers_and_the_borrowed_rich_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let state = cx.new(|_| AppState::new());
+        let composer = cx.new(|cx| Composer::new(state, cx));
+        composer.update(cx, |composer, cx| {
+            composer
+                .input
+                .update(cx, |input, cx| input.set_text("**Keep this draft**", cx));
+            composer.question_draft = Some(composer.input.read(cx).snapshot());
+            let mut choice = question("choice", &["One", "Two"], false);
+            choice.allow_custom = false;
+            composer.wizard = Some(Wizard::new(
+                "req".into(),
+                vec![choice, question("text", &[], false)],
+            ));
+            composer.sync_question_input(cx);
+            assert!(composer.input.read(cx).read_only);
+            let wizard = composer.wizard.as_mut().unwrap();
+            wizard.select(0);
+            wizard.advance();
+            wizard.set_typed("My answer".into());
+            composer.sync_question_input(cx);
+            assert!(!composer.input.read(cx).read_only);
+            assert_eq!(composer.input.read(cx).text(), "My answer");
+            composer.wizard_back(cx);
+            assert!(composer.input.read(cx).read_only);
+            composer.wizard_advance(cx);
+            assert_eq!(composer.input.read(cx).text(), "My answer");
+            composer.wizard = None;
+            composer.restore_question_draft(cx);
+            assert!(!composer.input.read(cx).read_only);
+            assert_eq!(composer.input.read(cx).text(), "**Keep this draft**");
+        });
+    }
+
+    #[test]
+    fn multiple_choices_can_include_a_custom_answer() {
+        let mut wizard = Wizard::new("req".into(), vec![question("q", &["One", "Two"], true)]);
+        wizard.select(0);
+        wizard.set_typed("Additional context".into());
+        assert_eq!(wizard.answers()[0].labels, ["One", "Additional context"]);
+        assert!(wizard.questions[0].accepts(&wizard.answers()[0]));
+    }
+
+    #[test]
+    fn composer_question_fixtures_enforce_each_answer_contract() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../scripts/fixtures/composer-questions.json"
+        ))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            let question: UserInputQuestion =
+                serde_json::from_value(case["question"].clone()).unwrap();
+            let mut wizard = Wizard::new("fixture".into(), vec![question.clone()]);
+            assert_eq!(
+                wizard.advance(),
+                WizardStep::Stay,
+                "empty answers must stay pending"
+            );
+            wizard.set_typed("A custom response".into());
+            if question.allow_custom {
+                assert!(matches!(wizard.advance(), WizardStep::Done(_)));
+                assert!(question.accepts(&wizard.answers()[0]));
+            } else {
+                assert_eq!(wizard.advance(), WizardStep::Stay);
+                assert!(!question.accepts(&UserInputAnswer {
+                    question_id: question.id.clone(),
+                    labels: vec!["A custom response".into()]
+                }));
+            }
+            wizard.set_typed(String::new());
+            if !question.options.is_empty() {
+                wizard.select(0);
+                assert!(matches!(wizard.advance(), WizardStep::Done(_)));
+                assert!(question.accepts(&wizard.answers()[0]));
+            }
+        }
+    }
+
+    #[test]
     fn wizard_single_select_auto_advances_and_completes() {
         let mut w = Wizard::new(
             "req".into(),
@@ -12707,8 +13066,8 @@ mod tests {
             pending_input_request(&t).map(|(id, _)| id),
             Some("r1".into())
         );
-        // A NEWER assistant entry supersedes an unanswered question.
-        let t = vec![
+        // Nonblocking questions remain answerable when the agent continues.
+        let mut t = vec![
             entry(Some(MessageStatus::Aborted), vec![input_part.clone()]),
             SessionMessageEntry {
                 id: "m2".into(),
@@ -12723,7 +13082,17 @@ mod tests {
                 continuation_of: None,
             },
         ];
-        assert!(pending_input_request(&t).is_none());
+        assert!(
+            pending_input_request(&t).is_none(),
+            "Old blocking requests stay superseded"
+        );
+        if let MessagePart::Input { questions, .. } = &mut t[0].parts[0] {
+            questions[0].non_blocking = true;
+        }
+        assert_eq!(
+            pending_input_request(&t).map(|(id, _)| id),
+            Some("r1".into())
+        );
         // Resolved part → no panel.
         let resolved = MessagePart::Input {
             id: "in-r1".into(),
@@ -12848,6 +13217,55 @@ mod appshot_rebase_tests {
 
 #[cfg(feature = "appshots-fixture")]
 impl Composer {
+    pub fn fixture_activity(
+        &mut self,
+        calls: Vec<zeron_proto::ToolCall>,
+        expanded: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.wizard = None;
+        self.current_key = "composer-fixture".into();
+        self.state.update(cx, |state, cx| {
+            state.selected_chat = Some("composer-fixture".into());
+            state.transcript = vec![SessionMessageEntry {
+                id: "fixture-entry".into(), role: MessageRole::Assistant, created_at: 0,
+                device_id: "fixture".into(), status: None, continuation_of: None,
+                parts: calls.into_iter().enumerate().map(|(i, call)| serde_json::from_value(serde_json::json!({
+                    "kind":"tool", "id":format!("fixture-{i}"), "call":call, "resolved":true, "isError":false
+                })).unwrap()).collect(),
+            }];
+            cx.notify();
+        });
+        self.activity_chat = Some(self.current_key.clone());
+        self.activity_expanded = expanded;
+        self.activity_motion = activity::ActivityMotion::default();
+        self.input.update(cx, |input, cx| {
+            input.read_only = false;
+            input.set_text("", cx);
+        });
+        cx.notify();
+    }
+
+    pub fn fixture_compact_picker(
+        &mut self,
+        window: &mut Window,
+        models: bool,
+        fast: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.wizard = None;
+        self.pickers.update(cx, |picker, cx| {
+            picker.fixture_compact_state(models, fast, window, cx);
+        });
+        cx.notify();
+    }
+
+    pub fn fixture_question(&mut self, question: UserInputQuestion, cx: &mut Context<Self>) {
+        self.wizard = Some(Wizard::new("fixture-question".into(), vec![question]));
+        self.sync_question_input(cx);
+        cx.notify();
+    }
+
     pub fn fixture_rich_draft(&mut self, text: &str, cx: &mut Context<Self>) {
         self.input.update(cx, |input, cx| input.set_text(text, cx));
         self.expanded_mode = true;
