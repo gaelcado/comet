@@ -63,8 +63,8 @@ use tokio::sync::watch;
 
 use zeron_doc::{MessagePart, SessionCommandPayload, SessionCommandStatus};
 use zeron_proto::{
-    ChatConfig, CreateWorktreeOutcome, EngineInfo, GoalAction, HarnessId, ProjectActionDraft, Space, ToolCall,
-    WorkspaceScope,
+    ChatConfig, CreateWorktreeOutcome, EngineInfo, GoalAction, HarnessId, ProjectActionDraft,
+    Space, ToolCall, WorkspaceScope,
 };
 use zeron_rpc::{LinkCache, RpcError, RpcReply, RpcService, methods, parse_params};
 
