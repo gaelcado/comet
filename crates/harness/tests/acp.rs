@@ -76,6 +76,53 @@ fn controls() -> (RunControls, mpsc::Sender<SteerMessage>, CancellationToken) {
     (controls, steer_tx, token)
 }
 
+fn all_fixture_harnesses() -> Vec<AcpHarness> {
+    vec![
+        AcpHarness::devin().with_executable(fixture_path()),
+        AcpHarness::grok().with_executable(fixture_path()),
+        AcpHarness::hermes().with_executable(fixture_path()),
+        AcpHarness::pi().with_executable(fixture_path()),
+        AcpHarness::antigravity().with_executable(fixture_path()),
+    ]
+}
+
+fn answering_controls(
+    answer: Option<&str>,
+) -> (
+    RunControls,
+    std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+) {
+    let seen: std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>> = Default::default();
+    let recorder = seen.clone();
+    let answer = answer.map(str::to_owned);
+    let (_steer_tx, steering) = mpsc::channel(1);
+    let controls = RunControls {
+        request_input: Box::new(move |questions| {
+            assert_eq!(questions.len(), 1);
+            let question = &questions[0];
+            assert!(!question.allow_custom);
+            assert!(!question.multi_select);
+            assert!(!question.non_blocking);
+            recorder.lock().unwrap().push(question.options.clone());
+            let answers = answer
+                .as_ref()
+                .map(|label| {
+                    vec![UserInputAnswer {
+                        question_id: question.id.clone(),
+                        labels: vec![label.clone()],
+                    }]
+                })
+                .unwrap_or_default();
+            let (tx, rx) = oneshot::channel();
+            let _ = tx.send(answers);
+            rx
+        }),
+        steering,
+        interrupt: CancellationToken::new(),
+    };
+    (controls, seen)
+}
+
 async fn run_to_end(
     harness: &AcpHarness,
     req: RunRequest,
@@ -123,6 +170,216 @@ async fn plan_exit_requires_the_shared_question_bridge() {
         text: "approved plan".into()
     }));
     assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+}
+
+#[tokio::test]
+async fn every_acp_harness_preserves_opaque_native_modes_on_resumed_sessions() {
+    for harness in all_fixture_harnesses() {
+        let mut req = request("scenario:opaque-mode");
+        req.model = None;
+        req.resume = Some("opaque-mode".into());
+        req.model_options.insert(
+            zeron_proto::AGENT_MODE_OPTION.into(),
+            serde_json::json!("architect/native.v2"),
+        );
+        let (controls, _steer, _token) = controls();
+        let events = run_to_end(&harness, req, controls).await;
+        assert!(
+            events.contains(&AgentEvent::TextDelta {
+                text: "opaque mode selected".into()
+            }),
+            "{:?}: {events:?}",
+            harness.id()
+        );
+        assert_eq!(
+            dones(&events),
+            vec![(DoneStatus::Completed, None)],
+            "{:?}",
+            harness.id()
+        );
+    }
+}
+
+#[tokio::test]
+async fn every_acp_harness_tracks_live_mode_discovery_for_permissions() {
+    for harness in all_fixture_harnesses() {
+        let (controls, seen) = answering_controls(Some("Allow once"));
+        let mut req = request("scenario:dynamic-mode-permission");
+        req.model = None;
+        let events = run_to_end(&harness, req, controls).await;
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![vec!["Allow once".to_owned(), "Reject".to_owned()]],
+            "{:?}",
+            harness.id()
+        );
+        assert!(events.contains(&AgentEvent::TextDelta {
+            text: "mode permission answered".into()
+        }));
+        assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+    }
+}
+
+#[tokio::test]
+async fn every_acp_harness_round_trips_disambiguated_options_and_cancellation() {
+    for harness in all_fixture_harnesses() {
+        let (controls, seen) = answering_controls(Some("Same (2)"));
+        let mut req = request("scenario:duplicate-question-options");
+        req.model = None;
+        let events = run_to_end(&harness, req, controls).await;
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![vec![
+                "Same".to_owned(),
+                "Same (2)".to_owned(),
+                "Option 3".to_owned(),
+            ]],
+            "{:?}",
+            harness.id()
+        );
+        assert!(events.contains(&AgentEvent::TextDelta {
+            text: "duplicate label mapped".into()
+        }));
+
+        let (controls, seen) = answering_controls(None);
+        let mut req = request("scenario:question-cancel");
+        req.model = None;
+        let events = run_to_end(&harness, req, controls).await;
+        assert_eq!(seen.lock().unwrap().len(), 1, "{:?}", harness.id());
+        assert!(events.contains(&AgentEvent::TextDelta {
+            text: "cancelled question".into()
+        }));
+        assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+    }
+}
+
+#[tokio::test]
+async fn every_acp_harness_cancels_pending_native_input_on_interrupt() {
+    for harness in all_fixture_harnesses() {
+        let token = CancellationToken::new();
+        let interrupt = token.clone();
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let keep_pending = pending.clone();
+        let (_steer_tx, steering) = mpsc::channel(1);
+        let controls = RunControls {
+            request_input: Box::new(move |questions| {
+                assert_eq!(questions.len(), 1);
+                assert_eq!(questions[0].options, vec!["Continue"]);
+                let (tx, rx) = oneshot::channel();
+                keep_pending.lock().unwrap().push(tx);
+                interrupt.cancel();
+                rx
+            }),
+            steering,
+            interrupt: token,
+        };
+        let mut req = request("scenario:question-interrupt");
+        req.model = None;
+        let events = run_to_end(&harness, req, controls).await;
+        assert_eq!(pending.lock().unwrap().len(), 1, "{:?}", harness.id());
+        assert_eq!(
+            dones(&events),
+            vec![(DoneStatus::Interrupted, None)],
+            "{:?}: {events:?}",
+            harness.id()
+        );
+    }
+}
+
+#[tokio::test]
+async fn every_acp_harness_rejects_cross_session_and_empty_native_input() {
+    for harness in all_fixture_harnesses() {
+        let (controls, seen) = answering_controls(Some("Live"));
+        let mut req = request("scenario:cross-session-question");
+        req.model = None;
+        let events = run_to_end(&harness, req, controls).await;
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![vec!["Live".to_owned()]],
+            "foreign request reached {:?}'s input bridge",
+            harness.id()
+        );
+        assert!(events.contains(&AgentEvent::TextDelta {
+            text: "only live question shown".into()
+        }));
+
+        let (controls, seen) = answering_controls(None);
+        let mut req = request("scenario:empty-mode-permission");
+        req.model = None;
+        let events = run_to_end(&harness, req, controls).await;
+        assert!(seen.lock().unwrap().is_empty(), "{:?}", harness.id());
+        assert!(events.contains(&AgentEvent::TextDelta {
+            text: "empty request cancelled".into()
+        }));
+        assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+    }
+}
+
+#[tokio::test]
+async fn every_acp_harness_rejects_missing_and_nonstring_permission_owners() {
+    for harness in all_fixture_harnesses() {
+        let (controls, seen) = answering_controls(None);
+        let mut req = request("scenario:invalid-question-owner");
+        req.model = None;
+        let events = run_to_end(&harness, req, controls).await;
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "invalid owner reached {:?}'s input bridge",
+            harness.id()
+        );
+        assert!(events.contains(&AgentEvent::TextDelta {
+            text: "invalid owners cancelled".into()
+        }));
+        assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+    }
+}
+
+#[tokio::test]
+async fn every_acp_harness_preserves_question_classification_before_filtering() {
+    for harness in all_fixture_harnesses() {
+        let (controls, seen) = answering_controls(None);
+        let mut req = request("scenario:malformed-question-option");
+        req.model = None;
+        let events = run_to_end(&harness, req, controls).await;
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![vec!["Allow once".to_owned()]],
+            "malformed question was auto-approved by {:?}",
+            harness.id()
+        );
+        assert!(events.contains(&AgentEvent::TextDelta {
+            text: "malformed question cancelled".into()
+        }));
+        assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+    }
+}
+
+#[tokio::test]
+async fn every_acp_harness_keeps_native_plans_alongside_tool_activity() {
+    for harness in all_fixture_harnesses() {
+        let mut req = request("scenario:happy");
+        req.model = None;
+        let (controls, _steer, _token) = controls();
+        let events = run_to_end(&harness, req, controls).await;
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ToolCall { id, call: ToolCall::Todo { items } }
+                    if id == zeron_proto::LIVE_PLAN_TOOL_ID && items.len() == 2
+            )),
+            "{:?}: {events:?}",
+            harness.id()
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ToolCall { id, call: ToolCall::Exec { .. } } if id == "t1"
+            )),
+            "{:?}: {events:?}",
+            harness.id()
+        );
+        assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+    }
 }
 
 #[tokio::test]
