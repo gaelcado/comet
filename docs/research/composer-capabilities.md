@@ -33,6 +33,11 @@ always require an answer, even when every option has a standard allow/reject kin
 For agents without modes, existing unattended tool permissions remain unchanged;
 question-shaped choices still use the tray.
 
+If an explicit ACP mode's live session state changes, the runtime retires at the
+turn boundary. Undelivered follow-ups resume through setup, which validates and
+reapplies the exact mode against the current catalog before prompting. Mode-stable
+sessions can continue using the warm runtime.
+
 Codex fallback model lists intentionally contain no mode claims. Runtime discovery
 must establish Default and Plan support; Goal is offered only when the separate
 experimental feature catalog enables it. Selecting Goal creates a new active goal
@@ -126,6 +131,12 @@ Opaque ACP IDs survive unchanged. A provider's existing command wins its name;
 the local mode command then uses `/zeron:<name>`. Selecting one changes the next
 message's mode and consumes only the command token, preserving the draft.
 
+Existing-chat selections and new-chat defaults use the same effective option
+filter: a loaded model catalog removes retired choices from the outgoing request,
+and a host without `agent-modes-v1` cannot receive a saved mode. Persisted choices
+remain available if the catalog later offers them again. Command presentation and
+outgoing requests share this capability gate.
+
 Question constraints travel with each request, rather than being guessed from a
 harness badge. The engine validates IDs, cardinality and allowed labels before
 resolving a pending request. Invalid responses leave it pending; an empty response
@@ -154,6 +165,13 @@ Question pages retain their typed answers when navigating back. A choice-only pa
 makes the text editor read-only and explains that an option is required. Questions
 borrow and restore the current rich draft, including selection, rather than silently
 discarding it. Empty pages cannot advance. Option descriptions wrap below labels.
+
+Submitting an answer retains its complete draft until the durable command reaches
+an outcome. Pending delivery has no arbitrary timeout. Rejected, expired,
+superseded or cancelled answers restore the same question pages and typed answers,
+including after navigation or displacement by a blocking question. Applied answers
+stay hidden until the resolved transcript update arrives. Reconnecting watches
+reuse the command ID and back off between attempts.
 
 Claude's `control_cancel_request` retires the waiter for its exact native
 request ID. CLI teardown retires all remaining plan-approval and question
@@ -184,6 +202,12 @@ commands with attachments, `/compact` without a resumable Codex conversation,
 and selected OpenCode native commands with attachments. Raw OpenCode slash text
 still needs the live project command catalog, and ACP choices still need the live
 session catalog, so static preflight does not claim to validate those names.
+
+OpenCode retains canonical command identity through fresh runs, warm follow-ups,
+steers and retries. If the run's project catalog no longer offers a selected
+command, delivery fails explicitly; only raw slash text can fall back to a normal
+prompt. Native-command HTTP failures settle the matching turn as errored. A delayed
+failure from an earlier command cannot change the outcome of a later turn.
 
 Canonical provider-backed skills carry their owning harness. A native-only
 `opencode-skill:` or `harness-skill:` selection is rejected if the message is
