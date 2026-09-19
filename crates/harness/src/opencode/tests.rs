@@ -47,6 +47,19 @@ impl TurnWire {
         answer: Option<bool>,
         mode: Option<&str>,
     ) -> Self {
+        Self::start_config(queued, v2, auto_approve, answer, mode, false, false, None).await
+    }
+
+    async fn start_config(
+        queued: bool,
+        v2: bool,
+        auto_approve: bool,
+        answer: Option<bool>,
+        mode: Option<&str>,
+        cancel_input: bool,
+        drop_input: bool,
+        resume: Option<&str>,
+    ) -> Self {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -94,24 +107,27 @@ impl TurnWire {
                         }
                         return;
                     }
-                    let body = if v2 {
+                    let missing_resume = path == "/session/missing" || path == "/api/session/missing";
+                    let (status, body) = if missing_resume {
+                        ("404 Not Found", r#"{"error":"missing"}"#)
+                    } else if v2 {
                         match path.as_str() {
-                            "/api/health" => r#"{"healthy":true,"version":"2.0.3"}"#,
-                            "/api/session" => r#"{"data":{"id":"fixture"}}"#,
-                            "/api/command" => r#"{"data":[]}"#,
+                            "/api/health" => ("200 OK", r#"{"healthy":true,"version":"2.0.3"}"#),
+                            "/api/session" => ("200 OK", r#"{"data":{"id":"fixture"}}"#),
+                            "/api/command" => ("200 OK", r#"{"data":[]}"#),
                             // Non-empty: the catalog-sync retry loop must not stall tests.
-                            "/api/model" => r#"{"data":[{"providerID":"opencode","id":"muse","name":"Muse","limit":{"context":1000},"variants":[{"id":"low"}],"enabled":true}]}"#,
-                            _ => "{}",
+                            "/api/model" => ("200 OK", r#"{"data":[{"providerID":"opencode","id":"muse","name":"Muse","limit":{"context":1000},"variants":[{"id":"low"}],"enabled":true}]}"#),
+                            _ => ("200 OK", "{}"),
                         }
                     } else {
                         match path.as_str() {
-                            "/global/health" => r#"{"healthy":true,"version":"1.18.31"}"#,
-                            "/session" => r#"{"id":"fixture"}"#,
-                            "/command" => "[]",
-                            _ => "{}",
+                            "/global/health" => ("200 OK", r#"{"healthy":true,"version":"1.18.31"}"#),
+                            "/session" => ("200 OK", r#"{"id":"fixture"}"#),
+                            "/command" => ("200 OK", "[]"),
+                            _ => ("200 OK", "{}"),
                         }
                     };
-                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                    socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
                     if path.ends_with("/prompt_async")
                         || path.ends_with("/prompt")
                         || path.ends_with("/abort")
@@ -141,18 +157,24 @@ impl TurnWire {
             event_tx,
             controls: RunControls {
                 request_input: Box::new(move |questions| {
-                    let answer = answer.expect("fixture must not ask for input");
                     let (tx, rx) = tokio::sync::oneshot::channel();
-                    let _ = tx.send(questions.into_iter().map(|q| UserInputAnswer {
-                        question_id: q.id, labels: vec![if answer { "Yes" } else { "No" }.into()],
-                    }).collect());
+                    if drop_input {
+                        drop(tx);
+                    } else if cancel_input {
+                        let _ = tx.send(Vec::new());
+                    } else {
+                        let answer = answer.expect("fixture must not ask for input");
+                        let _ = tx.send(questions.into_iter().map(|q| UserInputAnswer {
+                            question_id: q.id, labels: vec![if answer { "Yes" } else { "No" }.into()],
+                        }).collect());
+                    }
                     rx
                 }),
                 steering,
                 interrupt: interrupt.clone(),
             },
             request: serde_json::from_value(
-                json!({"prompt":"first", "cwd":"", "sandbox":"workspace-write", "autoApprove": auto_approve, "modelOptions": mode.map(|mode| json!({"agentMode":mode})).unwrap_or(json!({})), "model": if v2 { Some("opencode/muse") } else { None }, "reasoning": "low"}),
+                json!({"prompt":"first", "cwd":"", "sandbox":"workspace-write", "autoApprove": auto_approve, "modelOptions": mode.map(|mode| json!({"agentMode":mode})).unwrap_or(json!({})), "model": if v2 { Some("opencode/muse") } else { None }, "reasoning": "low", "resume": resume}),
             )
             .unwrap(),
             interrupt_grace: Duration::from_secs(2),
@@ -1050,6 +1072,31 @@ fn v2_frames_normalize_to_v1_payloads() {
         vec![json!({"type":"permission.asked","properties":{
             "id":"per_1","sessionID":"ses_1","action":"external_directory","resources":["/tmp/*"]}})]
     );
+    assert_eq!(
+        normalize_v2_frame(
+            json!({"id":"evt_11b","type":"permission.replied","data":{
+                "requestID":"per_1","sessionID":"ses_1","reply":"once"}}),
+            &mut tools,
+        ),
+        vec![json!({"type":"permission.replied","properties":{
+            "requestID":"per_1","sessionID":"ses_1","reply":"once"}})]
+    );
+    // Native todo snapshots keep their event name on 2.x, while the /api
+    // stream carries the payload under `data` rather than `properties`.
+    let out = normalize_v2_frame(
+        json!({"id":"evt_12","type":"todo.updated","data":{
+        "sessionID":"ses_1","todos":[
+            {"id":"todo_1","content":"Inspect","status":"in_progress","priority":"high"}
+        ]}}),
+        &mut tools,
+    );
+    assert_eq!(
+        out,
+        vec![json!({"type":"todo.updated","properties":{
+        "sessionID":"ses_1","todos":[
+            {"id":"todo_1","content":"Inspect","status":"in_progress","priority":"high"}
+        ]}})]
+    );
     // Boilerplate frames (catalog sync etc.) drop.
     assert!(
         normalize_v2_frame(
@@ -1177,6 +1224,18 @@ async fn permissions_stay_session_scoped_and_never_persist_grants() {
         for (path, body) in approvals {
             assert_eq!(body["reply"], "once");
             assert!(!path.contains("foreign") && !path.contains("missing"));
+            if v2 {
+                assert!(
+                    path == "/api/session/fixture/permission/own/reply"
+                        || path == "/api/session/child/permission/child/reply",
+                    "unexpected 2.x permission path: {path}"
+                );
+            } else {
+                assert!(
+                    path == "/permission/own/reply" || path == "/permission/child/reply",
+                    "unexpected 1.x permission path: {path}"
+                );
+            }
         }
     }
 }
@@ -1470,6 +1529,348 @@ async fn plan_mode_selects_the_native_opencode_agent_and_requires_permissions() 
     .unwrap();
 }
 
+fn preflight_request(prompt: String) -> RunRequest {
+    RunRequest {
+        prompt,
+        harness: Some(HarnessId::Opencode),
+        model: None,
+        reasoning: None,
+        model_options: serde_json::Map::new(),
+        cwd: String::new(),
+        sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+        auto_approve: false,
+        resume: None,
+        attachments: Vec::new(),
+        worktree: None,
+    }
+}
+
+#[test]
+fn static_preflight_rejects_selected_command_attachments_and_bad_modes() {
+    let harness = OpencodeHarness::default();
+    let command = zeron_proto::invocation::Invocation::Command {
+        name: "init".into(),
+    };
+    let mut request = preflight_request(format!("  {} repository", command.link()));
+    request.attachments.push("/tmp/image.png".into());
+    assert_eq!(
+        harness.validate_request(&request).unwrap_err().to_string(),
+        "harness protocol error: OpenCode commands cannot include attachments; send them in a separate prompt"
+    );
+
+    // Plain slash text needs the project-scoped live catalog before OpenCode
+    // can decide whether it is a command, so static preflight leaves it alone.
+    request.prompt = "/tmp/image.png".into();
+    harness.validate_request(&request).unwrap();
+
+    request
+        .model_options
+        .insert(zeron_proto::AGENT_MODE_OPTION.into(), json!(false));
+    assert_eq!(
+        harness.validate_request(&request).unwrap_err().to_string(),
+        "harness protocol error: OpenCode mode must be a string"
+    );
+}
+
+#[tokio::test]
+async fn native_resolution_events_abort_local_input_waiters() {
+    async fn assert_aborted(event: Value, kind: NativeInputKind, request_id: &str) {
+        let (_answer_tx, answer_rx) = tokio::sync::oneshot::channel();
+        let waiter = tokio::spawn(async move {
+            let _: Result<Vec<UserInputAnswer>, _> = answer_rx.await;
+        });
+        let mut input_waiters = HashMap::from([(
+            NativeInputKey {
+                kind,
+                session_id: "fixture".into(),
+                request_id: request_id.into(),
+            },
+            waiter.abort_handle(),
+        )]);
+        let server = Server::attached("http://127.0.0.1:1".into());
+        let (event_tx, _events) = mpsc::channel(1);
+        let request_input: Arc<RequestInput> = Arc::new(Box::new(|_| {
+            panic!("resolution events must not open another input request")
+        }));
+        let mut main_feed = SessionFeed::default();
+        let mut children = HashMap::new();
+        let mut pending_spawns = VecDeque::new();
+        let mut unbound_children = HashMap::new();
+        let mut turn = TurnState::begin(None);
+        let mut pending_usage = None;
+        let context_windows = HashMap::new();
+
+        let outcome = handle_bus_event(BusCtx {
+            event: &event,
+            session_id: "fixture",
+            server: &server,
+            dir: None,
+            event_tx: &event_tx,
+            request_input: &request_input,
+            auto_approve: false,
+            main_feed: &mut main_feed,
+            children: &mut children,
+            pending_spawns: &mut pending_spawns,
+            unbound_children: &mut unbound_children,
+            input_waiters: &mut input_waiters,
+            turn: &mut turn,
+            pending_usage: &mut pending_usage,
+            context_windows: &context_windows,
+        })
+        .await;
+        assert!(matches!(outcome, BusOutcome::Continue));
+        assert!(input_waiters.is_empty());
+        assert!(waiter.await.unwrap_err().is_cancelled());
+    }
+
+    assert_aborted(
+        json!({"type":"question.replied","properties":{
+            "sessionID":"fixture","requestID":"question_1","answers":[]}}),
+        NativeInputKind::Question,
+        "question_1",
+    )
+    .await;
+    assert_aborted(
+        json!({"type":"permission.replied","properties":{
+            "sessionID":"fixture","requestID":"permission_1","reply":"once"}}),
+        NativeInputKind::Permission,
+        "permission_1",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn stale_or_unknown_modes_fail_without_silently_selecting_build() {
+    for (v2, mode, expected) in [
+        (false, "architect", "Unsupported OpenCode mode: architect"),
+        (
+            true,
+            "plan",
+            "Plan mode is not available through this OpenCode server's integration",
+        ),
+    ] {
+        let mut wire = TurnWire::start_mode(false, v2, true, None, Some(mode)).await;
+        if v2 {
+            wire.request("/api/model").await;
+        }
+        let error = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let AgentEvent::Done { error, .. } = wire.events.recv().await.unwrap().unwrap() {
+                    break error.unwrap_or_default();
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(error.contains(expected), "unexpected error: {error}");
+        assert!(
+            !wire
+                .posts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(path, _)| path.ends_with("/prompt_async") || path.ends_with("/prompt")),
+            "unsupported mode must stop before prompting"
+        );
+    }
+}
+
+#[tokio::test]
+async fn missing_resume_fails_instead_of_starting_an_unrelated_session() {
+    let mut wire = TurnWire::start_config(
+        false,
+        false,
+        true,
+        None,
+        None,
+        false,
+        false,
+        Some("missing"),
+    )
+    .await;
+    let error = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let AgentEvent::Done { error, .. } = wire.events.recv().await.unwrap().unwrap() {
+                break error.unwrap_or_default();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        error.contains("cannot be resumed"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !wire
+            .posts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(path, _)| path == "/session"),
+        "a failed resume must not create a fresh conversation"
+    );
+}
+
+#[tokio::test]
+async fn questions_reply_reject_and_filter_by_session_on_the_native_wire() {
+    let mut reply = TurnWire::start_policy(false, false, false, Some(true)).await;
+    reply.request("/prompt_async").await;
+    reply
+        .bus
+        .send(json!({"type":"question.asked","properties":{
+        "id":"que_foreign","sessionID":"foreign","questions":[{
+            "header":"Choice","question":"Foreign?","options":[{"label":"Yes","description":""}]
+        }]}}))
+        .unwrap();
+    reply
+        .bus
+        .send(json!({"type":"question.asked","properties":{
+        "id":"que_own","sessionID":"fixture","questions":[{
+            "header":"Choice","question":"Proceed?","options":[
+                {"label":"Yes","description":"Proceed"},{"label":"No","description":"Stop"}
+            ],"custom":false,"multiple":false
+        }]}}))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if reply
+                .posts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(path, _)| path == "/question/que_own/reply")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    reply
+        .bus
+        .send(json!({"type":"question.asked","properties":{
+            "id":"que_empty","sessionID":"fixture","questions":[]
+        }}))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if reply
+                .posts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(path, _)| path == "/question/que_empty/reject")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let posts = reply.posts.lock().unwrap();
+    assert_eq!(
+        posts
+            .iter()
+            .find(|(path, _)| path == "/question/que_own/reply")
+            .unwrap()
+            .1,
+        json!({"answers":[["Yes"]]})
+    );
+    assert!(!posts.iter().any(|(path, _)| path.contains("que_foreign")));
+    assert_eq!(
+        posts
+            .iter()
+            .find(|(path, _)| path == "/question/que_empty/reject")
+            .unwrap()
+            .1,
+        Value::Null
+    );
+    drop(posts);
+
+    let mut cancel =
+        TurnWire::start_config(false, false, false, None, None, true, false, None).await;
+    cancel.request("/prompt_async").await;
+    cancel
+        .bus
+        .send(json!({"type":"question.asked","properties":{
+        "id":"que_cancel","sessionID":"fixture","questions":[{
+            "header":"Choice","question":"Proceed?","options":[{"label":"Yes","description":""}]
+        }]}}))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if cancel
+                .posts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(path, _)| path == "/question/que_cancel/reject")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let posts = cancel.posts.lock().unwrap();
+    let (_, body) = posts
+        .iter()
+        .find(|(path, _)| path == "/question/que_cancel/reject")
+        .unwrap();
+    assert_eq!(*body, Value::Null);
+    drop(posts);
+
+    // The real engine drops the response sender when native constraints are
+    // malformed (duplicate/blank labels, invalid question shape). The adapter
+    // must turn that bridge failure into an explicit native rejection so the
+    // OpenCode tool cannot remain suspended forever.
+    let mut malformed =
+        TurnWire::start_config(false, false, false, None, None, false, true, None).await;
+    malformed.request("/prompt_async").await;
+    malformed
+        .bus
+        .send(json!({"type":"question.asked","properties":{
+            "id":"que_malformed","sessionID":"fixture","questions":[{
+                "header":"Choice","question":"Pick one","options":[
+                    {"label":"Same","description":"first"},
+                    {"label":"Same","description":"duplicate"}
+                ],"custom":false
+            }]
+        }}))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if malformed
+                .posts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(path, _)| path == "/question/que_malformed/reject")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        malformed
+            .posts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(path, _)| path == "/question/que_malformed/reject")
+            .unwrap()
+            .1,
+        Value::Null
+    );
+}
+
 #[tokio::test]
 async fn todo_events_are_session_scoped_and_empty_snapshots_clear() {
     let mut wire = TurnWire::start(false).await;
@@ -1479,7 +1880,7 @@ async fn todo_events_are_session_scoped_and_empty_snapshots_clear() {
         ("foreign", json!([{"content":"Wrong", "status":"pending"}])),
         (
             "fixture",
-            json!([{"content":"Work", "status":"in_progress"},{"content":"Skipped", "status":"cancelled"}]),
+            json!([{"id":"todo_work","content":"Work", "status":"in_progress"},{"id":"todo_skip","content":"Skipped", "status":"cancelled"}]),
         ),
         ("fixture", json!([])),
     ] {
@@ -1504,6 +1905,8 @@ async fn todo_events_are_session_scoped_and_empty_snapshots_clear() {
     .await
     .unwrap();
     assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0][0].id.as_deref(), Some("todo_work"));
+    assert_eq!(snapshots[0][1].id.as_deref(), Some("todo_skip"));
     assert_eq!(snapshots[0][0].state(), zeron_proto::TodoStatus::InProgress);
     assert_eq!(snapshots[0][1].state(), zeron_proto::TodoStatus::Cancelled);
     assert!(snapshots[1].is_empty());
