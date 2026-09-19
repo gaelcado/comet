@@ -1028,7 +1028,9 @@ impl EngineRpc {
             // only unary calls below get the reply deadline.
             if matches!(
                 method,
-                methods::WATCH_CHECKOUT_CHANGE_REQUEST | methods::WATCH_WORKSPACE_GIT_STATUS
+                methods::WATCH_CHECKOUT_CHANGE_REQUEST
+                    | methods::WATCH_WORKSPACE_GIT_STATUS
+                    | methods::WATCH_HARNESS_UPDATES
             ) {
                 let rx = match client.subscribe_checked(method, params).await {
                     Ok(rx) => rx,
