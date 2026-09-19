@@ -3352,10 +3352,13 @@ impl Pickers {
     /// with a ⌘N jump chip and a star toggle trailing. Searching hides the
     /// rail and spans every harness.
     fn render_harness_model_popover(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let compact = self.compact_model_picker(cx);
         // Compact tabbed layout (user request, modeled on the referenced
         // picker): the model LIST gets a fixed band of roughly seven compact
         // rows; the pinned traits tray below sizes to its sections.
-        let list_height = if self.state.read(cx).selected_chat.is_none() {
+        let list_height = if compact {
+            216.0
+        } else if self.state.read(cx).selected_chat.is_none() {
             // Keep the settings tray visible while the model list scrolls
             // within the room below the new-chat composer.
             let tray_height = if self.setting_groups(cx).is_empty() {
@@ -3656,10 +3659,7 @@ impl Pickers {
         // ── traits tray: the reasoning ladder + model options PINNED under
         //    the list (the separate Traits popover folded in here — user
         //    request). Hidden entirely when the selected model has neither.
-        let has_tray = !self.trait_ladder(cx).is_empty()
-            || self
-                .selected_model(cx)
-                .is_some_and(|m| !m.options.is_empty());
+        let has_tray = !compact && !self.setting_groups(cx).is_empty();
         let tray: Option<AnyElement> = has_tray.then(|| {
             let sections = self.render_traits_sections(cx);
             div()
@@ -5753,7 +5753,7 @@ mod tests {
             supports_steering: false,
         }
     }
-#[gpui::test]
+    #[gpui::test]
     fn compact_keyboard_reaches_every_control_and_returns_to_models(cx: &mut gpui::TestAppContext) {
         use compact::CompactControl;
         let haptics_before = crate::haptics::step_count();
@@ -5889,7 +5889,7 @@ mod tests {
             .unwrap();
     }
 
-#[gpui::test]
+    #[gpui::test]
     fn compact_catalog_failures_remain_visible_beside_ready_models(cx: &mut gpui::TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
         cx.update(|cx| {
@@ -5959,7 +5959,7 @@ mod tests {
             .unwrap();
     }
 
-#[test]
+    #[test]
     fn compact_all_models_keeps_favorites_first_in_catalog_and_search() {
         let descriptors = vec![
             descriptor(HarnessId::ClaudeCode, "Claude"),
@@ -5994,7 +5994,6 @@ mod tests {
             );
         }
     }
-
 
     #[test]
     fn tab_search_never_leaves_the_viewed_harness() {
