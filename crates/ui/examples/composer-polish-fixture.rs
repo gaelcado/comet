@@ -194,7 +194,8 @@ fn main() -> anyhow::Result<()> {
     let data = temp.path().to_path_buf();
     gpui_platform::application().with_assets(icons::Assets).run(move |cx| {
         gpui_tokio::init(cx); gpui_base::init(cx);
-        let prefs = settings::UiSettings::default();
+        let mut prefs = settings::UiSettings::default();
+        prefs.compact_model_picker = true;
         settings::init(prefs.clone(), data.clone(), cx);
         let fonts = typography::register_fonts(cx);
         typography::init(prefs.ui_font_family.clone(), prefs.ui_font_size, prefs.terminal_font_family.clone(), prefs.terminal_font_size, prefs.code_font_family.clone(), prefs.code_font_size, fonts, cx);
@@ -270,6 +271,52 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
+            }
+            let cases: serde_json::Value = serde_json::from_str(include_str!("../../../scripts/fixtures/composer-questions.json")).unwrap();
+            for case in cases.as_array().unwrap() {
+                for (light, width) in [(false, 840.), (true, 440.)] {
+                    let question = serde_json::from_value(case["question"].clone()).unwrap();
+                    cx.update(|cx| appearance::set_mode(if light { appearance::AppearanceMode::Light } else { appearance::AppearanceMode::Dark }, cx));
+                    window.update(cx, |view, w, cx| {
+                        view.settings = false;
+                        view.title = "Agent question";
+                        view.composer.update(cx, |composer, cx| composer.fixture_question(question, cx));
+                        w.resize(size(px(width), px(960.)));
+                        cx.notify();
+                    }).unwrap();
+                    pause(cx).await;
+                    let name = format!("question-{}-{}-{}.png", case["name"].as_str().unwrap(), if light { "light" } else { "dark" }, width as u32);
+                    let capture_window: gpui::AnyWindowHandle = window.into();
+                    capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
+                }
+            }
+            let cases: serde_json::Value = serde_json::from_str(include_str!("../../../scripts/fixtures/composer-activity.json")).unwrap();
+            for case in cases.as_array().unwrap() {
+                for expanded in [false, true] {
+                    window.update(cx, |view, w, cx| {
+                        view.title = "Agent activity";
+                        w.resize(size(px(840.), px(960.)));
+                        let calls = serde_json::from_value(case["calls"].clone()).unwrap();
+                        view.composer.update(cx, |composer, cx| composer.fixture_activity(calls, expanded, cx));
+                        cx.notify();
+                    }).unwrap();
+                    pause(cx).await;
+                    let name = format!("activity-{}-{}.png", case["name"].as_str().unwrap(), if expanded { "expanded" } else { "collapsed" });
+                    let capture_window: gpui::AnyWindowHandle = window.into();
+                    capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
+                }
+            }
+            for (models, fast, name) in [(false, false, "compact-standard"), (false, true, "compact-fast"), (true, false, "compact-favorites")] {
+                window.update(cx, |view, w, cx| {
+                    view.composer.update(cx, |composer, cx| {
+                        composer.fixture_activity(Vec::new(), false, cx);
+                        composer.fixture_compact_picker(w, models, fast, cx);
+                    });
+                    cx.notify();
+                }).unwrap();
+                pause(cx).await;
+                let capture_window: gpui::AnyWindowHandle = window.into();
+                capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("{name}.png"))).unwrap(); }).unwrap();
             }
             cx.update(|cx| cx.quit());
         }).detach();
