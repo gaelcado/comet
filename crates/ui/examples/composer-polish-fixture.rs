@@ -409,6 +409,14 @@ fn main() -> anyhow::Result<()> {
                     cx.notify();
                 }).unwrap();
                 pause(cx).await;
+                window.update(cx, |view, _, cx| {
+                    assert!(
+                        view.composer
+                            .read(cx)
+                            .fixture_has_pending_question("fixture-question", cx),
+                        "dense-stack capture requires its durable pending question"
+                    );
+                }).unwrap();
                 let capture_window: gpui::AnyWindowHandle = window.into();
                 let name = format!(
                     "dense-stack-{}-{surface_name}-{size_name}.png",
@@ -434,6 +442,7 @@ fn main() -> anyhow::Result<()> {
                 cx.notify();
             }).unwrap();
             pause(cx).await;
+            let capture_window: gpui::AnyWindowHandle = window.into();
             let mut tab_count = 0;
             let activity_focused = loop {
                 let focused = window.update(cx, |view, w, cx| {
@@ -442,17 +451,20 @@ fn main() -> anyhow::Result<()> {
                 if focused || tab_count == 32 {
                     break focused;
                 }
-                window.update(cx, |_, w, cx| {
+                capture_window.update(cx, |_, w, cx| {
                     assert!(w.dispatch_keystroke(gpui::Keystroke::parse("tab").unwrap(), cx));
                 }).unwrap();
                 tab_count += 1;
             };
             assert!(activity_focused, "activity disclosure was not reachable after {tab_count} Tab keystrokes");
-            let capture_window: gpui::AnyWindowHandle = window.into();
             capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("keyboard-activity-tab-focus-{surface_name}.png"))).unwrap(); }).unwrap();
 
-            window.update(cx, |view, w, cx| {
+            // Dispatch without borrowing the root Fixture: key handlers may
+            // update it while routing focus and actions through the window.
+            capture_window.update(cx, |_, w, cx| {
                 assert!(w.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx));
+            }).unwrap();
+            window.update(cx, |view, w, cx| {
                 assert!(view.composer.read(cx).fixture_activity_keyboard_state(w).1);
             }).unwrap();
             capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("activity-motion-{motion_name}-000ms-{surface_name}.png"))).unwrap(); }).unwrap();
@@ -461,10 +473,16 @@ fn main() -> anyhow::Result<()> {
             pause_for(cx, 160).await;
             capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(format!("activity-motion-{motion_name}-250ms-{surface_name}.png"))).unwrap(); }).unwrap();
 
-            window.update(cx, |view, w, cx| {
+            capture_window.update(cx, |_, w, cx| {
                 assert!(w.dispatch_keystroke(gpui::Keystroke::parse("escape").unwrap(), cx));
+            }).unwrap();
+            window.update(cx, |view, w, cx| {
                 assert!(!view.composer.read(cx).fixture_activity_keyboard_state(w).1);
+            }).unwrap();
+            capture_window.update(cx, |_, w, cx| {
                 assert!(w.dispatch_keystroke(gpui::Keystroke::parse("space").unwrap(), cx));
+            }).unwrap();
+            window.update(cx, |view, w, cx| {
                 assert!(view.composer.read(cx).fixture_activity_keyboard_state(w).1);
             }).unwrap();
             pause(cx).await;

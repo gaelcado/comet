@@ -14609,9 +14609,7 @@ impl Composer {
     }
 
     pub fn fixture_question(&mut self, question: UserInputQuestion, cx: &mut Context<Self>) {
-        self.wizard = Some(Wizard::new("fixture-question".into(), vec![question]));
-        self.sync_question_input(cx);
-        cx.notify();
+        self.fixture_pending_questions("fixture-question", vec![question], cx);
     }
 
     pub fn fixture_paginated_question(
@@ -14619,13 +14617,88 @@ impl Composer {
         questions: Vec<UserInputQuestion>,
         cx: &mut Context<Self>,
     ) {
-        self.wizard = Some(Wizard::new("fixture-question-pages".into(), questions));
-        self.sync_question_input(cx);
+        self.fixture_pending_questions("fixture-question-pages", questions, cx);
         self.input.update(cx, |input, cx| {
             input.set_text("Keep this typed answer when I return", cx)
         });
         self.wizard_advance(cx);
         cx.notify();
+    }
+
+    fn fixture_pending_questions(
+        &mut self,
+        request_id: &str,
+        questions: Vec<UserInputQuestion>,
+        cx: &mut Context<Self>,
+    ) {
+        const CHAT_ID: &str = "composer-fixture";
+        const ENTRY_ID: &str = "fixture-question-entry";
+        self.wizard = None;
+        self.current_key = CHAT_ID.into();
+        remove_answered_request(
+            &mut self.answered_requests,
+            &mut self.answered_request_order,
+            &answered_request_key(CHAT_ID, request_id),
+        );
+        self.state.update(cx, |state, cx| {
+            state.selected_chat = Some(CHAT_ID.into());
+            state.chats = vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": CHAT_ID,
+                    "deviceId": "fixture-device",
+                    "title": "Codex composer fixture",
+                    "archived": false,
+                    "cwd": "/fixture",
+                    "branch": "fixture",
+                    "checkoutId": "fixture-checkout",
+                    "lastMessagePreview": null,
+                    "lastMessageAt": null,
+                    "createdAt": chrono::Utc::now(),
+                    "config": {
+                        "harness": HarnessId::Codex,
+                        "model": null,
+                        "reasoning": null,
+                        "modelOptions": {},
+                        "sandbox": SandboxLevel::WorkspaceWrite
+                    }
+                }))
+                .expect("valid Codex composer fixture chat"),
+            ];
+            state.transcript.retain(|entry| entry.id != ENTRY_ID);
+            state.transcript.push(SessionMessageEntry {
+                id: ENTRY_ID.into(),
+                role: MessageRole::Assistant,
+                created_at: 1,
+                device_id: "fixture".into(),
+                status: None,
+                continuation_of: None,
+                parts: vec![MessagePart::Input {
+                    id: "fixture-question-input".into(),
+                    request_id: request_id.into(),
+                    questions,
+                    resolved: false,
+                }],
+            });
+            cx.notify();
+        });
+        // Reconcile through the same transcript path as a native request. A
+        // later state notification can no longer clear this fixture wizard.
+        self.on_state_changed(cx);
+        assert_eq!(
+            self.wizard
+                .as_ref()
+                .map(|wizard| wizard.request_id.as_str()),
+            Some(request_id),
+            "fixture request must mount through the production pending-input path"
+        );
+    }
+
+    pub fn fixture_has_pending_question(&self, request_id: &str, cx: &App) -> bool {
+        self.wizard
+            .as_ref()
+            .is_some_and(|wizard| wizard.request_id == request_id)
+            && pending_input_request(&self.state.read(cx).transcript)
+                .is_some_and(|(pending, _)| pending == request_id)
     }
 
     pub fn fixture_question_back(&mut self, cx: &mut Context<Self>) {
