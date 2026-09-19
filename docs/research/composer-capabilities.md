@@ -1,13 +1,15 @@
 # Composer capability mapping
 
 Audited 2026-09-19. These are integration contracts, not promises that every
-installed agent version or account offers the same modes. The UI uses the host's
-`agent-modes-v1` capability and the selected model's discovered options. An
-advertised native mode keeps its exact ID and label; no prompt simulates a mode.
+installed agent version or account offers the same modes. The UI requires the
+host's `agent-modes-v1` capability and the selected model's adapter-advertised
+options. Some catalogs are live and some are versioned static contracts, as
+called out below. An advertised native mode keeps its exact ID and label; no
+prompt simulates a mode.
 
 | Harness | Plan / native modes | Persistent goal | User input above composer |
 | --- | --- | --- | --- |
-| Codex | `collaborationMode/list`; only advertised presets | Only when `experimentalFeature/list` advertises enabled `goals`; `thread/goal/get,set` | `item/tool/requestUserInput` (blocking or asynchronous), plus completed assistant-message questions |
+| Codex | Default requires `collaborationMode/list`; Plan also requires its advertised preset; Goal requires enabled `goals` | Only when `experimentalFeature/list` advertises enabled `goals`; `thread/goal/get,set` plus update/clear notifications | `item/tool/requestUserInput` (blocking or asynchronous), plus completed assistant-message questions |
 | Claude Code | `--permission-mode plan`; explicit approval of `ExitPlanMode` | Not exposed | `AskUserQuestion` control request and plan approval |
 | Cursor | Pinned `@cursor/sdk@1.0.31`: `mode` on create and send, including resume | Not exposed | Not exposed: pinned public SDK has no answer channel; `askQuestion` remains disabled |
 | OpenCode | V1 `/agent` must advertise visible primary `build` and `plan` agents; V2 plan is not exposed by this integration | Not exposed | `question.asked` with reply/reject; explicit permissions while planning |
@@ -17,6 +19,9 @@ advertised native mode keeps its exact ID and label; no prompt simulates a mode.
 | Pi | `pi-acp` live `configOptions` or legacy `modes` only | Same ACP restriction | Same ACP input bridge |
 | Antigravity | ACP live modes only; pinned fixture advertises Default/Auto Edit/YOLO, **not Plan** | Same ACP restriction | Same ACP input bridge |
 | Mock | Test-only harness; no production mode selector | Test events only | Test callback |
+
+The first nine rows are production harnesses. Mock exists only for fixtures and
+is included because the Rust contract is exhaustive over `HarnessId`.
 
 ACP mode IDs are opaque: `architect` is not rewritten as `plan`. Semantic mode
 configurations use a shared UI key but are sent through their original config ID.
@@ -29,10 +34,18 @@ For agents without modes, existing unattended tool permissions remain unchanged;
 question-shaped choices still use the tray.
 
 Codex fallback model lists intentionally contain no mode claims. Runtime discovery
-must establish support first. Claude's CLI supports the native plan permission
-mode. Cursor's pinned published type definitions include `AgentModeOption`, but
-no public question response operation. OpenCode V2 plan is an integration gap,
-not a claim that the product itself cannot plan.
+must establish Default and Plan support; Goal is offered only when the separate
+experimental feature catalog enables it. Selecting Goal creates a new active goal
+after no goal/completion, or resumes a non-active goal. Selecting Default or Plan
+pauses an active goal. The adapter consumes native goal update and clear events,
+but does not fabricate a goal when the feature is absent. Claude and Cursor add
+their versioned native mode options to their adapter model catalogs rather than
+discovering them per session. Claude's installed CLI supports the native plan
+permission mode. Cursor's pinned published type definitions include
+`AgentModeOption`, but no public question response operation. OpenCode exposes
+Build/Plan only when the live V1 `/agent` catalog contains both visible primary
+agents. OpenCode V2 plan is an integration gap, not a claim that the product
+itself cannot plan.
 
 Native plans/checklists, Codex goals, and questions use the existing durable
 transcript events and composer tray. Cursor `createPlan` and Claude plan-exit
@@ -42,9 +55,27 @@ turn. A plain-text question from an agent is not treated as a structured request
 
 ## Evidence and verification
 
-- Installed Codex app-server: read-only `collaborationMode/list` and
-  `experimentalFeature/list`; generated experimental protocol types.
-- Installed Claude CLI `--help`: plan permission mode.
+Read-only local version/help/catalog probes produced this inventory. Missing
+means no executable was found in the integration's production search paths; it
+does not say whether the user has an account or could install the adapter.
+
+| Harness | Local production transport observed | Version / source boundary |
+| --- | --- | --- |
+| Codex | `codex` installed | `codex-cli 0.154.0`; generated app-server protocol plus read-only `collaborationMode/list` and `experimentalFeature/list` |
+| Claude Code | `claude` installed | `2.1.273 (Claude Code)`; `--help` advertises `--permission-mode plan` |
+| Cursor | `cursor-agent`/`cursor` absent; managed SDK package not installed | Integration pins `@cursor/sdk@1.0.31`; published typings were inspected during implementation |
+| OpenCode | `opencode` installed | `1.18.31`; `agent list` advertised visible primary `build` and `plan` agents |
+| Devin | `devin` absent | Live ACP session discovery remains the authority when installed |
+| Grok | `grok` absent | Integration-managed package pin is `@xai-official/grok@1.0.4` |
+| Hermes | `hermes` installed | `0.21.3`; `hermes acp --version` also reported `0.21.3` |
+| Pi | `pi` and managed `pi-acp` installed | Pi `0.85.1`; integration adapter `pi-acp@0.0.33` |
+| Antigravity | `agy_acp_server` absent | Integration archive pin is `1.1.1`, downloaded only on first use |
+
+The managed `claude-agent-acp@0.66.0` and `codex-acp@1.1.14` packages also
+exist locally, but they are not the production Claude/Codex transports in this
+contract; those harnesses use their native integrations. No sign-in, browser,
+hosted model turn, or credential-content read was performed.
+
 - Published Cursor SDK 1.0.31 package: `options.d.ts`, `agent.d.ts`, and
   `createPlan` tool delta types. [Official SDK documentation](https://cursor.com/docs/sdk/typescript).
 - ACP [session modes](https://agentclientprotocol.com/protocol/v1/session-modes)
@@ -53,11 +84,12 @@ turn. A plain-text question from an agent is not treated as a structured request
   V1/V2 HTTP/SSE fixtures.
 - Regression coverage: native mode discovery, disabled/missing Codex goal support,
   opaque/grouped ACP mode IDs, stale intent rejection, plan-exit question round
-  trip, Cursor plan/create and build/resume, and existing harness input tests.
+  trip, Cursor plan/create and build/resume, external native-input resolution,
+  request preflight, provider-scoped resume, and existing harness input tests.
 
-No hosted model turns were started for this audit. Fixture coverage verifies the
-adapter contracts; it does not establish live end-to-end behavior for every
-installed provider version, account, or optional ACP extension.
+Fixture coverage verifies the adapter contracts; it does not establish live
+end-to-end behavior for every installed provider version, account, or optional
+ACP extension. Missing executables were not installed to expand the matrix.
 
 ## Plan and task projection
 
@@ -113,8 +145,8 @@ is cancellation. Impossible choice-only requests with no options cancel immediat
 
 Codex `isSecret` requests are explicitly rejected with a protocol error; the
 composer does not claim to be a credential input. ACP extension-specific custom
-answers are not inferred or fabricated. [Codex app-server protocol](https://developers.openai.com/ja-JP/docs/app-server)
-, [OpenCode question schema](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/v1/question.ts),
+answers are not inferred or fabricated. [Codex app-server protocol](https://developers.openai.com/ja-JP/docs/app-server),
+[OpenCode question schema](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/v1/question.ts),
 and [ACP permission schema](https://docs.rs/agent-client-protocol-schema/latest/src/agent_client_protocol_schema/v2/client.rs.html)
 are the source contracts; the installed generated Codex types were also inspected.
 
@@ -122,6 +154,54 @@ Question pages retain their typed answers when navigating back. A choice-only pa
 makes the text editor read-only and explains that an option is required. Questions
 borrow and restore the current rich draft, including selection, rather than silently
 discarding it. Empty pages cannot advance. Option descriptions wrap below labels.
+
+Claude's `control_cancel_request` retires the waiter for its exact native
+request ID. CLI teardown retires all remaining plan-approval and question
+waiters. Codex assistant-message question waiters likewise end with their run.
+
+Codex can withdraw a native server request independently of the tray. The
+app-server contract emits `serverRequest/resolved` after a client response or
+when turn start/completion/interruption clears a pending request. The adapter
+then aborts only the matching waiter; teardown aborts all remaining waiters. The
+engine observes the closed response receiver, durably resolves that question,
+and preserves any unrelated blocking request. It sends no invented answer and a
+late tray response cannot fall through to a different request. This lifecycle is
+dynamic and therefore is not represented by the static `QuestionTransport` enum.
+
+OpenCode's event bus can likewise report that another native client settled an
+input. Pending waiters are keyed by request kind, session ID and request ID.
+`question.replied`, `question.rejected` and `permission.replied` abort only the
+matching local waiter, which closes the engine response receiver and retires the
+tray request without posting a second reply. Foreign-session events are ignored,
+and adapter teardown aborts any waiters still open.
+
+## Request preflight and resume safety
+
+The engine performs static request validation before it writes a user turn,
+routes a warm steer, or interrupts a run for a queued replacement. This catches
+invalid mode value types and adapter-known mode IDs. It also rejects Codex native
+commands with attachments, `/compact` without a resumable Codex conversation,
+and selected OpenCode native commands with attachments. Raw OpenCode slash text
+still needs the live project command catalog, and ACP choices still need the live
+session catalog, so static preflight does not claim to validate those names.
+
+Canonical provider-backed skills carry their owning harness. A native-only
+`opencode-skill:` or `harness-skill:` selection is rejected if the message is
+sent through another harness, because there is no portable file to deliver.
+File-backed skills remain portable: the owning provider can use its advertised
+command while another provider receives the readable file reference.
+
+Cursor recovery encodes unacknowledged user messages as JSON history. Each
+message's rich references are converted before encoding, preserving quotes,
+newlines, and file paths without rewriting the serialized envelope.
+
+Harness-native session IDs are persisted with both their harness and cwd. Resume
+is injected only when both match the next run, so switching from one of the nine
+production harnesses to another cannot feed the former provider's local ID to
+the latter. A legacy row without a harness tag is resumed only when the journal
+independently proves the same harness, session ID and cwd; otherwise the run
+starts fresh. Within the same ACP harness, `session/load` failure still falls
+back to `session/new`, and the resulting `SessionStarted` replaces the stored ID.
 
 ## Transport contracts versus availability
 
@@ -156,11 +236,14 @@ explicitly rather than being turned into successful empty answers.
 ## Compaction lifecycle
 
 Codex `contextCompaction` item start/completion becomes a typed `Compaction` part
-with one stable native ID. The transcript renders a standalone divider with a
-shimmering center label while active, then a static completion label. Reduced
-motion removes the shimmer. Interrupted or failed turns stop the animation even
-when the provider omits the completion item. Compaction does not get hidden inside
-a generic “Called tools” fold and does not fabricate an assistant message.
+with one stable native ID. The generated 0.154 protocol item itself has no
+separate status field; lifecycle comes from `item/started` and `item/completed`.
+The transcript renders a standalone divider with a shimmering center label while
+active, then a static completion label. Reduced motion removes the shimmer. Any
+terminal turn stops an unresolved compaction and renders it as stopped rather
+than completed, even when the provider omits the completion item. Compaction does
+not get hidden inside a generic “Called tools” fold and does not fabricate an
+assistant message.
 
 Other adapters currently have no mapped compaction lifecycle in this contract.
 Do not synthesize an indeterminate duration from a `/compact` command or assume a
