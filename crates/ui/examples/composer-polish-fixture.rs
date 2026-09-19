@@ -209,6 +209,62 @@ async fn pause_for(cx: &mut AsyncApp, milliseconds: u64) {
         .await;
 }
 
+async fn wheel_to_bottom(
+    window: gpui::WindowHandle<Fixture>,
+    target: &'static str,
+    output: &std::path::Path,
+    filename: String,
+    cx: &mut AsyncApp,
+) {
+    let (position, before, max) = window
+        .update(cx, |view, _, cx| {
+            view.composer.read(cx).fixture_scroll_probe(target)
+        })
+        .unwrap();
+    assert!(
+        max > px(0.0),
+        "{target} fixture must overflow before its wheel probe"
+    );
+    let capture_window: gpui::AnyWindowHandle = window.into();
+    capture_window
+        .update(cx, |_, window, cx| {
+            window.dispatch_event(
+                gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                    position,
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-10_000.0))),
+                    modifiers: gpui::Modifiers::default(),
+                    touch_phase: gpui::TouchPhase::Moved,
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+    pause(cx).await;
+    capture_window
+        .update(cx, |_, window, cx| {
+            window.draw(cx).clear();
+            window
+                .render_to_image()
+                .unwrap()
+                .save(output.join(filename))
+                .unwrap();
+        })
+        .unwrap();
+    let (_, after, settled_max) = window
+        .update(cx, |view, _, cx| {
+            view.composer.read(cx).fixture_scroll_probe(target)
+        })
+        .unwrap();
+    assert!(
+        after < before,
+        "{target} wheel event did not move its scroller"
+    );
+    assert!(
+        (after + settled_max).abs() <= px(1.0),
+        "{target} wheel event did not reach bottom: offset={after:?}, max={settled_max:?}"
+    );
+}
+
 fn fixture_surface() -> anyhow::Result<(SurfacePreference, &'static str)> {
     match std::env::var("ZERON_FIXTURE_SURFACE")
         .unwrap_or_else(|_| "frosted".into())
@@ -424,6 +480,72 @@ fn main() -> anyhow::Result<()> {
                 );
                 capture_window.update(cx, |_, w, cx| { w.draw(cx).clear(); w.render_to_image().unwrap().save(output.join(name)).unwrap(); }).unwrap();
             }
+
+            // Prove each constrained tray's hidden content is reachable via
+            // its actual GPUI wheel path. Isolating the trays prevents a
+            // later-painted sibling from intercepting the event coordinate.
+            window.update(cx, |view, w, cx| {
+                view.settings = false;
+                view.title = "Activity · wheel at bottom";
+                view.composer.update(cx, |composer, cx| {
+                    composer.fixture_activity(dense_calls.clone(), true, cx);
+                });
+                w.resize(size(px(440.), px(520.)));
+                cx.notify();
+            }).unwrap();
+            pause(cx).await;
+            wheel_to_bottom(
+                window,
+                "activity",
+                &output,
+                format!("scroll-activity-bottom-{surface_name}.png"),
+                cx,
+            ).await;
+
+            window.update(cx, |view, w, cx| {
+                view.title = "Queue · wheel at bottom";
+                view.composer.update(cx, |composer, cx| {
+                    composer.fixture_activity(Vec::new(), false, cx);
+                    composer.fixture_queue(&[
+                        "First queued follow-up",
+                        "Second queued follow-up",
+                        "Third queued follow-up",
+                        "Fourth queued follow-up",
+                        "Fifth queued follow-up",
+                        "Sixth queued follow-up",
+                        "Seventh queued follow-up",
+                        "Eighth queued follow-up",
+                    ], cx);
+                });
+                w.resize(size(px(440.), px(520.)));
+                cx.notify();
+            }).unwrap();
+            pause(cx).await;
+            wheel_to_bottom(
+                window,
+                "queue",
+                &output,
+                format!("scroll-queue-bottom-{surface_name}.png"),
+                cx,
+            ).await;
+
+            window.update(cx, |view, w, cx| {
+                view.title = "Question · wheel at bottom";
+                view.composer.update(cx, |composer, cx| {
+                    composer.fixture_activity(Vec::new(), false, cx);
+                    composer.fixture_question(dense_question.clone(), cx);
+                });
+                w.resize(size(px(440.), px(520.)));
+                cx.notify();
+            }).unwrap();
+            pause(cx).await;
+            wheel_to_bottom(
+                window,
+                "question",
+                &output,
+                format!("scroll-question-bottom-{surface_name}.png"),
+                cx,
+            ).await;
 
             // Use actual keystrokes against the same disclosure rendered in
             // production. The bounded Tab loop proves it remains reachable as
