@@ -148,8 +148,9 @@ live appearance and frame timing still require a focused preview.
 Mode choices are slash commands, not a permanent toolbar. Only choices advertised
 by the selected model are offered; remote hosts also need `agent-modes-v1`.
 Opaque ACP IDs survive unchanged. A provider's existing command wins its name;
-the local mode command then uses `/zeron:<name>`. Selecting one changes the next
-message's mode and consumes only the command token, preserving the draft.
+the local mode command then uses `/zeron:<name>`. Selecting one changes the selected mode from the next message onward and
+consumes only the command token, preserving the draft. Ordinary mode selections
+persist; Goal creation is the one-shot exception described above.
 
 Existing-chat selections and new-chat defaults use the same effective option
 filter: a loaded model catalog removes retired choices from the outgoing request,

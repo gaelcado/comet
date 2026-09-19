@@ -15047,6 +15047,8 @@ impl Composer {
         self.activity_motion = activity::ActivityMotion::default();
         self.input.update(cx, |input, cx| {
             input.read_only = false;
+            input.set_placeholder("Do anything…", cx);
+            input.set_key_context(MESSAGE_COMPOSER_CONTEXT, cx);
             input.set_text("", cx);
         });
         cx.notify();
