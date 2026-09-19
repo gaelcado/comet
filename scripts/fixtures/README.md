@@ -25,12 +25,15 @@ select live text. See the [native regression recordings](../../docs/transcript-s
 `composer-questions.json` covers choice-only, options with custom text, multiple
 selection, text-only, non-blocking and long/Unicode questions. The same payloads
 feed the production Wizard regression tests and `composer-polish-fixture` native
-renderer (`appshots-fixture` feature).
+renderer (`appshots-fixture` feature). The runner also advances a two-page request,
+then returns to page one and captures its preserved typed answer.
 
 `composer-activity.json` covers no activity, plans, all task states, goals,
 authoritative empty task snapshots, overflowing plans and combined activity.
 The native runner captures collapsed/expanded states; projection tests consume
-the identical data. Existing rich Markdown/chip cases remain in that runner,
+the identical data. It also composes the combined activity payload with the
+long question and three queued messages in a 440×520 window, covering the
+densest supported glass stack. Existing rich Markdown/chip cases remain in that runner,
 which now also opens the real compact picker in standard, fast and favorite-model
 list states with a fixture catalog.
 
@@ -46,9 +49,15 @@ Relevant automated suites:
 
 Build the native fixture with `cargo check -p zeron-ui --features appshots-fixture
 --example composer-polish-fixture`. Launch/capture it only on an explicit preview
-request, with a dedicated output directory. Rendered fixtures are visual evidence,
-not live provider compatibility evidence. Account-specific native turns and frame
-pacing require separate verification.
+request, with a dedicated output directory:
+
+```sh
+cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish
+ZERON_FIXTURE_REDUCE_MOTION=1 cargo run -p zeron-ui --features appshots-fixture --example composer-polish-fixture -- /tmp/zeron-composer-polish-reduced-motion
+```
+
+Rendered fixtures are visual evidence, not live provider compatibility evidence.
+Account-specific native turns and frame pacing require separate verification.
 
 Compaction regressions use the fake Codex peer's native item start/completion
 sequence and the production transcript projection test (including interruption).
