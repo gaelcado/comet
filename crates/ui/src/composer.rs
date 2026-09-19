@@ -14702,20 +14702,31 @@ impl Composer {
     }
 
     /// Geometry and state for interaction-level fixture probes. The example
-    /// dispatches a real wheel event at the returned viewport center, then
-    /// reads the same handle again to prove the production scroller moved.
-    pub fn fixture_scroll_probe(&self, target: &str) -> (Point<Pixels>, Pixels, Pixels) {
+    /// dispatches a real wheel event at the returned visible viewport point,
+    /// then reads the same handle again to prove the production scroller moved.
+    pub fn fixture_scroll_probe(
+        &self,
+        target: &str,
+        visible_top: bool,
+    ) -> (Point<Pixels>, Pixels, Pixels) {
         let scroll = match target {
             "activity" => &self.activity_scroll,
             "question" => &self.question_scroll,
             "queue" => &self.queue_scroll,
             _ => panic!("unknown composer fixture scroll target: {target}"),
         };
-        (
-            scroll.bounds().center(),
-            scroll.offset().y,
-            scroll.max_offset().y,
-        )
+        let bounds = scroll.bounds();
+        let position = if visible_top {
+            // Later trays overlap the lower edge of earlier ones. Probe just
+            // inside the still-painted top of this viewport in dense scenes.
+            point(
+                bounds.center().x,
+                bounds.top() + px((f32::from(bounds.size.height) * 0.25).min(12.0)),
+            )
+        } else {
+            bounds.center()
+        };
+        (position, scroll.offset().y, scroll.max_offset().y)
     }
 
     pub fn fixture_question_back(&mut self, cx: &mut Context<Self>) {

@@ -212,13 +212,16 @@ async fn pause_for(cx: &mut AsyncApp, milliseconds: u64) {
 async fn wheel_to_bottom(
     window: gpui::WindowHandle<Fixture>,
     target: &'static str,
+    visible_top: bool,
     output: &std::path::Path,
     filename: String,
     cx: &mut AsyncApp,
 ) {
     let (position, before, max) = window
         .update(cx, |view, _, cx| {
-            view.composer.read(cx).fixture_scroll_probe(target)
+            view.composer
+                .read(cx)
+                .fixture_scroll_probe(target, visible_top)
         })
         .unwrap();
     assert!(
@@ -252,7 +255,9 @@ async fn wheel_to_bottom(
         .unwrap();
     let (_, after, settled_max) = window
         .update(cx, |view, _, cx| {
-            view.composer.read(cx).fixture_scroll_probe(target)
+            view.composer
+                .read(cx)
+                .fixture_scroll_probe(target, visible_top)
         })
         .unwrap();
     assert!(
@@ -497,6 +502,7 @@ fn main() -> anyhow::Result<()> {
             wheel_to_bottom(
                 window,
                 "activity",
+                false,
                 &output,
                 format!("scroll-activity-bottom-{surface_name}.png"),
                 cx,
@@ -524,6 +530,7 @@ fn main() -> anyhow::Result<()> {
             wheel_to_bottom(
                 window,
                 "queue",
+                false,
                 &output,
                 format!("scroll-queue-bottom-{surface_name}.png"),
                 cx,
@@ -542,10 +549,40 @@ fn main() -> anyhow::Result<()> {
             wheel_to_bottom(
                 window,
                 "question",
+                false,
                 &output,
                 format!("scroll-question-bottom-{surface_name}.png"),
                 cx,
             ).await;
+
+            // Repeat through the complete overlapping stack. Reset before
+            // each wheel so every assertion proves that target's visible hit
+            // area receives the event instead of inheriting another offset.
+            for target in ["activity", "queue", "question"] {
+                window.update(cx, |view, w, cx| {
+                    view.title = "Dense stack · wheel reachability";
+                    view.composer.update(cx, |composer, cx| {
+                        composer.fixture_activity(dense_calls.clone(), true, cx);
+                        composer.fixture_queue(&[
+                            "Run the focused checks after this answer",
+                            "Summarize any remaining provider-specific gaps",
+                            "Prepare the review notes without losing this queue",
+                        ], cx);
+                        composer.fixture_question(dense_question.clone(), cx);
+                    });
+                    w.resize(size(px(440.), px(520.)));
+                    cx.notify();
+                }).unwrap();
+                pause(cx).await;
+                wheel_to_bottom(
+                    window,
+                    target,
+                    true,
+                    &output,
+                    format!("scroll-dense-{target}-bottom-{surface_name}.png"),
+                    cx,
+                ).await;
+            }
 
             // Use actual keystrokes against the same disclosure rendered in
             // production. The bounded Tab loop proves it remains reachable as
