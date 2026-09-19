@@ -67,8 +67,9 @@ const HEALTH_POLL: Duration = Duration::from_millis(150);
 
 /// Bound on ordinary (non-SSE) HTTP calls: everything is loopback and the
 /// only slow route is a cold /provider catalog. The synchronous per-turn
-/// command endpoint deliberately bypasses this (its response can take the
-/// whole turn and is ignored anyway).
+/// command endpoint deliberately bypasses this because its response can take
+/// the whole turn; its detached task still reports HTTP and transport errors
+/// to the generation that launched it.
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Bus reconnect: the server is our own child on loopback, so a dropped
@@ -429,10 +430,15 @@ impl Harness for OpencodeHarness {
 
     async fn run(
         &self,
-        request: RunRequest,
+        mut request: RunRequest,
         controls: RunControls,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
-        validate_agent_mode(&request)?;
+        self.validate_request(&request)?;
+        // The engine intentionally leaves OpenCode's canonical invocation
+        // intact. Capture the selected identity before converting it to the
+        // provider's `/command arguments` text.
+        let initial_native_command_selected = selected_native_command(&request.prompt, self.id());
+        request.prompt = zeron_proto::invocation::harness_prompt(&request.prompt, self.id());
         let cwd = (!request.cwd.is_empty()).then(|| request.cwd.clone());
         let server = self.server(cwd.as_deref()).await?;
         let (event_tx, event_rx) = mpsc::channel::<Result<AgentEvent, HarnessError>>(256);
@@ -444,6 +450,7 @@ impl Harness for OpencodeHarness {
             interrupt_grace: self.interrupt_grace,
             kill_grace: self.kill_grace,
             known_commands: None, // Resolve the live session directory, never a global probe cache.
+            initial_native_command_selected,
         }));
         Ok(futures::stream::unfold(event_rx, |mut rx| async move {
             rx.recv().await.map(|ev| (ev, rx))
@@ -1161,6 +1168,9 @@ struct Session {
     interrupt_grace: Duration,
     kill_grace: Duration,
     known_commands: Option<Vec<SlashCommand>>,
+    /// True only when the composer supplied a canonical leading command or
+    /// provider-backed skill. Raw slash text deliberately stays false.
+    initial_native_command_selected: bool,
 }
 
 fn new_message_id() -> String {
@@ -1250,6 +1260,15 @@ struct TurnState {
     stall_deadline: Option<tokio::time::Instant>,
 }
 
+/// A detached native-command HTTP request failed. `generation` binds the
+/// response to the turn that launched it: the synchronous command endpoint
+/// can return after the event bus has already settled that turn and started a
+/// queued successor.
+struct NativeCommandFailure {
+    generation: u64,
+    message: String,
+}
+
 impl TurnState {
     fn begin(stall: Option<Duration>) -> Self {
         Self {
@@ -1323,6 +1342,7 @@ async fn run_session(session: Session) {
         interrupt_grace,
         kill_grace,
         known_commands,
+        initial_native_command_selected,
     } = session;
     let RunControls {
         request_input,
@@ -1512,12 +1532,17 @@ async fn run_session(session: Session) {
         );
     }
     let stall = stall_bound();
+    let (command_failure_tx, mut command_failure_rx) = mpsc::unbounded_channel();
+    let mut turn_generation = 0_u64;
     if let Err(e) = post_prompt(
         &server,
         &session_id,
         dir,
         &commands,
         &request.prompt,
+        initial_native_command_selected,
+        turn_generation,
+        &command_failure_tx,
         TurnSpec {
             agent: requested_agent,
             model: model.as_ref(),
@@ -1557,7 +1582,7 @@ async fn run_session(session: Session) {
     // Child sessions created before their spawn chip was seen (id → title).
     let mut unbound_children: HashMap<String, String> = HashMap::new();
     let mut input_waiters: HashMap<NativeInputKey, tokio::task::AbortHandle> = HashMap::new();
-    let mut queued_steers: VecDeque<String> = VecDeque::new();
+    let mut queued_steers: VecDeque<(String, bool)> = VecDeque::new();
     let mut steering_open = true;
     let mut interrupt_requested = false;
     let mut pending_usage: Option<AgentEvent> = None;
@@ -1594,7 +1619,8 @@ async fn run_session(session: Session) {
                 done_sent = true;
                 break $label;
             }
-            if let Some(steer) = queued_steers.pop_front() {
+            if let Some((steer, native_command_selected)) = queued_steers.pop_front() {
+                turn_generation = turn_generation.wrapping_add(1);
                 let (prev, next) = rotate(&mut assistant_message_id);
                 if !send(&event_tx, AgentEvent::Steered {
                     assistant_message_id: Some(prev),
@@ -1608,6 +1634,9 @@ async fn run_session(session: Session) {
                     dir,
                     &commands,
                     &steer,
+                    native_command_selected,
+                    turn_generation,
+                    &command_failure_tx,
                     TurnSpec {
                         agent: requested_agent,
                         model: model.as_ref(),
@@ -1625,6 +1654,8 @@ async fn run_session(session: Session) {
                         let _ = send(&event_tx, AgentEvent::Error {
                             message: e.to_string(),
                         }).await;
+                        turn.error = Some(e.to_string());
+                        turn.aborted_for_retry = true;
                         // Fall through to Done below.
                     }
                 }
@@ -1710,12 +1741,51 @@ async fn run_session(session: Session) {
                 }
             }
 
+            failure = command_failure_rx.recv() => {
+                let Some(failure) = failure else { continue 'main; };
+                if failure.generation != turn_generation || !turn.active || interrupt_requested {
+                    tracing::debug!(
+                        target: "zeron_harness::opencode",
+                        failed_generation = failure.generation,
+                        active_generation = turn_generation,
+                        "ignoring native-command HTTP failure from a retired turn"
+                    );
+                    continue 'main;
+                }
+                let _ = send(
+                    &event_tx,
+                    AgentEvent::Error {
+                        message: failure.message.clone(),
+                    },
+                )
+                .await;
+                let _ = send(
+                    &event_tx,
+                    AgentEvent::Done {
+                        status: DoneStatus::Errored,
+                        result: None,
+                        error: Some(failure.message),
+                        session_id: Some(session_id.clone()),
+                    },
+                )
+                .await;
+                done_sent = true;
+                break 'main;
+            }
+
             steer = steering.recv(), if steering_open => {
                 match steer {
                     Some(steer) => {
+                        let native_command_selected =
+                            selected_native_command(&steer.prompt, HarnessId::Opencode);
+                        let prompt = zeron_proto::invocation::harness_prompt(
+                            &steer.prompt,
+                            HarnessId::Opencode,
+                        );
                         if turn.active {
-                            queued_steers.push_back(steer.prompt);
+                            queued_steers.push_back((prompt, native_command_selected));
                         } else {
+                            turn_generation = turn_generation.wrapping_add(1);
                             // Between turns (shouldn't happen — the engine
                             // steers live runs — but deliver, don't drop).
                             let (prev, next) = rotate(&mut assistant_message_id);
@@ -1723,12 +1793,15 @@ async fn run_session(session: Session) {
                                 assistant_message_id: Some(prev),
                                 next_assistant_message_id: Some(next),
                             }).await;
-                            if post_prompt(
+                            match post_prompt(
                                 &server,
                                 &session_id,
                                 dir,
                                 &commands,
-                                &steer.prompt,
+                                &prompt,
+                                native_command_selected,
+                                turn_generation,
+                                &command_failure_tx,
                                 TurnSpec {
                                     agent: requested_agent,
                                     model: model.as_ref(),
@@ -1737,9 +1810,30 @@ async fn run_session(session: Session) {
                                 },
                             )
                             .await
-                            .is_ok()
                             {
-                                turn = TurnState::begin(stall);
+                                Ok(()) => turn = TurnState::begin(stall),
+                                Err(error) => {
+                                    let message = error.to_string();
+                                    let _ = send(
+                                        &event_tx,
+                                        AgentEvent::Error {
+                                            message: message.clone(),
+                                        },
+                                    )
+                                    .await;
+                                    let _ = send(
+                                        &event_tx,
+                                        AgentEvent::Done {
+                                            status: DoneStatus::Errored,
+                                            result: None,
+                                            error: Some(message),
+                                            session_id: Some(session_id.clone()),
+                                        },
+                                    )
+                                    .await;
+                                    done_sent = true;
+                                    break 'main;
+                                }
                             }
                         }
                     }
@@ -2068,6 +2162,9 @@ async fn post_prompt(
     dir: Option<&str>,
     commands: &[SlashCommand],
     prompt: &str,
+    native_command_selected: bool,
+    turn_generation: u64,
+    command_failure_tx: &mpsc::UnboundedSender<NativeCommandFailure>,
     spec: TurnSpec<'_>,
 ) -> Result<(), HarnessError> {
     let TurnSpec {
@@ -2082,60 +2179,70 @@ async fn post_prompt(
             "Plan mode is not available through this OpenCode server's integration".into(),
         ));
     }
-    if let Some((name, arguments)) = zeron_proto::invocation::leading_command(prompt) {
-        if commands.iter().any(|c| c.name == name) {
-            if !attachments.is_empty() {
-                return Err(HarnessError::Protocol(
-                    "OpenCode commands cannot include attachments; send them in a separate prompt"
-                        .into(),
-                ));
-            }
-            // 1.x names the args `arguments`; 2.x `text`.
-            let (path, mut cmd_body) = match protocol {
-                Protocol::V1 => (
-                    format!("/session/{session_id}/command"),
-                    json!({ "command": name, "arguments": arguments }),
-                ),
-                Protocol::V2 => (
-                    format!("/api/session/{session_id}/command"),
-                    json!({ "command": name, "text": arguments }),
-                ),
-            };
-            if protocol == Protocol::V1
-                && let Some(agent) = agent
-            {
-                cmd_body["agent"] = agent.into();
-            }
-            let server_base = server.base.clone();
-            let auth = server.auth.clone();
-            let dir_owned = dir.map(str::to_owned);
-            let path_owned = path.clone();
-            let protocol = server.protocol.clone();
-            tokio::spawn(async move {
-                let server = Server {
-                    child: None,
-                    base: server_base,
-                    auth,
-                    client: http_client(),
-                    stderr_tail: crate::StderrTail::default(),
-                    protocol,
-                };
-                // The command endpoint blocks for the whole turn; the bus
-                // carries the real events, so this response is ignored —
-                // but it must not be cut off mid-turn by CALL_TIMEOUT.
-                let mut req = server
-                    .request(reqwest::Method::POST, &path_owned)
-                    .json(&cmd_body);
-                req = server.scoped(req, dir_owned.as_deref()).await;
-                if let Err(e) = req.send().await {
-                    tracing::debug!(
-                        target: "zeron_harness::opencode",
-                        "command turn failed: {e}"
-                    );
-                }
-            });
-            return Ok(());
+    if let Some((name, arguments)) =
+        native_command_request(prompt, commands, native_command_selected)?
+    {
+        if !attachments.is_empty() {
+            return Err(HarnessError::Protocol(
+                "OpenCode commands cannot include attachments; send them in a separate prompt"
+                    .into(),
+            ));
         }
+        // 1.x names the args `arguments`; 2.x `text`.
+        let (path, mut cmd_body) = match protocol {
+            Protocol::V1 => (
+                format!("/session/{session_id}/command"),
+                json!({ "command": name, "arguments": arguments }),
+            ),
+            Protocol::V2 => (
+                format!("/api/session/{session_id}/command"),
+                json!({ "command": name, "text": arguments }),
+            ),
+        };
+        if protocol == Protocol::V1
+            && let Some(agent) = agent
+        {
+            cmd_body["agent"] = agent.into();
+        }
+        let server_base = server.base.clone();
+        let auth = server.auth.clone();
+        let dir_owned = dir.map(str::to_owned);
+        let path_owned = path.clone();
+        let protocol = server.protocol.clone();
+        let command_failure_tx = command_failure_tx.clone();
+        tokio::spawn(async move {
+            let server = Server {
+                child: None,
+                base: server_base,
+                auth,
+                client: http_client(),
+                stderr_tail: crate::StderrTail::default(),
+                protocol,
+            };
+            // The command endpoint blocks for the whole turn; the bus
+            // carries the real events, so this response is ignored —
+            // but it must not be cut off mid-turn by CALL_TIMEOUT.
+            let mut req = server
+                .request(reqwest::Method::POST, &path_owned)
+                .json(&cmd_body);
+            req = server.scoped(req, dir_owned.as_deref()).await;
+            let failure = match req.send().await {
+                Ok(response) if response.status().is_success() => None,
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    Some(post_error_message(&path_owned, status, &body))
+                }
+                Err(error) => Some(format!("opencode POST {path_owned}: {error}")),
+            };
+            if let Some(message) = failure {
+                let _ = command_failure_tx.send(NativeCommandFailure {
+                    generation: turn_generation,
+                    message,
+                });
+            }
+        });
+        return Ok(());
     }
     match protocol {
         Protocol::V1 => {
@@ -2158,6 +2265,36 @@ async fn post_prompt(
             let path = format!("/api/session/{session_id}/prompt");
             server.post_json(&path, dir, &body).await.map(|_| ())
         }
+    }
+}
+
+/// Resolve a delivered leading slash command against the run's live,
+/// project-scoped catalog. Canonical composer selections must remain commands:
+/// if their discovered entry vanished, reporting that race is safer than
+/// silently submitting the decoded slash text as an ordinary model prompt.
+/// Raw slash text retains OpenCode's historical prompt fallback.
+fn native_command_request<'a>(
+    prompt: &'a str,
+    commands: &[SlashCommand],
+    selected: bool,
+) -> Result<Option<(&'a str, &'a str)>, HarnessError> {
+    let Some((name, arguments)) = zeron_proto::invocation::leading_command(prompt) else {
+        return if selected {
+            Err(HarnessError::Protocol(
+                "The selected OpenCode command is no longer available in this project".into(),
+            ))
+        } else {
+            Ok(None)
+        };
+    };
+    if commands.iter().any(|command| command.name == name) {
+        Ok(Some((name, arguments)))
+    } else if selected {
+        Err(HarnessError::Protocol(format!(
+            "The selected OpenCode command /{name} is no longer available in this project"
+        )))
+    } else {
+        Ok(None)
     }
 }
 
