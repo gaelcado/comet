@@ -40,8 +40,11 @@ enum Delivery {
 }
 struct RecordingHarness {
     id: HarnessId,
+    session_id: String,
     delivery: mpsc::UnboundedSender<Delivery>,
     fail_start: AtomicBool,
+    reject_request: AtomicBool,
+    require_resume: AtomicBool,
 }
 #[async_trait]
 impl Harness for RecordingHarness {
@@ -59,6 +62,19 @@ impl Harness for RecordingHarness {
     }
     fn reasoning_levels(&self) -> &[ReasoningLevel] {
         &[]
+    }
+    fn validate_request(&self, request: &RunRequest) -> Result<(), HarnessError> {
+        if self.reject_request.load(Ordering::SeqCst) {
+            Err(HarnessError::Protocol(
+                "unsupported rich composer request".into(),
+            ))
+        } else if self.require_resume.load(Ordering::SeqCst) && request.resume.is_none() {
+            Err(HarnessError::Protocol(
+                "native command needs an existing conversation".into(),
+            ))
+        } else {
+            Ok(())
+        }
     }
     async fn models(&self) -> Result<Vec<Model>, HarnessError> {
         Ok(vec![])
@@ -107,7 +123,7 @@ impl Harness for RecordingHarness {
             model: "probe".into(),
             tools: vec![],
             cwd: request.cwd,
-            session_id: "rich-session".into(),
+            session_id: self.session_id.clone(),
             assistant_message_id: "rich-assistant".into(),
         })]);
         let delivery = self.delivery.clone();
@@ -169,6 +185,19 @@ fn expected(raw: &str, readable: &str, id: HarnessId) -> String {
         readable.into()
     }
 }
+fn assert_delivered(actual: &str, raw: &str, readable: &str, id: HarnessId) {
+    let expected = expected(raw, readable, id);
+    if id == HarnessId::Cursor
+        && let Some(json) = actual.strip_prefix("The preceding user messages may not have reached a Cursor checkpoint before startup stopped. Retain this JSON as conversation history; do not rerun prior tools or side effects. Respond to the current message.\n")
+    {
+        let history: serde_json::Value = serde_json::from_str(json)
+            .expect("rich selections must not corrupt Cursor's recovery JSON");
+        assert_eq!(history["currentUserMessage"], expected, "{id:?}");
+        assert!(history["previousUserMessages"].as_array().is_some_and(|messages| !messages.is_empty()));
+    } else {
+        assert_eq!(actual, expected, "{id:?}");
+    }
+}
 async fn receive(rx: &mut mpsc::UnboundedReceiver<Delivery>) -> Delivery {
     tokio::time::timeout(Duration::from_secs(10), rx.recv())
         .await
@@ -187,8 +216,11 @@ async fn setup(
     let (delivery, rx) = mpsc::unbounded_channel();
     let harness = Arc::new(RecordingHarness {
         id,
+        session_id: "rich-session".into(),
         delivery,
         fail_start: AtomicBool::new(false),
+        reject_request: AtomicBool::new(false),
+        require_resume: AtomicBool::new(false),
     });
     let registry = HarnessRegistry::new();
     registry.register(harness.clone());
@@ -240,7 +272,7 @@ async fn rich_selections_survive_fresh_warm_steer_and_attachment_delivery_for_ev
         let Delivery::Run(run) = receive(&mut rx).await else {
             panic!("fresh run expected")
         };
-        assert_eq!(run.prompt, expected(&raw, &readable, id), "{id:?}");
+        assert_delivered(&run.prompt, &raw, &readable, id);
         assert_eq!(core.sessions.last_request(CHAT).unwrap().prompt, raw);
         assert_persisted(&core, &raw, 1);
 
@@ -278,7 +310,7 @@ async fn rich_selections_survive_fresh_warm_steer_and_attachment_delivery_for_ev
         let Delivery::Run(run) = receive(&mut rx).await else {
             panic!("attachments require a new run")
         };
-        assert_eq!(run.prompt, expected(&attached, &readable, id), "{id:?}");
+        assert_delivered(&run.prompt, &attached, &readable, id);
         assert_eq!(run.attachments, req.attachments);
         assert_persisted(&core, &attached, 4);
         core.shutdown().await;
@@ -323,7 +355,7 @@ async fn rich_selections_are_converted_once_on_startup_retry_for_every_harness()
             let Delivery::Run(run) = receive(&mut rx).await else {
                 panic!("fresh run expected")
             };
-            assert_eq!(run.prompt, expected(&raw, &readable, id), "{id:?}");
+            assert_delivered(&run.prompt, &raw, &readable, id);
         }
         assert_persisted(&core, &raw, 2);
         assert_eq!(core.sessions.last_request(CHAT).unwrap().prompt, raw);
@@ -383,10 +415,213 @@ async fn queue_edits_preserve_reselected_skills_until_delivery_for_every_harness
         let Delivery::Run(run) = receive(&mut rx).await else {
             panic!("send now replaces run")
         };
-        assert_eq!(run.prompt, expected(&edited, &readable, id), "{id:?}");
+        assert_delivered(&run.prompt, &edited, &readable, id);
         assert_persisted(&core, &edited, 2);
         core.shutdown().await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejected_queued_delivery_preserves_the_draft_without_a_new_turn() {
+    let (tmp, core, harness, mut rx) = setup(HarnessId::Codex).await;
+    core.sessions
+        .dispatch(CHAT, HarnessId::Codex, request("opening"), None)
+        .await
+        .unwrap();
+    let Delivery::Run(_) = receive(&mut rx).await else {
+        panic!("opening run expected")
+    };
+
+    let command = Invocation::Command {
+        name: "compact".into(),
+    }
+    .link();
+    let attachment = tmp.path().join("diagram.png");
+    std::fs::write(&attachment, b"image fixture").unwrap();
+    let attachment = attachment.to_string_lossy().into_owned();
+    let queued = core
+        .doc_host
+        .queue_message(CHAT, &command, vec![attachment.clone()])
+        .unwrap();
+    harness.reject_request.store(true, Ordering::SeqCst);
+
+    let error = core
+        .doc_host
+        .send_queued_now(CHAT, &queued)
+        .await
+        .expect_err("unsupported command/attachment combination must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported rich composer request")
+    );
+    let queue = core
+        .doc_host
+        .open(CHAT)
+        .unwrap()
+        .doc()
+        .read_queue()
+        .unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].id, queued);
+    assert_eq!(queue[0].text, command);
+    assert_eq!(queue[0].attachments, [attachment]);
+    assert_persisted(&core, "opening", 1);
+    assert!(
+        core.sessions.turn_in_flight(CHAT),
+        "preflight rejection interrupted the active turn"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "rejection started a replacement turn"
+    );
+    core.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preflight_sees_the_remembered_session_on_fresh_and_warm_followups() {
+    let (_tmp, core, harness, mut rx) = setup(HarnessId::Codex).await;
+    core.sessions
+        .dispatch(CHAT, HarnessId::Codex, request("opening"), None)
+        .await
+        .unwrap();
+    let Delivery::Run(_) = receive(&mut rx).await else {
+        panic!("opening run expected")
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while core
+            .workspace
+            .chat(CHAT)
+            .unwrap()
+            .unwrap()
+            .harness_session_id
+            .is_none()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("session ID was not persisted");
+
+    harness.require_resume.store(true, Ordering::SeqCst);
+    let command = Invocation::Command {
+        name: "compact".into(),
+    }
+    .link();
+    assert!(matches!(
+        core.sessions.steer(CHAT, &command, None).await.unwrap(),
+        SteerOutcome::Accepted
+    ));
+    let Delivery::Steer(_) = receive(&mut rx).await else {
+        panic!("warm follow-up steer expected")
+    };
+
+    core.sessions.interrupt(CHAT).await.unwrap();
+    core.sessions
+        .dispatch(CHAT, HarnessId::Codex, request(&command), None)
+        .await
+        .unwrap();
+    let Delivery::Run(run) = receive(&mut rx).await else {
+        panic!("fresh follow-up run expected")
+    };
+    assert_eq!(run.resume.as_deref(), Some("rich-session"));
+    core.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_session_resume_is_scoped_to_the_selected_harness() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (delivery, mut rx) = mpsc::unbounded_channel();
+    let harness = |id, session_id: &str| {
+        Arc::new(RecordingHarness {
+            id,
+            session_id: session_id.into(),
+            delivery: delivery.clone(),
+            fail_start: AtomicBool::new(false),
+            reject_request: AtomicBool::new(false),
+            require_resume: AtomicBool::new(false),
+        })
+    };
+    let registry = HarnessRegistry::new();
+    registry.register(harness(HarnessId::ClaudeCode, "claude-session"));
+    registry.register(harness(HarnessId::Cursor, "cursor-session"));
+    let core = EngineCore::assemble(
+        &tmp.path().join("data"),
+        Arc::new(registry),
+        HarnessId::ClaudeCode,
+        None,
+    )
+    .unwrap();
+    let client = zeron_rpc::memory_client(core.rpc_service());
+    client
+        .call(
+            zeron_rpc::methods::MUTATE,
+            serde_json::json!({"op":"createChat", "chatId":CHAT, "deviceId":core.device_id}),
+        )
+        .await
+        .unwrap();
+    core.workspace.rename_chat(CHAT, "Harness switch").unwrap();
+
+    core.sessions
+        .dispatch(CHAT, HarnessId::ClaudeCode, request("claude turn"), None)
+        .await
+        .unwrap();
+    let Delivery::Run(first) = receive(&mut rx).await else {
+        panic!("Claude run expected")
+    };
+    assert_eq!(first.resume, None);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while core
+            .workspace
+            .chat(CHAT)
+            .unwrap()
+            .unwrap()
+            .harness_session_harness
+            != Some(HarnessId::ClaudeCode)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Claude session was not persisted");
+    core.sessions.interrupt(CHAT).await.unwrap();
+
+    core.sessions
+        .dispatch(CHAT, HarnessId::Cursor, request("cursor turn"), None)
+        .await
+        .unwrap();
+    let Delivery::Run(switched) = receive(&mut rx).await else {
+        panic!("Cursor run expected")
+    };
+    assert_eq!(
+        switched.resume, None,
+        "Claude's native session id must not cross into Cursor"
+    );
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while core
+            .workspace
+            .chat(CHAT)
+            .unwrap()
+            .unwrap()
+            .harness_session_harness
+            != Some(HarnessId::Cursor)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Cursor session was not persisted");
+    core.sessions.interrupt(CHAT).await.unwrap();
+
+    core.sessions
+        .dispatch(CHAT, HarnessId::Cursor, request("cursor again"), None)
+        .await
+        .unwrap();
+    let Delivery::Run(same_provider) = receive(&mut rx).await else {
+        panic!("second Cursor run expected")
+    };
+    assert_eq!(same_provider.resume.as_deref(), Some("cursor-session"));
+    core.shutdown().await;
 }
 
 #[tokio::test]
