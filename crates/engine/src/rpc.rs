@@ -331,7 +331,11 @@ fn tool_file_path(call: &ToolCall) -> Option<&str> {
         | ToolCall::WebFetch { .. }
         | ToolCall::WebSearch { .. }
         | ToolCall::Todo { .. }
+        | ToolCall::TodoPatch { .. }
+        | ToolCall::Goal { .. }
+        | ToolCall::Plan { .. }
         | ToolCall::Mcp { .. }
+        | ToolCall::Compaction {}
         | ToolCall::Unknown { .. } => None,
     }
 }
