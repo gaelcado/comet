@@ -35,6 +35,7 @@ pub mod catalog;
 mod normalize;
 mod wire;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -382,6 +383,9 @@ impl Harness for ClaudeHarness {
     fn deterministic_turn_end(&self) -> bool {
         true
     }
+    fn validate_request(&self, request: &RunRequest) -> Result<(), HarnessError> {
+        validate_agent_mode(request)
+    }
 
     /// The curated static catalog (see [`catalog`]); requires an installed CLI
     /// so an absent binary surfaces as [`HarnessError::NotInstalled`] here,
@@ -474,6 +478,7 @@ impl ClaudeHarness {
         controls: RunControls,
         title_only: bool,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
+        validate_agent_mode(&request)?;
         let exe = self.resolve_executable()?;
         let mut cmd = self.build_command(&exe, &request);
         if title_only {
@@ -709,6 +714,7 @@ async fn run_session(session: Session) {
     let mut any_done = false;
     let mut done_after_interrupt = false;
     let mut escalation: Option<tokio::task::JoinHandle<()>> = None;
+    let mut pending_control_requests = HashMap::<String, tokio::task::AbortHandle>::new();
 
     'main: loop {
         tokio::select! {
@@ -732,7 +738,19 @@ async fn run_session(session: Session) {
                             }));
                             let _ = stdin_tx.send(StdinMsg::Line(line));
                         } else {
-                            handle_control_request(req, &request_input, &stdin_tx, &plan_mode);
+                            if let Some((request_id, waiter)) =
+                                handle_control_request(req, &request_input, &stdin_tx, &plan_mode)
+                                && let Some(previous) =
+                                    pending_control_requests.insert(request_id, waiter)
+                            {
+                                previous.abort();
+                            }
+                        }
+                        continue;
+                    }
+                    if let Frame::ControlCancelRequest(cancel) = frame {
+                        if let Some(waiter) = pending_control_requests.remove(&cancel.request_id) {
+                            waiter.abort();
                         }
                         continue;
                     }
@@ -802,6 +820,12 @@ async fn run_session(session: Session) {
         }
     }
 
+    // Detached control-request waiters must not outlive the CLI run: dropping
+    // their response receivers lets the engine retire any still-open input UI.
+    for waiter in pending_control_requests.into_values() {
+        waiter.abort();
+    }
+
     // Terminal bookkeeping: never end the stream without a Done unless the
     // consumer already hung up.
     if !event_tx.is_closed() {
@@ -839,6 +863,24 @@ type RequestInputFn = Box<
         + Sync,
 >;
 
+fn validate_agent_mode(request: &RunRequest) -> Result<(), HarnessError> {
+    let Some(value) = request.model_options.get(zeron_proto::AGENT_MODE_OPTION) else {
+        return Ok(());
+    };
+    let Some(mode) = value.as_str() else {
+        return Err(HarnessError::Protocol(
+            "Claude mode must be a string".into(),
+        ));
+    };
+    if matches!(mode, "default" | "plan") {
+        Ok(())
+    } else {
+        Err(HarnessError::Protocol(format!(
+            "Unsupported Claude mode: {mode}"
+        )))
+    }
+}
+
 /// Serve one `can_use_tool` control request. Every tool is auto-approved
 /// (unattended parity — the CLI still blocks until SOME response arrives, so
 /// every request must be answered); `AskUserQuestion` is intercepted —
@@ -851,22 +893,23 @@ fn handle_control_request(
     request_input: &Arc<RequestInputFn>,
     stdin_tx: &mpsc::UnboundedSender<StdinMsg>,
     plan_mode: &Arc<std::sync::atomic::AtomicBool>,
-) {
+) -> Option<(String, tokio::task::AbortHandle)> {
     if req.request.subtype != "can_use_tool" {
         tracing::debug!(
             target: "zeron_harness::claude",
             "unhandled control_request subtype: {}", req.request.subtype
         );
-        return;
+        return None;
     }
     if req.request.tool_name == "EnterPlanMode" {
         plan_mode.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     if req.request.tool_name == "ExitPlanMode" {
+        let request_id = req.request_id.clone();
         let plan_mode = Arc::clone(plan_mode);
         let request_input = Arc::clone(request_input);
         let stdin_tx = stdin_tx.clone();
-        tokio::spawn(async move {
+        let waiter = tokio::spawn(async move {
             let question = UserInputQuestion {
                 id: "implement-plan".into(),
                 header: "Plan ready".into(),
@@ -902,7 +945,7 @@ fn handle_control_request(
                 response,
             )));
         });
-        return;
+        return Some((request_id, waiter.abort_handle()));
     }
     if req.request.tool_name != "AskUserQuestion" {
         let response = if plan_mode.load(std::sync::atomic::Ordering::Relaxed)
@@ -914,14 +957,23 @@ fn handle_control_request(
         };
         let line = control_response_line(&req.request_id, response);
         let _ = stdin_tx.send(StdinMsg::Line(line));
-        return;
+        return None;
     }
     let request_input = Arc::clone(request_input);
     let stdin_tx = stdin_tx.clone();
-    tokio::spawn(async move {
+    let request_id = req.request_id.clone();
+    let waiter = tokio::spawn(async move {
         let request_id = req.request_id;
         let input = req.request.input;
         let questions = parse_questions(&input);
+        if !valid_ask_user_questions(&input, &questions) {
+            let response = serde_json::json!({
+                "behavior": "deny",
+                "message": "AskUserQuestion contained an invalid or ambiguous question payload"
+            });
+            let _ = stdin_tx.send(StdinMsg::Line(control_response_line(&request_id, response)));
+            return;
+        }
         // The engine's input bridge is the SOLE emitter of
         // `InputRequested`/`InputResolved`: it mints the request id, parks the
         // resolver for `respond_input`, and surfaces both events. Emitting our
@@ -929,18 +981,31 @@ fn handle_control_request(
         // input part into the doc whose id no resolver knew — the QuestionPanel
         // answered that unanswerable twin and the run never resumed.
         //
-        // A dropped sender (caller went away) degrades to empty answers so the
-        // agent is unblocked rather than wedged.
+        // Cancellation and invalid answers deny the tool. Allowing it with
+        // empty strings would report a successful answer the user never gave.
         let answers = (request_input)(questions.clone()).await.unwrap_or_default();
+        if answers.is_empty() || !zeron_proto::valid_input_answers(&questions, &answers) {
+            let response = serde_json::json!({
+                "behavior": "deny",
+                "message": if answers.is_empty() {
+                    "User cancelled the question"
+                } else {
+                    "Question answers did not match the request"
+                }
+            });
+            let _ = stdin_tx.send(StdinMsg::Line(control_response_line(&request_id, response)));
+            return;
+        }
         let updated = updated_input_with_answers(&input, &questions, &answers);
         let line = control_response_line(&request_id, allow_response(updated));
         let _ = stdin_tx.send(StdinMsg::Line(line));
     });
+    Some((request_id, waiter.abort_handle()))
 }
 
 /// Parse Claude's `AskUserQuestion` tool input into [`UserInputQuestion`]s
 /// (tolerant of `header`/`title`, `question`/`prompt`, string or object
-/// options — option descriptions are dropped, the wire type carries labels).
+/// options while preserving descriptions).
 fn parse_questions(input: &Value) -> Vec<UserInputQuestion> {
     let raw = input.get("questions").and_then(Value::as_array);
     raw.map(|a| a.as_slice())
@@ -991,6 +1056,21 @@ fn parse_questions(input: &Value) -> Vec<UserInputQuestion> {
             }
         })
         .collect()
+}
+
+fn valid_ask_user_questions(input: &Value, questions: &[UserInputQuestion]) -> bool {
+    if !zeron_proto::valid_input_questions(questions)
+        || input
+            .get("questions")
+            .and_then(Value::as_array)
+            .is_some_and(|raw| raw.iter().any(|question| question["isSecret"] == true))
+    {
+        return false;
+    }
+    let mut response_keys = std::collections::HashSet::new();
+    questions.iter().all(|question| {
+        !question.question.trim().is_empty() && response_keys.insert(question.question.clone())
+    })
 }
 
 /// Merge the user's answers back into the tool input, keyed by question text
@@ -1059,7 +1139,7 @@ mod tests {
                 "request_id": "plan-exit", "request": {"subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": {"plan": "Make the change"}}
             })).unwrap();
             let plan = Arc::new(std::sync::atomic::AtomicBool::new(true));
-            handle_control_request(req, &request_input, &tx, &plan);
+            let _ = handle_control_request(req, &request_input, &tx, &plan);
             let Some(StdinMsg::Line(line)) = rx.recv().await else {
                 panic!("response missing")
             };
@@ -1072,7 +1152,7 @@ mod tests {
             let write: ControlRequestFrame = serde_json::from_value(json!({
                 "request_id": "write", "request": {"subtype": "can_use_tool", "tool_name": "Write", "input": {"file_path": "/tmp/example"}}
             })).unwrap();
-            handle_control_request(write, &request_input, &tx, &plan);
+            let _ = handle_control_request(write, &request_input, &tx, &plan);
             let Some(StdinMsg::Line(line)) = rx.recv().await else {
                 panic!("response missing")
             };
@@ -1117,5 +1197,89 @@ mod tests {
         assert_eq!(updated["answers"]["Pick one"], json!("B"));
         // Original input is preserved alongside the answers.
         assert!(updated["questions"].is_array());
+    }
+
+    #[tokio::test]
+    async fn ask_user_cancellation_is_a_native_denial() {
+        let request_input: Arc<RequestInputFn> = Arc::new(Box::new(|_| {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            tx.send(Vec::new()).unwrap();
+            rx
+        }));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let req: ControlRequestFrame = serde_json::from_value(json!({
+            "request_id":"cancel", "request": {
+                "subtype":"can_use_tool", "tool_name":"AskUserQuestion",
+                "input":{"questions":[{"question":"Choose","options":["A"]}]}
+            }
+        }))
+        .unwrap();
+        let _ = handle_control_request(
+            req,
+            &request_input,
+            &tx,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let Some(StdinMsg::Line(line)) = rx.recv().await else {
+            panic!("response missing")
+        };
+        let response: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["response"]["response"]["behavior"], "deny");
+        assert!(
+            response["response"]["response"]
+                .get("updatedInput")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn ask_user_rejects_ambiguous_response_keys_before_prompting() {
+        let request_input: Arc<RequestInputFn> = Arc::new(Box::new(|_| {
+            panic!("ambiguous questions must not reach the UI bridge")
+        }));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let req: ControlRequestFrame = serde_json::from_value(json!({
+            "request_id":"duplicates", "request": {
+                "subtype":"can_use_tool", "tool_name":"AskUserQuestion",
+                "input":{"questions":[
+                    {"question":"Same text","options":["A"]},
+                    {"question":"Same text","options":["B"]}
+                ]}
+            }
+        }))
+        .unwrap();
+        let _ = handle_control_request(
+            req,
+            &request_input,
+            &tx,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let Some(StdinMsg::Line(line)) = rx.recv().await else {
+            panic!("response missing")
+        };
+        let response: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["response"]["response"]["behavior"], "deny");
+    }
+
+    #[test]
+    fn explicit_unknown_mode_is_rejected() {
+        let mut request = RunRequest {
+            prompt: "test".into(),
+            harness: None,
+            model: None,
+            reasoning: None,
+            model_options: serde_json::Map::new(),
+            cwd: String::new(),
+            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+            auto_approve: false,
+            resume: None,
+            attachments: Vec::new(),
+            worktree: None,
+        };
+        request
+            .model_options
+            .insert(zeron_proto::AGENT_MODE_OPTION.into(), "invented".into());
+        assert!(validate_agent_mode(&request).is_err());
+        assert!(ClaudeHarness::default().validate_request(&request).is_err());
     }
 }

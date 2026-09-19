@@ -809,7 +809,7 @@ impl Normalizer {
             }
 
             // Control frames are handled by the run loop, not normalized.
-            Frame::ControlRequest(_) | Frame::Other => Vec::new(),
+            Frame::ControlRequest(_) | Frame::ControlCancelRequest(_) | Frame::Other => Vec::new(),
         }
     }
 }
