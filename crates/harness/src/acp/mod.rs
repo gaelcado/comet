@@ -1677,6 +1677,16 @@ impl Harness for AcpHarness {
     fn reasoning_levels(&self) -> &[ReasoningLevel] {
         self.spec.reasoning_levels
     }
+    fn validate_request(&self, request: &RunRequest) -> Result<(), HarnessError> {
+        if request
+            .model_options
+            .get(zeron_proto::AGENT_MODE_OPTION)
+            .is_some_and(|mode| !mode.is_string())
+        {
+            return Err(HarnessError::Protocol("Invalid agent mode".into()));
+        }
+        Ok(())
+    }
 
     /// The agent's own CLI, not the adapter: `claude` counts as installed even
     /// when `claude-agent-acp` would arrive via npx, and an npx-reachable
@@ -2435,43 +2445,105 @@ fn is_user_question(options: &[Value]) -> bool {
     })
 }
 
+/// The composer response contract addresses choices by their displayed label,
+/// while ACP resolves them by opaque `optionId`. Agents are allowed to repeat
+/// or omit display names, so make the UI labels non-empty and unique and keep
+/// their positional mapping back to the exact native option.
+fn permission_option_labels(options: &[Value]) -> Vec<String> {
+    let mut labels = Vec::with_capacity(options.len());
+    for (index, option) in options.iter().enumerate() {
+        let base = option
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("Option {}", index + 1));
+        let mut label = base.clone();
+        let mut suffix = 2;
+        while labels.contains(&label) {
+            label = format!("{base} ({suffix})");
+            suffix += 1;
+        }
+        labels.push(label);
+    }
+    labels
+}
+
+fn answerable_permission_options(options: Vec<Value>) -> Vec<Value> {
+    let mut ids = std::collections::HashSet::new();
+    options
+        .into_iter()
+        .filter(|option| {
+            option
+                .get("optionId")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .is_some_and(|id| ids.insert(id.to_owned()))
+        })
+        .collect()
+}
+
 /// Native mode permissions, mode exits and question-shaped requests use the
 /// input bridge. Only agents without modes retain unattended permissions.
 /// Questions block on the
 /// engine's input bridge (in a subtask so the message loop keeps flowing)
-/// and answer with the option whose name matches the chosen label. A dropped
-/// resolver degrades to `cancelled` — never a silent allow.
+/// and map the chosen, disambiguated display label back to its opaque native
+/// option id. A dropped resolver degrades to `cancelled` — never a silent allow.
 fn handle_server_request_live(
     client: &RpcClient,
     id: Value,
     method: &str,
     params: &Value,
+    session_id: &str,
     request_input: &std::sync::Arc<RequestInputFn>,
+    mut input_cancel: tokio::sync::watch::Receiver<bool>,
     honor_mode_permissions: bool,
 ) -> Vec<AgentEvent> {
     if method != "session/request_permission" {
         return handle_server_request(client, id, method, params);
     }
-    let options: Vec<Value> = params
+    // A request can race in after the run-level interrupt broadcast. A watch
+    // receiver cloned after that broadcast has already observed the current
+    // version, so `changed()` alone would wait forever; reject it before the
+    // engine creates another pending composer request.
+    if *input_cancel.borrow() {
+        client.respond(&id, json!({ "outcome": { "outcome": "cancelled" } }));
+        return Vec::new();
+    }
+    // A single ACP process can multiplex sessions. Replayed or concurrent
+    // requests for another session must never open the active conversation's
+    // question tray. Cancel the native request so the foreign session is not
+    // left waiting, but do not involve this run's input bridge.
+    if params.get("sessionId").and_then(Value::as_str) != Some(session_id) {
+        client.respond(&id, json!({ "outcome": { "outcome": "cancelled" } }));
+        return Vec::new();
+    }
+    let raw_options = params
         .get("options")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    // Classify the native request before dropping malformed/unanswerable
+    // choices. A kind-less choice is user-facing even when it omitted an
+    // optionId; filtering it first could turn the remaining allow option into
+    // an unattended tool approval.
+    let user_question = is_user_question(&raw_options);
+    let options = answerable_permission_options(raw_options);
+    // The composer cannot answer a choice-only request with no choices. This
+    // can occur on extension/version skew; cancel immediately instead of
+    // presenting an input page that has no valid completion path.
+    if options.is_empty() {
+        client.respond(&id, json!({ "outcome": { "outcome": "cancelled" } }));
+        return Vec::new();
+    }
     if !honor_mode_permissions
-        && !is_user_question(&options)
+        && !user_question
         && params["toolCall"]["kind"] != "switch_mode"
     {
         return handle_server_request(client, id, method, params);
     }
-    let names: Vec<String> = options
-        .iter()
-        .map(|o| {
-            o.get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned()
-        })
-        .collect();
+    let names = permission_option_labels(&options);
     let question = UserInputQuestion {
         id: new_message_id(),
         header: "Agent question".into(),
@@ -2479,6 +2551,8 @@ fn handle_server_request_live(
             .get("toolCall")
             .and_then(|t| t.get("title"))
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
             .unwrap_or("The agent needs your input.")
             .to_owned(),
         options: names.clone(),
@@ -2490,18 +2564,17 @@ fn handle_server_request_live(
     let client = client.clone();
     let request_input = std::sync::Arc::clone(request_input);
     tokio::spawn(async move {
-        let answers = (request_input)(vec![question.clone()])
-            .await
-            .unwrap_or_default();
+        let answer_rx = (request_input)(vec![question.clone()]);
+        let answers = tokio::select! {
+            answers = answer_rx => answers.unwrap_or_default(),
+            _ = input_cancel.changed() => Vec::new(),
+        };
         let picked = answers
             .iter()
             .find(|a| a.question_id == question.id)
             .and_then(|a| a.labels.first())
-            .and_then(|label| {
-                options
-                    .iter()
-                    .find(|o| o.get("name").and_then(Value::as_str) == Some(label.as_str()))
-            })
+            .and_then(|label| names.iter().position(|name| name == label))
+            .and_then(|index| options.get(index))
             .and_then(|o| o.get("optionId").and_then(Value::as_str));
         match picked {
             Some(option_id) => client.respond(
@@ -2512,6 +2585,24 @@ fn handle_server_request_live(
         }
     });
     Vec::new()
+}
+
+fn advertises_modes(value: &Value) -> bool {
+    legacy_mode_option(value).is_some()
+        || value["configOptions"]
+            .as_array()
+            .is_some_and(|options| options.iter().any(|option| option["category"] == "mode"))
+}
+
+/// Apply a live config snapshot only when it belongs to this session. ACP
+/// agents may refresh configuration after `session/new` (login/model rollout,
+/// or a resumed session finishing hydration), so permission routing must track
+/// the newest advertised mode surface rather than freezing the handshake.
+fn live_mode_capability(params: &Value, session_id: &str) -> Option<bool> {
+    (params.get("sessionId").and_then(Value::as_str) == Some(session_id)
+        && params["update"]["sessionUpdate"] == "config_option_update"
+        && params["update"]["configOptions"].is_array())
+    .then(|| advertises_modes(&params["update"]))
 }
 
 /// `session/new`. Agents that sign in from Settings never start a browser
@@ -2817,6 +2908,7 @@ async fn run_session(session: Session) {
         interrupt,
     } = controls;
     let request_input = std::sync::Arc::new(request_input);
+    let (input_cancel_tx, input_cancel_rx) = tokio::sync::watch::channel(false);
 
     // ---- handshake + session (interruptible) ------------------------------
     let setup = async {
@@ -2991,10 +3083,7 @@ async fn run_session(session: Session) {
                 );
             }
         }
-        let honor_mode_permissions = legacy_mode_option(&options_snapshot).is_some()
-            || options_snapshot["configOptions"]
-                .as_array()
-                .is_some_and(|opts| opts.iter().any(|o| o["category"] == "mode"));
+        let honor_mode_permissions = advertises_modes(&options_snapshot);
         Ok::<(String, bool, Vec<SlashCommand>, bool), HarnessError>((
             session_id,
             steer_ext,
@@ -3002,7 +3091,7 @@ async fn run_session(session: Session) {
             honor_mode_permissions,
         ))
     };
-    let (session_id, steer_ext, init_commands, honor_mode_permissions) = tokio::select! {
+    let (session_id, steer_ext, init_commands, mut honor_mode_permissions) = tokio::select! {
         res = tokio::time::timeout(handshake_timeout, setup) => {
             let res = res.unwrap_or_else(|_| {
                 // A hung handshake (agent waiting on a login it can never
@@ -3274,7 +3363,9 @@ async fn run_session(session: Session) {
                                 id,
                                 &method,
                                 &params,
+                                &session_id,
                                 &request_input,
+                                input_cancel_rx.clone(),
                                 honor_mode_permissions,
                             ) {
                                 if !send(&event_tx, ev).await {
@@ -3367,6 +3458,11 @@ async fn run_session(session: Session) {
             inc = incoming.recv() => match inc {
                 Some(Incoming::Notification { method, params }) => {
                     last_update_at = tokio::time::Instant::now();
+                    if method == "session/update"
+                        && let Some(advertised) = live_mode_capability(&params, &session_id)
+                    {
+                        honor_mode_permissions = advertised;
+                    }
                     // Wire traffic is a sign of life for the prompt-stall
                     // watchdog — EXCEPT session boilerplate: opencode emits
                     // available_commands_update right after session/new on
@@ -3447,7 +3543,9 @@ async fn run_session(session: Session) {
                         id,
                         &method,
                         &params,
+                        &session_id,
                         &request_input,
+                        input_cancel_rx.clone(),
                         honor_mode_permissions,
                     ) {
                         if !send(&event_tx, ev).await {
@@ -3557,7 +3655,9 @@ async fn run_session(session: Session) {
                                         id,
                                         &method,
                                         &params,
+                                        &session_id,
                                         &request_input,
+                                        input_cancel_rx.clone(),
                                         honor_mode_permissions,
                                     ) {
                                         if !send(&event_tx, ev).await {
@@ -3853,6 +3953,9 @@ async fn run_session(session: Session) {
             _ = interrupt.cancelled(), if !interrupt_sent => {
                 interrupt_sent = true;
                 interrupted = true;
+                // ACP requires every pending permission request to receive a
+                // cancelled response when its prompt turn is cancelled.
+                let _ = input_cancel_tx.send(true);
                 if turn.is_some() {
                     client.notify("session/cancel", Some(json!({ "sessionId": session_id })));
                     // Escalate if the agent doesn't wind down (stopReason
@@ -3913,6 +4016,10 @@ async fn run_session(session: Session) {
             _ = event_tx.closed() => break 'main,
         }
     }
+
+    // Also release native input if the transport ends through EOF, a prompt
+    // error, or consumer teardown instead of an explicit interrupt.
+    let _ = input_cancel_tx.send(true);
 
     // A vanished Devin process cannot send subagent_completed. Settle every
     // open nested transcript before the parent's terminal Done.
