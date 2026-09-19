@@ -37,6 +37,16 @@ impl TurnWire {
         auto_approve: bool,
         answer: Option<bool>,
     ) -> Self {
+        Self::start_mode(queued, v2, auto_approve, answer, None).await
+    }
+
+    async fn start_mode(
+        queued: bool,
+        v2: bool,
+        auto_approve: bool,
+        answer: Option<bool>,
+        mode: Option<&str>,
+    ) -> Self {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -142,7 +152,7 @@ impl TurnWire {
                 interrupt: interrupt.clone(),
             },
             request: serde_json::from_value(
-                json!({"prompt":"first", "cwd":"", "sandbox":"workspace-write", "autoApprove": auto_approve, "model": if v2 { Some("opencode/muse") } else { None }, "reasoning": "low"}),
+                json!({"prompt":"first", "cwd":"", "sandbox":"workspace-write", "autoApprove": auto_approve, "modelOptions": mode.map(|mode| json!({"agentMode":mode})).unwrap_or(json!({})), "model": if v2 { Some("opencode/muse") } else { None }, "reasoning": "low"}),
             )
             .unwrap(),
             interrupt_grace: Duration::from_secs(2),
@@ -1427,4 +1437,86 @@ fn native_skill_catalog_rejects_unrepresentable_commands() {
         };
         assert_eq!(invocation_links(&invocation.link())[0].1, invocation);
     }
+}
+
+#[tokio::test]
+async fn plan_mode_selects_the_native_opencode_agent_and_requires_permissions() {
+    let mut wire = TurnWire::start_mode(false, false, true, Some(false), Some("plan")).await;
+    wire.request("/prompt_async").await;
+    assert!(
+        wire.posts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(path, body)| path.ends_with("/prompt_async") && body["agent"] == "plan")
+    );
+    wire.bus.send(json!({"type":"permission.asked", "properties":{"id":"plan-write", "sessionID":"fixture"}})).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some((_, body)) = wire
+                .posts
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(path, _)| path.contains("plan-write"))
+            {
+                assert_eq!(body["reply"], "reject");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn todo_events_are_session_scoped_and_empty_snapshots_clear() {
+    let mut wire = TurnWire::start(false).await;
+    wire.request("/prompt_async").await;
+    wire.status("busy");
+    for (session, todos) in [
+        ("foreign", json!([{"content":"Wrong", "status":"pending"}])),
+        (
+            "fixture",
+            json!([{"content":"Work", "status":"in_progress"},{"content":"Skipped", "status":"cancelled"}]),
+        ),
+        ("fixture", json!([])),
+    ] {
+        wire.bus
+            .send(json!({"type":"todo.updated", "properties":{"sessionID":session,"todos":todos}}))
+            .unwrap();
+    }
+    wire.idle();
+    let mut snapshots = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(event) = wire.events.recv().await {
+            match event.unwrap() {
+                AgentEvent::ToolCall {
+                    call: ToolCall::Todo { items },
+                    ..
+                } => snapshots.push(items),
+                AgentEvent::Done { .. } => break,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0][0].state(), zeron_proto::TodoStatus::InProgress);
+    assert_eq!(snapshots[0][1].state(), zeron_proto::TodoStatus::Cancelled);
+    assert!(snapshots[1].is_empty());
+}
+
+#[test]
+fn question_capability_contract() {
+    let mapped = map_questions(&serde_json::json!({"questions":[
+        {"question":"Choose","custom":false,"multiple":true,"options":[{"label":"One","description":"First option"}]},
+        {"question":"Explain","options":[]}
+    ]}));
+    assert!(!mapped[0].allow_custom);
+    assert!(mapped[0].multi_select);
+    assert_eq!(mapped[0].option_descriptions, ["First option"]);
+    assert!(mapped[1].allow_custom);
 }
