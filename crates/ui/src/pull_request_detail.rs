@@ -591,6 +591,10 @@ impl PullRequestDetailPage {
         let now = Instant::now();
         let tabs = div()
             .id("pr-detail-nav")
+            // Occlude links/images; consume raw bubble listeners used by Markdown selection too.
+            .occlude()
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_up(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .debug_selector(|| "pr-detail-nav".into())
             .p(px(4.0))
             .relative()
@@ -1818,6 +1822,69 @@ mod tests {
         assert!(cx.debug_bounds("pr-file-0").is_none());
         assert!(cx.debug_bounds("pr-file-1").is_some());
         assert!(cx.debug_bounds("pr-file-2").is_none());
+    }
+
+    struct NavigationHitHost {
+        page: Entity<PullRequestDetailPage>,
+        presses: usize,
+        clicks: usize,
+        raw_presses: Rc<std::cell::Cell<usize>>,
+    }
+
+    impl Render for NavigationHitHost {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::of(cx).clone();
+            let navigation = self.page.update(cx, |page, cx| page.navigation(&theme, cx));
+            let raw = self.raw_presses.clone();
+            div().size_full().relative()
+                .child(div().id("under-tabs").size_full().relative()
+                    .child(gpui::canvas(|_, _, _| (), move |bounds, _, window, _| {
+                        window.on_mouse_event(move |event: &gpui::MouseDownEvent, phase, _, _| {
+                            if phase == gpui::DispatchPhase::Bubble && bounds.contains(&event.position) {
+                                raw.set(raw.get() + 1);
+                            }
+                        });
+                    }).absolute().inset_0())
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|host, _, _, _| host.presses += 1))
+                    .on_click(cx.listener(|host, _, _, _| host.clicks += 1)))
+                .child(navigation)
+        }
+    }
+
+    #[gpui::test]
+    fn pull_request_navigation_occludes_underlying_press_and_click(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let (host, cx) = cx.add_window_view(|window, cx| {
+            let state = cx.new(|_| AppState::new());
+            let page = cx.new(|cx| PullRequestDetailPage::new(
+                state, "https://github.com/a/b/pull/1".into(), None,
+                Default::default(), None, window, cx,
+            ));
+            NavigationHitHost { page, presses: 0, clicks: 0, raw_presses: Default::default() }
+        });
+        cx.simulate_resize(gpui::size(px(600.0), px(400.0)));
+        cx.run_until_parked();
+        let tab = cx.debug_bounds("pr-checks").unwrap();
+        let nav = cx.debug_bounds("pr-detail-nav").unwrap();
+        for point in [tab.center(), gpui::point(nav.left() + px(2.0), nav.center().y)] {
+            cx.simulate_mouse_down(point, gpui::MouseButton::Left, gpui::Modifiers::default());
+            cx.simulate_mouse_up(point, gpui::MouseButton::Left, gpui::Modifiers::default());
+        }
+        host.read_with(cx, |host, cx| {
+            assert_eq!(host.presses, 0, "tabs and glass padding must block selection starts beneath them");
+            assert_eq!(host.clicks, 0, "tabs must block underlying links/images");
+            assert_eq!(host.raw_presses.get(), 0, "raw text-selection listeners must not receive tab presses");
+            assert!(host.page.read(cx).tab == Tab::Checks);
+        });
+        let outside = gpui::point(nav.left() - px(10.0), nav.center().y);
+        cx.simulate_mouse_down(outside, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(outside, gpui::MouseButton::Left, gpui::Modifiers::default());
+        host.read_with(cx, |host, _| {
+            assert_eq!(host.presses, 1, "only the glass footprint should intercept input");
+            assert_eq!(host.clicks, 1);
+            assert_eq!(host.raw_presses.get(), 1);
+        });
     }
 
     struct DetailHost {
