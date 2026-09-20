@@ -7,7 +7,7 @@ use crate::{
     theme::Theme,
 };
 use gpui::{
-    Action, AnyElement, App, Context, Entity, IntoElement, Render, SharedString, Subscription,
+    Action, AnyElement, App, Context, Entity, Focusable, IntoElement, Render, SharedString, Subscription,
     Task, Window, div, prelude::*, px,
 };
 #[cfg(test)]
@@ -164,18 +164,15 @@ struct ParsedDiff {
     patch: Arc<String>,
     rows: Arc<Vec<CodeRow>>,
     files: Arc<Vec<(String, usize)>>,
-    width: f32,
 }
 
 impl ParsedDiff {
     fn new(patch: String) -> Self {
         let (rows, files) = code_rows(&patch);
-        let width = code_content_width(&rows);
         Self {
             patch: Arc::new(patch),
             rows: Arc::new(rows),
             files: Arc::new(files),
-            width,
         }
     }
 }
@@ -242,6 +239,10 @@ pub struct PullRequestDetailPage {
     diff_error: Option<String>,
     tab: Tab,
     tab_fades: crate::motion::HoverFades,
+    selected_code_file: usize,
+    file_search: Entity<crate::composer::ComposerInput>,
+    file_search_subscription: Option<Subscription>,
+    file_query: String,
     files_expanded: bool,
     files_motion: Option<crate::motion::DisclosureMotion>,
     files_height: Rc<std::cell::Cell<f32>>,
@@ -298,6 +299,12 @@ impl PullRequestDetailPage {
             diff_error: None,
             tab: Tab::Summary,
             tab_fades,
+            selected_code_file: 0,
+            file_search: cx.new(|cx| crate::composer::ComposerInput::with_context(
+                "Find a changed file…", "PaletteSearch", cx,
+            ).with_single_line().with_text_metrics(12.0, 16.0)),
+            file_search_subscription: None,
+            file_query: String::new(),
             files_expanded: false,
             files_motion: None,
             files_height: Rc::new(std::cell::Cell::new(0.0)),
@@ -323,6 +330,17 @@ impl PullRequestDetailPage {
             image_previous_focus: None,
             image_error: None,
         };
+        page.file_search_subscription = Some(cx.subscribe(&page.file_search, |page: &mut Self, input, event, cx| {
+            if matches!(event, crate::composer::ComposerInputEvent::Edited) {
+                page.file_query = input.read(cx).text().to_lowercase();
+                cx.notify();
+            } else if matches!(event, crate::composer::ComposerInputEvent::Submitted) {
+                if let Some(index) = page.code_files.iter().position(|(path, _)| path.to_lowercase().contains(&page.file_query)) {
+                    page.select_code_file(index, cx);
+                    if page.files_expanded { page.toggle_files(cx); }
+                }
+            }
+        }));
         page.comment_subscription =
             Some(cx.subscribe(&page.comment_input, |page, _, event, cx| {
                 page.comment_event(event, cx)
@@ -549,7 +567,6 @@ impl PullRequestDetailPage {
             patch: self.diff.clone()?,
             rows: self.code_rows.clone(),
             files: self.code_files.clone(),
-            width: self.code_width,
         })
     }
 
@@ -557,7 +574,8 @@ impl PullRequestDetailPage {
         self.diff = Some(diff.patch);
         self.code_rows = diff.rows;
         self.code_files = diff.files;
-        self.code_width = diff.width;
+        self.selected_code_file = self.selected_code_file.min(self.code_files.len().saturating_sub(1));
+        self.code_width = code_content_width(&self.code_rows[self.code_range()]);
     }
 
     fn navigation(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -658,19 +676,34 @@ impl PullRequestDetailPage {
         div()
             .absolute()
             .bottom(px(16.0))
-            .left(px(12.0))
-            .right(px(12.0))
-            .w(px(216.0))
-            .mx_auto()
-            .child(crate::frost::frosted(radius, crate::frost::MENU_BLUR, tabs))
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(div().w(px(216.0)).child(crate::frost::frosted(radius, crate::frost::MENU_BLUR, tabs)))
             .into_any_element()
+    }
+
+    fn code_range(&self) -> std::ops::Range<usize> {
+        let start = self.code_files.get(self.selected_code_file).map_or(0, |(_, offset)| *offset);
+        let end = self.code_files.get(self.selected_code_file + 1).map_or(self.code_rows.len(), |(_, offset)| *offset);
+        start..end
+    }
+
+    fn select_code_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.code_files.len() { return; }
+        self.selected_code_file = index;
+        self.code_width = code_content_width(&self.code_rows[self.code_range()]);
+        self.code_scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
+        self.code_horizontal.set_offset(gpui::Point::default());
+        cx.notify();
     }
 
     fn toggle_files(&mut self, cx: &mut Context<Self>) {
         let height = self
             .files_height
             .get()
-            .max((self.code_files.len() as f32 * 28.0).min(168.0));
+            .max((self.code_files.len() as f32 * 28.0 + 40.0).min(208.0));
         let previous = self.files_motion;
         let from = previous
             .filter(|motion| motion.animating())
@@ -783,9 +816,11 @@ impl Render for PrActionTooltip {
 fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     let icon_only = matches!(
         id,
-        "pr-back" | "pr-external" | "pr-copy-url" | "pr-detail-refresh"
+        "pr-back" | "pr-external" | "pr-copy-url" | "pr-detail-refresh" | "pr-previous-file" | "pr-next-file"
     );
     let glyph = match id {
+        "pr-previous-file" => Some(crate::icons::ALT_ARROW_LEFT),
+        "pr-next-file" => Some(crate::icons::ALT_ARROW_RIGHT),
         "pr-back" => Some(crate::icons::ALT_ARROW_LEFT),
         "pr-copy-url" if label == "Link copied" => Some(crate::icons::CHECK),
         "pr-copy-url" | "pr-copy-patch" => Some(crate::icons::COPY),
@@ -982,6 +1017,7 @@ impl Render for PullRequestDetailPage {
         let theme = Theme::of(cx).clone();
         let content = {
             let mut column = widgets::page_column()
+                .id("pr-content-column").debug_selector(|| "pr-content-column".into())
                 .when(self.tab == Tab::Code, |el| el.h_full().min_h_0())
                 .pt(px(24.0))
                 .pb(px(if self.tab == Tab::Activity {
@@ -1229,8 +1265,11 @@ impl Render for PullRequestDetailPage {
                                                         ),
                                                     ),
                                             )
-                                            .on_click(cx.listener(|page, _, _, cx| {
+                                            .on_click(cx.listener(|page, _, window, cx| {
                                                 page.toggle_files(cx);
+                                                if page.files_expanded {
+                                                    window.focus(&page.file_search.read(cx).focus_handle(cx), cx);
+                                                }
                                             })),
                                     )
                                     .justify_between()
@@ -1248,10 +1287,11 @@ impl Render for PullRequestDetailPage {
                                 let height = self.files_height.clone();
                                 let mut file_list = div()
                                     .id("pr-file-list")
-                                    .max_h(px(160.0))
+                                    .max_h(px(200.0))
                                     .overflow_y_scroll()
                                     .mt(px(8.0))
                                     .relative()
+                                    .child(div().py(px(8.0)).child(crate::surface_chrome::input().child(div().flex_1().min_w_0().child(self.file_search.clone()))))
                                     .child(
                                         gpui::canvas(
                                             move |bounds, _, _| {
@@ -1264,22 +1304,23 @@ impl Render for PullRequestDetailPage {
                                     );
                                 let file_stats: std::collections::HashMap<_, _> = detail.files
                                     .iter().map(|file| (file.path.as_str(), file)).collect();
-                                for (index, (path, offset)) in self.code_files.iter().enumerate() {
-                                    let offset = *offset;
+                                let mut matches = 0;
+                                for (index, (path, _)) in self.code_files.iter().enumerate() {
+                                    if !self.file_query.is_empty() && !path.to_lowercase().contains(&self.file_query) { continue; }
+                                    matches += 1;
                                     let stats = file_stats.get(path.as_str());
                                     file_list = file_list.child(
                                         widgets::ghost_action(&theme)
                                             .id(SharedString::from(format!("pr-file-{index}")))
+                                            .debug_selector(move || format!("pr-file-{index}"))
                                             .role(gpui::Role::Button)
-                                            .aria_label(format!("Jump to {path}"))
+                                            .aria_label(format!("Open diff for {path}"))
+                                            .when(index == self.selected_code_file, |el| el.bg(theme.glass_hover()))
                                             .focus_visible(|style| style.bg(theme.glass_hover()))
                                             .hover(|style| style.bg(theme.glass_hover()))
                                             .tab_index(0)
                                             .on_click(cx.listener(move |page, _, _, cx| {
-                                                page.code_scroll.scroll_to_item(
-                                                    offset,
-                                                    gpui::ScrollStrategy::Top,
-                                                );
+                                                page.select_code_file(index, cx);
                                                 if page.files_expanded {
                                                     page.toggle_files(cx);
                                                 }
@@ -1296,6 +1337,9 @@ impl Render for PullRequestDetailPage {
                                                 .child(div().flex_none().text_color(theme.danger).child(format!("−{}", file.deletions)))),
                                     );
                                 }
+                                if matches == 0 {
+                                    file_list = file_list.child(div().p(px(12.0)).text_color(theme.text_muted).child("No matching files"));
+                                }
                                 column = column.child(
                                     div()
                                         .flex_none()
@@ -1311,6 +1355,21 @@ impl Render for PullRequestDetailPage {
                                         .child(file_list),
                                 );
                             }
+                            let current = self.selected_code_file;
+                            column = column.child(div()
+                                .id("pr-file-navigation").debug_selector(|| "pr-file-navigation".into())
+                                .flex_none().mt(px(8.0)).flex().items_center().gap(px(8.0))
+                                .child(div().flex_1().min_w_0().truncate().text_size(px(12.0))
+                                    .child(self.code_files.get(current).map(|(path, _)| path.clone()).unwrap_or_else(|| "No changed files".into())))
+                                .child(div().flex_none().text_size(px(11.0)).text_color(theme.text_muted)
+                                    .child(format!("{} / {}", if self.code_files.is_empty() { 0 } else { current + 1 }, self.code_files.len())))
+                                .child(action("pr-previous-file", "Previous file", &theme)
+                                    .when(current == 0, |el| el.opacity(0.4))
+                                    .on_click(cx.listener(move |page, _, _, cx| { if current > 0 { page.select_code_file(current - 1, cx); } })))
+                                .child(action("pr-next-file", "Next file", &theme)
+                                    .when(current + 1 >= self.code_files.len(), |el| el.opacity(0.4))
+                                    .on_click(cx.listener(move |page, _, _, cx| page.select_code_file(current + 1, cx)))));
+                            let visible_rows = self.code_range();
                             let rows = self.code_rows.clone();
                             let files = self.code_files.clone();
                             let code_width = (self.code_width - 128.0) / 7.0
@@ -1337,10 +1396,11 @@ impl Render for PullRequestDetailPage {
                                                 true,
                                                 gpui::uniform_list(
                                                     "pr-code-lines",
-                                                    rows.len(),
+                                                    visible_rows.len(),
                                                     move |range, _, _| {
                                                         range
                                                     .map(|index| {
+                                                        let index = index + visible_rows.start;
                                                         let row = &rows[index];
                                                         if row.kind == crate::changes::LineKind::Meta {
                                                             let file_header = files.binary_search_by_key(&index, |(_, offset)| *offset).is_ok();
@@ -1398,13 +1458,24 @@ impl Render for PullRequestDetailPage {
                                     .child("No comments or reviews yet."),
                             );
                         }
+                        let viewer_login = detail.comments.iter().chain(detail.reviews.iter())
+                            .find(|comment| comment.viewer_did_author && !comment.author.login.is_empty())
+                            .map(|comment| comment.author.login.as_str());
                         for (index, comment) in activity {
+                            let own = comment.viewer_did_author || viewer_login.is_some_and(|login| login.eq_ignore_ascii_case(&comment.author.login));
                             column = column.child(
-                                div()
-                                    .mb(px(16.0))
-                                    .p(px(16.0))
-                                    .rounded(px(16.0))
-                                    .bg(theme.glass_hover())
+                                div().w_full().flex().mb(px(24.0))
+                                    .when(own, |el| el.justify_end())
+                                    .child(div()
+                                    .id(SharedString::from(format!("pr-message-{index}")))
+                                    .debug_selector(move || format!("pr-message-{index}"))
+                                    .min_w_0()
+                                    .w(gpui::relative(0.9))
+                                    .when(own, |el| el
+                                        .max_w(gpui::relative(0.8))
+                                        .px(px(16.0)).py(px(10.0))
+                                        .rounded(px(Theme::BUBBLE_RADIUS))
+                                        .bg(crate::theme::user_bubble_bg()))
                                     .flex()
                                     .flex_col()
                                     .gap(px(8.0))
@@ -1446,7 +1517,7 @@ impl Render for PullRequestDetailPage {
                                             ),
                                     )
                                     .children(self.activity_bodies.get(index).map(|body| {
-                                        div().pl(px(32.0)).child(rich_text(
+                                        div().child(rich_text(
                                             body,
                                             format!("pr-activity-{index}"),
                                             &self.url,
@@ -1454,7 +1525,7 @@ impl Render for PullRequestDetailPage {
                                             window,
                                             cx.weak_entity(),
                                         ))
-                                    })),
+                                    }))),
                             );
                         }
                     }
@@ -1715,6 +1786,40 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn pull_request_file_navigation_slices_cached_diff_and_resets_scrolling(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let (host, cx) = cx.add_window_view(|window, cx| DetailHost::new(window, cx, true));
+        let page = host.read_with(cx, |host, _| host.page.clone());
+        page.update(cx, |page, cx| {
+            let patch = ["a.rs", "nested/b.rs", "c.rs"].iter().map(|name| format!(
+                "diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n-old\n+new\n"
+            )).collect::<String>();
+            page.install_diff(ParsedDiff::new(patch));
+            let cached = page.code_rows.clone();
+            page.select_tab(Tab::Code, cx);
+            for index in [2, 0, 1] {
+                page.select_code_file(index, cx);
+                let range = page.code_range();
+                assert_eq!(page.code_rows[range.start].text.as_ref(), page.code_files[index].0);
+                assert_eq!(range.len(), 4);
+                assert!(Arc::ptr_eq(&cached, &page.code_rows));
+                assert_eq!(page.code_horizontal.offset().x, px(0.0));
+            }
+            page.select_code_file(99, cx);
+            assert_eq!(page.selected_code_file, 1);
+            page.file_search.update(cx, |input, cx| input.set_text("NESTED", cx));
+            page.files_expanded = true;
+        });
+        cx.run_until_parked();
+        page.read_with(cx, |page, _| assert_eq!(page.file_query, "nested"));
+        assert!(cx.debug_bounds("pr-file-navigation").is_some());
+        assert!(cx.debug_bounds("pr-file-0").is_none());
+        assert!(cx.debug_bounds("pr-file-1").is_some());
+        assert!(cx.debug_bounds("pr-file-2").is_none());
+    }
+
     struct DetailHost {
         page: Entity<PullRequestDetailPage>,
         _subscription: Subscription,
@@ -1746,7 +1851,14 @@ mod tests {
                     page.detail.as_mut().unwrap().reviews.push(zeron_proto::ChangeRequestComment {
                         body: review.into(), ..Default::default()
                     });
-                    page.activity_bodies = vec![super::super::pull_request_media::parse_description(review)];
+                    page.detail.as_mut().unwrap().comments.push(zeron_proto::ChangeRequestComment {
+                        viewer_did_author: true, body: "My comment".into(),
+                        author: zeron_proto::ChangeRequestActor { login: "viewer".into() }, ..Default::default()
+                    });
+                    page.activity_bodies = vec![
+                        super::super::pull_request_media::parse_description("My comment"),
+                        super::super::pull_request_media::parse_description(review),
+                    ];
                     let patch = format!("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+{}\n", "long_expression_".repeat(30));
                     let (rows, files) = code_rows(&patch);
                     page.code_width = code_content_width(&rows);
@@ -1917,6 +2029,22 @@ mod tests {
         cx.run_until_parked();
         page.read_with(cx, |page, _| assert!(page.tab == Tab::Activity));
         assert!(cx.debug_bounds("pr-rich-text").is_some());
+        for width in [320.0, 900.0, 1200.0] {
+            cx.simulate_resize(gpui::size(px(width), px(800.0)));
+            cx.run_until_parked();
+            let column = cx.debug_bounds("pr-content-column").unwrap();
+            let composer = cx.debug_bounds("pr-comment-surface").unwrap();
+            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
+            let mine = cx.debug_bounds("pr-message-0").unwrap();
+            let other = cx.debug_bounds("pr-message-1").unwrap();
+            assert_eq!(composer.left(), column.left() + px(24.0));
+            assert_eq!(composer.right(), column.right() - px(24.0));
+            assert_eq!(nav.center().x, composer.center().x);
+            assert_eq!(mine.right(), composer.right());
+            assert_eq!(other.left(), composer.left());
+            assert!(mine.left() > other.left());
+        }
+
         cx.simulate_resize(gpui::size(px(900.0), px(400.0)));
         cx.run_until_parked();
         let nav = cx.debug_bounds("pr-detail-nav").unwrap();

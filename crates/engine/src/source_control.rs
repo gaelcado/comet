@@ -383,6 +383,7 @@ impl GitHubCli {
         let value: serde_json::Value =
             serde_json::from_slice(&output.stdout).map_err(|_| ChangeRequestError::Decode)?;
         Ok(zeron_proto::ChangeRequestComment {
+            viewer_did_author: true,
             body: value["body"]
                 .as_str()
                 .ok_or(ChangeRequestError::Decode)?
@@ -1592,6 +1593,7 @@ mod tests {
             .unwrap();
         assert_eq!(comment.body, body);
         assert_eq!(comment.author.login, "octocat");
+        assert!(comment.viewer_did_author);
         assert!(github.pr_cache.lock().await.entries.is_empty());
         let requests = runner.requests();
         assert_eq!(requests.len(), 1);
@@ -1642,7 +1644,7 @@ mod tests {
 
     #[tokio::test]
     async fn pr_detail_normalizes_absent_github_fields_and_uses_bounded_process() {
-        let runner = FakeProcessRunner::with_responses([command_success(br#"{"number":12,"title":"A PR","body":"Description","author":null,"reviewDecision":null,"statusCheckRollup":[{"name":"build","status":"IN_PROGRESS","conclusion":null}]}"#.to_vec())]);
+        let runner = FakeProcessRunner::with_responses([command_success(br#"{"number":12,"title":"A PR","body":"Description","author":null,"reviewDecision":null,"comments":[{"viewerDidAuthor":true,"author":{"login":"viewer"},"body":"Own comment"},{"author":{"login":"other"},"body":"Other comment"}],"statusCheckRollup":[{"name":"build","status":"IN_PROGRESS","conclusion":null}]}"#.to_vec())]);
         let result = GitHubCli::with_runner(runner.clone())
             .detail("https://github.com/a/b/pull/12", false, false)
             .await
@@ -1651,6 +1653,8 @@ mod tests {
         assert_eq!(detail.status_check_rollup[0].status, "IN_PROGRESS");
         assert_eq!(detail.status_check_rollup[0].conclusion, "");
         assert!(detail.author.login.is_empty());
+        assert!(detail.comments[0].viewer_did_author);
+        assert!(!detail.comments[1].viewer_did_author);
         let request = &runner.requests()[0];
         assert_eq!(
             &request.args[..3],

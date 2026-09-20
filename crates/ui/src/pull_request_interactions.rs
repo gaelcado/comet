@@ -252,11 +252,11 @@ impl PullRequestDetailPage {
         div()
             .absolute()
             .bottom(px(72.0))
-            .left(px(24.0))
-            .right(px(24.0))
-            .max_w(px(720.0))
-            .mx_auto()
-            .child(stack)
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(div().w_full().max_w(px(768.0)).px(px(24.0)).child(stack))
             .into_any_element()
     }
 

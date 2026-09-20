@@ -894,6 +894,8 @@ pub struct ChangeRequestActor {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChangeRequestComment {
+    /// Provided by GitHub for the authenticated viewer, independent of PR authorship.
+    pub viewer_did_author: bool,
     pub author: ChangeRequestActor,
     pub body: String,
     pub state: String,
