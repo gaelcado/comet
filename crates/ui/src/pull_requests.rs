@@ -115,23 +115,6 @@ fn request_group(item: &ChangeRequestListItem) -> PullRequestGroup {
     }
 }
 
-fn group_glyph(group: PullRequestGroup) -> &'static str {
-    match group {
-        PullRequestGroup::Attention => icons::DANGER_TRIANGLE,
-        PullRequestGroup::Review => icons::CLOCK_CIRCLE,
-        PullRequestGroup::Approved => icons::CHECK,
-        PullRequestGroup::Drafts => icons::DOCUMENT,
-    }
-}
-
-fn group_color(group: PullRequestGroup, theme: &Theme) -> gpui::Hsla {
-    match group {
-        PullRequestGroup::Attention => theme.warning,
-        PullRequestGroup::Approved => theme.success,
-        PullRequestGroup::Review | PullRequestGroup::Drafts => theme.text_muted,
-    }
-}
-
 fn request_glyph(item: &ChangeRequestListItem) -> &'static str {
     if item.is_draft {
         icons::DOCUMENT
@@ -809,7 +792,10 @@ impl Render for PullRequestsPage {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(Theme::SPACE_XS))
+                            .gap(px(2.0))
+                            .p(px(3.0))
+                            .rounded(px(9.0))
+                            .bg(theme.glass_hover())
                             .children(
                                 [
                                     ("Updated", PullRequestSortField::Updated),
@@ -818,7 +804,7 @@ impl Render for PullRequestsPage {
                                 ]
                                 .into_iter()
                                 .map(|(label, field)| {
-                                    render_sort_header(label, 76.0, field, self.sort, &theme, cx)
+                                    render_sort_header(label, 80.0, field, self.sort, &theme, cx)
                                 }),
                             ),
                     ),
@@ -1047,11 +1033,6 @@ fn render_grouped_requests(
                                     .flex()
                                     .items_center()
                                     .gap(px(8.0))
-                                    .child(
-                                        icon(group_glyph(group))
-                                            .size(px(14.0))
-                                            .text_color(group_color(group, theme)),
-                                    )
                                     .child(group.label()),
                             )
                             .child(
@@ -1097,8 +1078,11 @@ fn render_sort_header(
         )))
         .debug_selector(move || format!("pull-requests-sort-{}", field.key()))
         .w(px(width))
-        .h(px(32.0))
+        .h(px(26.0))
+        .justify_center()
+        .when(active, |el| el.bg(theme.surface_raised))
         .role(gpui::Role::Button)
+        .aria_selected(active)
         .aria_label(format!(
             "Sort by {label}{}",
             if active {
@@ -1121,11 +1105,7 @@ fn render_sort_header(
         .gap(px(4.0))
         .cursor_pointer()
         .text_size(px(12.0))
-        .text_color(if active {
-            theme.text_muted
-        } else {
-            theme.text_faint
-        })
+        .text_color(if active { theme.text } else { theme.text_muted })
         .hover(|style| style.bg(crate::theme::ink(0.04)).text_color(theme.text))
         .on_click(cx.listener(move |page, _, _, cx| page.select_sort(field, cx)))
         .child(label)

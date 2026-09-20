@@ -48,6 +48,7 @@ pub mod pickers;
 pub mod popover;
 pub mod project_actions;
 pub mod pull_request_detail;
+mod pull_request_media;
 pub mod pull_requests;
 pub mod queue;
 pub mod rail;

@@ -1767,6 +1767,7 @@ pub struct Shell {
     nav: NavHistory,
     pull_requests_page: Option<Entity<PullRequestsPage>>,
     pull_request_detail: Option<Entity<crate::pull_request_detail::PullRequestDetailPage>>,
+    pull_request_detail_subscription: Option<Subscription>,
     devices_page: Option<Entity<DevicesPage>>,
     archived_page: Option<Entity<ArchivedPage>>,
     appearance_page: Option<Entity<AppearancePage>>,
@@ -2203,6 +2204,7 @@ impl Shell {
             nav,
             pull_requests_page: None,
             pull_request_detail: None,
+            pull_request_detail_subscription: None,
             devices_page: None,
             archived_page: None,
             appearance_page: None,
@@ -5669,8 +5671,19 @@ impl Shell {
                     .flex()
                     .items_center()
                     .pt(px(Theme::TITLEBAR_TOP_PAD))
-                    .pl(px(self.title_bar_content_start()))
-                    .pr(px(self.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET)));
+                    .pl(px(if matches!(self.route, Route::PullRequests) {
+                        (self.sidebar_now() + Theme::SPACE_LG).max(self.title_bar_content_start())
+                    } else {
+                        self.title_bar_content_start()
+                    }))
+                    .pr(px(self.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET)))
+                    .when(matches!(self.route, Route::PullRequests), |bar| {
+                        if let Some(detail) = &self.pull_request_detail {
+                            bar.child(detail.update(cx, |page, cx| page.titlebar(cx)))
+                        } else {
+                            bar
+                        }
+                    });
                 let bar = div().h(px(Theme::TITLEBAR_HEIGHT)).flex_none().child(inner);
                 let id = if matches!(self.route, Route::PullRequests) {
                     "pull-requests-titlebar"
@@ -7479,6 +7492,7 @@ impl Shell {
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
                 this.pull_request_detail = None;
+                this.pull_request_detail_subscription = None;
                 if let Some(page) = &this.pull_requests_page {
                     page.update(cx, |page, cx| page.select_url(None, cx));
                 }
@@ -9169,10 +9183,6 @@ impl Shell {
                     .min_w_0()
                     .h_full()
                     .flex()
-                    .when(
-                        main_content_width >= 1050.0 && !detail.read(cx).immersive,
-                        |el| el.child(div().w(px(400.0)).flex_none().h_full().child(outlet)),
-                    )
                     .child(div().flex_1().min_w_0().h_full().child(detail))
                     .into_any_element();
             }
@@ -11516,6 +11526,7 @@ impl Render for Shell {
                 self.browser_subs.clear();
                 self.browser_context = crate::browser::BrowserContext::default();
                 self.pull_request_detail = None;
+                self.pull_request_detail_subscription = None;
             }
             self.browser_profile = browser_profile;
         }
@@ -11750,20 +11761,22 @@ impl Render for Shell {
                             cx,
                         )
                     }));
+                    this.pull_request_detail_subscription = this
+                        .pull_request_detail
+                        .as_ref()
+                        .map(|detail| cx.observe(detail, |_, _, cx| cx.notify()));
                     cx.notify();
                 },
             ))
             .on_action(cx.listener(
                 |this, _: &crate::pull_request_detail::ClosePullRequest, _, cx| {
                     this.pull_request_detail = None;
+                    this.pull_request_detail_subscription = None;
                     if let Some(page) = &this.pull_requests_page {
                         page.update(cx, |page, cx| page.select_url(None, cx));
                     }
                     cx.notify();
                 },
-            ))
-            .on_action(cx.listener(
-                |_, _: &crate::pull_request_detail::TogglePullRequestFocus, _, cx| cx.notify(),
             ))
             // New session works from anywhere — `open_new_session` routes back
             // to chat itself, so Settings is not a dead spot.

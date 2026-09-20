@@ -20,10 +20,6 @@ pub struct OpenPullRequest(pub String, pub Option<String>);
 #[action(namespace = shell, no_json)]
 pub struct ClosePullRequest;
 
-#[derive(Clone, PartialEq, Action)]
-#[action(namespace = shell, no_json)]
-pub struct TogglePullRequestFocus;
-
 pub fn open(url: &str, window: &mut Window, cx: &mut App) {
     open_on_device(url, None, window, cx);
 }
@@ -141,6 +137,8 @@ pub struct PullRequestDetailPage {
     loading: bool,
     task: Option<Task<()>>,
     diff_task: Option<Task<()>>,
+    copy_reset: Option<Task<()>>,
+    copied_link: bool,
     diff: Option<String>,
     code_rows: std::rc::Rc<Vec<CodeRow>>,
     code_files: Vec<(String, usize)>,
@@ -148,7 +146,6 @@ pub struct PullRequestDetailPage {
     diff_error: Option<String>,
     tab: Tab,
     scroll: widgets::PageScroll,
-    pub(crate) immersive: bool,
     browser_context: BrowserContext,
     browser: Option<Entity<BrowserSurface>>,
     browser_events: Option<Subscription>,
@@ -173,6 +170,8 @@ impl PullRequestDetailPage {
             loading: false,
             task: None,
             diff_task: None,
+            copy_reset: None,
+            copied_link: false,
             diff: None,
             code_rows: Default::default(),
             code_files: Vec::new(),
@@ -180,7 +179,6 @@ impl PullRequestDetailPage {
             diff_error: None,
             tab: Tab::Summary,
             scroll: widgets::PageScroll::default(),
-            immersive: false,
             browser_context,
             browser: None,
             browser_events: None,
@@ -191,6 +189,123 @@ impl PullRequestDetailPage {
             page.load(cx);
         }
         page
+    }
+
+    pub(crate) fn titlebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let url = self.url.clone();
+        let copy_url = self.url.clone();
+        let identity = self
+            .detail
+            .as_ref()
+            .map(|detail| format!("#{} · {}", detail.number, detail.title))
+            .unwrap_or_else(|| "Pull request".into());
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .child(
+                action("pr-back", "Back to board", &theme).on_click(|_, window, cx| {
+                    cx.stop_propagation();
+                    window.dispatch_action(Box::new(ClosePullRequest), cx)
+                }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px(px(8.0))
+                    .overflow_hidden()
+                    .text_size(crate::typography::ui_rems(12.0))
+                    .text_color(theme.text_muted)
+                    .text_ellipsis()
+                    .child(identity),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(2.0))
+                    .p(px(2.0))
+                    .rounded(px(8.0))
+                    .bg(theme.glass_hover())
+                    .child(
+                        action("pr-native", "PR view", &theme)
+                            .aria_selected(self.browser.is_none())
+                            .when(self.browser.is_none(), |el| el.bg(theme.surface_raised))
+                            .on_click(cx.listener(|page, _, _, cx| {
+                                cx.stop_propagation();
+                                page.browser = None;
+                                page.browser_events = None;
+                                if page.detail.is_none() {
+                                    page.load(cx);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        action("pr-browser", "Zeron browser", &theme)
+                            .aria_selected(self.browser.is_some())
+                            .when(self.browser.is_some(), |el| el.bg(theme.surface_raised))
+                            .on_click(cx.listener(|page, _, window, cx| {
+                                cx.stop_propagation();
+                                page.show_browser(window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                action("pr-detail-refresh", "Refresh pull request", &theme)
+                    .when(self.loading && self.browser.is_none(), |el| el.opacity(0.4))
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        cx.stop_propagation();
+                        if let Some(browser) = &page.browser {
+                            browser.update(cx, |browser, cx| browser.reload(cx));
+                        } else if !page.loading {
+                            page.diff = None;
+                            page.load(cx);
+                            if page.tab == Tab::Code {
+                                page.load_diff(cx);
+                            }
+                        }
+                    })),
+            )
+            .child(
+                action(
+                    "pr-copy-url",
+                    if self.copied_link {
+                        "Link copied"
+                    } else {
+                        "Copy link"
+                    },
+                    &theme,
+                )
+                .on_click(cx.listener(move |page, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_url.clone()));
+                    page.copied_link = true;
+                    page.copy_reset = Some(cx.spawn(async move |page, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_secs(2))
+                            .await;
+                        let _ = page.update(cx, |page, cx| {
+                            page.copied_link = false;
+                            cx.notify();
+                        });
+                    }));
+                    cx.notify();
+                })),
+            )
+            .child(
+                action("pr-external", "Open in default browser", &theme).on_click(
+                    move |_, _, cx| {
+                        cx.stop_propagation();
+                        cx.open_url(&url);
+                    },
+                ),
+            )
+            .into_any_element()
     }
 
     fn params(&self) -> serde_json::Value {
@@ -216,7 +331,7 @@ impl PullRequestDetailPage {
             let _ = this.update(cx, |page, cx| {
                 page.loading = false;
                 match result {
-                    Ok(detail) => { page.body = Some(crate::markdown::parse_full(&detail.body)); page.detail = Some(detail); }
+                    Ok(detail) => { page.body = Some(super::pull_request_media::parse_description(&detail.body)); page.detail = Some(detail); }
                     Err(error) => page.error = Some(error),
                 }
                 cx.notify();
@@ -307,19 +422,23 @@ impl Render for PrActionTooltip {
 }
 
 fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
-    let icon_only = matches!(id, "pr-back" | "pr-immersive" | "pr-external");
+    let icon_only = matches!(
+        id,
+        "pr-back"
+            | "pr-external"
+            | "pr-native"
+            | "pr-browser"
+            | "pr-copy-url"
+            | "pr-detail-refresh"
+    );
     let glyph = match id {
         "pr-back" => Some(crate::icons::ALT_ARROW_LEFT),
+        "pr-copy-url" if label == "Link copied" => Some(crate::icons::CHECK),
         "pr-copy-url" | "pr-copy-patch" => Some(crate::icons::COPY),
         "pr-detail-refresh" | "pr-retry-diff" => Some(crate::icons::REFRESH),
         "pr-external" => Some(crate::icons::ARROW_UP_RIGHT),
         "pr-browser" => Some(crate::icons::GLOBAL),
         "pr-native" => Some(crate::icons::PULL_REQUEST),
-        "pr-immersive" => Some(if label == "Show list" {
-            crate::icons::COLLAPSE_ARROWS
-        } else {
-            crate::icons::EXPAND_ARROWS
-        }),
         "pr-summary" => Some(crate::icons::DOCUMENT),
         "pr-code" => Some(crate::icons::FILE_CODE),
         "pr-activity" => Some(crate::icons::CHAT_ROUND_LINE),
@@ -335,9 +454,15 @@ fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Statefu
         .border_color(gpui::transparent_black())
         .focus_visible(|style| style.border_color(theme.accent))
         .cursor_pointer()
-        .hover(|style| style.bg(theme.selection))
+        .hover(|style| style.bg(theme.glass_hover()))
         .when(icon_only, |el| {
-            el.size(px(32.0))
+            el.size(px(24.0))
+                .flex_none()
+                .rounded(px(6.0))
+                .occlude()
+                .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+                    window.prevent_default()
+                })
                 .px_0()
                 .py_0()
                 .justify_center()
@@ -437,12 +562,6 @@ fn section_heading(label: &str, glyph: &'static str, theme: &Theme) -> AnyElemen
 }
 
 fn field(label: &str, value: String, theme: &Theme) -> AnyElement {
-    let glyph = match label {
-        "Branch" => crate::icons::GIT_BRANCH,
-        "Status" => crate::icons::PULL_REQUEST,
-        "Review" => crate::icons::CHECKLIST,
-        _ => crate::icons::FILE_CODE,
-    };
     let content = if matches!(label, "Status" | "Review") {
         status_chip(&value, theme)
     } else if label == "Changes" {
@@ -482,11 +601,6 @@ fn field(label: &str, value: String, theme: &Theme) -> AnyElement {
                 .items_center()
                 .gap(px(8.0))
                 .text_color(theme.text_muted)
-                .child(
-                    crate::icons::icon(glyph)
-                        .size(px(14.0))
-                        .text_color(theme.text_muted),
-                )
                 .child(SharedString::from(label.to_owned())),
         )
         .child(div().flex_1().min_w_0().child(content))
@@ -505,56 +619,6 @@ impl crate::popover::ScrollRailHost for PullRequestDetailPage {
 impl Render for PullRequestDetailPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        let url = self.url.clone();
-        let copy_url = self.url.clone();
-        let toolbar = widgets::page_column()
-            .pt_0()
-            .pb_0()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap(px(4.0))
-            .px(px(24.0))
-            .py(px(12.0))
-            .child(
-                action("pr-back", "Back to board", &theme).on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(ClosePullRequest), cx)
-                }),
-            )
-            .child(
-                action(
-                    "pr-immersive",
-                    if self.immersive { "Show list" } else { "Focus" },
-                    &theme,
-                )
-                .on_click(cx.listener(|page, _, window, cx| {
-                    page.immersive = !page.immersive;
-                    window.dispatch_action(Box::new(TogglePullRequestFocus), cx);
-                    cx.notify();
-                })),
-            )
-            .child(div().flex_1())
-            .child(
-                action("pr-native", "PR view", &theme)
-                    .when(self.browser.is_none(), |el| el.bg(theme.selection))
-                    .on_click(cx.listener(|page, _, _, cx| {
-                        page.browser = None;
-                        page.browser_events = None;
-                        if page.detail.is_none() {
-                            page.load(cx);
-                        }
-                        cx.notify();
-                    })),
-            )
-            .child(
-                action("pr-browser", "Zeron browser", &theme)
-                    .when(self.browser.is_some(), |el| el.bg(theme.selection))
-                    .on_click(cx.listener(|page, _, window, cx| page.show_browser(window, cx))),
-            )
-            .child(
-                action("pr-external", "Default browser", &theme)
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
-            );
         let content = if let Some(browser) = &self.browser {
             div()
                 .flex_1()
@@ -562,37 +626,6 @@ impl Render for PullRequestDetailPage {
                 .child(browser.clone())
                 .into_any_element()
         } else {
-            let utilities = div().mt(px(16.0)).child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.0))
-                    .child(
-                        action(
-                            "pr-detail-refresh",
-                            if self.loading {
-                                "Refreshing…"
-                            } else {
-                                "Refresh"
-                            },
-                            &theme,
-                        )
-                        .on_click(cx.listener(|page, _, _, cx| {
-                            if !page.loading {
-                                page.diff = None;
-                                page.load(cx);
-                                if page.tab == Tab::Code {
-                                    page.load_diff(cx);
-                                }
-                            }
-                        })),
-                    )
-                    .child(
-                        action("pr-copy-url", "Copy link", &theme).on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_url.clone()))
-                        }),
-                    ),
-            );
             let mut column = widgets::page_column()
                 .pt(px(32.0))
                 .text_size(crate::typography::ui_rems(13.0))
@@ -640,7 +673,6 @@ impl Render for PullRequestDetailPage {
                             .text_color(theme.text_muted)
                             .child(format!("#{} · {}", detail.number, detail.author.login)),
                     )
-                    .child(utilities)
                     .child(
                         div()
                             .mt(px(24.0))
@@ -719,7 +751,7 @@ impl Render for PullRequestDetailPage {
                         } else if let Some(body) = &self.body {
                             let opts = crate::markdown::render::RenderOptions {
                                 tasks: None,
-                                media: None,
+                                media: Some(super::pull_request_media::media(&self.url)),
                                 row_key: "pr-description".into(),
                                 veil: None,
                                 cache: None,
@@ -1001,8 +1033,6 @@ impl Render for PullRequestDetailPage {
                 }
             } else if self.loading {
                 column = column.child(div().py(px(32.0)).child("Loading pull request…"));
-            } else {
-                column = column.child(utilities);
             }
             let scroll = self.scroll.scroll.clone();
             let rail = crate::popover::rail(self, "pr-detail-scrollbar", &theme, cx);
@@ -1039,7 +1069,6 @@ impl Render for PullRequestDetailPage {
             .flex()
             .flex_col()
             .pt(px(Theme::TITLEBAR_HEIGHT))
-            .child(toolbar)
             .child(content)
     }
 }
@@ -1079,42 +1108,84 @@ mod tests {
         assert_eq!(removed.new, "");
     }
 
+    struct DetailHost {
+        page: Entity<PullRequestDetailPage>,
+        _subscription: Subscription,
+    }
+
+    impl DetailHost {
+        fn new(window: &mut Window, cx: &mut Context<Self>, loaded: bool) -> Self {
+            let state = cx.new(|_| AppState::new());
+            let page = cx.new(|cx| {
+                let mut page = PullRequestDetailPage::new(
+                    state, "https://github.com/a/b/pull/1".into(),
+                    Some("remote-device".into()), BrowserContext::default(), window, cx,
+                );
+                if loaded {
+                    page.error = None;
+                    page.detail = Some(ChangeRequestDetail {
+                        title: "Inspect a pull request with a very long title that must leave room for all actions".into(),
+                        number: 1, body: "A description".into(), ..Default::default()
+                    });
+                    page.body = Some(crate::markdown::parse_full("A description"));
+                    page.diff = Some(String::new());
+                }
+                page
+            });
+            let subscription = cx.observe(&page, |_, _, cx| cx.notify());
+            Self {
+                page,
+                _subscription: subscription,
+            }
+        }
+    }
+
+    impl Render for DetailHost {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let header = self.page.update(cx, |page, cx| page.titlebar(cx));
+            div().size_full().relative().child(self.page.clone()).child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .w_full()
+                    .h(px(Theme::TITLEBAR_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .child(header),
+            )
+        }
+    }
+
     #[gpui::test]
     fn pull_request_detail_actions_fit_and_tabs_switch(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;
         cx.update(|cx| cx.set_global(Theme::default()));
-        let (page, cx) = cx.add_window_view(|window, cx| {
-            let state = cx.new(|_| AppState::new());
-            let mut page = PullRequestDetailPage::new(
-                state,
-                "https://github.com/a/b/pull/1".into(),
-                Some("remote-device".into()),
-                BrowserContext::default(),
-                window,
-                cx,
-            );
-            page.error = None;
-            page.detail = Some(ChangeRequestDetail {
-                title: "Inspect a pull request".into(),
-                number: 1,
-                body: "A description".into(),
-                ..Default::default()
-            });
-            page.body = Some(crate::markdown::parse_full("A description"));
-            page.diff = Some(String::new());
-            assert_eq!(page.params()["targetDeviceId"], "remote-device");
-            page
+        let (host, cx) = cx.add_window_view(|window, cx| DetailHost::new(window, cx, true));
+        let page = host.read_with(cx, |host, _| host.page.clone());
+        page.read_with(cx, |page, _| {
+            assert_eq!(page.params()["targetDeviceId"], "remote-device")
         });
-        for width in [320.0, 600.0, 900.0] {
+        for width in [240.0, 320.0, 600.0, 900.0] {
             cx.simulate_resize(gpui::size(px(width), px(800.0)));
             cx.run_until_parked();
-            for selector in ["pr-back", "pr-native", "pr-browser", "pr-external"] {
+            let mut previous_right = px(0.0);
+            for selector in [
+                "pr-back",
+                "pr-native",
+                "pr-browser",
+                "pr-detail-refresh",
+                "pr-copy-url",
+                "pr-external",
+            ] {
                 let bounds = cx.debug_bounds(selector).unwrap();
                 assert!(
-                    bounds.left() >= px(24.0) && bounds.right() <= px(width - 24.0),
+                    bounds.left() >= previous_right && bounds.right() <= px(width),
                     "{selector}: {bounds:?}"
                 );
+                assert!(bounds.top() >= px(0.0) && bounds.bottom() <= px(Theme::TITLEBAR_HEIGHT));
+                previous_right = bounds.right();
             }
+            assert!(cx.debug_bounds("pr-immersive").is_none());
         }
         let code = cx.debug_bounds("pr-code").unwrap();
         cx.simulate_mouse_down(
@@ -1130,35 +1201,30 @@ mod tests {
         cx.run_until_parked();
         page.read_with(cx, |page, _| assert!(page.tab == Tab::Code));
         assert!(cx.debug_bounds("pr-copy-patch").is_some());
-        let focus = cx.debug_bounds("pr-immersive").unwrap();
+        let copy = cx.debug_bounds("pr-copy-url").unwrap();
         cx.simulate_mouse_down(
-            focus.center(),
+            copy.center(),
             gpui::MouseButton::Left,
             gpui::Modifiers::default(),
         );
         cx.simulate_mouse_up(
-            focus.center(),
+            copy.center(),
             gpui::MouseButton::Left,
             gpui::Modifiers::default(),
         );
-        page.read_with(cx, |page, _| assert!(page.immersive));
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().unwrap(),
+                "https://github.com/a/b/pull/1"
+            )
+        });
     }
 
     #[gpui::test]
     fn pull_request_error_keeps_retry_and_browser_actions(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;
         cx.update(|cx| cx.set_global(Theme::default()));
-        let (_, cx) = cx.add_window_view(|window, cx| {
-            let state = cx.new(|_| AppState::new());
-            PullRequestDetailPage::new(
-                state,
-                "https://github.com/a/b/pull/1".into(),
-                None,
-                BrowserContext::default(),
-                window,
-                cx,
-            )
-        });
+        let (_, cx) = cx.add_window_view(|window, cx| DetailHost::new(window, cx, false));
         cx.simulate_resize(gpui::size(px(320.0), px(800.0)));
         cx.run_until_parked();
         for selector in ["pr-detail-refresh", "pr-browser", "pr-external"] {
