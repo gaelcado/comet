@@ -856,10 +856,10 @@ fn field(label: &str, value: String, theme: &Theme) -> AnyElement {
         .flex()
         .items_start()
         .gap(px(12.0))
-        .py(px(7.0))
+        .py(px(6.0))
         .child(
             div()
-                .w(px(94.0))
+                .w(px(80.0))
                 .flex_none()
                 .flex()
                 .items_center()
@@ -892,7 +892,7 @@ impl Render for PullRequestDetailPage {
         let theme = Theme::of(cx).clone();
         let content = {
             let mut column = widgets::page_column()
-                .pt(px(32.0))
+                .pt(px(24.0))
                 .pb(px(96.0))
                 .text_size(crate::typography::ui_rems(13.0))
                 .text_color(theme.text);
@@ -911,6 +911,7 @@ impl Render for PullRequestDetailPage {
                     .child(
                         div()
                             .mb(px(12.0))
+                            .text_size(crate::typography::ui_rems(12.0))
                             .flex()
                             .flex_wrap()
                             .items_center()
@@ -954,43 +955,45 @@ impl Render for PullRequestDetailPage {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(detail.title.clone()),
                     )
-                    .child(
-                        div()
-                            .mt(px(24.0))
-                            .child(field(
-                                "Branch",
-                                format!("{} → {}", detail.head_ref_name, detail.base_ref_name),
-                                &theme,
-                            ))
-                            .child(field(
-                                "Status",
-                                if detail.is_draft {
-                                    "Draft".into()
-                                } else {
-                                    detail.state.clone()
-                                },
-                                &theme,
-                            ))
-                            .child(field(
-                                "Review",
-                                if detail.review_decision.is_empty() {
-                                    "No review decision".into()
-                                } else {
-                                    detail.review_decision.replace('_', " ").to_lowercase()
-                                },
-                                &theme,
-                            ))
-                            .child(field(
-                                "Changes",
-                                format!(
-                                    "{} files · +{} −{}",
-                                    detail.files.len(),
-                                    detail.additions,
-                                    detail.deletions
-                                ),
-                                &theme,
-                            )),
-                    );
+                    .when(self.tab == Tab::Summary, |el| {
+                        el.child(
+                            div()
+                                .mt(px(24.0))
+                                .child(field(
+                                    "Branch",
+                                    format!("{} → {}", detail.head_ref_name, detail.base_ref_name),
+                                    &theme,
+                                ))
+                                .child(field(
+                                    "Status",
+                                    if detail.is_draft {
+                                        "Draft".into()
+                                    } else {
+                                        detail.state.clone()
+                                    },
+                                    &theme,
+                                ))
+                                .child(field(
+                                    "Review",
+                                    if detail.review_decision.is_empty() {
+                                        "No review decision".into()
+                                    } else {
+                                        detail.review_decision.replace('_', " ").to_lowercase()
+                                    },
+                                    &theme,
+                                ))
+                                .child(field(
+                                    "Changes",
+                                    format!(
+                                        "{} files · +{} −{}",
+                                        detail.files.len(),
+                                        detail.additions,
+                                        detail.deletions
+                                    ),
+                                    &theme,
+                                )),
+                        )
+                    });
                 if let Some(fetched) = self.fetched {
                     let age = if fetched.elapsed().as_secs() < 60 {
                         "just now".into()
@@ -1064,10 +1067,13 @@ impl Render for PullRequestDetailPage {
                             column = column.child(
                                 div()
                                     .id(SharedString::from(format!("pr-check-{index}")))
-                                    .py(px(10.0))
+                                    .mt(px(if index == 0 { 8.0 } else { 0.0 }))
+                                    .min_h(px(44.0))
+                                    .py(px(8.0))
                                     .flex()
                                     .flex_wrap()
-                                    .gap(px(12.0))
+                                    .items_center()
+                                    .gap(px(8.0))
                                     .child(div().flex_1().min_w_0().child(name.clone()))
                                     .child(status_chip(&status, &theme))
                                     .when(!link.is_empty(), |el| {
@@ -1095,6 +1101,7 @@ impl Render for PullRequestDetailPage {
                             column = column.child(
                                 div()
                                     .flex()
+                                    .flex_wrap()
                                     .items_center()
                                     .gap(px(8.0))
                                     .child(
@@ -1115,7 +1122,7 @@ impl Render for PullRequestDetailPage {
                                                 cx.notify();
                                             })),
                                     )
-                                    .child(div().flex_1())
+                                    .justify_between()
                                     .child(action("pr-copy-patch", "Copy diff", &theme).on_click(
                                         move |_, _, cx| {
                                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(
@@ -1170,7 +1177,7 @@ impl Render for PullRequestDetailPage {
                                     div()
                                         .id("pr-code-viewport")
                                         .debug_selector(|| "pr-code-viewport".into())
-                                        .mt(px(16.0))
+                                        .mt(px(12.0))
                                         .h(px(440.0))
                                         .overflow_x_scroll()
                                         .track_scroll(&self.code_horizontal)
@@ -1265,28 +1272,28 @@ impl Render for PullRequestDetailPage {
                                             )
                                             .when(!comment.state.is_empty(), |el| {
                                                 el.child(status_chip(&comment.state, &theme))
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.0))
-                                            .text_color(theme.text_muted)
-                                            .child(activity_time(
-                                                if comment.created_at.is_empty() {
-                                                    &comment.submitted_at
-                                                } else {
-                                                    &comment.created_at
-                                                },
-                                            )),
+                                            })
+                                            .child(
+                                                div()
+                                                    .text_size(crate::typography::ui_rems(11.0))
+                                                    .text_color(theme.text_muted)
+                                                    .child(activity_time(
+                                                        if comment.created_at.is_empty() {
+                                                            &comment.submitted_at
+                                                        } else {
+                                                            &comment.created_at
+                                                        },
+                                                    )),
+                                            ),
                                     )
                                     .children(self.activity_bodies.get(index).map(|body| {
-                                        rich_text(
+                                        div().pl(px(32.0)).child(rich_text(
                                             body,
                                             format!("pr-activity-{index}"),
                                             &self.url,
                                             &theme,
                                             window,
-                                        )
+                                        ))
                                     })),
                             );
                         }

@@ -1614,8 +1614,7 @@ fn render_table_row(
         .w_full()
         .min_h(px(PR_TABLE_ROW_HEIGHT))
         .py(px(Theme::SPACE_MD))
-        .pl(px(Theme::SPACE_SM * 2.0 + 14.0))
-        .pr(px(Theme::SPACE_SM))
+        .px(px(Theme::SPACE_SM))
         .rounded(px(6.0))
         .border_1()
         .border_color(gpui::transparent_black())
@@ -1661,6 +1660,7 @@ fn render_table_row(
             .child(render_pr_identity(item, theme))
             .child(
                 div()
+                    .pl(px(22.0))
                     .flex()
                     .items_center()
                     .gap(px(Theme::SPACE_SM))
