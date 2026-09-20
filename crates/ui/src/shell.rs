@@ -2348,7 +2348,7 @@ impl Shell {
             // canvas. Automatic capture on an existing canvas keeps its pick.
             self.open_new_session(cx);
         } else {
-            self.route = Route::Chat;
+            self.set_route(Route::Chat, cx);
         }
         let key = target.unwrap_or_default();
         self.composer.update(cx, |composer, cx| {
@@ -2364,7 +2364,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.route = Route::Chat;
+        self.set_route(Route::Chat, cx);
         self.composer
             .update(cx, |composer, cx| composer.show_appshot_error(message, cx));
         window.focus(&self.composer.focus_handle(cx), cx);
@@ -4036,6 +4036,7 @@ impl Shell {
     // ---- routes / settings ----
 
     fn set_route(&mut self, route: Route, cx: &mut Context<Self>) {
+        self.command_palette = None;
         let was_pull_requests = matches!(self.route, Route::PullRequests);
         let will_show_pull_requests = matches!(route, Route::PullRequests);
         if was_pull_requests && !will_show_pull_requests {

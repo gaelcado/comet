@@ -64,7 +64,9 @@ use zeron_proto::{
     ChatConfig, CreateWorktreeOutcome, EngineInfo, HarnessId, ProjectActionDraft, Space, ToolCall,
     WorkspaceScope,
 };
-use zeron_rpc::{LinkCache, RpcError, RpcReply, RpcService, capability_errors, methods, parse_params};
+use zeron_rpc::{
+    LinkCache, RpcError, RpcReply, RpcService, capability_errors, methods, parse_params,
+};
 
 use crate::agent_accounts::AgentAccounts;
 use crate::auth::Auth;
