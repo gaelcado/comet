@@ -1187,7 +1187,7 @@ mod pinned_session_tests {
             !compact && show_label
         );
         if compact {
-            assert!(cx.debug_bounds("chat-status-archived").is_some());
+            assert!(cx.debug_bounds("chat-status-archived").is_none());
             let time = cx.debug_bounds("chat-time-archived").unwrap();
             cx.simulate_mouse_move(archived.center(), None, gpui::Modifiers::default());
             assert!(cx.debug_bounds("chat-time-archived").is_none());
@@ -1199,6 +1199,62 @@ mod pinned_session_tests {
             cx.simulate_mouse_move(active.center(), None, gpui::Modifiers::default());
             assert_eq!(cx.debug_bounds("chat-time-archived").unwrap(), time);
         }
+
+        // Activity and elapsed time occupy one trailing slot, never both.
+        cx.simulate_mouse_move(
+            gpui::point(px(0.0), px(0.0)),
+            None,
+            gpui::Modifiers::default(),
+        );
+        for status in [
+            zeron_proto::SessionStatus::Working,
+            zeron_proto::SessionStatus::AwaitingInput,
+            zeron_proto::SessionStatus::Errored,
+        ] {
+            shell.update(cx, |shell, cx| {
+                shell.chat_status_hover = None;
+                shell.state.update(cx, |state, _| {
+                    let chat = state
+                        .chats
+                        .iter_mut()
+                        .find(|chat| chat.id == "older")
+                        .unwrap();
+                    chat.last_message_at = Some(chat.created_at);
+                    state.sessions = vec![zeron_proto::Session {
+                        chat_id: "older".into(),
+                        device_id: "local".into(),
+                        status,
+                        started_at: None,
+                        updated_at: Utc::now(),
+                        last_completed_turn: None,
+                    }];
+                });
+                cx.notify();
+            });
+            assert!(cx.debug_bounds("chat-time-older").is_none());
+            let status = cx.debug_bounds("chat-status-older").unwrap();
+            assert!(status.right() > active.center().x);
+            assert_eq!(cx.debug_bounds("chat-older").unwrap(), active);
+        }
+        shell.update(cx, |shell, cx| {
+            shell.state.update(cx, |state, _| state.sessions.clear());
+            cx.notify();
+        });
+        assert!(cx.debug_bounds("chat-status-older").is_some());
+        assert!(cx.debug_bounds("chat-time-older").is_none());
+        shell.update(cx, |shell, cx| {
+            shell.state.update(cx, |state, _| {
+                state
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == "older")
+                    .unwrap()
+                    .last_message_at = None;
+            });
+            cx.notify();
+        });
+        assert!(cx.debug_bounds("chat-status-older").is_none());
+        assert!(cx.debug_bounds("chat-time-older").is_some());
 
         // Switching grouping must not lower the first row or Archived.
         for organization in [
@@ -1333,14 +1389,13 @@ mod pinned_session_tests {
             });
         }
         if compact {
-            let status = cx.debug_bounds("chat-status-older").unwrap();
+            assert!(cx.debug_bounds("chat-status-older").is_none());
             let time = cx.debug_bounds("chat-time-older").unwrap();
-            assert!(status.right() < time.left());
             let row = cx.debug_bounds("chat-older").unwrap();
             let title = cx.debug_bounds("chat-title-older").unwrap();
             cx.simulate_mouse_move(row.center(), None, gpui::Modifiers::default());
             assert!(cx.debug_bounds("chat-title-older").unwrap().size.width < title.size.width);
-            assert_eq!(cx.debug_bounds("chat-status-older").unwrap(), status);
+            assert!(cx.debug_bounds("chat-status-older").is_none());
             assert!(cx.debug_bounds("chat-time-older").is_none());
             let pin = cx.debug_bounds("chat-older-pin").unwrap();
             let archive = cx.debug_bounds("chat-older-archive").unwrap();
@@ -6436,7 +6491,7 @@ impl Shell {
 
     // ---- space context menu / rename / delete overlays ----
 
-    fn close_space_menu(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn close_space_menu(&mut self, cx: &mut Context<Self>) {
         if self.space_menu.begin_close() {
             popover::reap_popup(cx, |shell: &mut Self| &mut shell.space_menu);
             cx.notify();
@@ -6505,6 +6560,11 @@ impl Shell {
             let closing = self.space_menu.closing_since();
             let rename_id = space_id.clone();
             let delete_id = space_id.clone();
+            let icon_id = space_id.clone();
+            let reset_icon_id = space_id.clone();
+            let has_icon = self
+                .project_icon_key(&space_id, cx)
+                .is_some_and(|key| self.settings.project_icon_overrides.contains_key(&key));
             let menu = popover::popover_card(&theme)
                 .w(px(170.0))
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -6521,6 +6581,42 @@ impl Shell {
                         .child(icon(icons::PEN).size(px(16.0)).text_color(theme.text_muted))
                         .child(SharedString::from("Rename…")),
                 )
+                .child(
+                    popover::menu_row(&theme, false, format!("space-menu-icon-{space_id}"))
+                        .id("space-menu-icon")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.choose_project_icon(icon_id.clone(), cx)
+                        }))
+                        .child(
+                            icon(icons::FILE_IMAGE)
+                                .size(px(16.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .child(if has_icon {
+                            "Change icon…"
+                        } else {
+                            "Choose icon…"
+                        }),
+                )
+                .when(has_icon, |el| {
+                    el.child(
+                        popover::menu_row(
+                            &theme,
+                            false,
+                            format!("space-menu-reset-icon-{space_id}"),
+                        )
+                        .id("space-menu-reset-icon")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.reset_project_icon(&reset_icon_id, cx)
+                        }))
+                        .child(
+                            icon(icons::CLOSE)
+                                .size(px(16.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .child("Reset icon"),
+                    )
+                })
                 .child(popover::menu_separator())
                 .child(
                     popover::menu_row(&theme, false, format!("space-menu-delete-{space_id}"))

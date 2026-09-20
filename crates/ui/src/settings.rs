@@ -682,6 +682,9 @@ pub struct UiSettings {
     pub sidebar_show_project_label: bool,
     pub sidebar_compact: bool,
     pub sidebar_show_project_icon: bool,
+    /// Device-local uploaded artwork, keyed by profile and project identity.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub project_icon_overrides: HashMap<String, String>,
     pub sidebar_show_harness: bool,
     pub sidebar_show_branch: bool,
     pub sidebar_show_pull_request: bool,
@@ -832,6 +835,7 @@ impl Default for UiSettings {
             sidebar_show_project_label: true,
             sidebar_compact: true,
             sidebar_show_project_icon: true,
+            project_icon_overrides: HashMap::new(),
             sidebar_show_harness: true,
             sidebar_show_branch: true,
             sidebar_show_pull_request: true,
@@ -2211,6 +2215,10 @@ mod tests {
             sidebar_sort: SidebarSort::Created,
             sidebar_compact: true,
             sidebar_show_project_icon: false,
+            project_icon_overrides: HashMap::from([(
+                "local:device:space".into(),
+                "custom.image".into(),
+            )]),
             sidebar_show_project_label: false,
             sidebar_show_harness: false,
             sidebar_show_branch: false,
