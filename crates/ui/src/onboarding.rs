@@ -26,13 +26,13 @@ use crate::theme::{Theme, ink};
 
 pub const SCHEMA_VERSION: u16 = 1;
 pub const STEP_COUNT: usize = 6;
-const CONTENT_MAX_WIDTH: f32 = Theme::SPACE_LG * 30.0;
+const CONTENT_MAX_WIDTH: f32 = 520.0;
 // The journey grows with the window until this cap; dense steps should expose
 // several useful rows before their overflow affordance becomes necessary.
-const CONTENT_MAX_HEIGHT: f32 = 448.0;
-const WORKSPACE_MAX_HEIGHT: f32 = 312.0;
-const HARNESS_MAX_HEIGHT: f32 = 488.0;
-const PROJECT_MAX_HEIGHT: f32 = 312.0;
+const CONTENT_MAX_HEIGHT: f32 = 488.0;
+const WORKSPACE_MAX_HEIGHT: f32 = 336.0;
+const HARNESS_MAX_HEIGHT: f32 = 528.0;
+const PROJECT_MAX_HEIGHT: f32 = 336.0;
 const HARNESS_ROW_HEIGHT: f32 = 54.0;
 const HARNESS_ROW_GAP: f32 = 8.0;
 // Four complete rows plus half of the next one uses the available height while
@@ -2080,8 +2080,8 @@ fn journey_max_height(step: OnboardingStep) -> f32 {
         OnboardingStep::Workspace => WORKSPACE_MAX_HEIGHT,
         OnboardingStep::Harnesses => HARNESS_MAX_HEIGHT,
         OnboardingStep::Project | OnboardingStep::FirstSession => PROJECT_MAX_HEIGHT,
-        OnboardingStep::Titles => 400.0,
-        OnboardingStep::Defaults => 488.0,
+        OnboardingStep::Titles => 440.0,
+        OnboardingStep::Defaults => 528.0,
         OnboardingStep::Appearance => CONTENT_MAX_HEIGHT,
     }
 }
@@ -2376,10 +2376,10 @@ mod tests {
 
     #[test]
     fn simple_steps_do_not_inherit_the_dense_journey_height() {
-        assert_eq!(journey_max_height(OnboardingStep::Workspace), 312.0);
-        assert_eq!(journey_max_height(OnboardingStep::Project), 312.0);
-        assert_eq!(journey_max_height(OnboardingStep::Harnesses), 488.0);
-        assert_eq!(journey_max_height(OnboardingStep::Appearance), 448.0);
+        assert_eq!(journey_max_height(OnboardingStep::Workspace), 336.0);
+        assert_eq!(journey_max_height(OnboardingStep::Project), 336.0);
+        assert_eq!(journey_max_height(OnboardingStep::Harnesses), 528.0);
+        assert_eq!(journey_max_height(OnboardingStep::Appearance), 488.0);
         assert_eq!(HARNESS_LIST_MAX_HEIGHT, 275.0);
     }
 

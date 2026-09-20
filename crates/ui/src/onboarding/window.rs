@@ -7,14 +7,14 @@ use super::OnboardingStep;
 
 pub(crate) fn preferred_size(step: OnboardingStep) -> Size<Pixels> {
     size(
-        px(560.0),
+        px(620.0),
         px(match step {
             OnboardingStep::Workspace | OnboardingStep::Project | OnboardingStep::FirstSession => {
-                440.0
+                480.0
             }
-            OnboardingStep::Appearance => 560.0,
-            OnboardingStep::Harnesses | OnboardingStep::Defaults => 620.0,
-            OnboardingStep::Titles => 500.0,
+            OnboardingStep::Appearance => 600.0,
+            OnboardingStep::Harnesses | OnboardingStep::Defaults => 680.0,
+            OnboardingStep::Titles => 560.0,
         }),
     )
 }
