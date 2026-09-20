@@ -78,6 +78,11 @@ fn main() -> anyhow::Result<()> {
                 });
             }
             s.chats[4].last_message_at = Some(chrono::Utc::now());
+            s.sessions.push(zeron_proto::Session {
+                chat_id: "chat-2".into(), device_id: "remote".into(),
+                status: zeron_proto::SessionStatus::Working, started_at: None,
+                updated_at: chrono::Utc::now(), last_completed_turn: None,
+            });
             for ix in [8, 16, 17, 18, 19, 20] { s.chats[ix].archived = true; }
             s
         });
@@ -103,10 +108,12 @@ fn main() -> anyhow::Result<()> {
                         ("by-project", ByProject, false, false),
                         ("by-device", ByDevice, false, false),
                         ("hover-actions", InOneList, false, true),
+                        ("project-icon-menu", InOneList, false, false),
                     ] {
                         window.update(cx, |shell, window, cx| {
                             window.resize(size(px(1100.), px(1000.)));
                             shell.fixture_sidebar_state(organization, collapsed, hover, cx);
+                            if name == "project-icon-menu" { shell.fixture_project_icon_menu(cx); }
                         })?;
                         cx.background_executor().timer(std::time::Duration::from_millis(600)).await;
                         let handle: gpui::AnyWindowHandle = window.into();

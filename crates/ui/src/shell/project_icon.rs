@@ -54,6 +54,54 @@ fn load_local_icon(root: &std::path::Path) -> Option<MediaImage> {
     None
 }
 
+/// Validate before copying so cancellation or invalid artwork leaves the current icon intact.
+fn import_project_icon(
+    source: &std::path::Path,
+    directory: &std::path::Path,
+) -> Result<String, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(source)
+        .map_err(|e| e.to_string())?
+        .take(zeron_proto::MAX_WORKSPACE_IMAGE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    let svg = source
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
+    decode_project_icon(
+        if svg { "image/svg+xml" } else { "image/png" },
+        bytes.clone(),
+    )?;
+    std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+    let name = format!(
+        "{}.{}",
+        uuid::Uuid::new_v4(),
+        if svg { "svg" } else { "image" }
+    );
+    std::fs::write(directory.join(&name), bytes).map_err(|e| e.to_string())?;
+    Ok(name)
+}
+
+fn load_uploaded_icon(path: &std::path::Path) -> Option<MediaImage> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(zeron_proto::MAX_WORKSPACE_IMAGE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    decode_project_icon(
+        if path.extension().is_some_and(|ext| ext == "svg") {
+            "image/svg+xml"
+        } else {
+            "image/png"
+        },
+        bytes,
+    )
+    .ok()
+}
+
 // Curated badge tones: (dark appearance, light appearance). Keep the ordering
 // stable so projects retain their assigned color. These are explicit colors,
 // independent of the selected theme accent; only their appearance variant changes.
@@ -135,6 +183,7 @@ impl ProjectIcon {
         seed: String,
         context: FilesRequestContext,
         engine: Option<crate::state::EngineHandle>,
+        uploaded: Option<std::path::PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.on_release(|this, cx| release_media(this.media.take(), cx))
@@ -142,6 +191,14 @@ impl ProjectIcon {
         let task = cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
             let load = async {
+                if let Some(path) = uploaded {
+                    if let Some(media) = executor
+                        .spawn(async move { load_uploaded_icon(&path) })
+                        .await
+                    {
+                        return Some(media);
+                    }
+                }
                 if context.target_device_id.is_none() {
                     let root = std::path::PathBuf::from(context.cwd);
                     return executor.spawn(async move { load_local_icon(&root) }).await;
@@ -279,6 +336,79 @@ fn project_icon_frame(
 }
 
 impl Shell {
+    pub(super) fn project_icon_key(&self, space_id: &str, cx: &App) -> Option<String> {
+        let space = self
+            .state
+            .read(cx)
+            .spaces
+            .iter()
+            .find(|space| space.id == space_id)?;
+        Some(format!(
+            "{:?}:{}:{}",
+            self.active_sidebar_pin_profile_key(cx),
+            space.device_id,
+            space.id
+        ))
+    }
+
+    pub(super) fn choose_project_icon(&mut self, space_id: String, cx: &mut Context<Self>) {
+        self.close_space_menu(cx);
+        let Some(key) = self.project_icon_key(&space_id, cx) else {
+            return;
+        };
+        let previous = self.settings.project_icon_overrides.get(&key).cloned();
+        let directory = self.boot.data_dir.join("project-icons");
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose Project Icon".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let path = match receiver.await {
+                Ok(Ok(Some(mut paths))) => paths.pop(),
+                _ => None,
+            };
+            let Some(path) = path else {
+                return;
+            };
+            let result = cx
+                .background_executor()
+                .spawn(async move { import_project_icon(&path, &directory) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                // Don't apply an old picker result to another workspace/profile.
+                if this.project_icon_key(&space_id, cx).as_ref() != Some(&key)
+                    || this.settings.project_icon_overrides.get(&key) != previous.as_ref()
+                {
+                    return;
+                }
+                match result {
+                    Ok(name) => {
+                        this.settings.project_icon_overrides.insert(key, name);
+                        this.schedule_save(cx);
+                        this.sidebar_notice = Some("Project icon updated".into());
+                    }
+                    Err(error) => {
+                        this.sidebar_notice =
+                            Some(format!("Could not use this image: {error}").into())
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn reset_project_icon(&mut self, space_id: &str, cx: &mut Context<Self>) {
+        self.close_space_menu(cx);
+        if let Some(key) = self.project_icon_key(space_id, cx) {
+            self.settings.project_icon_overrides.remove(&key);
+            self.schedule_save(cx);
+            cx.notify();
+        }
+    }
+
     pub(super) fn render_project_icon(
         &self,
         chat_id: &str,
@@ -300,6 +430,14 @@ impl Shell {
         let seed = space
             .map(|space| space.path.clone())
             .unwrap_or_else(|| "home".into());
+        let uploaded = space
+            .and_then(|space| self.project_icon_key(&space.id, cx))
+            .and_then(|key| self.settings.project_icon_overrides.get(&key))
+            // Settings contain a managed filename, never an arbitrary path.
+            .filter(|name| {
+                std::path::Path::new(name).components().count() == 1 && !name.contains(['/', '\\'])
+            })
+            .map(|name| self.boot.data_dir.join("project-icons").join(name));
         let context = space.map(|space| FilesRequestContext {
             target: zeron_proto::WorkspaceTarget {
                 chat_id: None,
@@ -321,16 +459,17 @@ impl Shell {
             );
         };
         let key = format!(
-            "{:?}:{:?}:{}:{:?}:{}",
+            "{:?}:{:?}:{}:{:?}:{}:{:?}",
             self.active_sidebar_pin_profile_key(cx),
             context.target_device_id,
             context.cwd,
             context.checkout_id,
-            name
+            name,
+            uploaded,
         );
         let engine = state.engine().cloned();
         // Don't cache a remote miss before a connection exists.
-        if context.target_device_id.is_some() && engine.is_none() {
+        if uploaded.is_none() && context.target_device_id.is_some() && engine.is_none() {
             return project_icon_frame(
                 chat_id,
                 &name,
@@ -344,8 +483,9 @@ impl Shell {
         let entity = cache
             .entry(key)
             .or_insert_with(|| {
-                let entity =
-                    cx.new(|cx| ProjectIcon::new(name.clone(), seed.clone(), context, engine, cx));
+                let entity = cx.new(|cx| {
+                    ProjectIcon::new(name.clone(), seed.clone(), context, engine, uploaded, cx)
+                });
                 // The monogram below is drawn by the shell (it needs the row's
                 // selected state, which the shared entity can't hold), so the
                 // shell must redraw when artwork lands.
@@ -373,6 +513,103 @@ mod tests {
     fn png(path: &std::path::Path, width: u32) {
         image::RgbaImage::new(width, 2).save(path).unwrap();
     }
+    #[gpui::test]
+    fn project_icon_picker_cancel_apply_and_reset(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("upload.png");
+        png(&source, 24);
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            crate::history::init(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                cx,
+            );
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| {
+                let mut state = AppState::new();
+                state.workspace_scope = Some(zeron_proto::WorkspaceScope::Local);
+                state.spaces = vec![serde_json::from_value(serde_json::json!({
+                    "id": "project", "deviceId": "local", "path": "/project", "createdAt": Utc::now(),
+                })).unwrap()];
+                state
+            });
+            Shell::new(state, EngineBootConfig {
+                data_dir: dir.path().into(), ipc_port: 0, edge_url: String::new(),
+                edge_token: None, org_id: None, workos_client_id: None,
+                default_harness: zeron_proto::HarnessId::Mock,
+            }, cx)
+        });
+        for accepted in [false, true] {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.choose_project_icon("project".into(), cx)
+                })
+                .unwrap();
+            assert!(cx.did_prompt_for_paths());
+            let path = source.clone();
+            cx.simulate_path_prompt_response(move |_| accepted.then(|| vec![path]));
+            cx.run_until_parked();
+            window
+                .read_with(cx, |shell, cx| {
+                    let key = shell.project_icon_key("project", cx).unwrap();
+                    assert_eq!(
+                        shell.settings.project_icon_overrides.contains_key(&key),
+                        accepted
+                    );
+                })
+                .unwrap();
+        }
+        std::fs::remove_file(&source).unwrap();
+        window
+            .update(cx, |shell, _, cx| {
+                let key = shell.project_icon_key("project", cx).unwrap();
+                let filename = &shell.settings.project_icon_overrides[&key];
+                assert!(
+                    load_uploaded_icon(&dir.path().join("project-icons").join(filename)).is_some()
+                );
+                shell.reset_project_icon("project", cx);
+                assert!(!shell.settings.project_icon_overrides.contains_key(&key));
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn imported_icon_survives_source_removal_and_rejects_invalid_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.png");
+        let managed = temp.path().join("icons");
+        png(&source, 24);
+        let name = import_project_icon(&source, &managed).unwrap();
+        std::fs::remove_file(&source).unwrap();
+        assert_eq!(
+            load_uploaded_icon(&managed.join(&name)).unwrap().width,
+            24.0
+        );
+        std::fs::write(&source, b"not an image").unwrap();
+        assert!(import_project_icon(&source, &managed).is_err());
+        assert_eq!(std::fs::read_dir(&managed).unwrap().count(), 1);
+        assert!(load_uploaded_icon(&managed.join(name)).is_some());
+    }
+
+    #[test]
+    fn imported_icon_rejects_oversized_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("large.png");
+        std::fs::File::create(&source)
+            .unwrap()
+            .set_len(zeron_proto::MAX_WORKSPACE_IMAGE_BYTES as u64 + 1)
+            .unwrap();
+        let managed = temp.path().join("icons");
+        assert!(import_project_icon(&source, &managed).is_err());
+        assert!(!managed.exists());
+    }
+
     #[test]
     fn sidebar_project_icon_priority_and_missing_fallback() {
         let temp = tempfile::tempdir().unwrap();

@@ -967,10 +967,6 @@ const SIDEBAR_LIST_PAD_TOP: f32 = 4.0;
 
 /// Active and archived sessions share harness/title geometry.
 const SIDEBAR_ACTIVE_HARNESS_ICON_SIZE: f32 = 13.0;
-/// Compact-row time slot while a text jump hint ("Ctrl+9") stands in for the
-/// time: wide enough for the widest of them at 11px on one line. In
-/// default-size pixels; scaled with the UI font via `ui_rems`.
-const COMPACT_JUMP_HINT_WIDTH: f32 = 42.0;
 const SIDEBAR_ACTIVE_HARNESS_TITLE_GAP: f32 = Theme::SPACE_SM;
 /// The sidebar footer's profile and settings buttons share one hit target.
 const SIDEBAR_FOOTER_BUTTON_SIZE: f32 = 28.0;
@@ -6909,7 +6905,7 @@ impl Shell {
         // word + glyph in the row's top-right corner — Working animates the
         // composer-strip spinner, Done wears a check; Idle rows show the
         // relative time instead. Row hover replaces trailing metadata with
-        // separate pin and archive actions; compact status stays at the left.
+        // separate pin and archive actions. Activity and time share this slot.
         // A chat can appear on both surfaces at once. Namespace every hover
         // key and child id so the palette never animates the sidebar copy.
         let row_id = if search_query.is_some() {
@@ -6976,45 +6972,7 @@ impl Shell {
         let shows_metadata = branch.is_some() || change_request.is_some();
         let queued = queued && !undelivered;
         let working = status == zeron_proto::ChatIndicator::Working && !queued && !undelivered;
-        let compact_status = compact.then(|| {
-            let glyph = if working {
-                loaders::mini_glyph_spinner(
-                    format!("{row_id}-working"),
-                    2.0,
-                    theme.glyph,
-                    self.sidebar_pane.entity_id(),
-                    cx,
-                )
-                .into_any_element()
-            } else if status == zeron_proto::ChatIndicator::Completed && !queued && !undelivered {
-                icon(icons::CHECK)
-                    .size(px(11.0))
-                    .text_color(status_color)
-                    .into_any_element()
-            } else {
-                div()
-                    .size(px(6.0))
-                    .rounded_full()
-                    .bg(status_color)
-                    .into_any_element()
-            };
-            div()
-                .id(SharedString::from(format!("{row_id}-status")))
-                .debug_selector({
-                    let id = id.clone();
-                    move || format!("chat-status-{id}")
-                })
-                .size(px(13.0))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .aria_label(status_label.unwrap_or("Idle"))
-                .child(glyph)
-                .into_any_element()
-        });
-        let compact_jump_label = compact.then(|| jump_label.clone()).flatten();
-        let corner_body: AnyElement = if let Some(label) = jump_label.filter(|_| !compact) {
+        let corner_body: AnyElement = if let Some(label) = jump_label {
             // The jump hint replaces the status/time corner while the modifier
             // is held, cut to the sidebar PR badge's exact cloth
             // (`pull_request_badge`, Sidebar surface): pinned 16px, px 4,
@@ -7098,22 +7056,16 @@ impl Shell {
                     })),
                 )
                 .into_any_element()
-        } else if compact {
-            if remote {
-                icon(icons::REMOTE_SERVER)
-                    .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
-                    .text_color(theme.text_muted.opacity(0.5))
-                    .into_any_element()
-            } else {
-                div().into_any_element()
-            }
         } else {
             match status_label {
                 Some(label) => {
                     // Glyph slot: Working wears the preset's animated pixel
                     // glyph beside its label, Done wears the check, and the
                     // remaining statuses use a compact dot.
-                    let glyph: AnyElement = if status == zeron_proto::ChatIndicator::Completed {
+                    let glyph: AnyElement = if status == zeron_proto::ChatIndicator::Completed
+                        && !queued
+                        && !undelivered
+                    {
                         icon(icons::CHECK)
                             .size(px(11.0))
                             .flex_none()
@@ -7137,21 +7089,33 @@ impl Shell {
                             .into_any_element()
                     };
                     div()
+                        .id(SharedString::from(format!("{row_id}-status")))
+                        .aria_label(label)
+                        .debug_selector({
+                            let id = id.clone();
+                            move || format!("chat-status-{id}")
+                        })
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(4.0))
                         .child(glyph)
-                        .child(
-                            div()
-                                .text_size(crate::typography::ui_rems(10.0))
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(status_color)
-                                .child(SharedString::from(label)),
-                        )
+                        .when(!compact || !working, |el| {
+                            el.child(
+                                div()
+                                    .text_size(crate::typography::ui_rems(10.0))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(status_color)
+                                    .child(SharedString::from(label)),
+                            )
+                        })
                         .into_any_element()
                 }
                 None => div()
+                    .debug_selector({
+                        let id = id.clone();
+                        move || format!("chat-time-{id}")
+                    })
                     .text_size(crate::typography::ui_rems(10.0))
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .child(time_ago.clone())
@@ -7339,7 +7303,7 @@ impl Shell {
                     } else {
                         SIDEBAR_ACTIVE_HARNESS_TITLE_GAP
                     }))
-                    .children(compact_status)
+                    .children(project_icon)
                     .when_some(
                         harness.map(crate::pickers::harness_brand_icon),
                         |el, (path, tint)| {
@@ -7357,7 +7321,6 @@ impl Shell {
                             )
                         },
                     )
-                    .children(project_icon)
                     .child(sidebar_faded_label(
                         format!("chat-title-{content_id}").into(),
                         true,
@@ -7366,7 +7329,7 @@ impl Shell {
                             .line_height(px(17.0))
                             .child(popover::search_highlight(title, search_query, theme)),
                     ))
-                    .when(!compact && !show_label && remote && !show_actions, |el| {
+                    .when((compact || !show_label) && remote && !show_actions, |el| {
                         el.child(
                             icon(icons::REMOTE_SERVER)
                                 .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
@@ -7374,21 +7337,6 @@ impl Shell {
                                 .text_color(subline),
                         )
                     })
-                    .when(
-                        if compact {
-                            remote || show_actions
-                        } else {
-                            !show_label
-                        },
-                        |el| {
-                            el.child(
-                                div()
-                                    .flex_none()
-                                    .text_color(subline)
-                                    .children(corner.take()),
-                            )
-                        },
-                    )
                     .when(compact && !show_actions, |el| {
                         el.children(change_request.clone().map(|summary| {
                             if preview {
@@ -7408,35 +7356,12 @@ impl Shell {
                             }
                         }))
                     })
-                    .when(compact && !show_actions, |el| {
-                        // The time slot is 30px, which holds "17m" but not
-                        // "Ctrl+2": unwrapped, the hint broke after the `+`
-                        // and stacked two lines. A text-length hint keeps one
-                        // line in a wider slot — a floor, not content sized,
-                        // so "Ctrl+1" (a narrower glyph) doesn't nudge its
-                        // row's badge off the others'. The floor scales with
-                        // the UI font like the text does, and a longer
-                        // rebound combo grows the slot instead of spilling
-                        // over the title.
-                        let text_hint = compact_jump_label
-                            .as_ref()
-                            .is_some_and(|label| label.chars().count() > 3);
+                    .when(compact || !show_label, |el| {
                         el.child(
                             div()
-                                .debug_selector({
-                                    let id = id.clone();
-                                    move || format!("chat-time-{id}")
-                                })
-                                .when(text_hint, |el| {
-                                    el.min_w(crate::typography::ui_rems(COMPACT_JUMP_HINT_WIDTH))
-                                })
-                                .when(!text_hint, |el| el.w(px(30.0)))
                                 .flex_none()
-                                .whitespace_nowrap()
-                                .text_right()
-                                .text_size(crate::typography::ui_rems(11.0))
                                 .text_color(subline)
-                                .child(compact_jump_label.unwrap_or(time_ago)),
+                                .children(corner.take()),
                         )
                     }),
             )
@@ -16440,6 +16365,12 @@ mod settings_modal_regressions {
 
 #[cfg(feature = "project-palette-fixture")]
 impl Shell {
+    pub fn fixture_project_icon_menu(&mut self, cx: &mut Context<Self>) {
+        self.space_menu
+            .open(("project".into(), gpui::point(px(28.0), px(100.0))));
+        cx.notify();
+    }
+
     /// Deterministic disclosure and hover states for sidebar review captures.
     pub fn fixture_sidebar_state(
         &mut self,
