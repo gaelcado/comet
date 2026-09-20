@@ -23,13 +23,12 @@ use crate::theme::Theme;
 const SNAPSHOT_TTL: Duration = Duration::from_secs(60);
 const PR_PAGE_MAX_WIDTH: f32 = 1120.0;
 const PR_PAGE_HORIZONTAL_PADDING: f32 = 24.0;
-const PR_TABLE_HEADER_HEIGHT: f32 = 24.0;
-const PR_TABLE_ROW_HEIGHT: f32 = 52.0;
-const PR_TABLE_CHANGES_WIDTH: f32 = 92.0;
-const PR_TABLE_OPENED_WIDTH: f32 = 92.0;
-const PR_TABLE_UPDATED_WIDTH: f32 = 92.0;
+const PR_TABLE_HEADER_HEIGHT: f32 = 36.0;
+const PR_TABLE_ROW_HEIGHT: f32 = 64.0;
+const PR_TABLE_CHANGES_WIDTH: f32 = 104.0;
+const PR_TABLE_OPENED_WIDTH: f32 = 104.0;
+const PR_TABLE_UPDATED_WIDTH: f32 = 104.0;
 const PR_TABLE_ACTION_WIDTH: f32 = 22.0;
-const PR_ROW_HOVER_TEXT_SCALE: f32 = 0.06;
 const PR_SORT_OFFSET_PER_ROW: f32 = 8.0;
 const PR_SORT_MAX_OFFSET: f32 = 24.0;
 const PR_SCROLL_FADE_BAND: f32 = 24.0;
@@ -82,9 +81,9 @@ struct PullRequestSort {
     direction: SortDirection,
 }
 
-struct MergeConflictTooltip;
+struct DashboardTooltip(SharedString);
 
-impl Render for MergeConflictTooltip {
+impl Render for DashboardTooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx);
         div()
@@ -96,8 +95,9 @@ impl Render for MergeConflictTooltip {
             .bg(theme.surface_raised)
             .shadow_md()
             .text_size(px(11.0))
-            .text_color(theme.danger_muted)
-            .child("Merge conflicts")
+            .max_w(px(420.0))
+            .text_color(theme.text)
+            .child(self.0.clone())
     }
 }
 
@@ -348,8 +348,15 @@ impl PullRequestsPage {
 
         let mut trigger = div()
             .id("pull-requests-device-switcher")
+            .role(gpui::Role::Button)
+            .aria_label(format!("Desktop device: {label}"))
+            .aria_expanded(open)
+            .tab_index(0)
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .focus_visible(|style| style.border_color(theme.accent))
             .flex_none()
-            .h(px(28.0))
+            .h(px(32.0))
             .px(px(8.0))
             .rounded(px(6.0))
             .flex()
@@ -368,8 +375,19 @@ impl PullRequestsPage {
                 gpui::MouseButton::Left,
                 cx.listener(|page, _, _, _| page.device_menu.note_trigger_press()),
             )
-            .on_click(cx.listener(|page, _, _, cx| {
-                if page.device_menu.take_press_was_open() {
+            .on_key_down(cx.listener(|page, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" && page.device_menu.is_open() {
+                    cx.stop_propagation();
+                    page.close_device_menu(cx);
+                }
+            }))
+            .on_click(cx.listener(|page, event, _, cx| {
+                let was_open = if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                    page.device_menu.is_open()
+                } else {
+                    page.device_menu.take_press_was_open()
+                };
+                if was_open {
                     page.close_device_menu(cx);
                 } else {
                     page.device_menu.open(());
@@ -409,6 +427,15 @@ impl PullRequestsPage {
                     let online = self.state.read(cx).device_online(&device.id, Utc::now());
                     popover::menu_row(theme, active, format!("pull-requests-device-row-{index}"))
                         .id(("pull-requests-device-row", index))
+                        .role(gpui::Role::Button)
+                        .aria_label(format!(
+                            "{}{}",
+                            device.name,
+                            if online { "" } else { ", offline" }
+                        ))
+                        .aria_selected(active)
+                        .tab_index(0)
+                        .focus_visible(|style| style.bg(theme.selection))
                         .on_click(cx.listener(move |page, _, _, cx| {
                             page.set_target_device((!local).then(|| device_id.clone()), cx);
                         }))
@@ -422,8 +449,8 @@ impl PullRequestsPage {
                             element.child(
                                 div()
                                     .text_size(px(10.5))
-                                    .text_color(theme.text_muted.opacity(0.45))
-                                    .child("You"),
+                                    .text_color(theme.text_muted)
+                                    .child("This device"),
                             )
                         })
                         .child(div().size(px(6.0)).rounded_full().bg(if online {
@@ -443,6 +470,16 @@ impl PullRequestsPage {
     }
 
     fn render_empty_or_error(&self, theme: &Theme) -> AnyElement {
+        let glyph = match &self.load_state {
+            PullRequestsLoadState::Failed(PullRequestsPageError::Authentication) => {
+                icons::KEY_MINIMALISTIC
+            }
+            PullRequestsLoadState::Failed(
+                PullRequestsPageError::Network | PullRequestsPageError::RemoteOffline(_),
+            ) => icons::WIFI_OFF,
+            PullRequestsLoadState::Failed(_) => icons::INFO_CIRCLE,
+            _ => icons::CHECKLIST,
+        };
         let (title, body) = match &self.load_state {
             PullRequestsLoadState::Failed(error) => error_copy(error),
             _ => (
@@ -456,6 +493,17 @@ impl PullRequestsPage {
             .flex_col()
             .items_center()
             .text_center()
+            .child(
+                div()
+                    .size(px(48.0))
+                    .mb(px(16.0))
+                    .rounded(px(16.0))
+                    .bg(crate::theme::ink(0.035))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon(glyph).size(px(24.0)).text_color(theme.text_muted)),
+            )
             .child(
                 div()
                     .text_size(px(15.0))
@@ -484,6 +532,13 @@ impl Render for PullRequestsPage {
             !self.items.is_empty() && matches!(self.load_state, PullRequestsLoadState::Loading);
         let refresh_error =
             !self.items.is_empty() && matches!(self.load_state, PullRequestsLoadState::Failed(_));
+        let refresh_message = match &self.load_state {
+            PullRequestsLoadState::Failed(error) => {
+                let (title, body) = error_copy(error);
+                format!("{title}. {body} Showing the last loaded results.")
+            }
+            _ => String::new(),
+        };
         let count = (!initial_loading
             && !matches!(self.load_state, PullRequestsLoadState::Failed(_))
             || !self.items.is_empty())
@@ -498,18 +553,22 @@ impl Render for PullRequestsPage {
         let width_probe = {
             let page = cx.weak_entity();
             gpui::canvas(
-                move |bounds, _, cx| {
+                move |bounds, window, cx| {
                     let width = table_content_width(f32::from(bounds.size.width));
-                    page.update(cx, |page, cx| {
-                        if page
-                            .content_width
-                            .is_none_or(|current| (current - width).abs() > 0.5)
-                        {
-                            page.content_width = Some(width);
-                            cx.notify();
-                        }
-                    })
-                    .ok();
+                    // Notify after layout completes so the next frame uses the
+                    // new outlet width even when resizing across a breakpoint.
+                    window.defer(cx, move |_, cx| {
+                        page.update(cx, |page, cx| {
+                            if page
+                                .content_width
+                                .is_none_or(|current| (current - width).abs() > 0.5)
+                            {
+                                page.content_width = Some(width);
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    });
                 },
                 |_, _, _, _| {},
             )
@@ -517,119 +576,142 @@ impl Render for PullRequestsPage {
             .inset_0()
         };
 
-        div().id("pull-requests-page").size_full().child(
-            crate::edge_fade::edge_faded(
-                PR_SCROLL_FADE_BAND,
-                true,
-                false,
+        let loading = initial_loading || refreshing;
+        let header = div()
+            .w_full()
+            .max_w(px(PR_PAGE_MAX_WIDTH))
+            .mx_auto()
+            .px(px(PR_PAGE_HORIZONTAL_PADDING))
+            .pb(px(16.0))
+            .flex_none()
+            .child(
                 div()
-                    .id("pull-requests-scroll")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&scroll)
+                    .flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap(px(12.0))
+                    .child(widgets::page_header(&theme, "Pull requests", count))
+                    .child(div().flex_1())
                     .child(
                         div()
-                            .w_full()
-                            .max_w(px(PR_PAGE_MAX_WIDTH))
-                            .mx_auto()
-                            .relative()
-                            .px(px(PR_PAGE_HORIZONTAL_PADDING))
-                            .pt(px(Theme::TITLEBAR_HEIGHT + Theme::SPACE_SM))
-                            .pb(px(64.0))
                             .flex()
-                            .flex_col()
-                            .child(width_probe)
+                            .items_center()
+                            .flex_wrap()
+                            .gap(px(8.0))
+                            .child(self.render_device_switcher(&theme, cx))
                             .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.0))
-                                    .child(widgets::page_header(&theme, "Pull requests", count))
-                                    .child(div().flex_1())
-                                    .child(self.render_device_switcher(&theme, cx))
-                                    .child(
-                                        widgets::ghost_action(&theme)
-                                            .id("pull-requests-refresh")
-                                            .flex_none()
-                                            .hover(|style| widgets::ghost_hover(&theme, style))
-                                            .when(
-                                                matches!(
-                                                    self.load_state,
-                                                    PullRequestsLoadState::Loading
-                                                ),
-                                                |element| element.opacity(0.5),
-                                            )
-                                            .on_click(
-                                                cx.listener(|page, _, _, cx| page.refresh(cx)),
-                                            )
-                                            .child(if refreshing || initial_loading {
-                                                crate::loaders::mini_glyph_spinner(
-                                                    "pull-requests-refresh-spinner",
-                                                    1.75,
-                                                    theme.glyph,
-                                                    cx.entity_id(),
-                                                    cx,
-                                                )
-                                                .into_any_element()
-                                            } else {
-                                                icon(icons::REFRESH)
-                                                    .size(px(16.0))
-                                                    .text_color(theme.text_muted)
-                                                    .into_any_element()
-                                            })
-                                            .child("Refresh"),
-                                    ),
-                            )
-                            .child(widgets::page_subtitle(
-                                &theme,
-                                "Open pull requests authored by you on GitHub.",
-                            ))
-                            .when(refresh_error, |element| {
-                                element.child(widgets::error_strip(
-                                    &theme,
-                                    "Refresh failed. Try again.",
-                                ))
-                            })
-                            .child(if initial_loading {
-                                div()
-                                    .mt(px(72.0))
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .gap(px(12.0))
-                                    .text_size(px(13.0))
-                                    .text_color(theme.text_muted)
-                                    .child(crate::loaders::gradient_spinner(
-                                        "pull-requests-loading",
-                                        &theme,
-                                        3.0,
-                                        cx.entity_id(),
-                                        cx,
-                                    ))
-                                    .child("Loading pull requests…")
-                                    .into_any_element()
-                            } else if items.is_empty() {
-                                self.render_empty_or_error(&theme)
-                            } else {
-                                div()
-                                    .mt(px(24.0))
-                                    .child(render_pull_request_table(
-                                        &items,
-                                        layout,
-                                        self.sort,
-                                        self.sort_epoch,
-                                        &self.sort_offsets,
-                                        &theme,
-                                        cx,
-                                    ))
-                                    .into_any_element()
-                            }),
+                                widgets::ghost_action(&theme)
+                                    .id("pull-requests-refresh")
+                                    .debug_selector(|| "pull-requests-refresh".to_string())
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Refresh pull requests")
+                                    .aria_description(if loading {
+                                        "Loading pull requests"
+                                    } else {
+                                        "Fetch the latest results from GitHub"
+                                    })
+                                    .tab_index(0)
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .focus_visible(|style| style.border_color(theme.accent))
+                                    .h(px(32.0))
+                                    .flex_none()
+                                    .hover(|style| widgets::ghost_hover(&theme, style))
+                                    .when(loading, |el| el.opacity(0.5))
+                                    .on_click(cx.listener(|page, _, _, cx| page.refresh(cx)))
+                                    .child(if loading {
+                                        crate::loaders::mini_glyph_spinner(
+                                            "pull-requests-refresh-spinner",
+                                            1.75,
+                                            theme.glyph,
+                                            cx.entity_id(),
+                                            cx,
+                                        )
+                                        .into_any_element()
+                                    } else {
+                                        icon(icons::REFRESH)
+                                            .size(px(16.0))
+                                            .text_color(theme.text_muted)
+                                            .into_any_element()
+                                    })
+                                    .child("Refresh"),
+                            ),
                     ),
             )
-            .inset_top(Theme::TITLEBAR_HEIGHT)
-            .band_top(PR_SCROLL_FADE_BAND)
-            .fade_overflow_y(&scroll),
-        )
+            .child(widgets::page_subtitle(
+                &theme,
+                "Open pull requests authored by you on GitHub.",
+            ))
+            .when(refresh_error, |el| {
+                el.child(widgets::error_strip(&theme, refresh_message))
+            });
+        let content = if initial_loading {
+            div()
+                .mt(px(72.0))
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(12.0))
+                .text_size(crate::typography::ui_rems(13.0))
+                .text_color(theme.text_muted)
+                .child(crate::loaders::gradient_spinner(
+                    "pull-requests-loading",
+                    &theme,
+                    3.0,
+                    cx.entity_id(),
+                    cx,
+                ))
+                .child("Loading pull requests…")
+                .into_any_element()
+        } else if items.is_empty() {
+            self.render_empty_or_error(&theme)
+        } else {
+            render_pull_request_table(
+                &items,
+                layout,
+                self.sort,
+                self.sort_epoch,
+                &self.sort_offsets,
+                &theme,
+                cx,
+            )
+        };
+        // Keep the page actions reachable while browsing a long list. Only the
+        // results scroll; the shared edges remain identical in every layout.
+        div()
+            .id("pull-requests-page")
+            .size_full()
+            .flex()
+            .flex_col()
+            .pt(px(Theme::TITLEBAR_HEIGHT + Theme::SPACE_SM))
+            .child(header)
+            .child(
+                div().flex_1().min_h_0().child(
+                    crate::edge_fade::edge_faded(
+                        PR_SCROLL_FADE_BAND,
+                        true,
+                        true,
+                        div()
+                            .id("pull-requests-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(PR_PAGE_MAX_WIDTH))
+                                    .mx_auto()
+                                    .relative()
+                                    .px(px(PR_PAGE_HORIZONTAL_PADDING))
+                                    .pt(px(8.0))
+                                    .pb(px(32.0))
+                                    .child(width_probe)
+                                    .child(content),
+                            ),
+                    )
+                    .fade_overflow_y(&scroll),
+                ),
+            )
     }
 }
 
@@ -711,11 +793,32 @@ fn render_pull_request_table(
     theme: &Theme,
     cx: &mut Context<PullRequestsPage>,
 ) -> AnyElement {
-    let show_header = layout != PullRequestTableLayout::Narrow;
     div()
         .w_full()
-        .when(show_header, |element| {
-            element.child(render_table_header(layout, sort, theme, cx))
+        .child(if layout == PullRequestTableLayout::Narrow {
+            div()
+                .mb(px(8.0))
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    icon(icons::SORT)
+                        .size(px(16.0))
+                        .text_color(theme.text_muted),
+                )
+                .children(
+                    [
+                        ("Updated", PullRequestSortField::Updated),
+                        ("Opened", PullRequestSortField::Opened),
+                        ("Changes", PullRequestSortField::Changes),
+                    ]
+                    .into_iter()
+                    .map(|(label, field)| render_sort_header(label, 76.0, field, sort, theme, cx)),
+                )
+                .into_any_element()
+        } else {
+            render_table_header(layout, sort, theme, cx)
         })
         .children(items.iter().map(|item| {
             let row = render_table_row(item, layout, theme);
@@ -752,7 +855,7 @@ fn render_table_header(
     };
     div()
         .h(px(PR_TABLE_HEADER_HEIGHT))
-        .px(px(8.0))
+        .px(px(9.0))
         .flex_none()
         .flex()
         .items_center()
@@ -763,7 +866,7 @@ fn render_table_header(
             div()
                 .flex_1()
                 .min_w_0()
-                .pl(px(23.0))
+                .pl(px(28.0))
                 .child(label("Pull request")),
         )
         .child(render_sort_header(
@@ -814,8 +917,26 @@ fn render_sort_header(
             "pull-requests-sort-{}",
             field.key()
         )))
+        .debug_selector(move || format!("pull-requests-sort-{}", field.key()))
         .w(px(width))
-        .h_full()
+        .h(px(32.0))
+        .role(gpui::Role::Button)
+        .aria_label(format!(
+            "Sort by {label}{}",
+            if active {
+                match sort.direction {
+                    SortDirection::Ascending => ", ascending",
+                    SortDirection::Descending => ", descending",
+                }
+            } else {
+                ""
+            }
+        ))
+        .tab_index(0)
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus_visible(|style| style.border_color(theme.accent))
         .flex_none()
         .flex()
         .items_center()
@@ -827,22 +948,12 @@ fn render_sort_header(
         } else {
             theme.text_faint
         })
-        .hover(|style| style.text_color(theme.text))
+        .hover(|style| style.bg(crate::theme::ink(0.04)).text_color(theme.text))
         .on_click(cx.listener(move |page, _, _, cx| page.select_sort(field, cx)))
         .child(label)
-        .child(
-            div()
-                .w(px(10.0))
-                .h(px(10.0))
-                .flex_none()
-                .when(active, |element| {
-                    element.child(
-                        icon(arrow)
-                            .size(px(9.0))
-                            .text_color(theme.text_muted.opacity(0.8)),
-                    )
-                }),
-        )
+        .child(div().size(px(12.0)).flex_none().when(active, |element| {
+            element.child(icon(arrow).size(px(12.0)).text_color(theme.text))
+        }))
         .into_any_element()
 }
 
@@ -852,85 +963,94 @@ fn render_table_row(
     theme: &Theme,
 ) -> AnyElement {
     let url = item.url.clone();
-    let group: SharedString =
-        format!("pull-request-row-hover-{}-{}", item.repository, item.number).into();
-    let hover_t = motion::hover_t(&group);
     let row = div()
         .id(SharedString::from(format!(
-            "pull-request-row-{}-{}",
-            item.repository, item.number
+            "pull-request-row-{}",
+            pull_request_key(item)
         )))
-        .group(group.clone())
-        .relative()
-        .top(px(-0.75 * hover_t))
+        .debug_selector(|| "pull-request-row".to_string())
+        .role(gpui::Role::Link)
+        .aria_label(format!(
+            "{}: {} #{}. {}. Open on GitHub",
+            item.title,
+            item.repository,
+            item.number,
+            status_description(item)
+        ))
+        .tab_index(0)
         .w_full()
+        .min_h(px(PR_TABLE_ROW_HEIGHT))
+        .py(px(12.0))
+        .px(px(8.0))
+        .rounded(px(8.0))
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus_visible(|style| style.border_color(theme.accent).bg(theme.selection))
         .flex_none()
         .cursor_pointer()
-        .hover(|style| style.bg(crate::theme::ink(0.025)))
-        .on_hover(motion::hover_listener(group.clone()))
+        .hover(|style| style.bg(crate::theme::ink(0.035)))
         .on_click(move |_, _, cx| {
             cx.stop_propagation();
             cx.open_url(&url);
         });
-
+    let external = || {
+        icon(icons::ARROW_UP_RIGHT)
+            .size(px(16.0))
+            .text_color(theme.text_muted)
+    };
     match layout {
         PullRequestTableLayout::Narrow => row
-            .px(px(8.0))
-            .py(px(10.0))
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .child(render_pr_identity(item, theme, hover_t))
+            .child(render_pr_identity(item, theme))
             .child(
                 div()
-                    .pl(px(23.0))
+                    .pl(px(28.0))
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap(px(10.0))
-                    .child(render_diff_stats(item, true, theme, hover_t))
+                    .gap(px(8.0))
+                    .child(render_diff_stats(item, theme))
                     .child(div().flex_1())
                     .child(
+                        icon(icons::CLOCK_CIRCLE)
+                            .size(px(14.0))
+                            .text_color(theme.text_muted),
+                    )
+                    .child(
                         div()
-                            .line_height(px(14.0))
-                            .text_size(hover_text_size(11.0, hover_t))
-                            .text_color(theme.text_muted.opacity(0.65))
+                            .text_size(crate::typography::ui_rems(11.0))
+                            .text_color(theme.text_muted)
                             .child(SharedString::from(compact_relative_time(
                                 item.updated_at,
                                 Utc::now(),
                             ))),
                     )
-                    .child(
-                        icon(icons::ARROW_UP_RIGHT)
-                            .size(px(12.0))
-                            .text_color(theme.accent.opacity(0.7)),
-                    ),
+                    .child(external()),
             )
             .into_any_element(),
         PullRequestTableLayout::Compact | PullRequestTableLayout::Wide => row
-            .h(px(PR_TABLE_ROW_HEIGHT))
-            .px(px(8.0))
             .flex()
             .items_center()
             .gap(px(8.0))
-            .child(render_pr_identity(item, theme, hover_t))
+            .child(render_pr_identity(item, theme))
             .child(
                 div()
                     .w(px(PR_TABLE_CHANGES_WIDTH))
                     .flex_none()
-                    .child(render_diff_stats(item, false, theme, hover_t)),
+                    .child(render_diff_stats(item, theme)),
             )
-            .when(layout == PullRequestTableLayout::Wide, |element| {
-                element.child(render_relative_time_cell(
+            .when(layout == PullRequestTableLayout::Wide, |el| {
+                el.child(render_relative_time_cell(
                     item.created_at,
                     PR_TABLE_OPENED_WIDTH,
-                    hover_t,
                     theme,
                 ))
             })
             .child(render_relative_time_cell(
                 item.updated_at,
                 PR_TABLE_UPDATED_WIDTH,
-                hover_t,
                 theme,
             ))
             .child(
@@ -939,45 +1059,58 @@ fn render_table_row(
                     .flex_none()
                     .flex()
                     .justify_end()
-                    .opacity(0.0)
-                    .group_hover(group, |style| style.opacity(1.0))
-                    .child(
-                        icon(icons::ARROW_UP_RIGHT)
-                            .size(px(12.0))
-                            .text_color(theme.accent.opacity(0.7)),
-                    ),
+                    .child(external()),
             )
             .into_any_element(),
     }
 }
 
-fn render_pr_identity(item: &ChangeRequestListItem, theme: &Theme, hover_t: f32) -> AnyElement {
+fn status_description(item: &ChangeRequestListItem) -> String {
+    let mut labels = vec![if item.is_draft { "Draft" } else { "Open" }];
+    if item.mergeability == ChangeRequestMergeability::Conflicting {
+        labels.push("Merge conflicts");
+    }
+    match item.review_decision {
+        ChangeRequestReviewDecision::ChangesRequested => labels.push("Changes requested"),
+        ChangeRequestReviewDecision::Approved => labels.push("Approved"),
+        _ => {}
+    }
+    labels.join(" · ")
+}
+
+fn render_pr_identity(item: &ChangeRequestListItem, theme: &Theme) -> AnyElement {
     let conflicting = item.mergeability == ChangeRequestMergeability::Conflicting;
+    let status = SharedString::from(status_description(item));
+    let title = SharedString::from(single_line(&item.title));
+    let full_title = title.clone();
+    let repository = SharedString::from(format!("{} #{}", item.repository, item.number));
+    let full_repository = repository.clone();
     let status_icon = div()
         .id(SharedString::from(format!(
-            "pull-request-status-{}-{}",
-            item.repository, item.number
+            "pull-request-status-{}",
+            pull_request_key(item)
         )))
-        .size(px(15.0))
+        .size(px(20.0))
         .flex_none()
-        .mt(px(3.0))
         .flex()
         .items_center()
         .justify_center()
         .child(
-            icon(pull_request_status_icon(item.mergeability))
-                .size(px(15.0))
-                .text_color(if conflicting {
-                    theme.danger_muted
-                } else {
-                    theme.success_muted
-                }),
+            icon(if item.is_draft && !conflicting {
+                icons::PEN
+            } else {
+                pull_request_status_icon(item.mergeability)
+            })
+            .size(px(16.0))
+            .text_color(if conflicting {
+                theme.danger_muted
+            } else if item.is_draft {
+                theme.text_muted
+            } else {
+                theme.success_muted
+            }),
         )
-        .when(conflicting, |element| {
-            element
-                .tooltip(|_, cx| cx.new(|_| MergeConflictTooltip).into())
-                .tooltip_show_delay(Duration::from_millis(350))
-        });
+        .tooltip(move |_, cx| cx.new(|_| DashboardTooltip(status.clone())).into());
     div()
         .flex_1()
         .min_w_0()
@@ -991,65 +1124,96 @@ fn render_pr_identity(item: &ChangeRequestListItem, theme: &Theme, hover_t: f32)
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
+                .gap(px(4.0))
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
+                        .id(SharedString::from(format!(
+                            "pull-request-title-{}",
+                            pull_request_key(item)
+                        )))
+                        .debug_selector(|| "pull-request-title".to_string())
                         .min_w_0()
-                        .line_height(px(15.0))
-                        .text_size(hover_text_size(12.0, hover_t))
+                        .truncate()
+                        .text_size(crate::typography::ui_rems(13.0))
+                        .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(theme.text)
-                        .child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .child(SharedString::from(truncate_title(&item.title, 120))),
-                        )
-                        .when(item.is_draft, |element| {
-                            element.child(render_pr_badge("DRAFT", theme.warning))
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| DashboardTooltip(full_title.clone())).into()
                         })
-                        .when(
-                            item.review_decision == ChangeRequestReviewDecision::ChangesRequested,
-                            |element| {
-                                element.child(render_pr_badge("CHANGES REQUESTED", theme.warning))
-                            },
-                        ),
+                        .child(title),
                 )
                 .child(
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_center()
-                        .gap(px(5.0))
+                        .gap(px(6.0))
                         .min_w_0()
-                        .line_height(px(13.0))
-                        .text_size(hover_text_size(10.0, hover_t))
-                        .text_color(theme.text_faint)
                         .child(
                             div()
+                                .id(SharedString::from(format!(
+                                    "pull-request-repository-{}",
+                                    pull_request_key(item)
+                                )))
                                 .min_w_0()
+                                .max_w_full()
                                 .truncate()
-                                .child(SharedString::from(item.repository.clone())),
+                                .text_size(crate::typography::ui_rems(11.0))
+                                .text_color(theme.text_muted)
+                                .tooltip(move |_, cx| {
+                                    cx.new(|_| DashboardTooltip(full_repository.clone())).into()
+                                })
+                                .child(repository),
                         )
-                        .child(SharedString::from(format!("#{}", item.number))),
+                        .when(item.is_draft, |el| {
+                            el.child(render_pr_badge("Draft", icons::PEN, theme.text_muted))
+                        })
+                        .when(conflicting, |el| {
+                            el.child(render_pr_badge(
+                                "Conflicts",
+                                icons::DANGER_TRIANGLE,
+                                theme.danger_muted,
+                            ))
+                        })
+                        .when(
+                            item.review_decision == ChangeRequestReviewDecision::ChangesRequested,
+                            |el| {
+                                el.child(render_pr_badge(
+                                    "Changes requested",
+                                    icons::PEN_NEW_SQUARE,
+                                    theme.warning,
+                                ))
+                            },
+                        )
+                        .when(
+                            item.review_decision == ChangeRequestReviewDecision::Approved,
+                            |el| {
+                                el.child(render_pr_badge(
+                                    "Approved",
+                                    icons::CHECK,
+                                    theme.success_muted,
+                                ))
+                            },
+                        ),
                 ),
         )
         .into_any_element()
 }
 
-fn render_pr_badge(label: &'static str, color: gpui::Hsla) -> AnyElement {
+fn render_pr_badge(label: &'static str, glyph: &'static str, color: gpui::Hsla) -> AnyElement {
     div()
         .flex_none()
         .px(px(6.0))
-        .h(px(15.0))
+        .py(px(2.0))
         .flex()
         .items_center()
-        .rounded_full()
-        .bg(color.opacity(0.1))
-        .text_size(px(9.0))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .gap(px(4.0))
+        .rounded(px(4.0))
+        .bg(color.opacity(0.08))
+        .whitespace_nowrap()
+        .text_size(crate::typography::ui_rems(10.0))
         .text_color(color)
+        .child(icon(glyph).size(px(12.0)).text_color(color))
         .child(label)
         .into_any_element()
 }
@@ -1063,19 +1227,22 @@ fn pull_request_status_icon(mergeability: ChangeRequestMergeability) -> &'static
     }
 }
 
-fn render_diff_stats(
-    item: &ChangeRequestListItem,
-    compact: bool,
-    theme: &Theme,
-    hover_t: f32,
-) -> AnyElement {
+fn render_diff_stats(item: &ChangeRequestListItem, theme: &Theme) -> AnyElement {
+    let exact = SharedString::from(format!(
+        "{} additions, {} deletions",
+        item.additions, item.deletions
+    ));
     div()
+        .id(SharedString::from(format!(
+            "pull-request-diff-{}",
+            pull_request_key(item)
+        )))
         .flex()
         .items_center()
-        .gap(px(if compact { 6.0 } else { 8.0 }))
+        .gap(px(8.0))
         .font_family(theme.font_mono.clone())
-        .line_height(px(14.0))
-        .text_size(hover_text_size(10.5, hover_t))
+        .text_size(crate::typography::ui_rems(11.0))
+        .tooltip(move |_, cx| cx.new(|_| DashboardTooltip(exact.clone())).into())
         .child(
             div()
                 .text_color(theme.success_muted)
@@ -1095,22 +1262,12 @@ fn render_diff_stats(
         .into_any_element()
 }
 
-fn hover_text_size(base: f32, hover_t: f32) -> gpui::Pixels {
-    px(base * (1.0 + PR_ROW_HOVER_TEXT_SCALE * hover_t))
-}
-
-fn render_relative_time_cell(
-    timestamp: DateTime<Utc>,
-    width: f32,
-    hover_t: f32,
-    theme: &Theme,
-) -> AnyElement {
+fn render_relative_time_cell(timestamp: DateTime<Utc>, width: f32, theme: &Theme) -> AnyElement {
     div()
         .w(px(width))
         .flex_none()
         .truncate()
-        .line_height(px(14.0))
-        .text_size(hover_text_size(10.5, hover_t))
+        .text_size(crate::typography::ui_rems(11.0))
         .text_color(theme.text_muted)
         .child(SharedString::from(relative_time(timestamp, Utc::now())))
         .into_any_element()
@@ -1287,16 +1444,6 @@ fn format_compact_count(value: u64) -> String {
     }
 }
 
-fn truncate_title(title: &str, max_chars: usize) -> String {
-    let title = single_line(title);
-    if title.chars().count() <= max_chars {
-        return title;
-    }
-    let mut truncated: String = title.chars().take(max_chars.saturating_sub(1)).collect();
-    truncated.push('…');
-    truncated
-}
-
 fn single_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -1360,6 +1507,130 @@ mod tests {
                 .with_ymd_and_hms(2026, 8, 19, updated_hour, 0, 0)
                 .unwrap(),
         }
+    }
+
+    struct RowLayoutFixture {
+        item: ChangeRequestListItem,
+    }
+
+    impl Render for RowLayoutFixture {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let width = f32::from(window.viewport_size().width);
+            div().w_full().child(render_table_row(
+                &self.item,
+                table_layout(width),
+                Theme::of(cx),
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn long_rows_fit_at_every_layout_and_do_not_resize_on_hover(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let mut item = pull_request(
+            "a-very-long-organization/a-very-long-repository-name",
+            181,
+            123456,
+            1,
+            1,
+        );
+        item.title =
+            "A long pull request title that must remain readable beside every possible status "
+                .repeat(3);
+        item.is_draft = true;
+        item.mergeability = ChangeRequestMergeability::Conflicting;
+        item.review_decision = ChangeRequestReviewDecision::ChangesRequested;
+        let (_, cx) = cx.add_window_view(|_, _| RowLayoutFixture { item });
+        for width in [272.0, 639.0, 640.0, 899.0, 900.0, 1072.0] {
+            cx.simulate_resize(gpui::size(px(width), px(480.0)));
+            cx.run_until_parked();
+            let row = cx.debug_bounds("pull-request-row").expect("row rendered");
+            let title = cx
+                .debug_bounds("pull-request-title")
+                .expect("title rendered");
+            assert!(row.size.width <= px(width), "row overflow at {width}");
+            assert!(
+                title.size.width > px(120.0),
+                "statuses squeezed title at {width}"
+            );
+            assert!(title.right() <= row.right(), "title overflow at {width}");
+            cx.simulate_mouse_move(title.center(), None, gpui::Modifiers::default());
+            cx.run_until_parked();
+            assert_eq!(
+                cx.debug_bounds("pull-request-title").unwrap(),
+                title,
+                "hover changed text geometry"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn narrow_sorting_and_refresh_stay_reachable(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let (page, cx) = cx.add_window_view(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            let mut page = PullRequestsPage::new(state, cx);
+            page.items = (1..=50)
+                .map(|n| pull_request("owner/repo", n, n, 1, 1))
+                .collect();
+            page.load_state = PullRequestsLoadState::Ready;
+            page
+        });
+        cx.simulate_resize(gpui::size(px(320.0), px(480.0)));
+        cx.run_until_parked();
+        let refresh = cx
+            .debug_bounds("pull-requests-refresh")
+            .expect("refresh rendered");
+        for selector in [
+            "pull-requests-sort-changes",
+            "pull-requests-sort-opened",
+            "pull-requests-sort-updated",
+        ] {
+            let bounds = cx.debug_bounds(selector).expect("sort rendered");
+            assert!(
+                bounds.left() >= px(0.0) && bounds.right() <= px(320.0),
+                "{selector}: {bounds:?}"
+            );
+        }
+        let changes = cx.debug_bounds("pull-requests-sort-changes").unwrap();
+        cx.simulate_mouse_down(
+            changes.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            changes.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        page.read_with(cx, |page, _| {
+            assert_eq!(page.sort.field, PullRequestSortField::Changes)
+        });
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: gpui::point(px(200.0), px(400.0)),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-800.0))),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        page.read_with(cx, |page, _| assert!(page.scroll.offset().y < px(0.0)));
+        assert_eq!(cx.debug_bounds("pull-requests-refresh").unwrap(), refresh);
+    }
+
+    #[test]
+    fn status_description_preserves_simultaneous_states() {
+        let mut item = pull_request("owner/repo", 181, 10, 1, 1);
+        item.is_draft = true;
+        item.mergeability = ChangeRequestMergeability::Conflicting;
+        item.review_decision = ChangeRequestReviewDecision::ChangesRequested;
+        assert_eq!(
+            status_description(&item),
+            "Draft · Merge conflicts · Changes requested"
+        );
+        item.is_draft = false;
+        item.mergeability = ChangeRequestMergeability::Unknown;
+        item.review_decision = ChangeRequestReviewDecision::Approved;
+        assert_eq!(status_description(&item), "Open · Approved");
     }
 
     fn numbers(items: &[ChangeRequestListItem]) -> Vec<u64> {
@@ -1621,7 +1892,6 @@ mod tests {
     #[test]
     fn visible_device_names_and_titles_are_sanitized() {
         assert_eq!(single_line("MacBook\n Pro"), "MacBook Pro");
-        assert!(truncate_title(&"a".repeat(200), 120).ends_with('…'));
-        assert_eq!(truncate_title("Short title", 120), "Short title");
+        assert_eq!(single_line(&"a".repeat(200)), "a".repeat(200));
     }
 }

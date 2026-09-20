@@ -7446,18 +7446,24 @@ impl Shell {
 
         let pull_requests_button = div()
             .id("open-pull-requests")
+            .role(gpui::Role::Button)
+            .aria_label("Pull requests")
+            .tab_index(0)
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .focus_visible(|style| style.border_color(theme.accent))
             .size(px(SIDEBAR_FOOTER_ACTION_SIZE))
             .flex_none()
             .flex()
             .items_center()
             .justify_center()
             .rounded(px(8.0))
-            .bg(motion::hover_blend(
-                "sidebar-pull-requests",
-                theme.glass_hover().opacity(0.0),
-                theme.glass_hover(),
-            ))
-            .on_hover(motion::hover_listener("sidebar-pull-requests"))
+            .bg(if matches!(self.route, Route::PullRequests) {
+                theme.selection
+            } else {
+                gpui::transparent_black()
+            })
+            .hover(|style| style.bg(theme.glass_hover()))
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| this.open_pull_requests(cx)))
             .tooltip(|_, cx| {
