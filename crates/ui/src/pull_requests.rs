@@ -274,7 +274,7 @@ impl PullRequestsPage {
             }
         });
         let mut filter_fades = crate::motion::HoverFades::default();
-        filter_fades.set_at("pr-filter-all", true, true, Instant::now());
+        filter_fades.set_at("pr-filter-authored", true, true, Instant::now());
         let mut page = Self {
             state,
             search,
@@ -298,7 +298,7 @@ impl PullRequestsPage {
             items: Vec::new(),
             view_items: None,
             sort: PullRequestSort::DEFAULT,
-            filter: ChangeRequestFilter::All,
+            filter: ChangeRequestFilter::Authored,
             filter_fades,
             load_state: PullRequestsLoadState::Idle,
             last_loaded_at: None,
@@ -2270,7 +2270,7 @@ mod tests {
                 (
                     Some("remote".into()),
                     "saved/repo".into(),
-                    ChangeRequestFilter::All,
+                    ChangeRequestFilter::Authored,
                 ),
                 vec![pull_request("saved/repo", 10, 1, 1, 1)],
                 Instant::now(),
@@ -2301,12 +2301,13 @@ mod tests {
         });
         page.update(cx, |page, cx| {
             assert_eq!(page.load_state, PullRequestsLoadState::Idle);
+            assert_eq!(page.filter, ChangeRequestFilter::Authored);
             page.on_hidden();
             page.on_visible(cx);
             assert_eq!(page.load_state, PullRequestsLoadState::Idle);
             // No engine exists. Any accidental request would produce Network.
             page.snapshots.push((
-                (None, "acme/zeron".into(), ChangeRequestFilter::All),
+                (None, "acme/zeron".into(), ChangeRequestFilter::Authored),
                 vec![pull_request("acme/zeron", 10, 1, 1, 1)],
                 Instant::now(),
             ));
@@ -2355,6 +2356,7 @@ mod tests {
                 }
                 methods::LIST_FILTERED_CHANGE_REQUESTS => {
                     assert_eq!(params["repository"], "owner/repo");
+                    assert_eq!(params["filter"], "authored");
                     zeron_rpc::RpcReply::value(&vec![pull_request("owner/canonical", 7, 1, 1, 1)])
                 }
                 _ => panic!("unexpected request {method}"),
@@ -2616,9 +2618,9 @@ mod tests {
                 ));
             }
             for (filter, number) in [
-                (ChangeRequestFilter::Authored, 2),
                 (ChangeRequestFilter::Reviewing, 3),
                 (ChangeRequestFilter::All, 1),
+                (ChangeRequestFilter::Authored, 2),
             ] {
                 page.select_filter(filter, cx);
                 assert_eq!(page.items[0].number, number);
