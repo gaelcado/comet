@@ -25,7 +25,7 @@ const GIT_OUTPUT_LIMIT: usize = 64 * 1024;
 const GITHUB_OUTPUT_LIMIT: usize = 1024 * 1024;
 const GITHUB_RESULT_LIMIT: &str = "20";
 const GITHUB_JSON_FIELDS: &str = "number,title,url,state,baseRefName,headRefName,updatedAt,isCrossRepository,headRepositoryOwner";
-const GITHUB_SEARCH_QUERY: &str = "query($search: String!) { search(query: $search, type: ISSUE, first: 50) { nodes { ... on PullRequest { author { login } number title url state isDraft mergeable reviewDecision createdAt updatedAt additions deletions repository { nameWithOwner } } } } }";
+const GITHUB_SEARCH_QUERY: &str = "query($search: String!, $owner: String!, $name: String!) { repository(owner: $owner, name: $name) { nameWithOwner } search(query: $search, type: ISSUE, first: 50) { nodes { ... on PullRequest { author { login } number title url state isDraft mergeable reviewDecision createdAt updatedAt additions deletions repository { nameWithOwner } } } } }";
 
 /// Strictly one repository; reject search qualifiers and unscoped requests.
 pub fn valid_pr_repository(repository: &str) -> bool {
@@ -441,6 +441,29 @@ impl GitHubCli {
         repository: &str,
         filter: zeron_proto::ChangeRequestFilter,
     ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        let (items, canonical) = self.fetch_scoped_search(repository, filter).await?;
+        if items.is_empty()
+            && let Some(canonical) = canonical
+            && !canonical.eq_ignore_ascii_case(repository)
+        {
+            // Search does not follow repository renames, although repository()
+            // does. Follow only that verified canonical name, at most once.
+            return self
+                .fetch_scoped_search(&canonical, filter)
+                .await
+                .map(|result| result.0);
+        }
+        Ok(items)
+    }
+
+    async fn fetch_scoped_search(
+        &self,
+        repository: &str,
+        filter: zeron_proto::ChangeRequestFilter,
+    ) -> Result<(Vec<ChangeRequestListItem>, Option<String>), ChangeRequestError> {
+        let (owner, name) = repository
+            .split_once('/')
+            .ok_or(ChangeRequestError::UnsupportedRepository)?;
         let qualifier = match filter {
             zeron_proto::ChangeRequestFilter::All => "",
             zeron_proto::ChangeRequestFilter::Authored => "author:@me ",
@@ -453,6 +476,10 @@ impl GitHubCli {
                 "graphql".into(),
                 "-f".into(),
                 format!("query={GITHUB_SEARCH_QUERY}"),
+                "-f".into(),
+                format!("owner={owner}"),
+                "-f".into(),
+                format!("name={name}"),
                 "-f".into(),
                 format!("search=is:pr is:open {qualifier}repo:{repository} sort:updated-desc"),
             ],
@@ -474,6 +501,13 @@ impl GitHubCli {
 
         let response: GhSearchResponse =
             serde_json::from_slice(&output.stdout).map_err(|_| ChangeRequestError::Decode)?;
+        let canonical = response.data.repository.map(|repo| repo.name_with_owner);
+        if canonical
+            .as_deref()
+            .is_some_and(|repo| !valid_pr_repository(repo))
+        {
+            return Err(ChangeRequestError::Decode);
+        }
         let mut items = response
             .data
             .search
@@ -491,7 +525,7 @@ impl GitHubCli {
                 .then_with(|| left.repository.cmp(&right.repository))
                 .then_with(|| left.number.cmp(&right.number))
         });
-        Ok(items)
+        Ok((items, canonical))
     }
 
     async fn list_for_selector(
@@ -977,6 +1011,8 @@ struct GhSearchResponse {
 
 #[derive(Debug, Deserialize)]
 struct GhSearchData {
+    #[serde(default)]
+    repository: Option<GhSearchRepository>,
     search: GhSearchConnection,
 }
 
@@ -1695,6 +1731,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pr_renamed_empty_search_follows_once_and_caches_result() {
+        let redirect = serde_json::json!({"data": {
+            "repository": {"nameWithOwner": "acme/new-name"},
+            "search": {"nodes": []}
+        }});
+        let items = search_response(vec![search_pull_request(
+            "acme/new-name",
+            1,
+            "PR",
+            "OPEN",
+            "UNKNOWN",
+            "2026-08-10T09:30:00Z",
+            "2026-08-19T12:00:00Z",
+            false,
+            None,
+        )]);
+        let runner = FakeProcessRunner::with_responses([
+            command_success(serde_json::to_vec(&redirect).unwrap()),
+            command_success(items),
+        ]);
+        let github = GitHubCli::with_runner(runner.clone());
+        for _ in 0..2 {
+            let items = github
+                .list_authored_open("acme/old-name", false)
+                .await
+                .unwrap();
+            assert_eq!(items[0].repository, "acme/new-name");
+        }
+        let requests = runner.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].args.iter().any(|arg| arg == "name=new-name"));
+        assert_eq!(
+            requests[1].args.last().unwrap(),
+            "search=is:pr is:open author:@me repo:acme/new-name sort:updated-desc"
+        );
+    }
+
+    #[tokio::test]
+    async fn pr_empty_canonical_search_does_not_retry() {
+        let response = serde_json::json!({"data": {
+            "repository": {"nameWithOwner": "acme/zeron"},
+            "search": {"nodes": []}
+        }});
+        let (items, runner) =
+            list_with(command_success(serde_json::to_vec(&response).unwrap())).await;
+        assert!(items.unwrap().is_empty());
+        assert_eq!(runner.requests().len(), 1);
+    }
+
+    #[tokio::test]
     async fn pr_filters_are_scoped_cached_and_never_prefetched() {
         use zeron_proto::ChangeRequestFilter::{All, Authored, Reviewing};
         let runner = FakeProcessRunner::with_responses(
@@ -1858,6 +1944,10 @@ mod tests {
                 "graphql",
                 "-f",
                 &format!("query={GITHUB_SEARCH_QUERY}"),
+                "-f",
+                "owner=acme",
+                "-f",
+                "name=zeron",
                 "-f",
                 "search=is:pr is:open author:@me repo:acme/zeron sort:updated-desc"
             ]

@@ -856,6 +856,28 @@ impl PullRequestsPage {
                 page.load_state = settle_snapshot(&mut page.items, loaded);
                 page.view_items = None;
                 if succeeded {
+                    if let Some(first) = page.items.first()
+                        && valid_repository_filter(&first.repository)
+                        && page
+                            .items
+                            .iter()
+                            .all(|item| item.repository == first.repository)
+                        && page.repository.as_deref() != Some(first.repository.as_str())
+                    {
+                        let canonical = first.repository.clone();
+                        page.repository = Some(canonical.clone());
+                        page.repository_input
+                            .update(cx, |input, cx| input.set_text(&canonical, cx));
+                        let device = page.target_device.clone();
+                        crate::settings::update(
+                            crate::settings::SavePolicy::Debounced,
+                            cx,
+                            |settings| {
+                                settings.last_pull_request_repository = Some(canonical);
+                                settings.last_pull_request_device = device;
+                            },
+                        );
+                    }
                     let now = Instant::now();
                     page.last_loaded_at = Some(now);
                     let key = (
@@ -1032,7 +1054,7 @@ impl PullRequestsPage {
                 PullRequestsPageError::Network | PullRequestsPageError::RemoteOffline(_),
             ) => icons::WIFI_OFF,
             PullRequestsLoadState::Failed(_) => icons::INFO_CIRCLE,
-            _ => icons::CHECKLIST,
+            _ => icons::PULL_REQUEST,
         };
         let (title, body) = match &self.load_state {
             PullRequestsLoadState::Failed(error) => error_copy(error),
@@ -2220,7 +2242,7 @@ mod tests {
                 }
                 methods::LIST_FILTERED_CHANGE_REQUESTS => {
                     assert_eq!(params["repository"], "owner/repo");
-                    zeron_rpc::RpcReply::value(&vec![pull_request("owner/repo", 7, 1, 1, 1)])
+                    zeron_rpc::RpcReply::value(&vec![pull_request("owner/canonical", 7, 1, 1, 1)])
                 }
                 _ => panic!("unexpected request {method}"),
             }
@@ -2283,6 +2305,14 @@ mod tests {
         page.update(cx, |page, cx| {
             assert_eq!(page.load_state, PullRequestsLoadState::Ready);
             assert_eq!(page.items[0].number, 7);
+            assert_eq!(page.repository.as_deref(), Some("owner/canonical"));
+            assert_eq!(
+                crate::settings::current(cx)
+                    .last_pull_request_repository
+                    .as_deref(),
+                Some("owner/canonical")
+            );
+            assert_eq!(page.snapshots.last().unwrap().0.1, "owner/canonical");
             page.on_hidden();
             page.on_visible(cx);
         });
@@ -2357,6 +2387,14 @@ mod tests {
         page.update(cx, |page, cx| {
             assert_eq!(page.load_state, PullRequestsLoadState::Ready);
             assert_eq!(page.items[0].number, 7);
+            assert_eq!(page.repository.as_deref(), Some("owner/canonical"));
+            assert_eq!(
+                crate::settings::current(cx)
+                    .last_pull_request_repository
+                    .as_deref(),
+                Some("owner/canonical")
+            );
+            assert_eq!(page.snapshots.last().unwrap().0.1, "owner/canonical");
             page.on_hidden();
             page.on_visible(cx);
         });
@@ -2426,6 +2464,14 @@ mod tests {
         page.update(cx, |page, cx| {
             assert_eq!(page.load_state, PullRequestsLoadState::Ready);
             assert_eq!(page.items[0].number, 7);
+            assert_eq!(page.repository.as_deref(), Some("owner/canonical"));
+            assert_eq!(
+                crate::settings::current(cx)
+                    .last_pull_request_repository
+                    .as_deref(),
+                Some("owner/canonical")
+            );
+            assert_eq!(page.snapshots.last().unwrap().0.1, "owner/canonical");
             page.on_hidden();
             page.on_visible(cx);
         });
