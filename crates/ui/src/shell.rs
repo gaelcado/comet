@@ -11996,7 +11996,7 @@ impl Render for Shell {
             gate.clone()
         };
         let root = match &render_gate {
-            GatePhase::Ready if self.onboarding.active() => {
+            GatePhase::Ready if self.onboarding_window.shows_setup(self.onboarding.active()) => {
                 self.onboarding.prepare_model_controls(cx);
                 let viewport = window.viewport_size();
                 let title_bar = self.render_onboarding_title_bar(cx);
@@ -12277,6 +12277,8 @@ impl Render for Shell {
         } else {
             root
         };
+
+        let root = root.opacity(self.onboarding_window.content_opacity());
 
         // A manually-driven tween is mid-flight: keep frames coming (the same
         // scheduling `with_animation` would have requested). Hover color fades
@@ -13543,6 +13545,13 @@ mod exit_regressions {
                     "{step:?}: progress is clipped"
                 );
                 assert!(action.origin.x >= px(16.0) && action.right() <= size.width - px(16.0));
+                if step == OnboardingStep::Harnesses {
+                    let list = visual.debug_bounds("onboarding-harness-scroll").unwrap();
+                    assert!(
+                        (action.origin.y - list.bottom() - px(Theme::SPACE_MD)).abs() < px(2.0),
+                        "agent scroll area must fill the space above the footer: {list:?} {action:?}"
+                    );
+                }
                 if matches!(step, OnboardingStep::Workspace | OnboardingStep::Project) {
                     let choices = visual
                         .debug_bounds(if step == OnboardingStep::Workspace {

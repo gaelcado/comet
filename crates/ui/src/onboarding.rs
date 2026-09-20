@@ -27,17 +27,8 @@ use crate::theme::{Theme, ink};
 pub const SCHEMA_VERSION: u16 = 1;
 pub const STEP_COUNT: usize = 6;
 const CONTENT_MAX_WIDTH: f32 = 520.0;
-// The journey grows with the window until this cap; dense steps should expose
-// several useful rows before their overflow affordance becomes necessary.
-const CONTENT_MAX_HEIGHT: f32 = 488.0;
-const WORKSPACE_MAX_HEIGHT: f32 = 336.0;
-const HARNESS_MAX_HEIGHT: f32 = 528.0;
-const PROJECT_MAX_HEIGHT: f32 = 336.0;
 const HARNESS_ROW_HEIGHT: f32 = 54.0;
 const HARNESS_ROW_GAP: f32 = 8.0;
-// Four complete rows plus half of the next one uses the available height while
-// still making the list's overflow obvious.
-const HARNESS_LIST_MAX_HEIGHT: f32 = HARNESS_ROW_HEIGHT * 4.5 + HARNESS_ROW_GAP * 4.0;
 const STEP_GROUP_GAP: f32 = 20.0;
 const VIEWPORT_INSET: f32 = Theme::SPACE_LG;
 const ROOMY_VIEWPORT_INSET: f32 = Theme::SPACE_LG * 2.0;
@@ -714,6 +705,7 @@ fn faded_step_scroll(id: &'static str, handle: &ScrollHandle, content: AnyElemen
         true,
         div()
             .id(id)
+            .debug_selector(move || id.into())
             .size_full()
             .min_w_0()
             .min_h_0()
@@ -1370,7 +1362,6 @@ fn render_harness_step(
         .mt(px(Theme::SPACE_SM))
         .flex_1()
         .min_h_0()
-        .max_h(px(HARNESS_LIST_MAX_HEIGHT))
         .child(faded_step_scroll(
             "onboarding-harness-scroll",
             &ui.harness_scroll,
@@ -1514,11 +1505,11 @@ fn render_model_choices(
             .iter()
             .map(|model| (Some(model.id.clone()), model.label.clone())),
     );
-    div()
+    let list = div()
         .id(prefix)
         .w_full()
-        .h(px(((models.len() + 1) as f32 * 34.0).min(119.0)))
-        .flex_none()
+        .min_h(px(102.0))
+        .flex_1()
         .rounded(px(10.0))
         .border_1()
         .border_color(theme.border)
@@ -1555,7 +1546,9 @@ fn render_model_choices(
                         shell.onboarding_pick_default_model(id.clone(), cx);
                     }
                 }))
-        }))
+        }));
+    crate::edge_fade::edge_faded(16.0, true, true, list)
+        .fade_overflow_y(&ui.model_scroll)
         .into_any_element()
 }
 
@@ -1675,11 +1668,12 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
                 }))
             }));
     let fields = div()
+        .min_h_full()
         .flex()
         .flex_col()
         .gap(px(STEP_GROUP_GAP))
         .child(field("Agent", harness_chips.into_any_element()))
-        .child(field("Model", model_content))
+        .child(field("Model", model_content).flex_1().min_h(px(132.0)))
         .child(field("Reasoning", reasoning_chips.into_any_element()))
         .into_any_element();
     div()
@@ -1835,6 +1829,8 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                 .child(error.clone())
                 .into_any_element(),
             Loadable::Ready(models) => div()
+                .flex_1()
+                .min_h(px(132.0))
                 .mt(px(18.0))
                 .flex()
                 .flex_col()
@@ -1858,6 +1854,9 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
         }
     };
     let title_options = div()
+        .min_h_full()
+        .flex()
+        .flex_col()
         .child(body(theme, "Choose an agent to name your sessions. Automatic uses an available agent, or the first seven words."))
         .child(div().mt(px(16.0)).child(choices))
         .child(title_models)
@@ -2075,17 +2074,6 @@ fn can_continue(ui: &OnboardingUi, step: OnboardingStep) -> bool {
             .any(|h| h.id != HarnessId::Mock && harness_is_usable(h, &ui.accounts)))
 }
 
-fn journey_max_height(step: OnboardingStep) -> f32 {
-    match step {
-        OnboardingStep::Workspace => WORKSPACE_MAX_HEIGHT,
-        OnboardingStep::Harnesses => HARNESS_MAX_HEIGHT,
-        OnboardingStep::Project | OnboardingStep::FirstSession => PROJECT_MAX_HEIGHT,
-        OnboardingStep::Titles => 440.0,
-        OnboardingStep::Defaults => 528.0,
-        OnboardingStep::Appearance => CONTENT_MAX_HEIGHT,
-    }
-}
-
 fn render_footer_actions(
     ui: &OnboardingUi,
     step: OnboardingStep,
@@ -2198,11 +2186,9 @@ pub fn render(
     let step = ui.step();
     let viewport_width = f32::from(viewport.width);
     let viewport_height = f32::from(viewport.height);
-    let journey_max_height = journey_max_height(step);
     let compact_navigation = viewport_width < COMPACT_NAVIGATION_WIDTH;
     let roomy_x = viewport_width >= CONTENT_MAX_WIDTH + ROOMY_VIEWPORT_INSET * 2.0;
-    let roomy_y =
-        viewport_height >= Theme::TITLEBAR_HEIGHT + journey_max_height + ROOMY_VIEWPORT_INSET * 2.0;
+    let roomy_y = viewport_height >= 600.0;
     let outer_x = if roomy_x {
         ROOMY_VIEWPORT_INSET
     } else {
@@ -2237,7 +2223,6 @@ pub fn render(
         .w_full()
         .h_full()
         .max_w(px(CONTENT_MAX_WIDTH))
-        .max_h(px(journey_max_height))
         .min_w_0()
         .min_h_0()
         .flex()
@@ -2372,15 +2357,6 @@ mod tests {
         assert_eq!(OnboardingStep::Appearance.next(), OnboardingStep::Harnesses);
         assert_eq!(OnboardingStep::Project.next(), OnboardingStep::Project);
         assert_eq!(OnboardingStep::Project.index() + 1, STEP_COUNT);
-    }
-
-    #[test]
-    fn simple_steps_do_not_inherit_the_dense_journey_height() {
-        assert_eq!(journey_max_height(OnboardingStep::Workspace), 336.0);
-        assert_eq!(journey_max_height(OnboardingStep::Project), 336.0);
-        assert_eq!(journey_max_height(OnboardingStep::Harnesses), 528.0);
-        assert_eq!(journey_max_height(OnboardingStep::Appearance), 488.0);
-        assert_eq!(HARNESS_LIST_MAX_HEIGHT, 275.0);
     }
 
     #[test]
