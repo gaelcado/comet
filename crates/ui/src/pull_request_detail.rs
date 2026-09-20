@@ -289,7 +289,25 @@ impl PullRequestDetailPage {
     }
 }
 
+struct PrActionTooltip(&'static str);
+
+impl Render for PrActionTooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx);
+        div()
+            .px(px(8.0))
+            .py(px(6.0))
+            .rounded(px(5.0))
+            .bg(theme.surface_raised)
+            .text_color(theme.text)
+            .shadow_md()
+            .text_size(crate::typography::ui_rems(11.0))
+            .child(self.0)
+    }
+}
+
 fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let icon_only = matches!(id, "pr-back" | "pr-immersive" | "pr-external");
     let glyph = match id {
         "pr-back" => Some(crate::icons::ALT_ARROW_LEFT),
         "pr-copy-url" | "pr-copy-patch" => Some(crate::icons::COPY),
@@ -317,8 +335,20 @@ fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Statefu
         .border_color(gpui::transparent_black())
         .focus_visible(|style| style.border_color(theme.accent))
         .cursor_pointer()
-        .children(glyph.map(|glyph| crate::icons::icon(glyph).size(px(14.0))))
-        .child(label)
+        .hover(|style| style.bg(theme.selection))
+        .when(icon_only, |el| {
+            el.size(px(32.0))
+                .px_0()
+                .py_0()
+                .justify_center()
+                .tooltip(move |_, cx| cx.new(|_| PrActionTooltip(label)).into())
+        })
+        .children(glyph.map(|glyph| {
+            crate::icons::icon(glyph)
+                .size(px(14.0))
+                .text_color(theme.text_muted)
+        }))
+        .when(!icon_only, |el| el.child(label))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -452,7 +482,11 @@ fn field(label: &str, value: String, theme: &Theme) -> AnyElement {
                 .items_center()
                 .gap(px(8.0))
                 .text_color(theme.text_muted)
-                .child(crate::icons::icon(glyph).size(px(14.0)))
+                .child(
+                    crate::icons::icon(glyph)
+                        .size(px(14.0))
+                        .text_color(theme.text_muted),
+                )
                 .child(SharedString::from(label.to_owned())),
         )
         .child(div().flex_1().min_w_0().child(content))
@@ -567,7 +601,32 @@ impl Render for PullRequestDetailPage {
                 column = column.child(widgets::error_strip(&theme, error.clone()));
             }
             if let Some(detail) = &self.detail {
+                let repository = self
+                    .url
+                    .split('/')
+                    .skip(3)
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join("/");
                 column = column
+                    .child(
+                        div()
+                            .mb(px(12.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                crate::icons::icon(crate::icons::FOLDER_WITH_FILES)
+                                    .size(px(14.0))
+                                    .text_color(theme.text_muted),
+                            )
+                            .child(
+                                div()
+                                    .text_size(crate::typography::ui_rems(12.0))
+                                    .text_color(theme.text_muted)
+                                    .child(repository),
+                            ),
+                    )
                     .child(
                         div()
                             .text_size(crate::typography::ui_rems(22.0))

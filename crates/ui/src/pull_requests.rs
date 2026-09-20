@@ -115,6 +115,49 @@ fn request_group(item: &ChangeRequestListItem) -> PullRequestGroup {
     }
 }
 
+fn group_glyph(group: PullRequestGroup) -> &'static str {
+    match group {
+        PullRequestGroup::Attention => icons::DANGER_TRIANGLE,
+        PullRequestGroup::Review => icons::CLOCK_CIRCLE,
+        PullRequestGroup::Approved => icons::CHECK,
+        PullRequestGroup::Drafts => icons::DOCUMENT,
+    }
+}
+
+fn group_color(group: PullRequestGroup, theme: &Theme) -> gpui::Hsla {
+    match group {
+        PullRequestGroup::Attention => theme.warning,
+        PullRequestGroup::Approved => theme.success,
+        PullRequestGroup::Review | PullRequestGroup::Drafts => theme.text_muted,
+    }
+}
+
+fn request_glyph(item: &ChangeRequestListItem) -> &'static str {
+    if item.is_draft {
+        icons::DOCUMENT
+    } else if item.mergeability == ChangeRequestMergeability::Conflicting {
+        icons::DANGER_TRIANGLE
+    } else if item.review_decision == ChangeRequestReviewDecision::Approved {
+        icons::CHECK
+    } else if item.review_decision == ChangeRequestReviewDecision::ChangesRequested {
+        icons::DANGER_TRIANGLE
+    } else {
+        icons::PULL_REQUEST
+    }
+}
+
+fn request_color(item: &ChangeRequestListItem, theme: &Theme) -> gpui::Hsla {
+    if item.is_draft {
+        theme.text_muted
+    } else if item.mergeability == ChangeRequestMergeability::Conflicting {
+        theme.danger
+    } else if item.review_decision == ChangeRequestReviewDecision::ChangesRequested {
+        theme.warning
+    } else {
+        theme.success
+    }
+}
+
 fn matches_query(item: &ChangeRequestListItem, query: &str) -> bool {
     let text = format!(
         "{} {} #{} {}",
@@ -1001,6 +1044,14 @@ fn render_grouped_requests(
                                     .text_size(crate::typography::ui_rems(12.0))
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(theme.text)
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(
+                                        icon(group_glyph(group))
+                                            .size(px(14.0))
+                                            .text_color(group_color(group, theme)),
+                                    )
                                     .child(group.label()),
                             )
                             .child(
@@ -1228,12 +1279,21 @@ fn render_pr_identity(item: &ChangeRequestListItem, theme: &Theme) -> AnyElement
                 .text_size(crate::typography::ui_rems(widgets::ROW_TITLE_SIZE))
                 .text_color(theme.text)
                 .tooltip(move |_, cx| cx.new(|_| DashboardTooltip(full_title.clone())).into())
-                .child(title),
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    icon(request_glyph(item))
+                        .size(px(14.0))
+                        .text_color(request_color(item, theme)),
+                )
+                .child(div().min_w_0().truncate().child(title)),
         )
         .child(
             div()
                 .flex()
                 .flex_wrap()
+                .pl(px(22.0))
                 .items_center()
                 .gap(px(Theme::SPACE_SM))
                 .min_w_0()

@@ -7492,7 +7492,13 @@ impl Shell {
                 .into()
             })
             .tooltip_show_delay(Duration::from_millis(350))
-            .child(icon(icons::PULL_REQUEST).size(px(18.0)));
+            .child(icon(icons::PULL_REQUEST).size(px(18.0)).text_color(
+                if matches!(self.route, Route::PullRequests) {
+                    theme.text
+                } else {
+                    theme.text_muted
+                },
+            ));
 
 
         // The space filter lives ABOVE the scroll region (fixed) so its
