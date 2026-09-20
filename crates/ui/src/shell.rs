@@ -1768,6 +1768,7 @@ pub struct Shell {
     pull_requests_page: Option<Entity<PullRequestsPage>>,
     pull_request_detail: Option<Entity<crate::pull_request_detail::PullRequestDetailPage>>,
     pull_request_detail_subscription: Option<Subscription>,
+    pull_request_cache: std::rc::Rc<std::cell::RefCell<crate::pull_request_detail::PullRequestCache>>,
     devices_page: Option<Entity<DevicesPage>>,
     archived_page: Option<Entity<ArchivedPage>>,
     appearance_page: Option<Entity<AppearancePage>>,
@@ -2205,6 +2206,7 @@ impl Shell {
             pull_requests_page: None,
             pull_request_detail: None,
             pull_request_detail_subscription: None,
+            pull_request_cache: Default::default(),
             devices_page: None,
             archived_page: None,
             appearance_page: None,
@@ -11525,6 +11527,7 @@ impl Render for Shell {
                 self.browsers.clear();
                 self.browser_subs.clear();
                 self.browser_context = crate::browser::BrowserContext::default();
+                self.pull_request_cache = Default::default();
                 self.pull_request_detail = None;
                 self.pull_request_detail_subscription = None;
             }
@@ -11757,6 +11760,10 @@ impl Render for Shell {
                             action.0.clone(),
                             target,
                             this.browser_context.clone(),
+                            this.pull_request_cache.clone(),
+                            this.pull_requests_page
+                                .as_ref()
+                                .and_then(|page| page.read(cx).preview(&action.0)),
                             window,
                             cx,
                         )

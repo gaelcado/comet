@@ -222,6 +222,10 @@ pub struct PullRequestsPage {
 }
 
 impl PullRequestsPage {
+    pub(crate) fn preview(&self, url: &str) -> Option<ChangeRequestListItem> {
+        self.items.iter().find(|item| item.url == url).cloned()
+    }
+
     pub(crate) fn select_url(&mut self, url: Option<String>, cx: &mut Context<Self>) {
         self.selected_url = url;
         cx.notify();
@@ -517,7 +521,7 @@ impl PullRequestsPage {
                         ))
                         .aria_selected(active)
                         .tab_index(0)
-                        .focus_visible(|style| style.bg(theme.selection))
+                        .focus_visible(|style| style.bg(theme.glass_hover()))
                         .on_click(cx.listener(move |page, _, _, cx| {
                             page.set_target_device((!local).then(|| device_id.clone()), cx);
                         }))
@@ -771,7 +775,7 @@ impl Render for PullRequestsPage {
                                         .items_center()
                                         .justify_center()
                                         .rounded(px(4.0))
-                                        .focus_visible(|style| style.bg(theme.selection))
+                                        .focus_visible(|style| style.bg(theme.glass_hover()))
                                         .cursor_pointer()
                                         .on_click(cx.listener(|page, _, _, cx| {
                                             page.search
@@ -1047,7 +1051,7 @@ fn render_grouped_requests(
                             div()
                                 .rounded(px(6.0))
                                 .when(selected_url == Some(item.url.as_str()), |el| {
-                                    el.bg(theme.selection)
+                                    el.bg(theme.glass_hover())
                                 })
                                 .child(render_table_row(item, layout, sort_field, theme))
                         }))
@@ -1145,7 +1149,7 @@ fn render_table_row(
         .rounded(px(6.0))
         .border_1()
         .border_color(gpui::transparent_black())
-        .focus_visible(|style| style.border_color(theme.accent).bg(theme.selection))
+        .focus_visible(|style| style.border_color(theme.accent).bg(theme.glass_hover()))
         .flex_none()
         .cursor_pointer()
         .hover(|style| style.bg(crate::theme::ink(0.035)))
@@ -1459,7 +1463,7 @@ fn platform_icon(platform: &str) -> &'static str {
     }
 }
 
-fn relative_time(timestamp: DateTime<Utc>, now: DateTime<Utc>) -> String {
+pub(crate) fn relative_time(timestamp: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let seconds = now.signed_duration_since(timestamp).num_seconds().max(0);
     let (amount, unit) = if seconds < 60 {
         return "just now".into();
