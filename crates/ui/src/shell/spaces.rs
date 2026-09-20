@@ -1190,8 +1190,128 @@ mod pinned_session_tests {
             assert!(cx.debug_bounds("chat-status-archived").is_some());
             let time = cx.debug_bounds("chat-time-archived").unwrap();
             cx.simulate_mouse_move(archived.center(), None, gpui::Modifiers::default());
+            assert!(cx.debug_bounds("chat-time-archived").is_none());
+            let pin = cx.debug_bounds("chat-archived-pin").unwrap();
+            let archive = cx.debug_bounds("chat-archived-archive").unwrap();
+            assert!(pin.right() <= archive.left());
+            assert_eq!(archive.right(), time.right());
+            assert_eq!(cx.debug_bounds("chat-archived").unwrap(), archived);
+            cx.simulate_mouse_move(active.center(), None, gpui::Modifiers::default());
             assert_eq!(cx.debug_bounds("chat-time-archived").unwrap(), time);
         }
+
+        // Switching grouping must not lower the first row or Archived.
+        for organization in [
+            SidebarOrganization::ByProject,
+            SidebarOrganization::ByDevice,
+            SidebarOrganization::InOneList,
+        ] {
+            shell.update(cx, |shell, cx| {
+                shell.settings.sidebar_organization = organization;
+                shell.sidebar_prev_order.clear();
+                shell.sidebar_resort.clear();
+                shell.sidebar_new_keys.clear();
+                cx.notify();
+            });
+            assert_eq!(cx.debug_bounds("chat-older").unwrap(), active);
+            assert_eq!(cx.debug_bounds("chat-archived").unwrap(), archived);
+        }
+
+        // All disclosure boundaries share one gap, including all-collapsed
+        // and mixed open/closed states (the original spacing regression).
+        for pins_open in [false, true] {
+            for sessions_open in [false, true] {
+                shell.update(cx, |shell, cx| {
+                    shell
+                        .settings
+                        .sidebar_pins_mut("local".into())
+                        .push("newer".into());
+                    shell.pinned_open = pins_open;
+                    shell.sessions_open = sessions_open;
+                    shell.archived_open = false;
+                    shell.sidebar_prev_order.clear();
+                    shell.sidebar_resort.clear();
+                    shell.sidebar_new_keys.clear();
+                    cx.notify();
+                });
+                let pinned = cx.debug_bounds("sidebar-pinned-section").unwrap();
+                let sessions = cx.debug_bounds("sessions-toggle").unwrap();
+                let shelf = cx.debug_bounds("archived-toggle").unwrap();
+                let last = if sessions_open {
+                    cx.debug_bounds("chat-older").unwrap()
+                } else {
+                    sessions
+                };
+                assert_eq!(sessions.top() - pinned.bottom(), px(SIDEBAR_SECTION_GAP));
+                assert_eq!(shelf.top() - last.bottom(), px(SIDEBAR_SECTION_GAP));
+                shell.update(cx, |shell, _| {
+                    shell.settings.sidebar_pins_mut("local".into()).clear();
+                });
+            }
+        }
+        for groups_open in [false, true] {
+            shell.update(cx, |shell, cx| {
+                shell.settings.sidebar_organization = SidebarOrganization::ByDevice;
+                shell
+                    .settings
+                    .sidebar_pins_mut("local".into())
+                    .push("newer".into());
+                shell.state.update(cx, |state, _| {
+                    let mut remote = state
+                        .chats
+                        .iter()
+                        .find(|chat| chat.id == "older")
+                        .unwrap()
+                        .clone();
+                    remote.id = "remote-row".into();
+                    remote.device_id = "remote".into();
+                    state.chats.push(remote);
+                });
+                shell.sidebar_collapsed_groups = if groups_open {
+                    Default::default()
+                } else {
+                    ["device:local".into(), "device:remote".into()]
+                        .into_iter()
+                        .collect()
+                };
+                shell.sidebar_prev_order.clear();
+                shell.sidebar_resort.clear();
+                shell.sidebar_new_keys.clear();
+                cx.notify();
+            });
+            let pinned = cx.debug_bounds("sidebar-pinned-section").unwrap();
+            let local = cx.debug_bounds("sidebar-group-device:local").unwrap();
+            let remote = cx.debug_bounds("sidebar-group-device:remote").unwrap();
+            let shelf = cx.debug_bounds("archived-toggle").unwrap();
+            let local_end = if groups_open {
+                cx.debug_bounds("chat-older").unwrap()
+            } else {
+                local
+            };
+            let remote_end = if groups_open {
+                cx.debug_bounds("chat-remote-row").unwrap()
+            } else {
+                remote
+            };
+            assert_eq!(local.top() - pinned.bottom(), px(SIDEBAR_SECTION_GAP));
+            assert_eq!(remote.top() - local_end.bottom(), px(SIDEBAR_SECTION_GAP));
+            assert_eq!(shelf.top() - remote_end.bottom(), px(SIDEBAR_SECTION_GAP));
+            shell.update(cx, |shell, cx| {
+                shell.settings.sidebar_pins_mut("local".into()).clear();
+                shell.state.update(cx, |state, _| {
+                    state.chats.retain(|chat| chat.id != "remote-row")
+                });
+            });
+        }
+        shell.update(cx, |shell, cx| {
+            shell.settings.sidebar_organization = SidebarOrganization::InOneList;
+            shell.sidebar_collapsed_groups.clear();
+            shell.pinned_open = true;
+            shell.sessions_open = true;
+            shell.archived_open = true;
+            shell.sidebar_prev_order.clear();
+            cx.notify();
+        });
 
         // Sessions owns all unpinned rows, including their keyboard traversal.
         for open in [false, true] {
@@ -1221,7 +1341,16 @@ mod pinned_session_tests {
             cx.simulate_mouse_move(row.center(), None, gpui::Modifiers::default());
             assert!(cx.debug_bounds("chat-title-older").unwrap().size.width < title.size.width);
             assert_eq!(cx.debug_bounds("chat-status-older").unwrap(), status);
-            assert_eq!(cx.debug_bounds("chat-time-older").unwrap(), time);
+            assert!(cx.debug_bounds("chat-time-older").is_none());
+            let pin = cx.debug_bounds("chat-older-pin").unwrap();
+            let archive = cx.debug_bounds("chat-older-archive").unwrap();
+            assert!(pin.right() <= archive.left());
+            assert_eq!(archive.right(), time.right());
+            for target in [pin.center(), archive.center()] {
+                cx.simulate_mouse_move(target, None, gpui::Modifiers::default());
+                assert_eq!(cx.debug_bounds("chat-older-pin").unwrap(), pin);
+                assert_eq!(cx.debug_bounds("chat-older-archive").unwrap(), archive);
+            }
         }
 
         // Dragging a regular session over another regular session is a no-op.
@@ -1922,11 +2051,9 @@ const SIDEBAR_VIEW_ROWS: [SidebarViewRow; 10] = [
 // list items stay tightly related at 2px, while section boundaries use 12px
 // (well over 2x the intra-list gap). Disclosure content gets a small 4px
 // handoff from its header without leaving dead space while collapsed.
-const SIDEBAR_SECTION_GAP: f32 = 12.0;
+pub(super) const SIDEBAR_SECTION_GAP: f32 = 12.0;
 pub(super) const SIDEBAR_DISCLOSURE_HEADER_HEIGHT: f32 = 28.0;
 pub(super) const SIDEBAR_DISCLOSURE_BODY_INSET: f32 = 4.0;
-const SIDEBAR_DISCLOSURE_SECTION_HEIGHT: f32 =
-    SIDEBAR_SECTION_GAP + SIDEBAR_DISCLOSURE_HEADER_HEIGHT;
 pub(super) const SIDEBAR_DISCLOSURE_TWEEN_GRACE: std::time::Duration =
     std::time::Duration::from_millis(120);
 
@@ -4669,6 +4796,10 @@ impl Shell {
             let toggle_motion_key = motion_key.clone();
             let header = sidebar_disclosure_header(theme, visible_label, chevron)
                 .id(SharedString::from(format!("sidebar-group-{collapse_key}")))
+                .debug_selector({
+                    let key = collapse_key.clone();
+                    move || format!("sidebar-group-{key}")
+                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let was_open = !this.sidebar_collapsed_groups.contains(&toggle_key);
                     this.begin_sidebar_disclosure_motion(
@@ -4689,13 +4820,21 @@ impl Shell {
                 body_height,
                 body.into_any_element(),
             );
-            let height =
-                SIDEBAR_DISCLOSURE_SECTION_HEIGHT + if collapsed { 0.0 } else { body_height };
+            // The first group shares the Sessions header's top edge. Only
+            // sections following pins or another group need the section gap.
+            let section_gap = if rendered.is_empty() && self.sidebar_session_transfer.is_none() {
+                0.0
+            } else {
+                SIDEBAR_SECTION_GAP
+            };
+            let height = section_gap
+                + SIDEBAR_DISCLOSURE_HEADER_HEIGHT
+                + if collapsed { 0.0 } else { body_height };
             let element = div()
                 .w_full()
                 .flex()
                 .flex_col()
-                .pt(px(SIDEBAR_SECTION_GAP))
+                .pt(px(section_gap))
                 .child(header)
                 .child(body)
                 .into_any_element();
@@ -4944,6 +5083,7 @@ impl Shell {
         let chevron = self.sidebar_disclosure_chevron("archived", open, theme);
         let header = sidebar_disclosure_header(theme, label, chevron)
             .id("archived-toggle")
+            .debug_selector(|| "archived-toggle".into())
             .on_click(cx.listener(move |this, _, _, cx| {
                 let was_open = this.archived_open;
                 this.begin_sidebar_disclosure_motion(
