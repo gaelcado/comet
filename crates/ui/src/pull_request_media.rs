@@ -138,7 +138,10 @@ fn placeholder(label: String, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-pub(super) fn media(pr_url: &str) -> MediaUi {
+pub(super) fn media(
+    pr_url: &str,
+    open: Rc<dyn Fn(&str, &mut gpui::Window, &mut gpui::App)>,
+) -> MediaUi {
     let pr_url = pr_url.to_owned();
     MediaUi {
         diagram: None,
@@ -157,9 +160,13 @@ pub(super) fn media(pr_url: &str) -> MediaUi {
             let loading_theme = theme.clone();
             let error_theme = theme.clone();
             let error_alt = alt.clone();
+            let tile_selector = format!("pr-image-tile-{id}");
             div()
                 .id(id.clone())
+                .debug_selector(move || tile_selector.clone())
                 .w_full()
+                .min_w_0()
+                .aspect_ratio(16.0 / 10.0)
                 .my(px(8.0))
                 .rounded(px(8.0))
                 .border_1()
@@ -172,14 +179,17 @@ pub(super) fn media(pr_url: &str) -> MediaUi {
                 .cursor_pointer()
                 .on_click({
                     let source = source.clone();
-                    move |_, _, cx| cx.open_url(&source)
+                    let open = open.clone();
+                    move |_, window, cx| {
+                        cx.stop_propagation();
+                        open(&source, window, cx);
+                    }
                 })
                 .child(
                     gpui::img(SharedString::from(source))
                         .id(SharedString::from(format!("{id}-image")))
                         .debug_selector(|| "pr-description-image".into())
-                        .w_full()
-                        .max_h(px(640.0))
+                        .size_full()
                         .object_fit(gpui::ObjectFit::Contain)
                         .with_loading(move || placeholder("Loading image…".into(), &loading_theme))
                         .with_fallback(move || {
@@ -197,6 +207,107 @@ pub(super) fn media(pr_url: &str) -> MediaUi {
                 .into_any_element()
         }),
     }
+}
+
+/// Screenshot tables become wrapping media cards instead of tall table cells.
+/// Ordinary data tables retain their Markdown layout and reading order.
+pub(super) fn render_description(
+    body: &BlockTree,
+    options: &markdown::render::RenderOptions,
+    theme: &Theme,
+    window: &mut gpui::Window,
+) -> AnyElement {
+    use markdown::parser::{Block, InlineRun};
+    let mut output = div().w_full().min_w_0().flex().flex_col().gap(px(8.0));
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        let cells: Option<Vec<Vec<InlineRun>>> = match &block.block {
+            Block::Table { header, rows, .. }
+                if rows
+                    .iter()
+                    .flatten()
+                    .flatten()
+                    .any(|run| run.style.image.is_some()) =>
+            {
+                Some(
+                    rows.iter()
+                        .flat_map(|row| {
+                            row.iter().enumerate().map(|(column, cell)| {
+                                let mut runs = header.get(column).cloned().unwrap_or_default();
+                                runs.extend(cell.clone());
+                                runs
+                            })
+                        })
+                        .collect(),
+                )
+            }
+            Block::Paragraph { runs }
+                if runs.iter().any(|run| run.style.image.is_some())
+                    && runs
+                        .iter()
+                        .all(|run| run.style.image.is_some() || run.text.trim().is_empty()) =>
+            {
+                Some(
+                    runs.iter()
+                        .filter(|run| run.style.image.is_some())
+                        .cloned()
+                        .map(|run| vec![run])
+                        .collect(),
+                )
+            }
+            _ => None,
+        };
+        if let Some(cells) = cells {
+            let mut grid = div().w_full().min_w_0().flex().flex_wrap().gap(px(12.0));
+            for (cell_index, runs) in cells.into_iter().enumerate() {
+                let mut card = div()
+                    .flex_basis(px(240.0))
+                    .flex_grow(1.0)
+                    .min_w_0()
+                    .max_w_full();
+                let label = runs
+                    .iter()
+                    .filter(|run| run.style.image.is_none())
+                    .map(|run| run.text.as_str())
+                    .collect::<String>();
+                if !label.trim().is_empty() {
+                    card = card.child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme.text_muted)
+                            .child(label),
+                    );
+                }
+                for (index, run) in runs.iter().enumerate() {
+                    if let Some(image) = &run.style.image {
+                        let id = format!(
+                            "{}-gallery-{block_index}-{cell_index}-{index}",
+                            options.row_key
+                        );
+                        card = card.child((options.media.as_ref().unwrap().image)(
+                            image,
+                            id.into(),
+                            theme,
+                        ));
+                    }
+                }
+                grid = grid.child(card);
+            }
+            output = output.child(grid);
+        } else {
+            let mut scoped = options.clone();
+            scoped.row_key = format!("{}-block-{block_index}", options.row_key).into();
+            output = output.child(markdown::render::render_tree(
+                &BlockTree {
+                    blocks: vec![block.clone()],
+                },
+                &scoped,
+                theme,
+                window,
+                &|_| None,
+            ));
+        }
+    }
+    output.into_any_element()
 }
 
 /// GitHub redirects this public profile image endpoint to its avatar CDN.
@@ -308,7 +419,10 @@ mod tests {
             cx: &mut gpui::Context<Self>,
         ) -> impl IntoElement {
             let options = markdown::render::RenderOptions {
-                media: Some(media("https://github.com/a/b/pull/1")),
+                media: Some(media(
+                    "https://github.com/a/b/pull/1",
+                    Rc::new(|_, _, _| {}),
+                )),
                 tasks: None,
                 row_key: "media-test".into(),
                 veil: None,
@@ -319,16 +433,12 @@ mod tests {
                 workspace_root: None,
                 code: None,
             };
-            div()
-                .size_full()
-                .p(px(24.0))
-                .child(markdown::render::render_tree(
-                    &parse_description(&self.description),
-                    &options,
-                    Theme::of(cx),
-                    window,
-                    &|_| None,
-                ))
+            div().size_full().p(px(24.0)).child(render_description(
+                &parse_description(&self.description),
+                &options,
+                Theme::of(cx),
+                window,
+            ))
         }
     }
 
@@ -384,6 +494,30 @@ mod tests {
             "{bounds:?}"
         );
         assert!(cx.debug_bounds("pr-description-image-error").is_none());
+        view.update(cx, |view, cx| {
+            view.description = "| Before | After |\n| --- | --- |\n| ![a](https://example.com/image.png) | ![b](https://example.com/image.png) |".into();
+            cx.notify();
+        });
+        for width in [800.0, 320.0] {
+            cx.simulate_resize(gpui::size(px(width), px(900.0)));
+            cx.run_until_parked();
+            let first = cx
+                .debug_bounds("pr-image-tile-media-test-gallery-0-0-1")
+                .unwrap();
+            let second = cx
+                .debug_bounds("pr-image-tile-media-test-gallery-0-1-1")
+                .unwrap();
+            assert!(
+                first.size.height < first.size.width,
+                "thumbnail must be landscape: {first:?}"
+            );
+            assert!(first.right() <= px(width - 24.0));
+            if width > 600.0 {
+                assert_eq!(first.top(), second.top());
+            } else {
+                assert!(second.top() >= first.bottom());
+            }
+        }
         view.update(cx, |view, cx| {
             view.description = "![missing](https://example.com/missing.png)".into();
             cx.notify();

@@ -1378,6 +1378,7 @@ fn forwardable(method: &str) -> bool {
             | methods::GET_CHANGE_REQUEST_REPOSITORY
             | methods::GET_CHANGE_REQUEST
             | methods::GET_CHANGE_REQUEST_DIFF
+            | methods::POST_CHANGE_REQUEST_COMMENT
             | methods::GET_CHECKOUT_DIFF
             | methods::DISCARD_WORKING_TREE
             | methods::GET_CHECKOUT_FILE_DIFF_TEXT
@@ -2281,6 +2282,25 @@ impl RpcService for EngineRpc {
                     .await
                     .map_err(change_request_rpc_error)?;
                 RpcReply::value(&items)
+            }
+            methods::POST_CHANGE_REQUEST_COMMENT => {
+                #[derive(Deserialize)]
+                struct P {
+                    url: String,
+                    body: String,
+                }
+                let p: P = parse_params(params)?;
+                if p.body.trim().is_empty() || p.body.len() > 60_000 {
+                    return Err(RpcError::BadParams(
+                        "Comment must contain 1–60000 bytes".into(),
+                    ));
+                }
+                let comment = self
+                    .open_change_requests
+                    .post_comment(&p.url, &p.body)
+                    .await
+                    .map_err(change_request_rpc_error)?;
+                RpcReply::value(&comment)
             }
             methods::GET_CHANGE_REQUEST | methods::GET_CHANGE_REQUEST_DIFF => {
                 #[derive(Deserialize)]
@@ -3671,6 +3691,8 @@ mod tests {
         assert!(forwardable(methods::GET_CHANGE_REQUEST_REPOSITORY));
         assert!(forwardable(methods::GET_CHANGE_REQUEST));
         assert!(forwardable(methods::GET_CHANGE_REQUEST_DIFF));
+        assert!(forwardable(methods::POST_CHANGE_REQUEST_COMMENT));
+        assert!(!is_stream_method(methods::POST_CHANGE_REQUEST_COMMENT));
         assert!(!is_stream_method(methods::GET_CHANGE_REQUEST));
         assert!(!is_stream_method(methods::GET_CHANGE_REQUEST_DIFF));
         assert!(!is_stream_method(methods::LIST_OPEN_CHANGE_REQUESTS));

@@ -1076,7 +1076,7 @@ fn excerpt_side(
     }))
 }
 
-fn excerpt_highlights(file: &FileDiff, language: Lang) -> Option<DiffHighlights> {
+pub(crate) fn excerpt_highlights(file: &FileDiff, language: Lang) -> Option<DiffHighlights> {
     if !zeron_syntax::supports_language(language) {
         return None;
     }
@@ -4400,8 +4400,12 @@ fn code_text_viewport(
 /// Read-only unified row for PR diffs; reuse the Changes pane's gutters,
 /// source text, font settings, markers and semantic colors. The caller owns
 /// virtualization and the shared horizontal viewport.
-pub(crate) fn readonly_diff_line(line: &DiffLine, theme: &Theme) -> AnyElement {
-    diff_line_row(line, &[], theme, GUTTER_WIDTH, DiffCodeWidth::Clipped, None)
+pub(crate) fn readonly_diff_line(
+    line: &DiffLine,
+    spans: &[zeron_syntax::HighlightSpan],
+    theme: &Theme,
+) -> AnyElement {
+    diff_line_row(line, spans, theme, GUTTER_WIDTH, DiffCodeWidth::Clipped, None)
 }
 
 /// One +/−/context/meta diff line: coloured accent bar, dual line-number

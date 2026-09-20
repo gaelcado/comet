@@ -1,4 +1,6 @@
-//! Native, read-only PR inspection with explicit browser escape routes.
+//! Native PR inspection and explicit comment submission.
+#[path = "pull_request_interactions.rs"]
+mod interactions;
 use crate::{
     settings::{self, PullRequestDestination, SavePolicy, widgets},
     state::AppState,
@@ -21,6 +23,10 @@ pub struct OpenPullRequest(pub String, pub Option<String>);
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = shell, no_json)]
 pub struct ClosePullRequest;
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct OpenPrImage(pub String);
 
 pub fn open(url: &str, window: &mut Window, cx: &mut App) {
     open_on_device(url, None, window, cx);
@@ -92,6 +98,7 @@ struct CodeRow {
     old: String,
     new: String,
     kind: crate::changes::LineKind,
+    spans: Vec<zeron_syntax::HighlightSpan>,
 }
 
 fn code_rows(patch: &str) -> (Vec<CodeRow>, Vec<(String, usize)>) {
@@ -99,12 +106,15 @@ fn code_rows(patch: &str) -> (Vec<CodeRow>, Vec<(String, usize)>) {
     let mut rows = Vec::new();
     let mut files = Vec::new();
     for file in crate::changes::parse_patch(patch) {
+        let highlights = zeron_syntax::language_for_path(&file.path)
+            .and_then(|language| crate::changes::excerpt_highlights(&file, language));
         files.push((file.path.clone(), rows.len()));
         rows.push(CodeRow {
             text: file.path.clone().into(),
             old: String::new(),
             new: String::new(),
             kind: LineKind::Meta,
+            spans: Vec::new(),
         });
         for notice in crate::changes::file_notices(&file) {
             rows.push(CodeRow {
@@ -112,6 +122,7 @@ fn code_rows(patch: &str) -> (Vec<CodeRow>, Vec<(String, usize)>) {
                 old: String::new(),
                 new: String::new(),
                 kind: LineKind::Meta,
+                spans: Vec::new(),
             });
         }
         for hunk in file.hunks {
@@ -120,12 +131,19 @@ fn code_rows(patch: &str) -> (Vec<CodeRow>, Vec<(String, usize)>) {
                 old: String::new(),
                 new: String::new(),
                 kind: LineKind::Meta,
+                spans: Vec::new(),
             });
-            rows.extend(hunk.lines.into_iter().map(|line| CodeRow {
-                text: line.text.into(),
-                old: line.old_no.map(|n| n.to_string()).unwrap_or_default(),
-                new: line.new_no.map(|n| n.to_string()).unwrap_or_default(),
-                kind: line.kind,
+            rows.extend(hunk.lines.into_iter().map(|line| {
+                CodeRow {
+                    spans: highlights
+                        .as_ref()
+                        .map(|h| h.spans(&line).to_vec())
+                        .unwrap_or_default(),
+                    text: line.text.into(),
+                    old: line.old_no.map(|n| n.to_string()).unwrap_or_default(),
+                    new: line.new_no.map(|n| n.to_string()).unwrap_or_default(),
+                    kind: line.kind,
+                }
             }));
         }
     }
@@ -226,6 +244,19 @@ pub struct PullRequestDetailPage {
     tab_fades: crate::motion::HoverFades,
     files_expanded: bool,
     scroll: widgets::PageScroll,
+    comment_input: Entity<crate::composer::ComposerInput>,
+    comment_subscription: Option<Subscription>,
+    comment_task: Option<Task<()>>,
+    comment_error: Option<String>,
+    mention_token: Option<crate::composer::MentionToken>,
+    mention_choices: Vec<String>,
+    mention_index: usize,
+    image_preview: Option<crate::attachments::PreviewImage>,
+    image_focus: gpui::FocusHandle,
+    image_task: Option<Task<()>>,
+    image_cached: Option<(String, crate::attachments::PreviewImage)>,
+    image_previous_focus: Option<gpui::FocusHandle>,
+    image_error: Option<String>,
 }
 
 impl PullRequestDetailPage {
@@ -267,7 +298,31 @@ impl PullRequestDetailPage {
             tab_fades,
             files_expanded: false,
             scroll: widgets::PageScroll::default(),
+            comment_input: cx.new(|cx| {
+                crate::composer::ComposerInput::with_context(
+                    "Write a comment… Type @ to mention someone",
+                    crate::composer::MESSAGE_COMPOSER_CONTEXT,
+                    cx,
+                )
+                .with_viewport_height(120.0)
+            }),
+            comment_subscription: None,
+            comment_task: None,
+            comment_error: None,
+            mention_token: None,
+            mention_choices: Vec::new(),
+            mention_index: 0,
+            image_preview: None,
+            image_focus: cx.focus_handle(),
+            image_task: None,
+            image_cached: None,
+            image_previous_focus: None,
+            image_error: None,
         };
+        page.comment_subscription =
+            Some(cx.subscribe(&page.comment_input, |page, _, event, cx| {
+                page.comment_event(event, cx)
+            }));
         let cached = page.cache.borrow_mut().get(&page.target, &page.url);
         if let Some(snapshot) = cached {
             page.fetched = Some(snapshot.fetched);
@@ -396,6 +451,9 @@ impl PullRequestDetailPage {
     }
 
     fn load(&mut self, refresh: bool, cx: &mut Context<Self>) {
+        if self.comment_task.is_some() {
+            return;
+        }
         let Some(engine) = self.state.read(cx).engine().cloned() else {
             self.error = Some("Connect to your device to load this pull request.".into());
             return;
@@ -508,10 +566,16 @@ impl PullRequestDetailPage {
         } else {
             theme.border
         };
+        let position = ["pr-summary", "pr-code", "pr-activity", "pr-checks"]
+            .iter()
+            .enumerate()
+            .map(|(index, key)| index as f32 * self.tab_fades.value_at(key, Instant::now()))
+            .sum::<f32>();
         let tabs = div()
             .id("pr-detail-nav")
             .debug_selector(|| "pr-detail-nav".into())
             .p(px(6.0))
+            .relative()
             .rounded(px(radius))
             .border_1()
             .border_color(border)
@@ -521,7 +585,23 @@ impl PullRequestDetailPage {
             })
             .flex()
             .items_center()
-            .gap(px(4.0))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(6.0))
+                    .bottom(px(6.0))
+                    .left(px(6.0))
+                    .right(px(6.0))
+                    .child(
+                        div()
+                            .absolute()
+                            .left(gpui::relative(position / 4.0))
+                            .w(gpui::relative(0.25))
+                            .h_full()
+                            .rounded(px(12.0))
+                            .bg(crate::theme::wash(0.10)),
+                    ),
+            )
             .children(
                 [
                     (
@@ -555,9 +635,7 @@ impl PullRequestDetailPage {
                         .tab_index(0)
                         .aria_selected(tab == self.tab)
                         .text_color(color)
-                        .bg(crate::theme::wash(
-                            0.10 * selected + 0.06 * hover * (1.0 - selected),
-                        ))
+                        .bg(crate::theme::wash(0.06 * hover * (1.0 - selected)))
                         .focus_visible(|style| style.bg(crate::theme::wash(0.16)))
                         .on_hover(crate::motion::hover_listener(hover_key))
                         .debug_selector(move || id.into())
@@ -632,10 +710,16 @@ fn rich_text(
     url: &str,
     theme: &Theme,
     window: &mut Window,
+    owner: gpui::WeakEntity<PullRequestDetailPage>,
 ) -> AnyElement {
     let options = crate::markdown::render::RenderOptions {
         tasks: None,
-        media: Some(super::pull_request_media::media(url)),
+        media: Some(super::pull_request_media::media(
+            url,
+            Rc::new(move |source, window, cx| {
+                let _ = owner.update(cx, |page, cx| page.open_image(source, window, cx));
+            }),
+        )),
         row_key: key.into(),
         veil: None,
         cache: None,
@@ -652,12 +736,8 @@ fn rich_text(
     };
     div()
         .debug_selector(|| "pr-rich-text".into())
-        .child(crate::markdown::render::render_tree(
-            body,
-            &options,
-            theme,
-            window,
-            &|_| None,
+        .child(super::pull_request_media::render_description(
+            body, &options, theme, window,
         ))
         .into_any_element()
 }
@@ -892,8 +972,13 @@ impl Render for PullRequestDetailPage {
         let theme = Theme::of(cx).clone();
         let content = {
             let mut column = widgets::page_column()
+                .when(self.tab == Tab::Code, |el| el.max_w_full())
                 .pt(px(24.0))
-                .pb(px(96.0))
+                .pb(px(if self.tab == Tab::Activity {
+                    280.0
+                } else {
+                    96.0
+                }))
                 .text_size(crate::typography::ui_rems(13.0))
                 .text_color(theme.text);
             if let Some(error) = &self.error {
@@ -1030,6 +1115,7 @@ impl Render for PullRequestDetailPage {
                                 &self.url,
                                 &theme,
                                 window,
+                                cx.weak_entity(),
                             )));
                         }
                     }
@@ -1178,7 +1264,8 @@ impl Render for PullRequestDetailPage {
                                         .id("pr-code-viewport")
                                         .debug_selector(|| "pr-code-viewport".into())
                                         .mt(px(12.0))
-                                        .h(px(440.0))
+                                        .h(px((f32::from(window.viewport_size().height) - 280.0).max(240.0)))
+                                        .border_1().border_color(theme.border).rounded(px(8.0))
                                         .overflow_x_scroll()
                                         .track_scroll(&self.code_horizontal)
                                         .child(
@@ -1203,7 +1290,7 @@ impl Render for PullRequestDetailPage {
                                                             crate::changes::readonly_diff_line(&crate::changes::DiffLine {
                                                                 kind: row.kind, old_no: row.old.parse().ok(), new_no: row.new.parse().ok(),
                                                                 text: row.text.to_string(),
-                                                            }, &colors)
+                                                            }, &row.spans, &colors)
                                                         }
                                                     })
                                                     .collect::<Vec<_>>()
@@ -1245,7 +1332,10 @@ impl Render for PullRequestDetailPage {
                         for (index, comment) in activity {
                             column = column.child(
                                 div()
-                                    .mb(px(24.0))
+                                    .mb(px(16.0))
+                                    .p(px(16.0))
+                                    .rounded(px(16.0))
+                                    .bg(theme.glass_hover())
                                     .flex()
                                     .flex_col()
                                     .gap(px(8.0))
@@ -1293,14 +1383,11 @@ impl Render for PullRequestDetailPage {
                                             &self.url,
                                             &theme,
                                             window,
+                                            cx.weak_entity(),
                                         ))
                                     })),
                             );
                         }
-                        column =
-                            column.child(div().text_color(theme.text_muted).child(
-                                "Open GitHub in your browser to comment, review, or merge.",
-                            ));
                     }
                 }
             } else if self.loading {
@@ -1369,8 +1456,13 @@ impl Render for PullRequestDetailPage {
         if self.tab_fades.tick_at(Instant::now()) {
             window.request_animation_frame();
         }
-        div()
+        let composer = (self.tab == Tab::Activity).then(|| self.comment_composer(&theme, cx));
+        let mut root = div()
             .size_full()
+            .relative()
+            .on_action(cx.listener(|page, action: &OpenPrImage, window, cx| {
+                page.open_image(&action.0, window, cx)
+            }))
             .flex()
             .flex_col()
             .pt(px(Theme::TITLEBAR_HEIGHT))
@@ -1382,8 +1474,55 @@ impl Render for PullRequestDetailPage {
                     .flex_1()
                     .min_h_0()
                     .child(content)
+                    .children(composer)
                     .child(navigation),
-            )
+            );
+        if let Some(preview) = &self.image_preview {
+            let weak = cx.weak_entity();
+            root = root.child(crate::attachments::lightbox(
+                window,
+                preview,
+                &self.image_focus,
+                move |window, cx| {
+                    let _ = weak.update(cx, |page, cx| {
+                        page.image_preview = None;
+                        if let Some(focus) = page.image_previous_focus.take() {
+                            window.focus(&focus, cx);
+                        }
+                        cx.notify();
+                    });
+                },
+                cx,
+            ));
+        }
+        if self.image_task.is_some() || self.image_error.is_some() {
+            root = root.child(
+                div()
+                    .id("pr-image-loading")
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .track_focus(&self.image_focus)
+                    .bg(crate::popover::scrim_alpha(0.7))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(gpui::white())
+                    .on_key_down(cx.listener(|page, event: &gpui::KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "escape" {
+                            page.close_image(window, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .on_click(cx.listener(|page, _, window, cx| page.close_image(window, cx)))
+                    .child(
+                        self.image_error
+                            .clone()
+                            .unwrap_or_else(|| "Loading image… · Escape to cancel".into()),
+                    ),
+            );
+        }
+        root
     }
 }
 
@@ -1490,6 +1629,18 @@ mod tests {
             .unwrap();
         assert_eq!(removed.old, "2");
         assert_eq!(removed.new, "");
+    }
+
+    #[test]
+    fn pull_request_diff_reuses_syntax_highlighting() {
+        let (rows, _) = code_rows(
+            "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-fn old() {}\n+fn new() {}\n",
+        );
+        assert!(
+            rows.iter()
+                .filter(|row| row.kind != crate::changes::LineKind::Meta)
+                .all(|row| !row.spans.is_empty())
+        );
     }
 
     struct DetailHost {

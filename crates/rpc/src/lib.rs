@@ -193,6 +193,7 @@ pub mod methods {
     /// Resolve a selected checkout through local Git metadata only.
     pub const GET_CHANGE_REQUEST_REPOSITORY: &str = "GetChangeRequestRepository";
     pub const GET_CHANGE_REQUEST: &str = "GetChangeRequest";
+    pub const POST_CHANGE_REQUEST_COMMENT: &str = "PostChangeRequestComment";
     pub const GET_CHANGE_REQUEST_DIFF: &str = "GetChangeRequestDiff";
     pub const GET_CHECKOUT_DIFF: &str = "GetCheckoutDiff";
     /// Permanently restore one chat-owned checkout to its current HEAD and

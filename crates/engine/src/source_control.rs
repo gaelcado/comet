@@ -139,6 +139,13 @@ pub trait OpenChangeRequestLookup: Send + Sync {
         }
         self.list_authored_open(repository, refresh).await
     }
+    async fn post_comment(
+        &self,
+        _url: &str,
+        _body: &str,
+    ) -> Result<zeron_proto::ChangeRequestComment, ChangeRequestError> {
+        Err(ChangeRequestError::UnsupportedRepository)
+    }
     async fn detail(
         &self,
         _url: &str,
@@ -321,6 +328,71 @@ impl GitHubCli {
             self.fetch_detail(&url, diff),
         )
         .await
+    }
+
+    /// Explicit user submission only. Never retry a write after an ambiguous failure.
+    pub async fn post_comment(
+        &self,
+        url: &str,
+        body: &str,
+    ) -> Result<zeron_proto::ChangeRequestComment, ChangeRequestError> {
+        let url = validated_pull_request_url(url)?;
+        if body.trim().is_empty() || body.len() > 60_000 {
+            return Err(ChangeRequestError::Decode);
+        }
+        let parsed = reqwest::Url::parse(&url).map_err(|_| ChangeRequestError::Decode)?;
+        let parts: Vec<_> = parsed.path().trim_matches('/').split('/').collect();
+        let endpoint = format!(
+            "repos/{}/{}/issues/{}/comments",
+            parts[0], parts[1], parts[3]
+        );
+        let output = self
+            .runner
+            .run(ProcessRequest {
+                program: "gh".into(),
+                args: vec![
+                    "api".into(),
+                    "--method".into(),
+                    "POST".into(),
+                    endpoint,
+                    "-f".into(),
+                    format!("body={body}"),
+                ],
+                cwd: None,
+                env: vec![
+                    ("GH_PROMPT_DISABLED".into(), "1".into()),
+                    ("GH_HOST".into(), "github.com".into()),
+                ],
+                timeout: GITHUB_TIMEOUT,
+                output_limit: GITHUB_OUTPUT_LIMIT,
+            })
+            .await
+            .map_err(classify_run_error)?;
+        if !output.success {
+            return Err(classify_github_failure(&output.stderr));
+        }
+        // Evict after the server accepted the write, even if its reply cannot be decoded.
+        self.pr_cache
+            .lock()
+            .await
+            .entries
+            .retain(|entry| entry.0 != format!("false:{url}"));
+        if output.stdout_truncated {
+            return Err(ChangeRequestError::Decode);
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|_| ChangeRequestError::Decode)?;
+        Ok(zeron_proto::ChangeRequestComment {
+            body: value["body"]
+                .as_str()
+                .ok_or(ChangeRequestError::Decode)?
+                .into(),
+            author: zeron_proto::ChangeRequestActor {
+                login: value["user"]["login"].as_str().unwrap_or_default().into(),
+            },
+            created_at: value["created_at"].as_str().unwrap_or_default().into(),
+            ..Default::default()
+        })
     }
 
     /// Fetch one PR without requiring a local checkout or executing shell text.
@@ -621,6 +693,13 @@ impl OpenChangeRequestLookup for GitHubCli {
         refresh: bool,
     ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
         GitHubCli::list_filtered_open(self, repository, filter, refresh).await
+    }
+    async fn post_comment(
+        &self,
+        url: &str,
+        body: &str,
+    ) -> Result<zeron_proto::ChangeRequestComment, ChangeRequestError> {
+        GitHubCli::post_comment(self, url, body).await
     }
     async fn detail(
         &self,
@@ -1490,6 +1569,75 @@ mod tests {
             validated_pull_request_url("https://github.com/a/b/pull/12#discussion").unwrap(),
             "https://github.com/a/b/pull/12"
         );
+    }
+
+    #[tokio::test]
+    async fn pr_comment_posts_literal_body_once_and_invalidates_detail() {
+        let body = "Hello @octocat\n\n`$(do-not-run)` **Markdown**";
+        let runner = FakeProcessRunner::with_responses([command_success(
+            serde_json::to_vec(&serde_json::json!({
+                "body": body, "user": {"login": "octocat"}, "created_at": "2026-09-20T20:00:00Z"
+            }))
+            .unwrap(),
+        )]);
+        let github = GitHubCli::with_runner(runner.clone());
+        github.pr_cache.lock().await.entries.push((
+            "false:https://github.com/a/b/pull/1".into(),
+            Instant::now(),
+            Ok(serde_json::json!({})),
+        ));
+        let comment = github
+            .post_comment("https://github.com/a/b/pull/1", body)
+            .await
+            .unwrap();
+        assert_eq!(comment.body, body);
+        assert_eq!(comment.author.login, "octocat");
+        assert!(github.pr_cache.lock().await.entries.is_empty());
+        let requests = runner.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].args,
+            [
+                "api",
+                "--method",
+                "POST",
+                "repos/a/b/issues/1/comments",
+                "-f",
+                &format!("body={body}")
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn pr_comment_rejects_invalid_inputs_and_never_retries_failure() {
+        let runner = FakeProcessRunner::with_responses([command_failure("request failed")]);
+        let github = GitHubCli::with_runner(runner.clone());
+        assert!(
+            github
+                .post_comment("https://evil.test/a/b/pull/1", "hello")
+                .await
+                .is_err()
+        );
+        assert!(
+            github
+                .post_comment("https://github.com/a/b/pull/1", "  ")
+                .await
+                .is_err()
+        );
+        assert!(
+            github
+                .post_comment("https://github.com/a/b/pull/1", &"x".repeat(60_001))
+                .await
+                .is_err()
+        );
+        assert!(runner.requests().is_empty());
+        assert!(
+            github
+                .post_comment("https://github.com/a/b/pull/1", "hello")
+                .await
+                .is_err()
+        );
+        assert_eq!(runner.requests().len(), 1);
     }
 
     #[tokio::test]

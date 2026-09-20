@@ -46,7 +46,7 @@ pub(crate) fn toolbar(theme: &Theme) -> Div {
 }
 
 /// Neutral navigation chip shared by the right-panel strip and PR navigation.
-pub(crate) fn tab(
+pub(crate) fn tab_frame(
     id: impl Into<gpui::ElementId>,
     selected: bool,
     theme: &Theme,
@@ -71,7 +71,14 @@ pub(crate) fn tab(
         })
         .focus_visible(|style| style.bg(crate::theme::wash(0.14)))
         .when(selected, |el| el.bg(crate::theme::wash(0.10)))
-        .when(!selected, |el| {
-            el.hover(|style| style.bg(crate::theme::wash(0.06)))
-        })
+}
+
+pub(crate) fn tab(
+    id: impl Into<gpui::ElementId>,
+    selected: bool,
+    theme: &Theme,
+) -> gpui::Stateful<Div> {
+    tab_frame(id, selected, theme).when(!selected, |el| {
+        el.hover(|style| style.bg(crate::theme::wash(0.06)))
+    })
 }

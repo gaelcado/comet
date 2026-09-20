@@ -206,6 +206,7 @@ pub struct PullRequestsPage {
     view_items: Option<Rc<Vec<ChangeRequestListItem>>>,
     sort: PullRequestSort,
     filter: ChangeRequestFilter,
+    filter_fades: crate::motion::HoverFades,
     load_state: PullRequestsLoadState,
     last_loaded_at: Option<Instant>,
     generation: u64,
@@ -264,6 +265,8 @@ impl PullRequestsPage {
                 cx.notify();
             }
         });
+        let mut filter_fades = crate::motion::HoverFades::default();
+        filter_fades.set_at("pr-filter-all", true, true, Instant::now());
         let mut page = Self {
             state,
             search,
@@ -283,6 +286,7 @@ impl PullRequestsPage {
             view_items: None,
             sort: PullRequestSort::DEFAULT,
             filter: ChangeRequestFilter::All,
+            filter_fades,
             load_state: PullRequestsLoadState::Idle,
             last_loaded_at: None,
             generation: 0,
@@ -533,6 +537,18 @@ impl PullRequestsPage {
         if self.filter == filter {
             return;
         }
+        for (candidate, key) in [
+            (ChangeRequestFilter::Authored, "pr-filter-authored"),
+            (ChangeRequestFilter::Reviewing, "pr-filter-reviewing"),
+            (ChangeRequestFilter::All, "pr-filter-all"),
+        ] {
+            self.filter_fades.set_at(
+                key,
+                candidate == filter,
+                crate::motion::reduced_motion(cx),
+                Instant::now(),
+            );
+        }
         self.filter = filter;
         if self.repository.is_none() {
             cx.notify();
@@ -778,7 +794,6 @@ impl PullRequestsPage {
                 .flex_col()
                 .gap(px(2.0))
                 .on_mouse_down_out(cx.listener(|page, _, _, cx| page.close_sort_menu(cx)))
-                .child(popover::menu_heading(theme, "Sort pull requests"))
                 .children(options.into_iter().map(|(field, direction, label, id)| {
                     let active = self.sort.field == field && self.sort.direction == direction;
                     popover::menu_row(theme, active, id)
@@ -1111,7 +1126,7 @@ impl popover::ScrollRailHost for PullRequestsPage {
 }
 
 impl Render for PullRequestsPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let initial_loading =
             self.items.is_empty() && matches!(self.load_state, PullRequestsLoadState::Loading);
@@ -1289,7 +1304,24 @@ impl Render for PullRequestsPage {
                         ]
                         .into_iter()
                         .map(|(filter, label, id)| {
-                            crate::surface_chrome::tab(id, self.filter == filter, &theme)
+                            let selected = self.filter_fades.value_at(id, Instant::now());
+                            let hover_key = format!("pr-filter-{}-{id}", cx.entity_id());
+                            let hover = crate::motion::hover_t(&hover_key);
+                            crate::surface_chrome::tab_frame(id, self.filter == filter, &theme)
+                                .bg(crate::theme::wash(
+                                    0.10 * selected + 0.06 * hover * (1.0 - selected),
+                                ))
+                                .text_color(crate::motion::mix(
+                                    theme.text_muted,
+                                    theme.text,
+                                    selected.max(hover),
+                                ))
+                                .on_hover(crate::motion::hover_listener(hover_key))
+                                .hover(move |style| {
+                                    style.bg(crate::theme::wash(
+                                        0.10 * selected + 0.06 * hover * (1.0 - selected),
+                                    ))
+                                })
                                 .debug_selector(move || id.into())
                                 .px(px(10.0))
                                 .child(label)
@@ -1416,6 +1448,9 @@ impl Render for PullRequestsPage {
             )
         };
         let scrollbar = popover::rail(self, "pull-requests-scrollbar", &theme, cx);
+        if self.filter_fades.tick_at(Instant::now()) {
+            window.request_animation_frame();
+        }
         // Keep the page actions reachable while browsing a long list. Only the
         // results scroll; the shared edges remain identical in every layout.
         div()
