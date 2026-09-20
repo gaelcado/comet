@@ -325,7 +325,7 @@ fn restored_main_window_bounds(cx: &App) -> (Bounds<gpui::Pixels>, Option<gpui::
 }
 
 fn save_main_window_geometry(window: &gpui::Window, cx: &mut App) {
-    if window.is_fullscreen() {
+    if window.is_fullscreen() || settings::current(cx).onboarding.is_active() {
         return;
     }
     // macos infers maximization from screen-sized bounds, including ordinary
@@ -342,9 +342,11 @@ fn save_main_window_geometry(window: &gpui::Window, cx: &mut App) {
     }
 }
 
-fn observe_main_window_geometry<T: 'static>(window: &mut gpui::Window, cx: &gpui::Context<T>) {
-    cx.observe_window_bounds(window, |_, window, cx| {
-        save_main_window_geometry(window, cx);
+fn observe_main_window_geometry(window: &mut gpui::Window, cx: &gpui::Context<shell::Shell>) {
+    cx.observe_window_bounds(window, |shell, window, cx| {
+        if !shell.onboarding_window.owns_geometry() {
+            save_main_window_geometry(window, cx);
+        }
     })
     .detach();
 }
@@ -355,12 +357,29 @@ fn open_main_window(
     cx: &mut App,
 ) -> gpui::WindowHandle<shell::Shell> {
     let (bounds, display_id) = restored_main_window_bounds(cx);
+    let workspace_size = bounds.size;
+    let setup = &settings::current(cx).onboarding;
+    let setup_step = setup.is_active().then_some(setup.step);
+    let bounds = setup_step.map_or(bounds, |step| {
+        let compact = onboarding::window::preferred_size(step);
+        Bounds::new(
+            gpui::point(
+                bounds.origin.x + (bounds.size.width - compact.width) / 2.0,
+                bounds.origin.y + (bounds.size.height - compact.height) / 2.0,
+            ),
+            compact,
+        )
+    });
     let handle = cx
         .open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 display_id,
-                window_min_size: Some(size(px(900.), px(600.))),
+                window_min_size: Some(if setup_step.is_some() {
+                    size(px(520.), px(440.))
+                } else {
+                    size(px(900.), px(600.))
+                }),
                 // `kind` is deliberately left at its default `WindowKind::Normal`
                 // (gpui platform.rs WindowOptions::default), which on macOS maps
                 // to `NSNormalWindowLevel` (gpui_macos window.rs) — same as zed's
@@ -417,16 +436,25 @@ fn open_main_window(
                 appearance::observe_window(window, cx).detach();
                 let shell = cx.new(|cx| {
                     observe_main_window_geometry(window, cx);
-                    shell::Shell::new(state, boot, cx)
+                    let mut shell = shell::Shell::new(state, boot, cx);
+                    if let Some(step) = setup_step {
+                        shell.onboarding_window.start(workspace_size, step);
+                    }
+                    shell
                 });
                 save_main_window_geometry(window, cx);
                 let weak_shell = shell.downgrade();
                 window.on_window_should_close(cx, move |window, cx| {
-                    let should_close = weak_shell
-                        .update(cx, |shell, cx| shell.prepare_window_close(cx))
-                        .unwrap_or(true);
+                    let (should_close, setup_geometry) = weak_shell
+                        .update(cx, |shell, cx| {
+                            let setup_geometry = shell.onboarding_window.owns_geometry();
+                            (shell.prepare_window_close(cx), setup_geometry)
+                        })
+                        .unwrap_or((true, false));
                     if should_close {
-                        save_main_window_geometry(window, cx);
+                        if !setup_geometry {
+                            save_main_window_geometry(window, cx);
+                        }
                         settings::flush(cx);
                     }
                     should_close

@@ -1453,6 +1453,7 @@ pub struct Shell {
     /// Full-window first-run flow. Its durable navigation snapshot mirrors the
     /// `UiSettings` field; authoritative choices stay in their normal stores.
     onboarding: OnboardingUi,
+    pub(crate) onboarding_window: crate::onboarding::window::WindowSizing,
     /// External image or workspace-path drag hovering the conversation
     /// column; a drop stages an image or inserts a file-mention chip.
     file_drag_active: bool,
@@ -1899,6 +1900,7 @@ impl Shell {
             transcript,
             composer,
             onboarding,
+            onboarding_window: Default::default(),
             file_drag_active: false,
             // Seed with the compact composer stack's rough height so the
             // first frame's clearance isn't zero (the measure corrects it).
@@ -11769,6 +11771,16 @@ impl Render for Shell {
         self.reduced_motion = motion::reduced_motion(cx);
         self.motion_active.set(false);
 
+        if matches!(gate, GatePhase::Ready) && !restart_required {
+            if self.onboarding_window.update(
+                self.onboarding.active().then(|| self.onboarding.step()),
+                window,
+                cx,
+            ) {
+                self.motion_active.set(true);
+            }
+        }
+
         if self.activation_sub.is_none() {
             self.activation_sub = Some(cx.observe_window_activation(
                 window,
@@ -13488,6 +13500,64 @@ mod exit_regressions {
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
             .unwrap();
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn onboarding_compact_navigation_stays_inside_every_step(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let window = onboarding_test_window(cx, dir.path(), OnboardingFixture::Defaults);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        for step in OnboardingStep::ALL {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.onboarding.state.step = step;
+                    cx.notify();
+                })
+                .unwrap();
+            onboarding_frame(cx, window);
+            for size in [
+                crate::onboarding::window::preferred_size(step),
+                gpui::size(px(520.0), px(440.0)),
+            ] {
+                cx.simulate_window_resize(window.into(), size);
+                onboarding_frame(cx, window);
+                let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+                let action = visual
+                    .debug_bounds(match step {
+                        OnboardingStep::Workspace => "onboarding-continue-workspace",
+                        OnboardingStep::Appearance => "onboarding-continue-appearance",
+                        OnboardingStep::Harnesses => "onboarding-continue-harnesses",
+                        OnboardingStep::Defaults => "onboarding-continue-defaults",
+                        OnboardingStep::Titles => "onboarding-continue-titles",
+                        _ => "onboarding-continue-project",
+                    })
+                    .expect("primary action must be mounted");
+                let progress = visual.debug_bounds("onboarding-progress").unwrap();
+                assert!(action.origin.y >= px(38.0), "{step:?}: {action:?}");
+                assert!(
+                    action.bottom() < progress.origin.y,
+                    "{step:?}: navigation overlaps progress"
+                );
+                assert!(
+                    progress.bottom() <= size.height,
+                    "{step:?}: progress is clipped"
+                );
+                assert!(action.origin.x >= px(16.0) && action.right() <= size.width - px(16.0));
+                if matches!(step, OnboardingStep::Workspace | OnboardingStep::Project) {
+                    let choices = visual
+                        .debug_bounds(if step == OnboardingStep::Workspace {
+                            "onboarding-workspace-choices"
+                        } else {
+                            "onboarding-project-choices"
+                        })
+                        .unwrap();
+                    assert!(
+                        choices.bottom() <= action.origin.y - px(8.0),
+                        "{step:?}: choices overlap navigation"
+                    );
+                }
+            }
+        }
     }
 
     fn onboarding_dispatch_key(window: &mut Window, cx: &mut App, key: &str) {

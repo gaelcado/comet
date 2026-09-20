@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+pub(crate) mod window;
+
 use gpui::{
     AnyElement, Context, Empty, Entity, FocusHandle, Image, ImageFormat, IntoElement, KeyDownEvent,
     Pixels, ScrollHandle, SharedString, Task, div, prelude::*, px,
@@ -27,16 +29,16 @@ pub const STEP_COUNT: usize = 6;
 const CONTENT_MAX_WIDTH: f32 = Theme::SPACE_LG * 30.0;
 // The journey grows with the window until this cap; dense steps should expose
 // several useful rows before their overflow affordance becomes necessary.
-const CONTENT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 35.0;
-const WORKSPACE_MAX_HEIGHT: f32 = Theme::SPACE_LG * 18.0;
-const HARNESS_MAX_HEIGHT: f32 = Theme::SPACE_LG * 40.0;
-const PROJECT_MAX_HEIGHT: f32 = Theme::SPACE_LG * 18.0;
+const CONTENT_MAX_HEIGHT: f32 = 448.0;
+const WORKSPACE_MAX_HEIGHT: f32 = 312.0;
+const HARNESS_MAX_HEIGHT: f32 = 488.0;
+const PROJECT_MAX_HEIGHT: f32 = 312.0;
 const HARNESS_ROW_HEIGHT: f32 = 54.0;
 const HARNESS_ROW_GAP: f32 = 8.0;
-// Six complete rows plus half of the next one uses the available height while
+// Four complete rows plus half of the next one uses the available height while
 // still making the list's overflow obvious.
-const HARNESS_LIST_MAX_HEIGHT: f32 = HARNESS_ROW_HEIGHT * 6.5 + HARNESS_ROW_GAP * 6.0;
-const STEP_GROUP_GAP: f32 = Theme::SPACE_LG + Theme::SPACE_SM;
+const HARNESS_LIST_MAX_HEIGHT: f32 = HARNESS_ROW_HEIGHT * 4.5 + HARNESS_ROW_GAP * 4.0;
+const STEP_GROUP_GAP: f32 = 20.0;
 const VIEWPORT_INSET: f32 = Theme::SPACE_LG;
 const ROOMY_VIEWPORT_INSET: f32 = Theme::SPACE_LG * 2.0;
 const COMPACT_NAVIGATION_WIDTH: f32 = Theme::SPACE_LG * 26.0;
@@ -498,8 +500,7 @@ fn heading(theme: &Theme, id: &'static str, text: &'static str) -> gpui::Statefu
         .role(gpui::Role::Heading)
         .aria_level(1)
         .w_full()
-        .text_center()
-        .text_size(crate::typography::ui_rems(28.0))
+        .text_size(crate::typography::ui_rems(24.0))
         .line_height(px(32.0))
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(theme.text)
@@ -662,6 +663,7 @@ fn footer_primary_button(
 ) -> gpui::Stateful<gpui::Div> {
     popover::btn_primary(theme, label)
         .id(id)
+        .debug_selector(move || id.into())
         .h(px(Theme::SPACE_SM * 5.0))
         .min_w_0()
         .flex()
@@ -835,6 +837,7 @@ fn render_workspace_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shel
             div().mt(px(STEP_GROUP_GAP)).flex_1().min_h_0().child(
                 div()
                     .id("onboarding-workspace-choices")
+                    .debug_selector(|| "onboarding-workspace-choices".into())
                     .flex()
                     .flex_col()
                     .gap(px(12.0))
@@ -1514,7 +1517,12 @@ fn render_model_choices(
     div()
         .id(prefix)
         .w_full()
-        .h(px(((models.len() + 1) as f32 * 34.0).min(153.0)))
+        .h(px(((models.len() + 1) as f32 * 34.0).min(119.0)))
+        .flex_none()
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.card_glass_bg())
         .overflow_y_scroll()
         .track_scroll(&ui.model_scroll)
         .role(gpui::Role::RadioGroup)
@@ -1528,6 +1536,7 @@ fn render_model_choices(
             popover::menu_row(theme, selected, format!("{prefix}-{index}"))
                 .id((prefix, index))
                 .h(px(34.0))
+                .flex_none()
                 .w_full()
                 .role(gpui::Role::RadioButton)
                 .aria_toggled(toggled(selected))
@@ -1773,30 +1782,25 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
     let mut choices = div()
         .id("onboarding-title-harnesses")
         .flex()
-        .flex_col()
-        .gap(px(10.0))
+        .flex_wrap()
+        .gap(px(8.0))
         .role(gpui::Role::RadioGroup)
         .aria_label("Title agent")
         .child(
-            choice_card(
-                theme,
-                "Automatic",
-                "Use an available agent, or the first seven words.",
-                current.harness.is_none(),
-                None,
-            )
-            .id("onboarding-title-auto")
-            .role(gpui::Role::RadioButton)
-            .aria_toggled(toggled(current.harness.is_none()))
-            .track_focus(ui.control(0))
-            .on_click(cx.listener(|shell, _, _, cx| shell.onboarding_pick_title_harness(None, cx))),
+            chip(theme, "Automatic".into(), current.harness.is_none(), None)
+                .id("onboarding-title-auto")
+                .role(gpui::Role::RadioButton)
+                .aria_toggled(toggled(current.harness.is_none()))
+                .track_focus(ui.control(0))
+                .on_click(
+                    cx.listener(|shell, _, _, cx| shell.onboarding_pick_title_harness(None, cx)),
+                ),
         );
     for (index, harness) in available.into_iter().enumerate() {
         choices = choices.child(
-            choice_card(
+            chip(
                 theme,
-                harness_name(harness),
-                "Generate a title without project tools.",
+                harness_name(harness).into(),
                 current.harness == Some(harness),
                 Some(harness),
             )
@@ -1854,7 +1858,8 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
         }
     };
     let title_options = div()
-        .child(choices)
+        .child(body(theme, "Choose an agent to name your sessions. Automatic uses an available agent, or the first seven words."))
+        .child(div().mt(px(16.0)).child(choices))
         .child(title_models)
         .when_some(ui.error.clone(), |column, error| {
             column.child(
@@ -1947,6 +1952,7 @@ fn render_project_step(
         };
     let choices = div()
         .id("onboarding-project-choices")
+        .debug_selector(|| "onboarding-project-choices".into())
         .flex()
         .flex_col()
         .gap(px(12.0))
@@ -2005,6 +2011,7 @@ fn render_project_step(
 fn render_progress(step: OnboardingStep, theme: &Theme, compact: bool) -> AnyElement {
     div()
         .id("onboarding-progress")
+        .debug_selector(|| "onboarding-progress".into())
         .flex()
         .items_center()
         .justify_center()
@@ -2073,9 +2080,9 @@ fn journey_max_height(step: OnboardingStep) -> f32 {
         OnboardingStep::Workspace => WORKSPACE_MAX_HEIGHT,
         OnboardingStep::Harnesses => HARNESS_MAX_HEIGHT,
         OnboardingStep::Project | OnboardingStep::FirstSession => PROJECT_MAX_HEIGHT,
-        OnboardingStep::Appearance | OnboardingStep::Defaults | OnboardingStep::Titles => {
-            CONTENT_MAX_HEIGHT
-        }
+        OnboardingStep::Titles => 400.0,
+        OnboardingStep::Defaults => 488.0,
+        OnboardingStep::Appearance => CONTENT_MAX_HEIGHT,
     }
 }
 
@@ -2191,26 +2198,7 @@ pub fn render(
     let step = ui.step();
     let viewport_width = f32::from(viewport.width);
     let viewport_height = f32::from(viewport.height);
-    let journey_max_height = if step == OnboardingStep::Titles {
-        let rows = ui.harnesses.ready().map_or(0, |rows| {
-            rows.iter()
-                .filter(|h| title_harness_is_available(h))
-                .count()
-        }) + 1;
-        let has_models = ui
-            .title_settings
-            .ready()
-            .is_some_and(|s| s.harness.is_some());
-        (32.0
-            + STEP_GROUP_GAP
-            + rows as f32 * 86.0
-            + if has_models { 196.0 } else { 0.0 }
-            + Theme::SPACE_MD
-            + 40.0)
-            .min(journey_max_height(step))
-    } else {
-        journey_max_height(step)
-    };
+    let journey_max_height = journey_max_height(step);
     let compact_navigation = viewport_width < COMPACT_NAVIGATION_WIDTH;
     let roomy_x = viewport_width >= CONTENT_MAX_WIDTH + ROOMY_VIEWPORT_INSET * 2.0;
     let roomy_y =
@@ -2225,7 +2213,6 @@ pub fn render(
     } else {
         VIEWPORT_INSET
     };
-    let progress_reserve = Theme::SPACE_LG + Theme::SPACE_SM;
     let decision = match step {
         OnboardingStep::Workspace => render_workspace_step(ui, &theme, cx),
         OnboardingStep::Appearance => render_appearance_step(ui, &theme, cx),
@@ -2267,27 +2254,24 @@ pub fn render(
                     compact_navigation,
                     cx,
                 )),
-        );
+        )
+        .child(div().mt(px(20.0)).flex_none().child(render_progress(
+            step,
+            &theme,
+            compact_navigation,
+        )));
     let panel = div()
         .absolute()
         .inset_0()
         .pt(px(Theme::TITLEBAR_HEIGHT + outer_y))
         .px(px(outer_x))
-        .pb(px(outer_y + progress_reserve))
+        .pb(px(outer_y))
         .min_w_0()
         .min_h_0()
         .flex()
         .items_center()
         .justify_center()
-        .child(journey)
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .bottom(px(outer_y))
-                .child(render_progress(step, &theme, compact_navigation)),
-        );
+        .child(journey);
     let close_confirm: AnyElement = if ui.close_confirm {
         div()
             .absolute()
@@ -2392,11 +2376,11 @@ mod tests {
 
     #[test]
     fn simple_steps_do_not_inherit_the_dense_journey_height() {
-        assert_eq!(journey_max_height(OnboardingStep::Workspace), 288.0);
-        assert_eq!(journey_max_height(OnboardingStep::Project), 288.0);
-        assert_eq!(journey_max_height(OnboardingStep::Harnesses), 640.0);
-        assert_eq!(journey_max_height(OnboardingStep::Appearance), 560.0);
-        assert_eq!(HARNESS_LIST_MAX_HEIGHT, 399.0);
+        assert_eq!(journey_max_height(OnboardingStep::Workspace), 312.0);
+        assert_eq!(journey_max_height(OnboardingStep::Project), 312.0);
+        assert_eq!(journey_max_height(OnboardingStep::Harnesses), 488.0);
+        assert_eq!(journey_max_height(OnboardingStep::Appearance), 448.0);
+        assert_eq!(HARNESS_LIST_MAX_HEIGHT, 275.0);
     }
 
     #[test]
