@@ -7458,12 +7458,12 @@ impl Shell {
             .items_center()
             .justify_center()
             .rounded(px(8.0))
-            .bg(if matches!(self.route, Route::PullRequests) {
-                theme.selection
+            .text_color(if matches!(self.route, Route::PullRequests) {
+                theme.text
             } else {
-                gpui::transparent_black()
+                theme.text_muted
             })
-            .hover(|style| style.bg(theme.glass_hover()))
+            .hover(|style| style.text_color(theme.text))
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| this.open_pull_requests(cx)))
             .tooltip(|_, cx| {
@@ -7473,11 +7473,7 @@ impl Shell {
                 .into()
             })
             .tooltip_show_delay(Duration::from_millis(350))
-            .child(
-                icon(icons::PULL_REQUEST)
-                    .size(px(18.0))
-                    .text_color(theme.text_muted),
-            );
+            .child(icon(icons::PULL_REQUEST).size(px(18.0)));
 
 
         // The space filter lives ABOVE the scroll region (fixed) so its
