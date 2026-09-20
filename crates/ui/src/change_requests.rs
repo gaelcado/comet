@@ -111,9 +111,10 @@ pub(crate) fn pull_request_badge(
     id: SharedString,
     summary: ChangeRequestSummary,
     surface: ChangeRequestBadgeSurface,
+    device: Option<String>,
     theme: &Theme,
 ) -> AnyElement {
-    pull_request_badge_with_query(id, summary, surface, None, theme)
+    pull_request_badge_with_query(id, summary, surface, None, device, theme)
 }
 
 pub(crate) fn pull_request_badge_with_query(
@@ -121,9 +122,10 @@ pub(crate) fn pull_request_badge_with_query(
     summary: ChangeRequestSummary,
     surface: ChangeRequestBadgeSurface,
     query: Option<&str>,
+    device: Option<String>,
     theme: &Theme,
 ) -> AnyElement {
-    render_pull_request_badge(id, summary, surface, query, true, theme)
+    render_pull_request_badge(id, summary, surface, query, true, device, theme)
 }
 
 /// The same badge geometry without hover, tooltip, or click behavior in drag previews.
@@ -133,7 +135,7 @@ pub(crate) fn pull_request_badge_preview(
     surface: ChangeRequestBadgeSurface,
     theme: &Theme,
 ) -> AnyElement {
-    render_pull_request_badge(id, summary, surface, None, false, theme)
+    render_pull_request_badge(id, summary, surface, None, false, None, theme)
 }
 
 fn render_pull_request_badge(
@@ -142,10 +144,20 @@ fn render_pull_request_badge(
     surface: ChangeRequestBadgeSurface,
     query: Option<&str>,
     interactive: bool,
+    device: Option<String>,
     theme: &Theme,
 ) -> AnyElement {
     let model = ChangeRequestBadgeModel::from_summary(&summary);
-    render_badge_model(id, model, summary.url, surface, query, interactive, theme)
+    render_badge_model(
+        id,
+        model,
+        summary.url,
+        surface,
+        query,
+        interactive,
+        device,
+        theme,
+    )
 }
 
 /// Listing surfaces use the exact sidebar badge renderer without inventing checkout refs.
@@ -161,6 +173,7 @@ pub(crate) fn pull_request_list_badge(
         ChangeRequestBadgeSurface::Sidebar,
         None,
         true,
+        None,
         theme,
     )
 }
@@ -172,11 +185,13 @@ fn render_badge_model(
     surface: ChangeRequestBadgeSurface,
     query: Option<&str>,
     interactive: bool,
+    device: Option<String>,
     theme: &Theme,
 ) -> AnyElement {
     let color = model.tone.color(theme);
     let tooltip_model = model.clone();
     let composer = surface == ChangeRequestBadgeSurface::Composer;
+    let accessible_label = format!("Open pull request {}: {}", model.number, model.title);
 
     div()
         .id(id)
@@ -193,11 +208,15 @@ fn render_badge_model(
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(color.opacity(0.85))
         .when(interactive, |el| {
-            el.cursor_pointer()
+            el.role(gpui::Role::Link)
+                .aria_label(accessible_label)
+                .tab_index(0)
+                .focus_visible(move |style| style.bg(color.opacity(0.16)).text_color(color))
+                .cursor_pointer()
                 .hover(move |style| style.bg(color.opacity(0.16)).text_color(color))
-                .on_click(move |_, _, cx| {
+                .on_click(move |_, window, cx| {
                     cx.stop_propagation();
-                    cx.open_url(&url);
+                    crate::pull_request_detail::open_on_device(&url, device.clone(), window, cx);
                 })
                 .tooltip(move |_, cx| {
                     cx.new(|_| ChangeRequestTooltip {

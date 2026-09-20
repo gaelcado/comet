@@ -21,7 +21,7 @@ use crate::state::AppState;
 use crate::theme::Theme;
 
 const SNAPSHOT_TTL: Duration = Duration::from_secs(60);
-const PR_PAGE_MAX_WIDTH: f32 = 1120.0;
+const PR_PAGE_MAX_WIDTH: f32 = 768.0;
 const PR_PAGE_HORIZONTAL_PADDING: f32 = Theme::SPACE_LG + Theme::SPACE_SM;
 const PR_TABLE_ROW_HEIGHT: f32 = 64.0;
 const PR_SCROLL_FADE_BAND: f32 = 24.0;
@@ -177,6 +177,7 @@ pub struct PullRequestsPage {
     state: Entity<AppState>,
     search: Entity<ComposerInput>,
     query: String,
+    selected_url: Option<String>,
     collapsed_groups: HashSet<PullRequestGroup>,
     _search_events: Subscription,
     /// `None` keeps local calls direct; a value is forwarded by the relay.
@@ -195,6 +196,13 @@ pub struct PullRequestsPage {
 }
 
 impl PullRequestsPage {
+    pub(crate) fn select_url(&mut self, url: Option<String>, cx: &mut Context<Self>) {
+        self.selected_url = url;
+        cx.notify();
+    }
+    pub(crate) fn target_device(&self) -> Option<String> {
+        self.target_device.clone()
+    }
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| {
             ComposerInput::with_context("Search pull requests", "PaletteSearch", cx)
@@ -222,6 +230,7 @@ impl PullRequestsPage {
             state,
             search,
             query: String::new(),
+            selected_url: None,
             collapsed_groups: HashSet::new(),
             _search_events: search_events,
             target_device: None,
@@ -633,6 +642,8 @@ impl Render for PullRequestsPage {
 
         let loading = initial_loading || refreshing;
         let header = widgets::page_column()
+            .id("pull-requests-column")
+            .debug_selector(|| "pull-requests-column".to_owned())
             .max_w(px(PR_PAGE_MAX_WIDTH))
             .pt_0()
             .pb(px(Theme::SPACE_LG))
@@ -818,6 +829,7 @@ impl Render for PullRequestsPage {
                 layout,
                 self.sort.field,
                 &self.collapsed_groups,
+                self.selected_url.as_deref(),
                 &theme,
                 cx,
             )
@@ -926,6 +938,7 @@ fn render_grouped_requests(
     layout: PullRequestTableLayout,
     sort_field: PullRequestSortField,
     collapsed: &HashSet<PullRequestGroup>,
+    selected_url: Option<&str>,
     theme: &Theme,
     cx: &mut Context<PullRequestsPage>,
 ) -> AnyElement {
@@ -998,10 +1011,14 @@ fn render_grouped_requests(
                             ),
                     )
                     .when(!closed, |el| {
-                        el.children(
-                            rows.into_iter()
-                                .map(|item| render_table_row(item, layout, sort_field, theme)),
-                        )
+                        el.children(rows.into_iter().map(|item| {
+                            div()
+                                .rounded(px(6.0))
+                                .when(selected_url == Some(item.url.as_str()), |el| {
+                                    el.bg(theme.selection)
+                                })
+                                .child(render_table_row(item, layout, sort_field, theme))
+                        }))
                     })
                     .into_any_element(),
             )
@@ -1082,7 +1099,7 @@ fn render_table_row(
         .debug_selector(|| "pull-request-row".to_string())
         .role(gpui::Role::Link)
         .aria_label(format!(
-            "{}: {} #{}. {}. Open on GitHub",
+            "{}: {} #{}. {}. Open pull request",
             item.title,
             item.repository,
             item.number,
@@ -1101,9 +1118,9 @@ fn render_table_row(
         .flex_none()
         .cursor_pointer()
         .hover(|style| style.bg(crate::theme::ink(0.035)))
-        .on_click(move |_, _, cx| {
+        .on_click(move |_, window, cx| {
             cx.stop_propagation();
-            cx.open_url(&url);
+            crate::pull_request_detail::open(&url, window, cx);
         });
     let (date_label, timestamp) = if sort_field == PullRequestSortField::Opened {
         ("Opened", item.created_at)
@@ -1635,6 +1652,21 @@ mod tests {
         assert_eq!(cx.debug_bounds("pull-requests-refresh").unwrap(), refresh);
     }
 
+    #[gpui::test]
+    fn pull_request_column_matches_settings_width(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            PullRequestsPage::new(state, cx)
+        });
+        cx.simulate_resize(gpui::size(px(1200.0), px(800.0)));
+        cx.run_until_parked();
+        let column = cx.debug_bounds("pull-requests-column").unwrap();
+        assert_eq!(column.size.width, px(768.0));
+        assert_eq!(column.left(), px(216.0));
+    }
+
     #[test]
     fn groups_prioritize_attention_without_claiming_merge_readiness() {
         let mut item = pull_request("owner/repo", 181, 1, 1, 1);
@@ -1767,7 +1799,7 @@ mod tests {
         );
         assert_eq!(
             table_layout(table_content_width(948.0)),
-            PullRequestTableLayout::Wide
+            PullRequestTableLayout::Compact
         );
     }
 

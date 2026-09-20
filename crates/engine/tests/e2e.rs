@@ -34,6 +34,14 @@ impl OpenChangeRequestLookup for FixedOpenChangeRequests {
     async fn list_authored_open(&self) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
         Ok(self.0.clone())
     }
+    async fn detail(&self, url: &str, diff: bool) -> Result<serde_json::Value, ChangeRequestError> {
+        assert_eq!(url, self.0[0].url);
+        if diff {
+            Ok(serde_json::json!("diff --git a/a b/a\n"))
+        } else {
+            Ok(serde_json::json!({ "title": self.0[0].title, "number": self.0[0].number }))
+        }
+    }
 }
 
 fn run_request(prompt: &str) -> RunRequest {
@@ -1095,7 +1103,24 @@ async fn pull_request_list_dispatch_returns_provider_items() {
         .await
         .unwrap();
 
-    assert_eq!(listed, vec![item]);
+    assert_eq!(listed, vec![item.clone()]);
+    let detail: zeron_proto::ChangeRequestDetail = client
+        .call_as(
+            zeron_rpc::methods::GET_CHANGE_REQUEST,
+            serde_json::json!({ "url": item.url, "targetDeviceId": core.device_id }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.title, item.title);
+    assert_eq!(detail.number, item.number);
+    let diff: String = client
+        .call_as(
+            zeron_rpc::methods::GET_CHANGE_REQUEST_DIFF,
+            serde_json::json!({ "url": item.url, "targetDeviceId": core.device_id }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(diff, "diff --git a/a b/a\n");
 }
 
 #[tokio::test]

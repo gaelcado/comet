@@ -1373,6 +1373,8 @@ fn forwardable(method: &str) -> bool {
             | methods::WATCH_WORKSPACE_GIT_STATUS
             | methods::WATCH_CHECKOUT_CHANGE_REQUEST
             | methods::LIST_OPEN_CHANGE_REQUESTS
+            | methods::GET_CHANGE_REQUEST
+            | methods::GET_CHANGE_REQUEST_DIFF
             | methods::GET_CHECKOUT_DIFF
             | methods::DISCARD_WORKING_TREE
             | methods::GET_CHECKOUT_FILE_DIFF_TEXT
@@ -2251,6 +2253,19 @@ impl RpcService for EngineRpc {
                     .await
                     .map_err(change_request_rpc_error)?;
                 RpcReply::value(&items)
+            }
+            methods::GET_CHANGE_REQUEST | methods::GET_CHANGE_REQUEST_DIFF => {
+                #[derive(Deserialize)]
+                struct P {
+                    url: String,
+                }
+                let p: P = parse_params(params)?;
+                let detail = self
+                    .open_change_requests
+                    .detail(&p.url, method == methods::GET_CHANGE_REQUEST_DIFF)
+                    .await
+                    .map_err(change_request_rpc_error)?;
+                RpcReply::value(&detail)
             }
             // One-shot scoped capture for the Changes pane: `branch` diffs the
             // working tree against merge-base(baseRef, HEAD); `turn` diffs the
@@ -3621,6 +3636,10 @@ mod tests {
         assert!(is_stream_method(methods::WATCH_WORKSPACE_FILES));
         assert!(is_stream_method(methods::WATCH_WORKSPACE_GIT_STATUS));
         assert!(forwardable(methods::LIST_OPEN_CHANGE_REQUESTS));
+        assert!(forwardable(methods::GET_CHANGE_REQUEST));
+        assert!(forwardable(methods::GET_CHANGE_REQUEST_DIFF));
+        assert!(!is_stream_method(methods::GET_CHANGE_REQUEST));
+        assert!(!is_stream_method(methods::GET_CHANGE_REQUEST_DIFF));
         assert!(!is_stream_method(methods::LIST_OPEN_CHANGE_REQUESTS));
     }
 

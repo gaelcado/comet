@@ -3043,6 +3043,11 @@ impl Render for AppearancePage {
                                         .children(library_rows),
                                 )
                                 .child(font_section)
+                                .child(
+                                    div().mt(px(32.0)).child(
+                                        crate::pull_request_detail::destination_setting(&theme, cx),
+                                    ),
+                                )
                                 .when_some(library_warning, |page, warning| {
                                     page.child(
                                         div()
@@ -3055,6 +3060,7 @@ impl Render for AppearancePage {
                         ),
                 )
                 .fade_overflow_y(&self.scroll.scroll),
+
             )
             .children(scrollbar)
             .children(modal)

@@ -850,6 +850,65 @@ pub struct ChangeRequestListItem {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Read-only GitHub detail response. Optional collections tolerate absent provider data.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangeRequestDetail {
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub number: u64,
+    pub author: ChangeRequestActor,
+    pub base_ref_name: String,
+    pub head_ref_name: String,
+    pub state: String,
+    pub is_draft: bool,
+    pub review_decision: String,
+    pub mergeable: String,
+    pub additions: u64,
+    pub deletions: u64,
+    pub comments: Vec<ChangeRequestComment>,
+    pub reviews: Vec<ChangeRequestComment>,
+    pub files: Vec<ChangeRequestFile>,
+    pub status_check_rollup: Vec<ChangeRequestCheck>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangeRequestActor {
+    pub login: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangeRequestComment {
+    pub author: ChangeRequestActor,
+    pub body: String,
+    pub state: String,
+    pub created_at: String,
+    pub submitted_at: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangeRequestFile {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangeRequestCheck {
+    pub name: String,
+    pub context: String,
+    pub status: String,
+    pub conclusion: String,
+    pub state: String,
+    pub details_url: String,
+    pub target_url: String,
+}
+
 /// Latest successful change request resolution for one checkout and branch.
 ///
 /// `change_request: None` is an authoritative successful lookup with no match;

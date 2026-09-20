@@ -1766,6 +1766,7 @@ pub struct Shell {
     /// Route history behind the titlebar back/forward buttons (§ nav history).
     nav: NavHistory,
     pull_requests_page: Option<Entity<PullRequestsPage>>,
+    pull_request_detail: Option<Entity<crate::pull_request_detail::PullRequestDetailPage>>,
     devices_page: Option<Entity<DevicesPage>>,
     archived_page: Option<Entity<ArchivedPage>>,
     appearance_page: Option<Entity<AppearancePage>>,
@@ -2201,6 +2202,7 @@ impl Shell {
             settings_restore_pending: false,
             nav,
             pull_requests_page: None,
+            pull_request_detail: None,
             devices_page: None,
             archived_page: None,
             appearance_page: None,
@@ -4018,6 +4020,7 @@ impl Shell {
         self.settings.new_thread_composer_background = current.new_thread_composer_background;
         self.settings.new_thread_background_effect = current.new_thread_background_effect;
         self.settings.open_web_links_in_zeron = current.open_web_links_in_zeron;
+        self.settings.pull_request_destination = current.pull_request_destination;
         self.settings.ui_font_family = current.ui_font_family;
         self.settings.ui_font_size = current.ui_font_size;
         self.settings.terminal_font_family = current.terminal_font_family;
@@ -6527,6 +6530,13 @@ impl Shell {
         } else {
             format!("chat-{id}")
         };
+        let pr_device = self
+            .state
+            .read(cx)
+            .chats
+            .iter()
+            .find(|chat| chat.id == id)
+            .map(|chat| chat.device_id.clone());
         let compact = search_query.is_none() && self.settings.sidebar_compact;
         let show_label = search_query.is_some() || self.settings.sidebar_show_project_label;
         let remote = self
@@ -6996,6 +7006,7 @@ impl Shell {
                                     format!("{row_id}-compact-pr").into(),
                                     summary,
                                     crate::change_requests::ChangeRequestBadgeSurface::Sidebar,
+                                    pr_device.clone(),
                                     theme,
                                 )
                             }
@@ -7061,6 +7072,7 @@ impl Shell {
                                     summary,
                                     crate::change_requests::ChangeRequestBadgeSurface::Sidebar,
                                     search_query,
+                                    pr_device.clone(),
                                     theme,
                                 )
                             })
@@ -7465,7 +7477,14 @@ impl Shell {
             })
             .hover(|style| style.text_color(theme.text))
             .cursor_pointer()
-            .on_click(cx.listener(|this, _, _, cx| this.open_pull_requests(cx)))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.pull_request_detail = None;
+                if let Some(page) = &this.pull_requests_page {
+                    page.update(cx, |page, cx| page.select_url(None, cx));
+                }
+                this.open_pull_requests(cx);
+                cx.notify();
+            }))
             .tooltip(|_, cx| {
                 cx.new(|_| WindowControlTooltip {
                     label: "Pull requests",
@@ -9138,6 +9157,18 @@ impl Shell {
                 .cloned()
                 .map(IntoElement::into_any_element)
                 .unwrap_or_else(|| Empty.into_any_element());
+            if let Some(detail) = self.pull_request_detail.clone() {
+                return div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .when(main_content_width >= 1050.0, |el| {
+                        el.child(div().w(px(400.0)).flex_none().h_full().child(outlet))
+                    })
+                    .child(div().flex_1().min_w_0().h_full().child(detail))
+                    .into_any_element();
+            }
             return div()
                 .flex_1()
                 .min_w_0()
@@ -11477,6 +11508,7 @@ impl Render for Shell {
                 self.browsers.clear();
                 self.browser_subs.clear();
                 self.browser_context = crate::browser::BrowserContext::default();
+                self.pull_request_detail = None;
             }
             self.browser_profile = browser_profile;
         }
@@ -11677,6 +11709,52 @@ impl Render for Shell {
                     this.toggle_sidebar(cx)
                 }
             }))
+            .on_action(cx.listener(
+                |this, action: &crate::pull_request_detail::OpenPullRequest, window, cx| {
+                    let target = if let Some(device) = action.1.clone() {
+                        (Some(device.as_str()) != this.state.read(cx).local_device_id.as_deref())
+                            .then_some(device)
+                    } else if matches!(this.route, Route::PullRequests) {
+                        this.pull_requests_page
+                            .as_ref()
+                            .and_then(|page| page.read(cx).target_device())
+                    } else {
+                        let state = this.state.read(cx);
+                        state.selected_chat_row().and_then(|chat| {
+                            (Some(chat.device_id.as_str()) != state.local_device_id.as_deref())
+                                .then(|| chat.device_id.clone())
+                        })
+                    };
+                    this.open_pull_requests(cx);
+                    if this.pull_requests_page.is_none() {
+                        this.pull_requests_page =
+                            Some(cx.new(|cx| PullRequestsPage::new(this.state.clone(), cx)));
+                    }
+                    if let Some(page) = &this.pull_requests_page {
+                        page.update(cx, |page, cx| page.select_url(Some(action.0.clone()), cx));
+                    }
+                    this.pull_request_detail = Some(cx.new(|cx| {
+                        crate::pull_request_detail::PullRequestDetailPage::new(
+                            this.state.clone(),
+                            action.0.clone(),
+                            target,
+                            this.browser_context.clone(),
+                            window,
+                            cx,
+                        )
+                    }));
+                    cx.notify();
+                },
+            ))
+            .on_action(cx.listener(
+                |this, _: &crate::pull_request_detail::ClosePullRequest, _, cx| {
+                    this.pull_request_detail = None;
+                    if let Some(page) = &this.pull_requests_page {
+                        page.update(cx, |page, cx| page.select_url(None, cx));
+                    }
+                    cx.notify();
+                },
+            ))
             // New session works from anywhere — `open_new_session` routes back
             // to chat itself, so Settings is not a dead spot.
             .on_action(cx.listener(|this, _: &NewSession, _, cx| {
@@ -13659,6 +13737,8 @@ mod exit_regressions {
                     settings::update(settings::SavePolicy::Immediate, cx, |settings| {
                         settings.window_geometry = geometry;
                         settings.open_web_links_in_zeron = open_links_in_zeron;
+                        settings.pull_request_destination =
+                            settings::PullRequestDestination::Browser;
                         settings.terminal_font_family = terminal_family.clone();
                         settings.terminal_font_size = terminal_size;
                         settings.code_font_family = code_family.clone();
@@ -13681,6 +13761,10 @@ mod exit_regressions {
                         assert_eq!(current.window_geometry, geometry);
                         assert_eq!(current.new_thread_background_effect, effect);
                         assert_eq!(current.open_web_links_in_zeron, open_links_in_zeron);
+                        assert_eq!(
+                            current.pull_request_destination,
+                            settings::PullRequestDestination::Browser
+                        );
                         assert_eq!(current.terminal_font_family, terminal_family);
                         assert_eq!(current.terminal_font_size, terminal_size);
                         assert_eq!(current.code_font_family, code_family);
@@ -13703,6 +13787,10 @@ mod exit_regressions {
                     assert_eq!(loaded.window_geometry, geometry);
                     assert_eq!(loaded.new_thread_background_effect, effect);
                     assert_eq!(loaded.open_web_links_in_zeron, open_links_in_zeron);
+                    assert_eq!(
+                        loaded.pull_request_destination,
+                        settings::PullRequestDestination::Browser
+                    );
                     assert_eq!(loaded.terminal_font_family, terminal_family);
                     assert_eq!(loaded.terminal_font_size, terminal_size);
                     assert_eq!(loaded.code_font_family, code_family);

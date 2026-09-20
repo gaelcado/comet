@@ -96,10 +96,17 @@ pub trait ChangeRequestProvider: Send + Sync {
     ) -> Result<Option<ChangeRequestSummary>, ChangeRequestError>;
 }
 
-/// Host-side boundary for global change request listing surfaces.
+/// Host-side boundary for global change request listing and inspection surfaces.
 #[async_trait]
 pub trait OpenChangeRequestLookup: Send + Sync {
     async fn list_authored_open(&self) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError>;
+    async fn detail(
+        &self,
+        _url: &str,
+        _diff: bool,
+    ) -> Result<serde_json::Value, ChangeRequestError> {
+        Err(ChangeRequestError::UnsupportedRepository)
+    }
 }
 
 /// Checkout inspection plus provider resolution, injectable for cache/service tests.
@@ -197,6 +204,75 @@ pub struct GitHubCli {
 }
 
 impl GitHubCli {
+    /// Fetch one PR without requiring a local checkout or executing shell text.
+    pub async fn detail(
+        &self,
+        url: &str,
+        diff: bool,
+    ) -> Result<serde_json::Value, ChangeRequestError> {
+        let url = validated_pull_request_url(url)?;
+        let mut args = vec![
+            "pr".into(),
+            if diff { "diff".into() } else { "view".into() },
+            url,
+        ];
+        if diff {
+            args.push("--color=never".into());
+        } else {
+            args.extend(["--json".into(), "title,body,url,number,author,baseRefName,headRefName,state,isDraft,reviewDecision,mergeable,additions,deletions,comments,reviews,files,statusCheckRollup".into()]);
+        }
+        let output = self
+            .runner
+            .run(ProcessRequest {
+                program: "gh".into(),
+                args,
+                cwd: None,
+                env: vec![
+                    ("GH_PROMPT_DISABLED".into(), "1".into()),
+                    ("GH_HOST".into(), "github.com".into()),
+                ],
+                timeout: GITHUB_TIMEOUT,
+                output_limit: GITHUB_OUTPUT_LIMIT,
+            })
+            .await
+            .map_err(classify_run_error)?;
+        if !output.success {
+            return Err(classify_github_failure(&output.stderr));
+        }
+        if output.stdout_truncated {
+            return Err(ChangeRequestError::Decode);
+        }
+        if diff {
+            Ok(serde_json::Value::String(
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+            ))
+        } else {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&output.stdout).map_err(|_| ChangeRequestError::Decode)?;
+            // GitHub uses null for absent check/review data; the wire model uses defaults.
+            fn remove_nulls(value: &mut serde_json::Value) {
+                match value {
+                    serde_json::Value::Object(map) => {
+                        map.retain(|_, v| !v.is_null());
+                        for v in map.values_mut() {
+                            remove_nulls(v);
+                        }
+                    }
+                    serde_json::Value::Array(items) => {
+                        for v in items {
+                            remove_nulls(v);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            remove_nulls(&mut value);
+            let detail: zeron_proto::ChangeRequestDetail =
+                serde_json::from_value(value).map_err(|_| ChangeRequestError::Decode)?;
+            serde_json::to_value(detail).map_err(|_| ChangeRequestError::Decode)
+        }
+    }
+
     pub fn new() -> Self {
         Self::with_runner(Arc::new(SystemProcessRunner))
     }
@@ -333,6 +409,9 @@ impl Default for GitHubCli {
 impl OpenChangeRequestLookup for GitHubCli {
     async fn list_authored_open(&self) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
         GitHubCli::list_authored_open(self).await
+    }
+    async fn detail(&self, url: &str, diff: bool) -> Result<serde_json::Value, ChangeRequestError> {
+        GitHubCli::detail(self, url, diff).await
     }
 }
 
@@ -914,6 +993,35 @@ fn to_list_item(
     })
 }
 
+fn validated_pull_request_url(raw: &str) -> Result<String, ChangeRequestError> {
+    let url = reqwest::Url::parse(raw).map_err(|_| ChangeRequestError::UnsupportedRepository)?;
+    let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || parts.len() != 4
+        || parts[2] != "pull"
+        || parts[0].is_empty()
+        || parts[1].is_empty()
+        || !parts[0..2].iter().all(|part| {
+            part.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        })
+        || parts[3]
+            .parse::<u64>()
+            .ok()
+            .is_none_or(|number| number == 0)
+    {
+        return Err(ChangeRequestError::UnsupportedRepository);
+    }
+    Ok(format!(
+        "https://github.com/{}/{}/pull/{}",
+        parts[0], parts[1], parts[3]
+    ))
+}
+
 fn classify_github_failure(stderr: &[u8]) -> ChangeRequestError {
     let stderr = String::from_utf8_lossy(stderr).to_ascii_lowercase();
     if stderr.contains("rate limit") || stderr.contains("secondary rate") {
@@ -1139,6 +1247,71 @@ mod tests {
             stderr: Vec::new(),
             stdout_truncated: false,
         })
+    }
+
+    #[test]
+    fn pr_detail_rejects_unsafe_or_non_pr_targets() {
+        for url in [
+            "--help",
+            "https://example.com/a/b/pull/1",
+            "http://github.com/a/b/pull/1",
+            "https://github.com/a/b/issues/1",
+            "https://github.com/a/b/pull/0",
+            "https://user@github.com/a/b/pull/1",
+            "https://github.com/a/b/pull/1/files",
+        ] {
+            assert!(validated_pull_request_url(url).is_err(), "{url}");
+        }
+        assert_eq!(
+            validated_pull_request_url("https://github.com/a/b/pull/12#discussion").unwrap(),
+            "https://github.com/a/b/pull/12"
+        );
+    }
+
+    #[tokio::test]
+    async fn pr_detail_normalizes_absent_github_fields_and_uses_bounded_process() {
+        let runner = FakeProcessRunner::with_responses([command_success(br#"{"number":12,"title":"A PR","body":"Description","author":null,"reviewDecision":null,"statusCheckRollup":[{"name":"build","status":"IN_PROGRESS","conclusion":null}]}"#.to_vec())]);
+        let result = GitHubCli::with_runner(runner.clone())
+            .detail("https://github.com/a/b/pull/12", false)
+            .await
+            .unwrap();
+        let detail: zeron_proto::ChangeRequestDetail = serde_json::from_value(result).unwrap();
+        assert_eq!(detail.status_check_rollup[0].status, "IN_PROGRESS");
+        assert_eq!(detail.status_check_rollup[0].conclusion, "");
+        assert!(detail.author.login.is_empty());
+        let request = &runner.requests()[0];
+        assert_eq!(
+            &request.args[..3],
+            ["pr", "view", "https://github.com/a/b/pull/12"]
+        );
+        assert_eq!(request.timeout, GITHUB_TIMEOUT);
+        assert_eq!(request.output_limit, GITHUB_OUTPUT_LIMIT);
+        assert!(request.cwd.is_none());
+    }
+
+    #[tokio::test]
+    async fn pr_diff_returns_patch_and_rejects_truncated_output() {
+        let mut truncated = command_success("partial").unwrap();
+        truncated.stdout_truncated = true;
+        let runner = FakeProcessRunner::with_responses([
+            command_success("diff --git a/a b/a\n"),
+            Ok(truncated),
+        ]);
+        let github = GitHubCli::with_runner(runner.clone());
+        assert_eq!(
+            github
+                .detail("https://github.com/a/b/pull/12", true)
+                .await
+                .unwrap(),
+            "diff --git a/a b/a\n"
+        );
+        assert!(
+            github
+                .detail("https://github.com/a/b/pull/12", true)
+                .await
+                .is_err()
+        );
+        assert_eq!(runner.requests()[0].args.last().unwrap(), "--color=never");
     }
 
     fn command_failure(stderr: &str) -> Result<ProcessOutput, ProcessRunError> {
