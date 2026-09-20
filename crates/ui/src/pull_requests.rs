@@ -2,8 +2,8 @@ use std::{collections::HashSet, rc::Rc, time::Instant};
 
 use chrono::{DateTime, Utc};
 use gpui::{
-    AnyElement, Context, Entity, IntoElement, Render, ScrollHandle, SharedString, Subscription,
-    Task, Window, div, prelude::*, px,
+    AnyElement, Context, Entity, Focusable, IntoElement, Render, ScrollHandle, SharedString,
+    Subscription, Task, Window, div, prelude::*, px,
 };
 use zeron_proto::{
     ChangeRequestFilter, ChangeRequestListItem, ChangeRequestMergeability,
@@ -214,6 +214,7 @@ pub struct PullRequestsPage {
     content_width: Option<f32>,
     device_menu: popover::Popup<()>,
     sort_menu: popover::Popup<()>,
+    repository_menu: popover::Popup<()>,
     _observe: Subscription,
 }
 
@@ -291,6 +292,7 @@ impl PullRequestsPage {
             content_width: None,
             device_menu: popover::Popup::default(),
             sort_menu: popover::Popup::default(),
+            repository_menu: popover::Popup::default(),
             _observe: observe,
         };
         page.initialize_repository(cx);
@@ -324,7 +326,11 @@ impl PullRequestsPage {
             }
             return;
         };
-        let target = (Some(device.as_str()) != state.local_device_id.as_deref()).then_some(device);
+        let local = state
+            .local_device_id
+            .as_deref()
+            .unwrap_or(&engine.engine_info().device_id);
+        let target = (device != local).then_some(device);
         let mut params = params_for_target(target.as_deref());
         params["cwd"] = cwd.into();
         self.initial_scope_attempted = true;
@@ -334,6 +340,7 @@ impl PullRequestsPage {
                 .client()
                 .call(methods::GET_CHANGE_REQUEST_REPOSITORY, params)
                 .await;
+            let discovery_failed = result.is_err();
             let repository = result
                 .ok()
                 .and_then(|value| serde_json::from_value::<Option<String>>(value).ok())
@@ -348,6 +355,8 @@ impl PullRequestsPage {
                 if let Some((repo, target)) = initial_repository_scope(repository, target, fallback)
                 {
                     page.apply_initial_repository(repo, target, cx);
+                } else if discovery_failed {
+                    page.repository_error = Some("Couldn’t detect this project’s repository. Choose a repository to continue.".into());
                 }
                 cx.notify();
             });
@@ -379,6 +388,7 @@ impl PullRequestsPage {
     pub fn on_hidden(&mut self) {
         self.visible = false;
         self.sort_menu = popover::Popup::default();
+        self.repository_menu = popover::Popup::default();
         if self.initial_scope_task.take().is_some() {
             self.initial_scope_attempted = false;
             self.load_state = PullRequestsLoadState::Idle;
@@ -449,6 +459,7 @@ impl PullRequestsPage {
             return;
         }
         self.repository_error = None;
+        self.close_repository_menu(cx);
         self.initial_scope_task = None;
         self.initial_scope_attempted = true;
         let saved_repository = repository.clone();
@@ -504,6 +515,139 @@ impl PullRequestsPage {
             self.load(false, cx);
         }
         cx.notify();
+    }
+
+    fn close_repository_menu(&mut self, cx: &mut Context<Self>) {
+        if self.repository_menu.begin_close() {
+            popover::reap_popup(cx, |page: &mut Self| &mut page.repository_menu);
+            cx.notify();
+        }
+    }
+
+    fn render_repository_menu(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let label = self.repository.clone().unwrap_or_else(|| {
+            if self.initial_scope_task.is_some() {
+                "Detecting repository…".into()
+            } else {
+                "Choose repository".into()
+            }
+        });
+        let tooltip = label.clone();
+        let mut trigger =
+            crate::surface_chrome::tab("pr-repository", self.repository_menu.is_open(), theme)
+                .debug_selector(|| "pr-repository".into())
+                .h(px(28.0))
+                .px(px(8.0))
+                .max_w(px(220.0))
+                .min_w_0()
+                .aria_label(format!("Repository: {label}"))
+                .aria_expanded(self.repository_menu.is_open())
+                .tooltip(move |_, cx| cx.new(|_| DashboardTooltip(tooltip.clone().into())).into())
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|page, _, _, _| page.repository_menu.note_trigger_press()),
+                )
+                .on_key_down(cx.listener(|page, event: &gpui::KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "escape" {
+                        page.close_repository_menu(cx);
+                    }
+                }))
+                .on_click(cx.listener(|page, event, window, cx| {
+                    cx.stop_propagation();
+                    let open = if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                        page.repository_menu.is_open()
+                    } else {
+                        page.repository_menu.take_press_was_open()
+                    };
+                    if open {
+                        page.close_repository_menu(cx);
+                    } else {
+                        page.repository_menu.open(());
+                        window.focus(&page.repository_input.read(cx).focus_handle(cx), cx);
+                    }
+                    cx.notify();
+                }))
+                .child(
+                    icon(icons::FOLDER_WITH_FILES)
+                        .size(px(14.0))
+                        .text_color(theme.text_muted),
+                )
+                .child(div().min_w_0().truncate().child(label))
+                .child(
+                    icon(icons::ALT_ARROW_DOWN)
+                        .size(px(12.0))
+                        .text_color(theme.text_muted),
+                );
+        if self.repository_menu.get().is_some() {
+            let mut recent: Vec<String> = self
+                .snapshots
+                .iter()
+                .rev()
+                .filter(|((target, _, _), _, _)| target == &self.target_device)
+                .map(|((_, repo, _), _, _)| repo.clone())
+                .collect();
+            let mut seen = HashSet::new();
+            recent.retain(|repo| seen.insert(repo.clone()));
+            recent.truncate(5);
+            let menu = popover::popover_card(theme)
+                .w(px(280.0))
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .on_mouse_down_out(cx.listener(|page, _, _, cx| page.close_repository_menu(cx)))
+                .child(popover::menu_heading(theme, "Repository"))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(
+                            crate::surface_chrome::input()
+                                .h(px(30.0))
+                                .child(self.repository_input.clone()),
+                        )
+                        .child(
+                            crate::surface_chrome::tab("pr-repository-load", false, theme)
+                                .debug_selector(|| "pr-repository-load".into())
+                                .h(px(30.0))
+                                .px(px(8.0))
+                                .aria_label("Open repository")
+                                .child("Open")
+                                .on_click(cx.listener(|page, _, _, cx| {
+                                    cx.stop_propagation();
+                                    page.select_repository(cx);
+                                })),
+                        ),
+                )
+                .when_some(self.repository_error.clone(), |el, error| {
+                    el.child(widgets::error_strip(theme, error))
+                })
+                .children(recent.into_iter().enumerate().map(|(index, repo)| {
+                    popover::menu_row(
+                        theme,
+                        self.repository.as_ref() == Some(&repo),
+                        format!("pr-recent-{index}"),
+                    )
+                    .id(("pr-recent", index))
+                    .role(gpui::Role::Button)
+                    .tab_index(0)
+                    .aria_label(format!("Open {repo}"))
+                    .focus_visible(|style| style.bg(theme.glass_hover()))
+                    .child(div().truncate().child(repo.clone()))
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        cx.stop_propagation();
+                        page.repository_input
+                            .update(cx, |input, cx| input.set_text(&repo, cx));
+                        page.select_repository(cx);
+                    }))
+                }));
+            trigger = trigger.child(popover::anchored_menu_below_end(
+                "pr-repository-menu",
+                menu.into_any_element(),
+                self.repository_menu.closing_since(),
+            ));
+        }
+        trigger.into_any_element()
     }
 
     fn close_sort_menu(&mut self, cx: &mut Context<Self>) {
@@ -562,7 +706,8 @@ impl PullRequestsPage {
         let mut trigger = crate::surface_chrome::tab("pr-sort", self.sort_menu.is_open(), theme)
             .debug_selector(|| "pr-sort".into())
             .h(px(32.0))
-            .px(px(8.0))
+            .w(px(32.0))
+            .justify_center()
             .aria_label(format!("Sort pull requests: {label}"))
             .aria_expanded(self.sort_menu.is_open())
             .on_mouse_down(
@@ -594,9 +739,10 @@ impl PullRequestsPage {
                 } else {
                     icons::ARROW_DOWN
                 })
-                .size(px(14.0)),
+                .size(px(14.0))
+                .text_color(theme.text_muted),
             )
-            .child(label);
+            .tooltip(move |_, cx| cx.new(|_| DashboardTooltip(label.into())).into());
         if self.sort_menu.get().is_some() {
             let menu = popover::popover_card(theme)
                 .w(px(220.0))
@@ -979,99 +1125,18 @@ impl Render for PullRequestsPage {
         };
 
         let loading = initial_loading || refreshing;
-        let mut recent: Vec<String> = self
-            .snapshots
-            .iter()
-            .rev()
-            .map(|((_, repo, _), _, _)| repo.clone())
-            .collect();
-        let mut seen = HashSet::new();
-        recent.retain(|repo| seen.insert(repo.clone()));
-        recent.truncate(5);
-        let repository_filter = div()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(
-                        crate::surface_chrome::input()
-                            .h(px(32.0))
-                            .child(
-                                icon(icons::FOLDER_WITH_FILES)
-                                    .size(px(14.0))
-                                    .text_color(theme.text_muted),
-                            )
-                            .child(self.repository_input.clone()),
-                    )
-                    .child(
-                        widgets::ghost_action(&theme)
-                            .id("pr-repository-load")
-                            .debug_selector(|| "pr-repository-load".into())
-                            .role(gpui::Role::Button)
-                            .aria_label("Load repository pull requests")
-                            .tab_index(0)
-                            .on_click(cx.listener(|page, _, _, cx| page.select_repository(cx)))
-                            .child("Load"),
-                    ),
+        let freshness: SharedString = match self.last_loaded_at {
+            Some(at) if at.elapsed().as_secs() < 60 => {
+                "Loaded just now · Refresh pull requests".into()
+            }
+            Some(at) => format!(
+                "Loaded {}m ago · Refresh pull requests",
+                at.elapsed().as_secs() / 60
             )
-            .when(!recent.is_empty(), |el| {
-                el.child(
-                    div()
-                        .id("pr-recent-repositories")
-                        .flex()
-                        .overflow_x_scroll()
-                        .gap(px(4.0))
-                        .children(recent.into_iter().enumerate().map(|(index, repo)| {
-                            crate::surface_chrome::tab(
-                                ("pr-recent-repository", index),
-                                self.repository.as_ref() == Some(&repo),
-                                &theme,
-                            )
-                            .px(px(8.0))
-                            .aria_label(format!("Show {repo}"))
-                            .child(repo.clone())
-                            .on_click(cx.listener(
-                                move |page, _, _, cx| {
-                                    page.repository_input
-                                        .update(cx, |input, cx| input.set_text(&repo, cx));
-                                    page.select_repository(cx);
-                                },
-                            ))
-                        })),
-                )
-            })
-            .when_some(self.repository_error.clone(), |el, error| {
-                el.child(widgets::error_strip(&theme, error))
-            })
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(theme.text_muted)
-                    .child(match (&self.repository, self.last_loaded_at) {
-                        (Some(repo), Some(at)) => format!(
-                            "{repo} · Updated {}",
-                            if at.elapsed().as_secs() < 60 {
-                                "just now".into()
-                            } else {
-                                format!("{}m ago", at.elapsed().as_secs() / 60)
-                            }
-                        ),
-                        (Some(repo), None) => format!("{repo} · Latest 50 open pull requests"),
-                        _ => "One repository at a time · No automatic refresh".into(),
-                    }),
-            )
-            .when(self.items.len() == 50, |el| {
-                el.child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(theme.text_muted)
-                        .child("Showing the latest 50 open pull requests."),
-                )
-            });
+            .into(),
+            None => "Refresh pull requests".into(),
+        };
+
         let header = widgets::page_column()
             .id("pull-requests-column")
             .debug_selector(|| "pull-requests-column".to_owned())
@@ -1085,7 +1150,17 @@ impl Render for PullRequestsPage {
                     .items_center()
                     .flex_wrap()
                     .gap(px(12.0))
-                    .child(widgets::page_header(&theme, "Pull requests", count))
+                    .child(widgets::page_header(&theme, "Pull requests", count).when(
+                        self.items.len() == 50,
+                        |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_muted)
+                                    .child("latest 50"),
+                            )
+                        },
+                    ))
                     .child(div().flex_1())
                     .child(
                         div()
@@ -1093,6 +1168,7 @@ impl Render for PullRequestsPage {
                             .items_center()
                             .flex_wrap()
                             .gap(px(8.0))
+                            .child(self.render_repository_menu(&theme, cx))
                             .child(self.render_device_switcher(&theme, cx))
                             .child(
                                 widgets::ghost_action(&theme)
@@ -1129,14 +1205,18 @@ impl Render for PullRequestsPage {
                                             .text_color(theme.text_muted)
                                             .into_any_element()
                                     })
-                                    .child("Refresh"),
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| DashboardTooltip(freshness.clone())).into()
+                                    }),
                             ),
                     ),
             )
             .when(refresh_error, |el| {
                 el.child(widgets::error_strip(&theme, refresh_message))
             })
-            .child(div().mt(px(16.0)).child(repository_filter))
+            .when_some(self.repository_error.clone(), |el, error| {
+                el.child(widgets::error_strip(&theme, error))
+            })
             .child(
                 div()
                     .mt(px(12.0))
@@ -2074,6 +2154,96 @@ mod tests {
         });
     }
 
+    struct InitialRepositoryRpc(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    #[async_trait::async_trait]
+    impl zeron_rpc::RpcService for InitialRepositoryRpc {
+        async fn handle(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> Result<zeron_rpc::RpcReply, zeron_rpc::RpcError> {
+            self.0.lock().unwrap().push(method.into());
+            assert!(
+                params.get("targetDeviceId").is_none(),
+                "local identity comes from engine before device frames"
+            );
+            match method {
+                methods::GET_CHANGE_REQUEST_REPOSITORY => {
+                    assert_eq!(params["cwd"], "/checkout");
+                    zeron_rpc::RpcReply::value(&Some("owner/repo"))
+                }
+                methods::LIST_FILTERED_CHANGE_REQUESTS => {
+                    assert_eq!(params["repository"], "owner/repo");
+                    zeron_rpc::RpcReply::value(&vec![pull_request("owner/repo", 7, 1, 1, 1)])
+                }
+                _ => panic!("unexpected request {method}"),
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn pull_request_initial_load_waits_for_engine_and_project(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let settings_dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            cx.set_global(Theme::default());
+            crate::settings::init(
+                crate::settings::UiSettings::default(),
+                settings_dir.path(),
+                cx,
+            );
+        });
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let state = cx.new(|_| AppState::new());
+        let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
+        state.update(cx, |state, cx| {
+            state.set_test_engine(crate::state::EngineHandle::from_test_client(
+                zeron_rpc::memory_client(std::sync::Arc::new(InitialRepositoryRpc(calls.clone()))),
+            ));
+            state.spaces = vec![zeron_proto::Space {
+                id: "project".into(),
+                device_id: "local".into(),
+                path: "/checkout".into(),
+                name: None,
+                git_detected: true,
+                git_checked_at: None,
+                checkout_id: None,
+                created_at: Utc::now(),
+            }];
+            state.selected_space = Some("project".into());
+            state.no_project = false;
+            cx.notify();
+        });
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if page.read_with(cx, |page, _| {
+                page.load_state == PullRequestsLoadState::Ready
+            }) {
+                break;
+            }
+            runtime.block_on(async { tokio::task::yield_now().await });
+        }
+        page.update(cx, |page, cx| {
+            assert_eq!(page.load_state, PullRequestsLoadState::Ready);
+            assert_eq!(page.items[0].number, 7);
+            page.on_hidden();
+            page.on_visible(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [
+                methods::GET_CHANGE_REQUEST_REPOSITORY,
+                methods::LIST_FILTERED_CHANGE_REQUESTS
+            ]
+        );
+    }
+
     #[gpui::test]
     fn pull_request_filter_switches_restore_only_matching_snapshots(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| cx.set_global(Theme::default()));
@@ -2230,6 +2400,37 @@ mod tests {
             assert!(page.scroll.scroll.offset().y < px(0.0))
         });
         assert_eq!(cx.debug_bounds("pull-requests-refresh").unwrap(), refresh);
+        let repository = cx.debug_bounds("pr-repository").unwrap();
+        cx.simulate_mouse_down(
+            repository.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            repository.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        let open = cx.debug_bounds("pr-repository-load").unwrap();
+        assert!(open.left() >= px(0.0) && open.right() <= px(320.0));
+        page.update(cx, |page, cx| {
+            page.repository_input
+                .update(cx, |input, cx| input.set_text("another/repo", cx))
+        });
+        cx.simulate_mouse_down(
+            open.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            open.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        page.read_with(cx, |page, _| {
+            assert_eq!(page.repository.as_deref(), Some("another/repo"))
+        });
     }
 
     #[gpui::test]

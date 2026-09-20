@@ -4025,6 +4025,8 @@ impl Shell {
         self.settings.new_thread_background_effect = current.new_thread_background_effect;
         self.settings.open_web_links_in_zeron = current.open_web_links_in_zeron;
         self.settings.pull_request_destination = current.pull_request_destination;
+        self.settings.last_pull_request_repository = current.last_pull_request_repository;
+        self.settings.last_pull_request_device = current.last_pull_request_device;
         self.settings.ui_font_family = current.ui_font_family;
         self.settings.ui_font_size = current.ui_font_size;
         self.settings.terminal_font_family = current.terminal_font_family;
@@ -13764,6 +13766,8 @@ mod exit_regressions {
                         settings.open_web_links_in_zeron = open_links_in_zeron;
                         settings.pull_request_destination =
                             settings::PullRequestDestination::External;
+                        settings.last_pull_request_repository = Some("acme/zeron".into());
+                        settings.last_pull_request_device = Some("remote-pr-device".into());
                         settings.terminal_font_family = terminal_family.clone();
                         settings.terminal_font_size = terminal_size;
                         settings.code_font_family = code_family.clone();
@@ -13783,6 +13787,14 @@ mod exit_regressions {
                         shell.settings.terminal_height = 300.0 + step as f32;
                         shell.schedule_save(cx);
                         let current = settings::current(cx);
+                        assert_eq!(
+                            current.last_pull_request_repository.as_deref(),
+                            Some("acme/zeron")
+                        );
+                        assert_eq!(
+                            current.last_pull_request_device.as_deref(),
+                            Some("remote-pr-device")
+                        );
                         assert_eq!(current.window_geometry, geometry);
                         assert_eq!(current.new_thread_background_effect, effect);
                         assert_eq!(current.open_web_links_in_zeron, open_links_in_zeron);
@@ -13809,6 +13821,14 @@ mod exit_regressions {
                     }
                     settings::flush(cx);
                     let loaded = settings::UiSettings::load(dir.path());
+                    assert_eq!(
+                        loaded.last_pull_request_repository.as_deref(),
+                        Some("acme/zeron")
+                    );
+                    assert_eq!(
+                        loaded.last_pull_request_device.as_deref(),
+                        Some("remote-pr-device")
+                    );
                     assert_eq!(loaded.window_geometry, geometry);
                     assert_eq!(loaded.new_thread_background_effect, effect);
                     assert_eq!(loaded.open_web_links_in_zeron, open_links_in_zeron);

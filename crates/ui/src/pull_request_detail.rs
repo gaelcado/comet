@@ -223,6 +223,7 @@ pub struct PullRequestDetailPage {
     code_scroll: gpui::UniformListScrollHandle,
     diff_error: Option<String>,
     tab: Tab,
+    tab_fades: crate::motion::HoverFades,
     files_expanded: bool,
     scroll: widgets::PageScroll,
 }
@@ -237,6 +238,8 @@ impl PullRequestDetailPage {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut tab_fades = crate::motion::HoverFades::default();
+        tab_fades.set_at("pr-summary", true, true, Instant::now());
         let mut page = Self {
             state,
             url,
@@ -261,6 +264,7 @@ impl PullRequestDetailPage {
             code_scroll: gpui::UniformListScrollHandle::new(),
             diff_error: None,
             tab: Tab::Summary,
+            tab_fades,
             files_expanded: false,
             scroll: widgets::PageScroll::default(),
         };
@@ -494,7 +498,7 @@ impl PullRequestDetailPage {
         self.code_width = diff.width;
     }
 
-    fn navigation(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    fn navigation(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let radius = 18.0;
         let border = if theme.is_frost() {
             match theme.appearance {
@@ -537,7 +541,25 @@ impl PullRequestDetailPage {
                 ]
                 .into_iter()
                 .map(|(tab, label, id, glyph)| {
-                    crate::surface_chrome::tab(id, tab == self.tab, theme)
+                    let selected = self.tab_fades.value_at(id, Instant::now());
+                    let hover_key = format!("pr-detail-{}-{id}", cx.entity_id());
+                    let hover = crate::motion::hover_t(&hover_key);
+                    let color =
+                        crate::motion::mix(theme.text_muted, theme.text, selected.max(hover));
+                    div()
+                        .id(id)
+                        .flex()
+                        .items_center()
+                        .cursor_pointer()
+                        .role(gpui::Role::Button)
+                        .tab_index(0)
+                        .aria_selected(tab == self.tab)
+                        .text_color(color)
+                        .bg(crate::theme::wash(
+                            0.10 * selected + 0.06 * hover * (1.0 - selected),
+                        ))
+                        .focus_visible(|style| style.bg(crate::theme::wash(0.16)))
+                        .on_hover(crate::motion::hover_listener(hover_key))
                         .debug_selector(move || id.into())
                         .aria_label(label)
                         .h(px(44.0))
@@ -549,7 +571,12 @@ impl PullRequestDetailPage {
                         .flex_col()
                         .gap(px(3.0))
                         .justify_center()
-                        .child(crate::icons::icon(glyph).size(px(16.0)).flex_none())
+                        .child(
+                            crate::icons::icon(glyph)
+                                .size(px(16.0))
+                                .text_color(color)
+                                .flex_none(),
+                        )
                         .child(
                             div()
                                 .min_w_0()
@@ -573,6 +600,23 @@ impl PullRequestDetailPage {
     }
 
     fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if self.tab == tab {
+            return;
+        }
+        let now = Instant::now();
+        for (candidate, key) in [
+            (Tab::Summary, "pr-summary"),
+            (Tab::Code, "pr-code"),
+            (Tab::Activity, "pr-activity"),
+            (Tab::Checks, "pr-checks"),
+        ] {
+            self.tab_fades.set_at(
+                key,
+                candidate == tab,
+                crate::motion::reduced_motion(cx),
+                now,
+            );
+        }
         self.tab = tab;
         self.scroll.scroll.set_offset(gpui::Point::default());
         if tab == Tab::Code && self.diff.is_none() && self.diff_task.is_none() {
@@ -1313,6 +1357,10 @@ impl Render for PullRequestDetailPage {
                 .children(rail)
                 .into_any_element()
         };
+        let navigation = self.navigation(&theme, cx);
+        if self.tab_fades.tick_at(Instant::now()) {
+            window.request_animation_frame();
+        }
         div()
             .size_full()
             .flex()
@@ -1326,7 +1374,7 @@ impl Render for PullRequestDetailPage {
                     .flex_1()
                     .min_h_0()
                     .child(content)
-                    .child(self.navigation(&theme, cx)),
+                    .child(navigation),
             )
     }
 }
