@@ -127,9 +127,21 @@ impl PullRequestDetailPage {
         let can_send = !sending
             && self.detail.is_some()
             && !self.comment_input.read(cx).text().trim().is_empty();
-        let mut stack = div().flex().flex_col().gap(px(8.0));
+        let mut stack = div().relative().flex().flex_col().gap(px(8.0));
         if self.mention_token.is_some() {
-            let mut menu = crate::popover::popover_card(&theme.for_popup()).w_full();
+            let popup_theme = theme.for_popup();
+            let mut menu = crate::popover::popover_card(&popup_theme)
+                .id("pr-mention-menu")
+                .debug_selector(|| "pr-mention-menu".into())
+                .w_full()
+                .max_h(px(240.0))
+                .overflow_y_scroll()
+                .on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                    page.mention_token = None;
+                    page.mention_choices.clear();
+                    page.sync_mention_controls(cx);
+                    cx.notify();
+                }));
             if self.mention_choices.is_empty() {
                 menu = menu.child(
                     div()
@@ -141,10 +153,13 @@ impl PullRequestDetailPage {
             }
             for (index, login) in self.mention_choices.iter().enumerate() {
                 menu = menu.child(
-                    crate::settings::widgets::ghost_action(theme)
+                    crate::popover::menu_row(
+                        &popup_theme,
+                        index == self.mention_index,
+                        format!("pr-mention-{}-{index}", cx.entity_id()),
+                    )
                         .id(SharedString::from(format!("pr-mention-{index}")))
                         .w_full()
-                        .when(index == self.mention_index, |el| el.bg(theme.glass_hover()))
                         .child(super::super::pull_request_media::avatar(
                             login,
                             format!("pr-mention-avatar-{index}").into(),
@@ -165,9 +180,15 @@ impl PullRequestDetailPage {
                         })),
                 );
             }
-            stack = stack.child(menu);
+            stack = stack.child(crate::popover::full_width_menu_above(
+                "pr-mention-popup",
+                menu.into_any_element(),
+                None,
+            ));
         }
         let mut surface = div()
+            .id("pr-comment-surface")
+            .debug_selector(|| "pr-comment-surface".into())
             .p(px(12.0))
             .rounded(px(18.0))
             .border_1()
@@ -230,7 +251,7 @@ impl PullRequestDetailPage {
         ));
         div()
             .absolute()
-            .bottom(px(88.0))
+            .bottom(px(72.0))
             .left(px(24.0))
             .right(px(24.0))
             .max_w(px(720.0))
@@ -438,6 +459,14 @@ mod tests {
                 .update(cx, |input, cx| input.set_text("Hello @oct", cx));
             page.comment_event(&ComposerInputEvent::Edited, cx);
             assert_eq!(page.mention_choices, ["octocat"]);
+        });
+        cx.run_until_parked();
+        let menu = cx.debug_bounds("pr-mention-menu").unwrap();
+        let composer = cx.debug_bounds("pr-comment-surface").unwrap();
+        assert!(menu.bottom() <= composer.top(), "mentions float above the input");
+        assert_eq!(menu.left(), composer.left());
+        assert_eq!(menu.right(), composer.right());
+        page.update(cx, |page, cx| {
             page.comment_event(&ComposerInputEvent::MentionAccept, cx);
             assert_eq!(page.comment_input.read(cx).text(), "Hello @octocat ");
             page.send_comment(cx);

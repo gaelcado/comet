@@ -561,7 +561,7 @@ impl PullRequestDetailPage {
     }
 
     fn navigation(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let radius = 18.0;
+        let radius = 16.0;
         let border = if theme.is_frost() {
             match theme.appearance {
                 crate::theme::Appearance::Dark => gpui::hsla(210.0 / 360.0, 0.18, 0.78, 0.09),
@@ -578,7 +578,7 @@ impl PullRequestDetailPage {
         let tabs = div()
             .id("pr-detail-nav")
             .debug_selector(|| "pr-detail-nav".into())
-            .p(px(6.0))
+            .p(px(4.0))
             .relative()
             .rounded(px(radius))
             .border_1()
@@ -592,10 +592,10 @@ impl PullRequestDetailPage {
             .child(
                 div()
                     .absolute()
-                    .top(px(6.0))
-                    .bottom(px(6.0))
-                    .left(px(6.0))
-                    .right(px(6.0))
+                    .top(px(4.0))
+                    .bottom(px(4.0))
+                    .left(px(4.0))
+                    .right(px(4.0))
                     .child(
                         div()
                             .absolute()
@@ -641,22 +641,25 @@ impl PullRequestDetailPage {
                         .text_color(color)
                         .bg(crate::theme::wash(0.06 * hover * (1.0 - selected)))
                         .focus_visible(|style| style.bg(crate::theme::wash(0.16)))
+                        .active(|style| style.bg(crate::theme::wash(0.12)))
                         .on_hover(crate::motion::hover_listener(hover_key))
                         .debug_selector(move || id.into())
                         .aria_label(label)
-                        .h(px(44.0))
+                        .h(px(36.0))
                         .rounded(px(12.0))
                         .px(px(2.0))
                         .flex_1()
                         .flex_shrink(1.0)
                         .min_w_0()
                         .flex_col()
-                        .gap(px(3.0))
+                        .gap(px(2.0))
                         .justify_center()
                         .child(
                             crate::icons::icon(glyph)
-                                .size(px(16.0))
+                                .size(px(14.0))
                                 .text_color(color)
+                                .relative()
+                                .top(px(-selected))
                                 .flex_none(),
                         )
                         .child(
@@ -675,7 +678,7 @@ impl PullRequestDetailPage {
             .bottom(px(16.0))
             .left(px(12.0))
             .right(px(12.0))
-            .max_w(px(430.0))
+            .max_w(px(352.0))
             .mx_auto()
             .child(crate::frost::frosted(radius, crate::frost::MENU_BLUR, tabs))
             .into_any_element()
@@ -997,12 +1000,12 @@ impl Render for PullRequestDetailPage {
         let theme = Theme::of(cx).clone();
         let content = {
             let mut column = widgets::page_column()
-                .when(self.tab == Tab::Code, |el| el.max_w_full())
+                .when(self.tab == Tab::Code, |el| el.h_full().min_h_0())
                 .pt(px(24.0))
                 .pb(px(if self.tab == Tab::Activity {
-                    280.0
+                    248.0
                 } else {
-                    96.0
+                    76.0
                 }))
                 .text_size(crate::typography::ui_rems(13.0))
                 .text_color(theme.text);
@@ -1020,6 +1023,7 @@ impl Render for PullRequestDetailPage {
                 column = column
                     .child(
                         div()
+                            .flex_none()
                             .mb(px(12.0))
                             .text_size(crate::typography::ui_rems(12.0))
                             .flex()
@@ -1059,6 +1063,7 @@ impl Render for PullRequestDetailPage {
                     )
                     .child(
                         div()
+                            .flex_none()
                             .text_size(crate::typography::ui_rems(22.0))
                             .line_height(px(30.0))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -1103,7 +1108,7 @@ impl Render for PullRequestDetailPage {
                                 )),
                         )
                     });
-                if let Some(fetched) = self.fetched {
+                if let Some(fetched) = self.fetched.filter(|_| self.tab != Tab::Code) {
                     let age = if fetched.elapsed().as_secs() < 60 {
                         "just now".into()
                     } else {
@@ -1117,7 +1122,7 @@ impl Render for PullRequestDetailPage {
                             .child(format!("Loaded {age} · Refresh to check for changes")),
                     );
                 }
-                column = column.child(div().h(px(24.0)));
+                column = column.child(div().flex_none().h(px(20.0)));
                 match self.tab {
                     Tab::Summary => {
                         column = column.child(section_heading(
@@ -1217,6 +1222,7 @@ impl Render for PullRequestDetailPage {
                             let patch = diff.clone();
                             column = column.child(
                                 div()
+                                    .flex_none()
                                     .flex()
                                     .flex_wrap()
                                     .items_center()
@@ -1268,8 +1274,11 @@ impl Render for PullRequestDetailPage {
                                         .absolute()
                                         .inset_0(),
                                     );
+                                let file_stats: std::collections::HashMap<_, _> = detail.files
+                                    .iter().map(|file| (file.path.as_str(), file)).collect();
                                 for (index, (path, offset)) in self.code_files.iter().enumerate() {
                                     let offset = *offset;
+                                    let stats = file_stats.get(path.as_str());
                                     file_list = file_list.child(
                                         widgets::ghost_action(&theme)
                                             .id(SharedString::from(format!("pr-file-{index}")))
@@ -1293,11 +1302,15 @@ impl Render for PullRequestDetailPage {
                                                     .size(px(14.0))
                                                     .text_color(theme.text_muted),
                                             )
-                                            .child(div().min_w_0().truncate().child(path.clone())),
+                                            .child(div().flex_1().min_w_0().truncate().child(path.clone()))
+                                            .when_some(stats, |el, file| el
+                                                .child(div().flex_none().text_color(theme.success).child(format!("+{}", file.additions)))
+                                                .child(div().flex_none().text_color(theme.danger).child(format!("−{}", file.deletions)))),
                                     );
                                 }
                                 column = column.child(
                                     div()
+                                        .flex_none()
                                         .overflow_hidden()
                                         .when_some(files_motion, |el, motion| {
                                             el.h(px(motion.current())).opacity(
@@ -1311,6 +1324,7 @@ impl Render for PullRequestDetailPage {
                                 );
                             }
                             let rows = self.code_rows.clone();
+                            let files = self.code_files.clone();
                             let code_width = (self.code_width - 128.0) / 7.0
                                 * crate::changes::diff_text_size(&theme)
                                 * 0.7
@@ -1323,7 +1337,8 @@ impl Render for PullRequestDetailPage {
                                         .id("pr-code-viewport")
                                         .debug_selector(|| "pr-code-viewport".into())
                                         .mt(px(12.0))
-                                        .h(px((f32::from(window.viewport_size().height) - 280.0).max(240.0)))
+                                        .flex_1()
+                                        .min_h_0()
                                         .border_1().border_color(theme.border).rounded(px(8.0))
                                         .overflow_x_scroll()
                                         .track_scroll(&self.code_horizontal)
@@ -1340,11 +1355,18 @@ impl Render for PullRequestDetailPage {
                                                     .map(|index| {
                                                         let row = &rows[index];
                                                         if row.kind == crate::changes::LineKind::Meta {
+                                                            let file_header = files.binary_search_by_key(&index, |(_, offset)| *offset).is_ok();
                                                             div().w_full().h(px(crate::changes::diff_line_height(&colors)))
-                                                                .px(px(12.0)).bg(colors.glass_hover())
-                                                                .font_family(colors.font_mono.clone())
-                                                                .text_size(px(crate::changes::diff_text_size(&colors)))
-                                                                .text_color(colors.text_muted).child(row.text.clone()).into_any_element()
+                                                                .flex().items_center().gap(px(8.0))
+                                                                .px(px(12.0))
+                                                                .bg(crate::theme::wash(if file_header { 0.08 } else { 0.035 }))
+                                                                .text_size(px(11.0))
+                                                                .text_color(if file_header { colors.text } else { colors.text_muted })
+                                                                .when(file_header, |el| el
+                                                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                                                    .child(crate::icons::icon(crate::icons::FILE_CODE).size(px(13.0)).text_color(colors.text_muted)))
+                                                                .when(!file_header, |el| el.font_family(colors.font_mono.clone()))
+                                                                .child(row.text.clone()).into_any_element()
                                                         } else {
                                                             crate::changes::readonly_diff_line(&crate::changes::DiffLine {
                                                                 kind: row.kind, old_no: row.old.parse().ok(), new_no: row.new.parse().ok(),
@@ -1502,13 +1524,14 @@ impl Render for PullRequestDetailPage {
                             .id("pr-detail-scroll")
                             .debug_selector(|| "pr-detail-scroll".into())
                             .size_full()
-                            .overflow_y_scroll()
+                            .when(self.tab != Tab::Code, |el| el.overflow_y_scroll())
+                            .when(self.tab == Tab::Code, |el| el.overflow_hidden())
                             .track_scroll(&scroll)
                             .child(column),
                     )
                     .fade_overflow_y(&scroll),
                 )
-                .children(rail)
+                .when(self.tab != Tab::Code, |el| el.children(rail))
                 .into_any_element()
         };
         let navigation = self.navigation(&theme, cx);
@@ -1835,6 +1858,21 @@ mod tests {
         cx.run_until_parked();
         page.read_with(cx, |page, _| assert!(page.tab == Tab::Code));
         assert!(cx.debug_bounds("pr-copy-patch").is_some());
+        for (width, height) in [(320.0, 600.0), (900.0, 400.0), (1200.0, 900.0)] {
+            cx.simulate_resize(gpui::size(px(width), px(height)));
+            cx.run_until_parked();
+            let viewport = cx.debug_bounds("pr-code-viewport").unwrap();
+            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
+            assert!(viewport.size.height > px(60.0), "{viewport:?}");
+            assert!(viewport.bottom() <= nav.top(), "diff must clear floating tabs");
+            assert!(viewport.size.width <= px(720.0), "shared page column width");
+            assert!(nav.size.width <= px(352.0) && nav.size.height <= px(46.0));
+            page.read_with(cx, |page, _| {
+                assert_eq!(page.scroll.scroll.max_offset().y, px(0.0), "Code has one vertical scroller");
+            });
+        }
+        cx.simulate_resize(gpui::size(px(900.0), px(800.0)));
+        cx.run_until_parked();
         let copy = cx.debug_bounds("pr-copy-url").unwrap();
         cx.simulate_mouse_down(
             copy.center(),
