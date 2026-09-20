@@ -1373,6 +1373,7 @@ fn forwardable(method: &str) -> bool {
             | methods::WATCH_WORKSPACE_GIT_STATUS
             | methods::WATCH_CHECKOUT_CHANGE_REQUEST
             | methods::LIST_OPEN_CHANGE_REQUESTS
+            | methods::LIST_REPOSITORY_CHANGE_REQUESTS
             | methods::GET_CHANGE_REQUEST
             | methods::GET_CHANGE_REQUEST_DIFF
             | methods::GET_CHECKOUT_DIFF
@@ -2246,10 +2247,20 @@ impl RpcService for EngineRpc {
                     .filter_map(|status| async move { serde_json::to_value(status).ok() });
                 Ok(RpcReply::Stream(stream.boxed()))
             }
-            methods::LIST_OPEN_CHANGE_REQUESTS => {
+            methods::LIST_OPEN_CHANGE_REQUESTS | methods::LIST_REPOSITORY_CHANGE_REQUESTS => {
+                #[derive(Deserialize)]
+                struct P {
+                    repository: String,
+                    #[serde(default)]
+                    refresh: bool,
+                }
+                let p: P = parse_params(params)?;
+                if !crate::source_control::valid_pr_repository(&p.repository) {
+                    return Err(RpcError::BadParams("repository must be owner/repo".into()));
+                }
                 let items = self
                     .open_change_requests
-                    .list_authored_open()
+                    .list_authored_open(&p.repository, p.refresh)
                     .await
                     .map_err(change_request_rpc_error)?;
                 RpcReply::value(&items)
@@ -2258,11 +2269,13 @@ impl RpcService for EngineRpc {
                 #[derive(Deserialize)]
                 struct P {
                     url: String,
+                    #[serde(default)]
+                    refresh: bool,
                 }
                 let p: P = parse_params(params)?;
                 let detail = self
                     .open_change_requests
-                    .detail(&p.url, method == methods::GET_CHANGE_REQUEST_DIFF)
+                    .detail(&p.url, method == methods::GET_CHANGE_REQUEST_DIFF, p.refresh)
                     .await
                     .map_err(change_request_rpc_error)?;
                 RpcReply::value(&detail)
@@ -3636,6 +3649,7 @@ mod tests {
         assert!(is_stream_method(methods::WATCH_WORKSPACE_FILES));
         assert!(is_stream_method(methods::WATCH_WORKSPACE_GIT_STATUS));
         assert!(forwardable(methods::LIST_OPEN_CHANGE_REQUESTS));
+        assert!(forwardable(methods::LIST_REPOSITORY_CHANGE_REQUESTS));
         assert!(forwardable(methods::GET_CHANGE_REQUEST));
         assert!(forwardable(methods::GET_CHANGE_REQUEST_DIFF));
         assert!(!is_stream_method(methods::GET_CHANGE_REQUEST));

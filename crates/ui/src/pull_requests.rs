@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    time::{Duration, Instant},
-};
+use std::{collections::HashSet, rc::Rc, time::Instant};
 
 use chrono::{DateTime, Utc};
 use gpui::{
@@ -20,7 +17,6 @@ use crate::settings::widgets;
 use crate::state::AppState;
 use crate::theme::Theme;
 
-const SNAPSHOT_TTL: Duration = Duration::from_secs(60);
 const PR_PAGE_MAX_WIDTH: f32 = 768.0;
 const PR_PAGE_HORIZONTAL_PADDING: f32 = Theme::SPACE_LG + Theme::SPACE_SM;
 const PR_TABLE_ROW_HEIGHT: f32 = 64.0;
@@ -203,12 +199,22 @@ pub struct PullRequestsPage {
     state: Entity<AppState>,
     search: Entity<ComposerInput>,
     query: String,
+    repository_input: Entity<ComposerInput>,
+    repository: Option<String>,
+    repository_error: Option<String>,
+    _repository_events: Subscription,
+    snapshots: Vec<(
+        (Option<String>, String),
+        Vec<ChangeRequestListItem>,
+        Instant,
+    )>,
     selected_url: Option<String>,
     collapsed_groups: HashSet<PullRequestGroup>,
     _search_events: Subscription,
     /// `None` keeps local calls direct; a value is forwarded by the relay.
     target_device: Option<String>,
     items: Vec<ChangeRequestListItem>,
+    view_items: Option<Rc<Vec<ChangeRequestListItem>>>,
     sort: PullRequestSort,
     load_state: PullRequestsLoadState,
     last_loaded_at: Option<Instant>,
@@ -243,28 +249,43 @@ impl PullRequestsPage {
         let search_events = cx.subscribe(&search, |page: &mut Self, input, event, cx| {
             if matches!(event, ComposerInputEvent::Edited) {
                 page.query = input.read(cx).text().to_string();
+                page.view_items = None;
                 page.scroll.scroll.set_offset(gpui::Point::default());
                 page.collapsed_groups.clear();
                 cx.notify();
             }
         });
+        let repository_input = cx.new(|cx| {
+            ComposerInput::with_context("owner/repository", "PaletteSearch", cx)
+                .with_text_metrics(12.0, 16.0)
+                .with_single_line()
+        });
+        let repository_events = cx.subscribe(&repository_input, |page: &mut Self, _, event, cx| {
+            if matches!(event, ComposerInputEvent::Submitted) {
+                page.select_repository(cx);
+            }
+        });
         let observe = cx.observe(&state, |page, _, cx| {
-            let target_changed = page.reconcile_target_device(cx);
-            if target_changed && page.visible {
-                page.load(cx);
-            } else {
+            if page.visible {
+                page.reconcile_target_device(cx);
                 cx.notify();
             }
         });
-        let mut page = Self {
+        Self {
             state,
             search,
             query: String::new(),
+            repository_input,
+            repository: None,
+            repository_error: None,
+            _repository_events: repository_events,
+            snapshots: Vec::new(),
             selected_url: None,
             collapsed_groups: HashSet::new(),
             _search_events: search_events,
             target_device: None,
             items: Vec::new(),
+            view_items: None,
             sort: PullRequestSort::DEFAULT,
             load_state: PullRequestsLoadState::Idle,
             last_loaded_at: None,
@@ -276,21 +297,15 @@ impl PullRequestsPage {
             content_width: None,
             device_menu: popover::Popup::default(),
             _observe: observe,
-        };
-        page.load(cx);
-        page
+        }
     }
 
     /// Called whenever shell navigation makes the already-owned entity visible again.
     pub fn on_visible(&mut self, cx: &mut Context<Self>) {
         self.visible = true;
-        let target_changed = self.reconcile_target_device(cx);
-        let stale = self
-            .last_loaded_at
-            .is_none_or(|loaded| loaded.elapsed() >= SNAPSHOT_TTL);
-        if target_changed || (!matches!(self.load_state, PullRequestsLoadState::Loading) && stale) {
-            self.load(cx);
-        }
+        self.reconcile_target_device(cx);
+        // Navigation never spends API quota. Refresh is an explicit action.
+        cx.notify();
     }
 
     /// Keep the retained route entity dormant while another outlet is active.
@@ -312,7 +327,7 @@ impl PullRequestsPage {
         }
 
         self.reset_for_target(target);
-        self.load(cx);
+        cx.notify();
     }
 
     fn reset_for_target(&mut self, target: Option<String>) {
@@ -321,9 +336,51 @@ impl PullRequestsPage {
         self.target_device = target;
         self.collapsed_groups.clear();
         self.items.clear();
+        self.view_items = None;
         self.load_state = PullRequestsLoadState::Idle;
         self.last_loaded_at = None;
         self.scroll.scroll.set_offset(gpui::Point::default());
+        self.restore_snapshot();
+    }
+
+    fn restore_snapshot(&mut self) {
+        let Some(repository) = &self.repository else {
+            return;
+        };
+        if let Some(index) = self
+            .snapshots
+            .iter()
+            .position(|((target, repo), _, _)| target == &self.target_device && repo == repository)
+        {
+            let snapshot = self.snapshots.remove(index);
+            self.items = snapshot.1.clone();
+            self.last_loaded_at = Some(snapshot.2);
+            self.load_state = PullRequestsLoadState::Ready;
+            self.snapshots.push(snapshot);
+        }
+    }
+
+    fn select_repository(&mut self, cx: &mut Context<Self>) {
+        let repository = self
+            .repository_input
+            .read(cx)
+            .text()
+            .trim()
+            .to_ascii_lowercase();
+        if !valid_repository_filter(&repository) {
+            self.repository_error = Some("Enter a repository as owner/name.".into());
+            cx.notify();
+            return;
+        }
+        self.repository_error = None;
+        if self.repository.as_deref() != Some(&repository) {
+            self.repository = Some(repository);
+            self.reset_for_target(self.target_device.clone());
+        }
+        if self.last_loaded_at.is_none() {
+            self.load(false, cx);
+        }
+        cx.notify();
     }
 
     /// Heal a selected remote that is no longer present in an authoritative
@@ -348,17 +405,21 @@ impl PullRequestsPage {
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         if !matches!(self.load_state, PullRequestsLoadState::Loading) {
-            self.load(cx);
+            self.load(true, cx);
         }
     }
 
     fn select_sort(&mut self, field: PullRequestSortField, cx: &mut Context<Self>) {
         self.sort = self.sort.select(field);
+        self.view_items = None;
         self.scroll.scroll.set_offset(gpui::Point::default());
         cx.notify();
     }
 
-    fn load(&mut self, cx: &mut Context<Self>) {
+    fn load(&mut self, refresh: bool, cx: &mut Context<Self>) {
+        if self.repository.is_none() || matches!(self.load_state, PullRequestsLoadState::Loading) {
+            return;
+        }
         self.reconcile_target_device(cx);
         let Some(engine) = self.state.read(cx).engine().cloned() else {
             self.load_state = PullRequestsLoadState::Failed(PullRequestsPageError::Network);
@@ -378,12 +439,14 @@ impl PullRequestsPage {
 
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
-        let params = params_for_target(self.target_device.as_deref());
+        let mut params = params_for_target(self.target_device.as_deref());
+        params["repository"] = self.repository.clone().unwrap().into();
+        params["refresh"] = refresh.into();
         self.load_state = PullRequestsLoadState::Loading;
         self.request_task = Some(cx.spawn(async move |this, cx| {
             let result = engine
                 .client()
-                .call(methods::LIST_OPEN_CHANGE_REQUESTS, params)
+                .call(methods::LIST_REPOSITORY_CHANGE_REQUESTS, params)
                 .await;
             this.update(cx, |page, cx| {
                 if !response_is_current(page.generation, generation) {
@@ -398,8 +461,16 @@ impl PullRequestsPage {
                 };
                 let succeeded = loaded.is_ok();
                 page.load_state = settle_snapshot(&mut page.items, loaded);
+                page.view_items = None;
                 if succeeded {
-                    page.last_loaded_at = Some(Instant::now());
+                    let now = Instant::now();
+                    page.last_loaded_at = Some(now);
+                    let key = (page.target_device.clone(), page.repository.clone().unwrap());
+                    page.snapshots.retain(|(existing, _, _)| existing != &key);
+                    page.snapshots.push((key, page.items.clone(), now));
+                    if page.snapshots.len() > 12 {
+                        page.snapshots.remove(0);
+                    }
                 }
                 cx.notify();
             })
@@ -568,6 +639,14 @@ impl PullRequestsPage {
         };
         let (title, body) = match &self.load_state {
             PullRequestsLoadState::Failed(error) => error_copy(error),
+            _ if self.repository.is_none() => (
+                "Choose a repository".into(),
+                "Load your open pull requests from one repository. Nothing is fetched until you choose.".into(),
+            ),
+            PullRequestsLoadState::Idle => (
+                "Ready when you are".into(),
+                "Refresh to load this repository on the selected device.".into(),
+            ),
             _ => (
                 "No open pull requests".to_string(),
                 "Pull requests authored by you will appear here.".to_string(),
@@ -632,13 +711,19 @@ impl Render for PullRequestsPage {
             && !matches!(self.load_state, PullRequestsLoadState::Failed(_))
             || !self.items.is_empty())
         .then_some(self.items.len());
-        let mut items: Vec<_> = self
-            .items
-            .iter()
-            .filter(|item| matches_query(item, &self.query))
-            .cloned()
-            .collect();
-        sort_pull_requests(&mut items, self.sort);
+        let items = self
+            .view_items
+            .get_or_insert_with(|| {
+                let mut items: Vec<_> = self
+                    .items
+                    .iter()
+                    .filter(|item| matches_query(item, &self.query))
+                    .cloned()
+                    .collect();
+                sort_pull_requests(&mut items, self.sort);
+                Rc::new(items)
+            })
+            .clone();
         let layout = self
             .content_width
             .map(table_layout)
@@ -671,6 +756,99 @@ impl Render for PullRequestsPage {
         };
 
         let loading = initial_loading || refreshing;
+        let mut recent: Vec<String> = self
+            .snapshots
+            .iter()
+            .rev()
+            .map(|((_, repo), _, _)| repo.clone())
+            .collect();
+        let mut seen = HashSet::new();
+        recent.retain(|repo| seen.insert(repo.clone()));
+        recent.truncate(5);
+        let repository_filter = div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        crate::surface_chrome::input()
+                            .h(px(32.0))
+                            .child(
+                                icon(icons::FOLDER_WITH_FILES)
+                                    .size(px(14.0))
+                                    .text_color(theme.text_muted),
+                            )
+                            .child(self.repository_input.clone()),
+                    )
+                    .child(
+                        widgets::ghost_action(&theme)
+                            .id("pr-repository-load")
+                            .debug_selector(|| "pr-repository-load".into())
+                            .role(gpui::Role::Button)
+                            .aria_label("Load repository pull requests")
+                            .tab_index(0)
+                            .on_click(cx.listener(|page, _, _, cx| page.select_repository(cx)))
+                            .child("Load"),
+                    ),
+            )
+            .when(!recent.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("pr-recent-repositories")
+                        .flex()
+                        .overflow_x_scroll()
+                        .gap(px(4.0))
+                        .children(recent.into_iter().enumerate().map(|(index, repo)| {
+                            crate::surface_chrome::tab(
+                                ("pr-recent-repository", index),
+                                self.repository.as_ref() == Some(&repo),
+                                &theme,
+                            )
+                            .px(px(8.0))
+                            .aria_label(format!("Show {repo}"))
+                            .child(repo.clone())
+                            .on_click(cx.listener(
+                                move |page, _, _, cx| {
+                                    page.repository_input
+                                        .update(cx, |input, cx| input.set_text(&repo, cx));
+                                    page.select_repository(cx);
+                                },
+                            ))
+                        })),
+                )
+            })
+            .when_some(self.repository_error.clone(), |el, error| {
+                el.child(widgets::error_strip(&theme, error))
+            })
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(theme.text_muted)
+                    .child(match (&self.repository, self.last_loaded_at) {
+                        (Some(repo), Some(at)) => format!(
+                            "{repo} · Updated {}",
+                            if at.elapsed().as_secs() < 60 {
+                                "just now".into()
+                            } else {
+                                format!("{}m ago", at.elapsed().as_secs() / 60)
+                            }
+                        ),
+                        (Some(repo), None) => format!("{repo} · Your latest 50 open pull requests"),
+                        _ => "One repository at a time · No automatic refresh".into(),
+                    }),
+            )
+            .when(self.items.len() == 50, |el| {
+                el.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(theme.text_muted)
+                        .child("Showing the latest 50 open pull requests."),
+                )
+            });
         let header = widgets::page_column()
             .id("pull-requests-column")
             .debug_selector(|| "pull-requests-column".to_owned())
@@ -732,13 +910,10 @@ impl Render for PullRequestsPage {
                             ),
                     ),
             )
-            .child(widgets::page_subtitle(
-                &theme,
-                "Authored by you, across your repositories.",
-            ))
             .when(refresh_error, |el| {
                 el.child(widgets::error_strip(&theme, refresh_message))
             })
+            .child(div().mt(px(16.0)).child(repository_filter))
             .child(
                 div()
                     .mt(px(Theme::SPACE_LG))
@@ -781,6 +956,7 @@ impl Render for PullRequestsPage {
                                             page.search
                                                 .update(cx, |input, cx| input.set_text("", cx));
                                             page.query.clear();
+                                            page.view_items = None;
                                             page.scroll.scroll.set_offset(gpui::Point::default());
                                             cx.notify();
                                         }))
@@ -875,7 +1051,7 @@ impl Render for PullRequestsPage {
             .size_full()
             .flex()
             .flex_col()
-            .pt(px(Theme::TITLEBAR_HEIGHT + Theme::SPACE_LG * 2.0))
+            .pt(px(Theme::TITLEBAR_HEIGHT + Theme::SPACE_LG))
             .child(header)
             .child(
                 div()
@@ -895,6 +1071,7 @@ impl Render for PullRequestsPage {
                             true,
                             div()
                                 .id("pull-requests-scroll")
+                                .debug_selector(|| "pull-requests-scroll".into())
                                 .size_full()
                                 .overflow_y_scroll()
                                 .track_scroll(&scroll)
@@ -1389,6 +1566,19 @@ fn normalized_target_device(
     }
 }
 
+fn valid_repository_filter(value: &str) -> bool {
+    let parts: Vec<_> = value.split('/').collect();
+    parts.len() == 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && *part != "."
+                && *part != ".."
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        })
+}
+
 fn params_for_target(target: Option<&str>) -> serde_json::Value {
     match target {
         Some(target) => serde_json::json!({ "targetDeviceId": target }),
@@ -1439,7 +1629,7 @@ fn error_copy(error: &PullRequestsPageError) -> (String, String) {
         ),
         PullRequestsPageError::RateLimited => (
             "GitHub’s rate limit was reached".into(),
-            "Try again later.".into(),
+            "Requests are paused for 15 minutes. Your loaded results stay available.".into(),
         ),
         PullRequestsPageError::Network => (
             "Couldn’t load pull requests".into(),
@@ -1602,6 +1792,48 @@ mod tests {
     }
 
     #[gpui::test]
+    fn pull_request_board_never_fetches_on_entry_and_restores_repository_cache(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext;
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let (page, cx) = cx.add_window_view(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            PullRequestsPage::new(state, cx)
+        });
+        page.update(cx, |page, cx| {
+            assert_eq!(page.load_state, PullRequestsLoadState::Idle);
+            page.on_hidden();
+            page.on_visible(cx);
+            assert_eq!(page.load_state, PullRequestsLoadState::Idle);
+            // No engine exists. Any accidental request would produce Network.
+            page.snapshots.push((
+                (None, "acme/zeron".into()),
+                vec![pull_request("acme/zeron", 10, 1, 1, 1)],
+                Instant::now(),
+            ));
+            page.repository_input
+                .update(cx, |input, cx| input.set_text("ACME/ZERON", cx));
+            page.select_repository(cx);
+            assert_eq!(page.items[0].number, 10);
+            assert_eq!(page.load_state, PullRequestsLoadState::Ready);
+            page.on_visible(cx);
+            assert_eq!(page.load_state, PullRequestsLoadState::Ready);
+            page.reset_for_target(Some("other-device".into()));
+            assert!(page.items.is_empty());
+            assert_eq!(page.load_state, PullRequestsLoadState::Idle);
+            page.reset_for_target(None);
+            assert_eq!(page.items[0].number, 10);
+            page.repository_input.update(cx, |input, cx| {
+                input.set_text("acme/zeron repo:other/repo", cx)
+            });
+            page.select_repository(cx);
+            assert!(page.repository_error.is_some());
+            assert_eq!(page.repository.as_deref(), Some("acme/zeron"));
+        });
+    }
+
+    #[gpui::test]
     fn long_rows_fit_at_every_layout_and_do_not_resize_on_hover(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| cx.set_global(Theme::default()));
         let mut item = pull_request(
@@ -1684,8 +1916,13 @@ mod tests {
         page.read_with(cx, |page, _| {
             assert_eq!(page.sort.field, PullRequestSortField::Changes)
         });
+        let viewport = cx.debug_bounds("pull-requests-scroll").unwrap();
+        assert!(
+            viewport.size.height > px(100.0),
+            "the filter must leave room for results: {viewport:?}"
+        );
         cx.simulate_event(gpui::ScrollWheelEvent {
-            position: gpui::point(px(200.0), px(400.0)),
+            position: viewport.center(),
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-800.0))),
             ..Default::default()
         });

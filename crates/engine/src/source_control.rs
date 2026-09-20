@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -25,7 +25,31 @@ const GIT_OUTPUT_LIMIT: usize = 64 * 1024;
 const GITHUB_OUTPUT_LIMIT: usize = 1024 * 1024;
 const GITHUB_RESULT_LIMIT: &str = "20";
 const GITHUB_JSON_FIELDS: &str = "number,title,url,state,baseRefName,headRefName,updatedAt,isCrossRepository,headRepositoryOwner";
-const GITHUB_SEARCH_QUERY: &str = "query { search(query: \"is:pr is:open author:@me sort:updated-desc\", type: ISSUE, first: 100) { nodes { ... on PullRequest { number title url state isDraft mergeable reviewDecision createdAt updatedAt additions deletions repository { nameWithOwner } } } } }";
+const GITHUB_SEARCH_QUERY: &str = "query($search: String!) { search(query: $search, type: ISSUE, first: 50) { nodes { ... on PullRequest { number title url state isDraft mergeable reviewDecision createdAt updatedAt additions deletions repository { nameWithOwner } } } } }";
+
+/// Strictly one repository; reject search qualifiers and unscoped requests.
+pub fn valid_pr_repository(repository: &str) -> bool {
+    let parts: Vec<_> = repository.split('/').collect();
+    parts.len() == 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && *part != "."
+                && *part != ".."
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        })
+}
+
+#[derive(Default)]
+struct PrRequestCache {
+    entries: Vec<(
+        String,
+        Instant,
+        Result<serde_json::Value, ChangeRequestError>,
+    )>,
+    rate_limited_at: Option<Instant>,
+}
 
 /// Repository identity extracted from a Git remote URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,11 +123,16 @@ pub trait ChangeRequestProvider: Send + Sync {
 /// Host-side boundary for global change request listing and inspection surfaces.
 #[async_trait]
 pub trait OpenChangeRequestLookup: Send + Sync {
-    async fn list_authored_open(&self) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError>;
+    async fn list_authored_open(
+        &self,
+        repository: &str,
+        refresh: bool,
+    ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError>;
     async fn detail(
         &self,
         _url: &str,
         _diff: bool,
+        _refresh: bool,
     ) -> Result<serde_json::Value, ChangeRequestError> {
         Err(ChangeRequestError::UnsupportedRepository)
     }
@@ -201,11 +230,72 @@ impl CheckoutChangeRequestLookup for ChangeRequestResolver {
 #[derive(Clone)]
 pub struct GitHubCli {
     runner: Arc<dyn ProcessRunner>,
+    pr_cache: Arc<tokio::sync::Mutex<PrRequestCache>>,
 }
 
 impl GitHubCli {
-    /// Fetch one PR without requiring a local checkout or executing shell text.
+    /// Shared across RPC clients on this engine. The lock also serializes distinct
+    /// provider reads and coalesces simultaneous identical reads. Never retry here.
+    async fn cached_pr_request<F>(
+        &self,
+        key: String,
+        refresh: bool,
+        fetch: F,
+    ) -> Result<serde_json::Value, ChangeRequestError>
+    where
+        F: std::future::Future<Output = Result<serde_json::Value, ChangeRequestError>> + Send,
+    {
+        let mut cache = self.pr_cache.lock().await;
+        if let Some(index) = cache.entries.iter().position(|entry| entry.0 == key) {
+            let entry = cache.entries.remove(index);
+            let ttl = match &entry.2 {
+                Err(ChangeRequestError::RateLimited) => Duration::from_secs(15 * 60),
+                Err(_) => Duration::from_secs(60),
+                Ok(_) if refresh => Duration::from_secs(15),
+                Ok(_) => Duration::from_secs(5 * 60),
+            };
+            let fresh = entry.1.elapsed() < ttl;
+            let result = entry.2.clone();
+            cache.entries.push(entry);
+            if fresh {
+                return result;
+            }
+        }
+        if cache
+            .rate_limited_at
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(15 * 60))
+        {
+            return Err(ChangeRequestError::RateLimited);
+        }
+        let result = fetch.await;
+        if matches!(result, Err(ChangeRequestError::RateLimited)) {
+            cache.rate_limited_at = Some(Instant::now());
+        }
+        cache.entries.retain(|entry| entry.0 != key);
+        cache.entries.push((key, Instant::now(), result.clone()));
+        if cache.entries.len() > 24 {
+            cache.entries.remove(0);
+        }
+        result
+    }
+
     pub async fn detail(
+        &self,
+        url: &str,
+        diff: bool,
+        refresh: bool,
+    ) -> Result<serde_json::Value, ChangeRequestError> {
+        let url = validated_pull_request_url(url)?;
+        self.cached_pr_request(
+            format!("{diff}:{url}"),
+            refresh,
+            self.fetch_detail(&url, diff),
+        )
+        .await
+    }
+
+    /// Fetch one PR without requiring a local checkout or executing shell text.
+    async fn fetch_detail(
         &self,
         url: &str,
         diff: bool,
@@ -278,12 +368,34 @@ impl GitHubCli {
     }
 
     fn with_runner(runner: Arc<dyn ProcessRunner>) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            pr_cache: Default::default(),
+        }
     }
 
     /// List open pull requests authored by the active GitHub CLI account.
     pub async fn list_authored_open(
         &self,
+        repository: &str,
+        refresh: bool,
+    ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        if !valid_pr_repository(repository) {
+            return Err(ChangeRequestError::UnsupportedRepository);
+        }
+        let repository = repository.to_ascii_lowercase();
+        let result = self
+            .cached_pr_request(format!("list:{repository}"), refresh, async {
+                serde_json::to_value(self.fetch_authored_open(&repository).await?)
+                    .map_err(|_| ChangeRequestError::Decode)
+            })
+            .await?;
+        serde_json::from_value(result).map_err(|_| ChangeRequestError::Decode)
+    }
+
+    async fn fetch_authored_open(
+        &self,
+        repository: &str,
     ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
         let request = ProcessRequest {
             program: "gh".into(),
@@ -292,6 +404,8 @@ impl GitHubCli {
                 "graphql".into(),
                 "-f".into(),
                 format!("query={GITHUB_SEARCH_QUERY}"),
+                "-f".into(),
+                format!("search=is:pr is:open author:@me repo:{repository} sort:updated-desc"),
             ],
             cwd: None,
             env: vec![
@@ -318,6 +432,8 @@ impl GitHubCli {
             .into_iter()
             .map(to_list_item)
             .collect::<Result<Vec<_>, _>>()?;
+        items.retain(|item| item.repository.eq_ignore_ascii_case(repository));
+        items.truncate(50);
         items.sort_by(|left, right| {
             right
                 .updated_at
@@ -407,11 +523,20 @@ impl Default for GitHubCli {
 
 #[async_trait]
 impl OpenChangeRequestLookup for GitHubCli {
-    async fn list_authored_open(&self) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
-        GitHubCli::list_authored_open(self).await
+    async fn list_authored_open(
+        &self,
+        repository: &str,
+        refresh: bool,
+    ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        GitHubCli::list_authored_open(self, repository, refresh).await
     }
-    async fn detail(&self, url: &str, diff: bool) -> Result<serde_json::Value, ChangeRequestError> {
-        GitHubCli::detail(self, url, diff).await
+    async fn detail(
+        &self,
+        url: &str,
+        diff: bool,
+        refresh: bool,
+    ) -> Result<serde_json::Value, ChangeRequestError> {
+        GitHubCli::detail(self, url, diff, refresh).await
     }
 }
 
@@ -1186,6 +1311,8 @@ mod tests {
     impl ProcessRunner for FakeProcessRunner {
         async fn run(&self, request: ProcessRequest) -> Result<ProcessOutput, ProcessRunError> {
             self.requests.lock().unwrap().push(request);
+            // Let competing callers reach the in-flight cache before completion.
+            tokio::task::yield_now().await;
             self.responses
                 .lock()
                 .unwrap()
@@ -1272,7 +1399,7 @@ mod tests {
     async fn pr_detail_normalizes_absent_github_fields_and_uses_bounded_process() {
         let runner = FakeProcessRunner::with_responses([command_success(br#"{"number":12,"title":"A PR","body":"Description","author":null,"reviewDecision":null,"statusCheckRollup":[{"name":"build","status":"IN_PROGRESS","conclusion":null}]}"#.to_vec())]);
         let result = GitHubCli::with_runner(runner.clone())
-            .detail("https://github.com/a/b/pull/12", false)
+            .detail("https://github.com/a/b/pull/12", false, false)
             .await
             .unwrap();
         let detail: zeron_proto::ChangeRequestDetail = serde_json::from_value(result).unwrap();
@@ -1300,14 +1427,14 @@ mod tests {
         let github = GitHubCli::with_runner(runner.clone());
         assert_eq!(
             github
-                .detail("https://github.com/a/b/pull/12", true)
+                .detail("https://github.com/a/b/pull/12", true, false)
                 .await
                 .unwrap(),
             "diff --git a/a b/a\n"
         );
         assert!(
             github
-                .detail("https://github.com/a/b/pull/12", true)
+                .detail("https://github.com/a/b/pull/13", true, false)
                 .await
                 .is_err()
         );
@@ -1400,7 +1527,7 @@ mod tests {
     ) {
         let runner = FakeProcessRunner::with_responses([response]);
         let github = GitHubCli::with_runner(runner.clone());
-        let result = github.list_authored_open().await;
+        let result = github.list_authored_open("acme/zeron", false).await;
         (result, runner)
     }
 
@@ -1459,7 +1586,87 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn github_search_uses_exact_global_arguments_and_environment() {
+    async fn pr_cache_coalesces_reads_throttles_refresh_and_expires() {
+        let runner = FakeProcessRunner::with_responses([
+            command_success(search_response(vec![])),
+            command_success(search_response(vec![])),
+            command_success(search_response(vec![])),
+        ]);
+        let github = GitHubCli::with_runner(runner.clone());
+        let (a, b) = tokio::join!(
+            github.list_authored_open("acme/zeron", false),
+            github.list_authored_open("ACME/ZERON", false)
+        );
+        assert!(a.unwrap().is_empty() && b.unwrap().is_empty());
+        github.list_authored_open("acme/zeron", true).await.unwrap();
+        assert_eq!(
+            runner.requests().len(),
+            1,
+            "concurrent and immediate refresh calls reuse one response"
+        );
+        github.pr_cache.lock().await.entries[0].1 = Instant::now() - Duration::from_secs(16);
+        github.list_authored_open("acme/zeron", true).await.unwrap();
+        assert_eq!(runner.requests().len(), 2);
+        github.pr_cache.lock().await.entries[0].1 = Instant::now() - Duration::from_secs(301);
+        github
+            .list_authored_open("acme/zeron", false)
+            .await
+            .unwrap();
+        assert_eq!(runner.requests().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn pr_rate_limit_cooldown_covers_other_repositories_and_details() {
+        let runner =
+            FakeProcessRunner::with_responses([command_failure("API rate limit exceeded")]);
+        let github = GitHubCli::with_runner(runner.clone());
+        assert_eq!(
+            github.list_authored_open("a/one", false).await,
+            Err(ChangeRequestError::RateLimited)
+        );
+        assert_eq!(
+            github.list_authored_open("a/two", true).await,
+            Err(ChangeRequestError::RateLimited)
+        );
+        assert_eq!(
+            github
+                .detail("https://github.com/a/one/pull/1", true, true)
+                .await,
+            Err(ChangeRequestError::RateLimited)
+        );
+        assert_eq!(
+            runner.requests().len(),
+            1,
+            "refresh and a different key must not bypass backoff"
+        );
+    }
+
+    #[tokio::test]
+    async fn pr_cache_is_bounded_and_repository_filter_cannot_be_broadened() {
+        let runner = FakeProcessRunner::with_responses(
+            (0..26).map(|_| command_success(search_response(vec![]))),
+        );
+        let github = GitHubCli::with_runner(runner.clone());
+        for invalid in ["", "acme", "a/b repo:c/d", "a/*", "a/b/c", "a/.."] {
+            assert_eq!(
+                github.list_authored_open(invalid, false).await,
+                Err(ChangeRequestError::UnsupportedRepository)
+            );
+        }
+        assert!(runner.requests().is_empty());
+        for index in 0..26 {
+            github
+                .list_authored_open(&format!("a/repo-{index}"), false)
+                .await
+                .unwrap();
+        }
+        let cache = github.pr_cache.lock().await;
+        assert_eq!(cache.entries.len(), 24);
+        assert!(cache.entries.iter().all(|entry| entry.0 != "list:a/repo-0"));
+    }
+
+    #[tokio::test]
+    async fn github_search_uses_exact_repository_arguments_and_environment() {
         let json = search_response(vec![search_pull_request(
             "acme/zeron",
             123,
@@ -1499,7 +1706,9 @@ mod tests {
                 "api",
                 "graphql",
                 "-f",
-                &format!("query={GITHUB_SEARCH_QUERY}")
+                &format!("query={GITHUB_SEARCH_QUERY}"),
+                "-f",
+                "search=is:pr is:open author:@me repo:acme/zeron sort:updated-desc"
             ]
         );
         assert_eq!(
@@ -1517,7 +1726,7 @@ mod tests {
     async fn github_search_normalizes_titles_and_sorts_results_stably() {
         let json = search_response(vec![
             search_pull_request(
-                "zeta/repo",
+                "acme/zeron",
                 8,
                 "  A title\nwith\tspacing  ",
                 "OPEN",
@@ -1528,7 +1737,7 @@ mod tests {
                 Some("APPROVED"),
             ),
             search_pull_request(
-                "alpha/repo",
+                "acme/zeron",
                 4,
                 "Alpha",
                 "OPEN",
@@ -1539,7 +1748,7 @@ mod tests {
                 Some("REVIEW_REQUIRED"),
             ),
             search_pull_request(
-                "alpha/repo",
+                "acme/zeron",
                 2,
                 "Earlier number",
                 "OPEN",
@@ -1558,7 +1767,7 @@ mod tests {
                 .iter()
                 .map(|item| (item.repository.as_str(), item.number))
                 .collect::<Vec<_>>(),
-            [("alpha/repo", 2), ("alpha/repo", 4), ("zeta/repo", 8)]
+            [("acme/zeron", 2), ("acme/zeron", 4), ("acme/zeron", 8)]
         );
         assert_eq!(items[2].title, "A title with spacing");
         assert_eq!(items[0].state, ChangeRequestState::Open);

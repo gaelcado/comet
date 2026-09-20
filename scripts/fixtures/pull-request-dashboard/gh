@@ -3,6 +3,7 @@
 
 from datetime import datetime, timedelta, timezone
 import json
+import re
 import sys
 
 
@@ -115,7 +116,13 @@ def main():
         print("pull request dashboard fixture only supports `gh api graphql`", file=sys.stderr)
         return 1
 
-    print(json.dumps({"data": {"search": {"nodes": pull_requests()}}}))
+    search = next((arg[7:] for arg in sys.argv if arg.startswith("search=")), "")
+    match = re.search(r"(?:^| )repo:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?: |$)", search)
+    if not match:
+        print("Select one repository, for example zeron-demo-labs/comet", file=sys.stderr)
+        return 1
+    items = [item for item in pull_requests() if item["repository"]["nameWithOwner"] == match[1]]
+    print(json.dumps({"data": {"search": {"nodes": items[:50]}}}))
     return 0
 
 

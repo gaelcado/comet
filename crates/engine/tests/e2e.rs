@@ -31,10 +31,20 @@ struct FixedOpenChangeRequests(Vec<ChangeRequestListItem>);
 
 #[async_trait]
 impl OpenChangeRequestLookup for FixedOpenChangeRequests {
-    async fn list_authored_open(&self) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+    async fn list_authored_open(
+        &self,
+        repository: &str,
+        _refresh: bool,
+    ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        assert_eq!(repository, "acme/zeron");
         Ok(self.0.clone())
     }
-    async fn detail(&self, url: &str, diff: bool) -> Result<serde_json::Value, ChangeRequestError> {
+    async fn detail(
+        &self,
+        url: &str,
+        diff: bool,
+        _refresh: bool,
+    ) -> Result<serde_json::Value, ChangeRequestError> {
         assert_eq!(url, self.0[0].url);
         if diff {
             Ok(serde_json::json!("diff --git a/a b/a\n"))
@@ -1095,10 +1105,15 @@ async fn pull_request_list_dispatch_returns_provider_items() {
     .with_open_change_requests(Arc::new(FixedOpenChangeRequests(vec![item.clone()])));
     let client = zeron_rpc::memory_client(Arc::new(rpc));
 
+    let unscoped = client
+        .call(zeron_rpc::methods::LIST_OPEN_CHANGE_REQUESTS, serde_json::json!({}))
+        .await;
+    assert!(unscoped.is_err(), "legacy unscoped requests must never reach the provider");
+
     let listed: Vec<ChangeRequestListItem> = client
         .call_as(
-            zeron_rpc::methods::LIST_OPEN_CHANGE_REQUESTS,
-            serde_json::json!({ "targetDeviceId": core.device_id }),
+            zeron_rpc::methods::LIST_REPOSITORY_CHANGE_REQUESTS,
+            serde_json::json!({ "repository": "acme/zeron", "targetDeviceId": core.device_id }),
         )
         .await
         .unwrap();

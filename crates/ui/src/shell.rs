@@ -10289,8 +10289,7 @@ impl Shell {
             } else {
                 accessible_name.to_string()
             };
-            let chip = div()
-                .id(("right-surface-tab", ix))
+            let chip = crate::surface_chrome::tab(("right-surface-tab", ix), is_active, &theme)
                 .debug_selector(|| format!("right-surface-tab-{ix}"))
                 .group(group.clone())
                 .h(px(24.0))
@@ -10325,10 +10324,6 @@ impl Shell {
                 .block_mouse_except_scroll()
                 .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
                     window.prevent_default()
-                })
-                .when(is_active, |el| el.bg(crate::theme::wash(0.10)))
-                .when(!is_active, |el| {
-                    el.hover(|s| s.bg(crate::theme::wash(0.06)))
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
@@ -11528,6 +11523,7 @@ impl Render for Shell {
                 self.browser_subs.clear();
                 self.browser_context = crate::browser::BrowserContext::default();
                 self.pull_request_cache = Default::default();
+                self.pull_requests_page = None;
                 self.pull_request_detail = None;
                 self.pull_request_detail_subscription = None;
             }

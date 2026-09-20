@@ -183,8 +183,11 @@ pub mod methods {
     pub const WATCH_WORKSPACE_GIT_STATUS: &str = "WatchWorkspaceGitStatus";
     /// Current pull request for one checkout, resolved on the checkout's host device.
     pub const WATCH_CHECKOUT_CHANGE_REQUEST: &str = "WatchCheckoutChangeRequest";
-    /// Open pull requests authored by the active GitHub CLI account on the target device.
+    /// Legacy listing method. Current engines require an explicit repository.
     pub const LIST_OPEN_CHANGE_REQUESTS: &str = "ListOpenChangeRequests";
+    /// Repository-scoped listing. A distinct method prevents old engines from
+    /// silently ignoring the filter and issuing a global GitHub search.
+    pub const LIST_REPOSITORY_CHANGE_REQUESTS: &str = "ListRepositoryChangeRequests";
     pub const GET_CHANGE_REQUEST: &str = "GetChangeRequest";
     pub const GET_CHANGE_REQUEST_DIFF: &str = "GetChangeRequestDiff";
     pub const GET_CHECKOUT_DIFF: &str = "GetCheckoutDiff";
