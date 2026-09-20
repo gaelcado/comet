@@ -25,7 +25,7 @@ const GIT_OUTPUT_LIMIT: usize = 64 * 1024;
 const GITHUB_OUTPUT_LIMIT: usize = 1024 * 1024;
 const GITHUB_RESULT_LIMIT: &str = "20";
 const GITHUB_JSON_FIELDS: &str = "number,title,url,state,baseRefName,headRefName,updatedAt,isCrossRepository,headRepositoryOwner";
-const GITHUB_SEARCH_QUERY: &str = "query($search: String!) { search(query: $search, type: ISSUE, first: 50) { nodes { ... on PullRequest { number title url state isDraft mergeable reviewDecision createdAt updatedAt additions deletions repository { nameWithOwner } } } } }";
+const GITHUB_SEARCH_QUERY: &str = "query($search: String!) { search(query: $search, type: ISSUE, first: 50) { nodes { ... on PullRequest { author { login } number title url state isDraft mergeable reviewDecision createdAt updatedAt additions deletions repository { nameWithOwner } } } } }";
 
 /// Strictly one repository; reject search qualifiers and unscoped requests.
 pub fn valid_pr_repository(repository: &str) -> bool {
@@ -954,6 +954,8 @@ struct GhPullRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GhSearchPullRequest {
+    #[serde(default)]
+    author: Option<zeron_proto::ChangeRequestActor>,
     number: u64,
     title: String,
     url: String,
@@ -1158,6 +1160,7 @@ fn to_list_item(
     }
     Ok(ChangeRequestListItem {
         provider: "github".into(),
+        author: pull_request.author.unwrap_or_default(),
         repository: repository.into(),
         number: pull_request.number,
         title,
@@ -1554,6 +1557,7 @@ mod tests {
     ) -> serde_json::Value {
         serde_json::json!({
             "number": number,
+            "author": { "login": "octocat" },
             "title": title,
             "url": format!("https://github.com/{repository}/pull/{number}"),
             "state": state,
@@ -1679,7 +1683,9 @@ mod tests {
             None,
         )]);
         let (result, runner) = list_with(command_success(json)).await;
-        assert_eq!(result.unwrap()[0].repository, "acme/new-name");
+        let items = result.unwrap();
+        assert_eq!(items[0].repository, "acme/new-name");
+        assert_eq!(items[0].author.login, "octocat");
         assert!(
             runner.requests()[0]
                 .args

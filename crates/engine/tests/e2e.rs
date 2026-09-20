@@ -1078,6 +1078,7 @@ async fn pull_request_list_dispatch_returns_provider_items() {
     );
     let item = ChangeRequestListItem {
         provider: "github".into(),
+        author: Default::default(),
         repository: "acme/zeron".into(),
         number: 123,
         title: "Add dashboard".into(),

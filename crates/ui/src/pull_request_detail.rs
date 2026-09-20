@@ -912,6 +912,7 @@ impl Render for PullRequestDetailPage {
                         div()
                             .mb(px(12.0))
                             .flex()
+                            .flex_wrap()
                             .items_center()
                             .gap(px(8.0))
                             .child(
@@ -924,6 +925,26 @@ impl Render for PullRequestDetailPage {
                                     .text_size(crate::typography::ui_rems(12.0))
                                     .text_color(theme.text_muted)
                                     .child(repository),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_color(theme.text_muted)
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(super::pull_request_media::avatar(
+                                        &detail.author.login,
+                                        "pr-author".into(),
+                                        20.0,
+                                        &theme,
+                                    ))
+                                    .child(if detail.author.login.is_empty() {
+                                        "Deleted account".to_owned()
+                                    } else {
+                                        detail.author.login.clone()
+                                    })
+                                    .child(format!("· #{}", detail.number)),
                             ),
                     )
                     .child(
@@ -932,26 +953,6 @@ impl Render for PullRequestDetailPage {
                             .line_height(px(30.0))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(detail.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .mt(px(8.0))
-                            .text_color(theme.text_muted)
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(super::pull_request_media::avatar(
-                                &detail.author.login,
-                                "pr-author".into(),
-                                20.0,
-                                &theme,
-                            ))
-                            .child(if detail.author.login.is_empty() {
-                                "Deleted account".to_owned()
-                            } else {
-                                detail.author.login.clone()
-                            })
-                            .child(format!("· #{}", detail.number)),
                     )
                     .child(
                         div()

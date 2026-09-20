@@ -124,11 +124,12 @@ fn request_color(item: &ChangeRequestListItem, theme: &Theme) -> gpui::Hsla {
 
 fn matches_query(item: &ChangeRequestListItem, query: &str) -> bool {
     let text = format!(
-        "{} {} #{} {}",
+        "{} {} #{} {} {}",
         item.title,
         item.repository,
         item.number,
-        status_description(item)
+        status_description(item),
+        item.author.login
     )
     .to_lowercase();
     query
@@ -307,15 +308,19 @@ impl PullRequestsPage {
         let Some(engine) = state.engine().cloned() else {
             return;
         };
-        let current = state
-            .selected_space_row()
-            .map(|space| (space.path.clone(), space.device_id.clone()))
-            .or_else(|| {
-                state
-                    .selected_chat_row()
-                    .and_then(|chat| Some((chat.cwd.clone()?, chat.device_id.clone())))
-            });
         let saved = crate::settings::current(cx);
+        // The sidebar scope is independent of the retained conversation/project.
+        let current = saved.space_filter.as_deref().and_then(|id| {
+            state
+                .spaces
+                .iter()
+                .find(|space| space.id == id)
+                .map(|space| (space.path.clone(), space.device_id.clone()))
+        });
+        if saved.space_filter.is_some() && current.is_none() {
+            // Wait for the project's first frame, rather than pinning a stale scope.
+            return;
+        }
         let fallback = saved
             .last_pull_request_repository
             .filter(|repo| valid_repository_filter(repo))
@@ -336,10 +341,13 @@ impl PullRequestsPage {
         self.initial_scope_attempted = true;
         self.load_state = PullRequestsLoadState::Loading;
         self.initial_scope_task = Some(cx.spawn(async move |this, cx| {
-            let result = engine
-                .client()
-                .call(methods::GET_CHANGE_REQUEST_REPOSITORY, params)
-                .await;
+            let request = engine.client().call(methods::GET_CHANGE_REQUEST_REPOSITORY, params);
+            let deadline = cx.background_executor().timer(std::time::Duration::from_secs(3));
+            futures::pin_mut!(request, deadline);
+            let result = match futures::future::select(request, deadline).await {
+                futures::future::Either::Left((result, _)) => result,
+                futures::future::Either::Right(_) => Err(RpcError::Failed("Repository detection timed out".into())),
+            };
             let discovery_failed = result.is_err();
             let repository = result
                 .ok()
@@ -373,6 +381,17 @@ impl PullRequestsPage {
         self.repository_input
             .update(cx, |input, cx| input.set_text(&repository, cx));
         self.select_repository(cx);
+    }
+
+    pub(crate) fn on_project_scope_changed(&mut self, cx: &mut Context<Self>) {
+        if self.repository.is_none() {
+            self.initial_scope_task = None;
+            self.initial_scope_attempted = false;
+            self.load_state = PullRequestsLoadState::Idle;
+            self.repository_error = None;
+            self.initialize_repository(cx);
+            cx.notify();
+        }
     }
 
     /// Called whenever shell navigation makes the already-owned entity visible again.
@@ -499,6 +518,11 @@ impl PullRequestsPage {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.repository.is_none() && self.initial_scope_task.is_none() {
+            self.initial_scope_attempted = false;
+            self.repository_error = None;
+            self.initialize_repository(cx);
+        }
         if !matches!(self.load_state, PullRequestsLoadState::Loading) {
             self.load(true, cx);
         }
@@ -510,6 +534,10 @@ impl PullRequestsPage {
             return;
         }
         self.filter = filter;
+        if self.repository.is_none() {
+            cx.notify();
+            return;
+        }
         self.reset_for_target(self.target_device.clone());
         if self.last_loaded_at.is_none() {
             self.load(false, cx);
@@ -1190,7 +1218,7 @@ impl Render for PullRequestsPage {
                                     .hover(|style| widgets::ghost_hover(&theme, style))
                                     .when(loading, |el| el.opacity(0.5))
                                     .on_click(cx.listener(|page, _, _, cx| page.refresh(cx)))
-                                    .child(if loading {
+                                    .child(if refreshing {
                                         crate::loaders::mini_glyph_spinner(
                                             "pull-requests-refresh-spinner",
                                             1.75,
@@ -1225,7 +1253,6 @@ impl Render for PullRequestsPage {
                     .gap(px(2.0))
                     .children(
                         [
-                            (ChangeRequestFilter::All, "All", "pr-filter-all"),
                             (
                                 ChangeRequestFilter::Authored,
                                 "Authored",
@@ -1236,6 +1263,7 @@ impl Render for PullRequestsPage {
                                 "Reviewing",
                                 "pr-filter-reviewing",
                             ),
+                            (ChangeRequestFilter::All, "All", "pr-filter-all"),
                         ]
                         .into_iter()
                         .map(|(filter, label, id)| {
@@ -1336,7 +1364,11 @@ impl Render for PullRequestsPage {
                     cx.entity_id(),
                     cx,
                 ))
-                .child("Loading pull requests…")
+                .child(if self.initial_scope_task.is_some() {
+                    "Finding repository…"
+                } else {
+                    "Loading pull requests…"
+                })
                 .into_any_element()
         } else if self.items.is_empty() {
             self.render_empty_or_error(&theme)
@@ -1673,8 +1705,6 @@ fn status_description(item: &ChangeRequestListItem) -> String {
 fn render_pr_identity(item: &ChangeRequestListItem, theme: &Theme) -> AnyElement {
     let title = SharedString::from(single_line(&item.title));
     let full_title = title.clone();
-    let repository = SharedString::from(item.repository.clone());
-    let full_repository = repository.clone();
     let status = status_description(item);
     let tone = if item.mergeability == ChangeRequestMergeability::Conflicting {
         theme.danger_muted
@@ -1714,26 +1744,35 @@ fn render_pr_identity(item: &ChangeRequestListItem, theme: &Theme) -> AnyElement
         .child(
             div()
                 .flex()
-                .flex_wrap()
                 .pl(px(22.0))
                 .items_center()
                 .gap(px(Theme::SPACE_SM))
                 .min_w_0()
                 .child(
                     div()
-                        .id(SharedString::from(format!(
-                            "pull-request-repository-{}",
-                            pull_request_key(item)
-                        )))
+                        .flex()
+                        .items_center()
+                        .gap(px(5.0))
                         .min_w_0()
-                        .max_w_full()
-                        .truncate()
-                        .text_size(crate::typography::ui_rems(11.0))
-                        .text_color(theme.text_muted)
-                        .tooltip(move |_, cx| {
-                            cx.new(|_| DashboardTooltip(full_repository.clone())).into()
-                        })
-                        .child(repository),
+                        .max_w(px(150.0))
+                        .child(super::pull_request_media::avatar(
+                            &item.author.login,
+                            format!("pr-list-author-{}", pull_request_key(item)).into(),
+                            16.0,
+                            theme,
+                        ))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(11.0))
+                                .text_color(theme.text_muted)
+                                .child(if item.author.login.is_empty() {
+                                    "Unknown author".to_owned()
+                                } else {
+                                    item.author.login.clone()
+                                }),
+                        ),
                 )
                 .child(crate::change_requests::pull_request_list_badge(
                     SharedString::from(format!("board-pr-badge-{}", pull_request_key(item))),
@@ -1743,6 +1782,8 @@ fn render_pr_identity(item: &ChangeRequestListItem, theme: &Theme) -> AnyElement
                 .when(status != "Open", |el| {
                     el.child(
                         div()
+                            .min_w_0()
+                            .truncate()
                             .text_size(crate::typography::ui_rems(11.0))
                             .text_color(tone)
                             .child(status.trim_start_matches("Open · ").to_string()),
@@ -2030,6 +2071,7 @@ mod tests {
     ) -> ChangeRequestListItem {
         ChangeRequestListItem {
             provider: "github".into(),
+            author: Default::default(),
             repository: repository.into(),
             number,
             title: format!("Pull request {number}"),
@@ -2154,7 +2196,7 @@ mod tests {
         });
     }
 
-    struct InitialRepositoryRpc(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+    struct InitialRepositoryRpc(std::sync::Arc<std::sync::Mutex<Vec<String>>>, bool);
 
     #[async_trait::async_trait]
     impl zeron_rpc::RpcService for InitialRepositoryRpc {
@@ -2171,6 +2213,9 @@ mod tests {
             match method {
                 methods::GET_CHANGE_REQUEST_REPOSITORY => {
                     assert_eq!(params["cwd"], "/checkout");
+                    if self.1 {
+                        return futures::future::pending().await;
+                    }
                     zeron_rpc::RpcReply::value(&Some("owner/repo"))
                 }
                 methods::LIST_FILTERED_CHANGE_REQUESTS => {
@@ -2193,7 +2238,11 @@ mod tests {
         cx.update(|cx| {
             cx.set_global(Theme::default());
             crate::settings::init(
-                crate::settings::UiSettings::default(),
+                {
+                    let mut settings = crate::settings::UiSettings::default();
+                    settings.space_filter = Some("project".into());
+                    settings
+                },
                 settings_dir.path(),
                 cx,
             );
@@ -2203,7 +2252,10 @@ mod tests {
         let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
         state.update(cx, |state, cx| {
             state.set_test_engine(crate::state::EngineHandle::from_test_client(
-                zeron_rpc::memory_client(std::sync::Arc::new(InitialRepositoryRpc(calls.clone()))),
+                zeron_rpc::memory_client(std::sync::Arc::new(InitialRepositoryRpc(
+                    calls.clone(),
+                    false,
+                ))),
             ));
             state.spaces = vec![zeron_proto::Space {
                 id: "project".into(),
@@ -2241,6 +2293,146 @@ mod tests {
                 methods::GET_CHANGE_REQUEST_REPOSITORY,
                 methods::LIST_FILTERED_CHANGE_REQUESTS
             ]
+        );
+    }
+
+    #[gpui::test]
+    fn pull_request_stalled_discovery_falls_back_once(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let settings_dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            cx.set_global(Theme::default());
+            crate::settings::init(
+                {
+                    let mut settings = crate::settings::UiSettings::default();
+                    settings.space_filter = Some("project".into());
+                    settings.last_pull_request_repository = Some("owner/repo".into());
+                    settings
+                },
+                settings_dir.path(),
+                cx,
+            );
+        });
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let state = cx.new(|_| AppState::new());
+        let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
+        state.update(cx, |state, cx| {
+            state.set_test_engine(crate::state::EngineHandle::from_test_client(
+                zeron_rpc::memory_client(std::sync::Arc::new(InitialRepositoryRpc(
+                    calls.clone(),
+                    true,
+                ))),
+            ));
+            state.spaces = vec![zeron_proto::Space {
+                id: "project".into(),
+                device_id: "local".into(),
+                path: "/checkout".into(),
+                name: None,
+                git_detected: true,
+                git_checked_at: None,
+                checkout_id: None,
+                created_at: Utc::now(),
+            }];
+            state.selected_space = Some("project".into());
+            state.no_project = false;
+            cx.notify();
+        });
+        for iteration in 0..100 {
+            cx.run_until_parked();
+            if iteration == 2 {
+                cx.executor()
+                    .advance_clock(std::time::Duration::from_secs(4));
+            }
+            if page.read_with(cx, |page, _| {
+                page.load_state == PullRequestsLoadState::Ready
+            }) {
+                break;
+            }
+            runtime.block_on(async { tokio::task::yield_now().await });
+        }
+        page.update(cx, |page, cx| {
+            assert_eq!(page.load_state, PullRequestsLoadState::Ready);
+            assert_eq!(page.items[0].number, 7);
+            page.on_hidden();
+            page.on_visible(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [
+                methods::GET_CHANGE_REQUEST_REPOSITORY,
+                methods::LIST_FILTERED_CHANGE_REQUESTS
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn pull_request_all_projects_loads_last_repo_without_discovery(cx: &mut gpui::TestAppContext) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = runtime.enter();
+        let settings_dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            cx.set_global(Theme::default());
+            crate::settings::init(
+                {
+                    let mut settings = crate::settings::UiSettings::default();
+                    settings.last_pull_request_repository = Some("owner/repo".into());
+                    settings
+                },
+                settings_dir.path(),
+                cx,
+            );
+        });
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let state = cx.new(|_| AppState::new());
+        let page = cx.new(|cx| PullRequestsPage::new(state.clone(), cx));
+        state.update(cx, |state, cx| {
+            state.set_test_engine(crate::state::EngineHandle::from_test_client(
+                zeron_rpc::memory_client(std::sync::Arc::new(InitialRepositoryRpc(
+                    calls.clone(),
+                    false,
+                ))),
+            ));
+            state.spaces = vec![zeron_proto::Space {
+                id: "project".into(),
+                device_id: "local".into(),
+                path: "/checkout".into(),
+                name: None,
+                git_detected: true,
+                git_checked_at: None,
+                checkout_id: None,
+                created_at: Utc::now(),
+            }];
+            state.selected_space = Some("project".into());
+            state.no_project = false;
+            cx.notify();
+        });
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if page.read_with(cx, |page, _| {
+                page.load_state == PullRequestsLoadState::Ready
+            }) {
+                break;
+            }
+            runtime.block_on(async { tokio::task::yield_now().await });
+        }
+        page.update(cx, |page, cx| {
+            assert_eq!(page.load_state, PullRequestsLoadState::Ready);
+            assert_eq!(page.items[0].number, 7);
+            page.on_hidden();
+            page.on_visible(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [methods::LIST_FILTERED_CHANGE_REQUESTS]
         );
     }
 

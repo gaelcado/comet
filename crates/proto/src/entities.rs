@@ -844,6 +844,8 @@ pub enum ChangeRequestFilter {
 #[serde(rename_all = "camelCase")]
 pub struct ChangeRequestListItem {
     pub provider: String,
+    #[serde(default)]
+    pub author: ChangeRequestActor,
     pub repository: String,
     pub number: u64,
     pub title: String,
@@ -883,7 +885,7 @@ pub struct ChangeRequestDetail {
     pub status_check_rollup: Vec<ChangeRequestCheck>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChangeRequestActor {
     pub login: String,
@@ -1362,6 +1364,7 @@ mod tests {
         ] {
             let item = ChangeRequestListItem {
                 provider: "github".into(),
+                author: Default::default(),
                 repository: "private-owner/private-repo".into(),
                 number: 123,
                 title: "Add pull request dashboard".into(),
@@ -1435,6 +1438,7 @@ mod tests {
 
         let mut value = serde_json::to_value(ChangeRequestListItem {
             provider: "github".into(),
+            author: Default::default(),
             repository: "acme/zeron".into(),
             number: 1,
             title: "Older payload".into(),
