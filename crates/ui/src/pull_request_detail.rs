@@ -495,52 +495,80 @@ impl PullRequestDetailPage {
     }
 
     fn navigation(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let radius = 18.0;
+        let border = if theme.is_frost() {
+            match theme.appearance {
+                crate::theme::Appearance::Dark => gpui::hsla(210.0 / 360.0, 0.18, 0.78, 0.09),
+                crate::theme::Appearance::Light => gpui::hsla(210.0 / 360.0, 0.18, 0.32, 0.10),
+            }
+        } else {
+            theme.border
+        };
+        let tabs = div()
+            .id("pr-detail-nav")
+            .debug_selector(|| "pr-detail-nav".into())
+            .p(px(6.0))
+            .rounded(px(radius))
+            .border_1()
+            .border_color(border)
+            .when(theme.is_frost(), |el| el.bg(theme.composer_sidebar_tint()))
+            .when(!theme.is_frost(), |el| {
+                el.bg(theme.input_glass_bg()).shadow_lg()
+            })
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .children(
+                [
+                    (
+                        Tab::Summary,
+                        "Summary",
+                        "pr-summary",
+                        crate::icons::DOCUMENT,
+                    ),
+                    (Tab::Code, "Code", "pr-code", crate::icons::FILE_CODE),
+                    (
+                        Tab::Activity,
+                        "Activity",
+                        "pr-activity",
+                        crate::icons::CHAT_ROUND_LINE,
+                    ),
+                    (Tab::Checks, "Checks", "pr-checks", crate::icons::CHECKLIST),
+                ]
+                .into_iter()
+                .map(|(tab, label, id, glyph)| {
+                    crate::surface_chrome::tab(id, tab == self.tab, theme)
+                        .debug_selector(move || id.into())
+                        .aria_label(label)
+                        .h(px(44.0))
+                        .rounded(px(12.0))
+                        .px(px(2.0))
+                        .flex_1()
+                        .flex_shrink(1.0)
+                        .min_w_0()
+                        .flex_col()
+                        .gap(px(3.0))
+                        .justify_center()
+                        .child(crate::icons::icon(glyph).size(px(16.0)).flex_none())
+                        .child(
+                            div()
+                                .min_w_0()
+                                .max_w_full()
+                                .truncate()
+                                .text_size(px(11.0))
+                                .child(label),
+                        )
+                        .on_click(cx.listener(move |page, _, _, cx| page.select_tab(tab, cx)))
+                }),
+            );
         div()
             .absolute()
-            .top(px(12.0))
+            .bottom(px(16.0))
             .left(px(12.0))
             .right(px(12.0))
             .max_w(px(430.0))
             .mx_auto()
-            .p(px(4.0))
-            .rounded(px(10.0))
-            .bg(theme.surface_raised)
-            .shadow_sm()
-            .id("pr-detail-nav")
-            .debug_selector(|| "pr-detail-nav".into())
-            .border_t_0()
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(720.0))
-                    .mx_auto()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    .children(
-                        [
-                            (Tab::Summary, "Summary", "pr-summary"),
-                            (Tab::Code, "Code", "pr-code"),
-                            (Tab::Activity, "Activity", "pr-activity"),
-                            (Tab::Checks, "Checks", "pr-checks"),
-                        ]
-                        .into_iter()
-                        .map(|(tab, label, id)| {
-                            crate::surface_chrome::tab(id, tab == self.tab, theme)
-                                .debug_selector(move || id.into())
-                                .aria_label(label)
-                                .px(px(6.0))
-                                .flex_1()
-                                .flex_shrink(1.0)
-                                .min_w_0()
-                                .justify_center()
-                                .child(div().min_w_0().truncate().child(label))
-                                .on_click(
-                                    cx.listener(move |page, _, _, cx| page.select_tab(tab, cx)),
-                                )
-                        }),
-                    ),
-            )
+            .child(crate::frost::frosted(radius, crate::frost::MENU_BLUR, tabs))
             .into_any_element()
     }
 
@@ -820,7 +848,8 @@ impl Render for PullRequestDetailPage {
         let theme = Theme::of(cx).clone();
         let content = {
             let mut column = widgets::page_column()
-                .pt(px(72.0))
+                .pt(px(32.0))
+                .pb(px(96.0))
                 .text_size(crate::typography::ui_rems(13.0))
                 .text_color(theme.text);
             if let Some(error) = &self.error {
@@ -1500,6 +1529,9 @@ mod tests {
             }
             assert!(cx.debug_bounds("pr-immersive").is_none());
             assert!(cx.debug_bounds("pr-browser").is_none());
+            let nav = cx.debug_bounds("pr-detail-nav").unwrap();
+            assert_eq!(nav.bottom(), px(784.0));
+            assert!(nav.top() > px(700.0));
             for selector in ["pr-summary", "pr-code", "pr-checks", "pr-activity"] {
                 let bounds = cx.debug_bounds(selector).unwrap();
                 assert!(
