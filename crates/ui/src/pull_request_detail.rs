@@ -570,11 +570,7 @@ impl PullRequestDetailPage {
         } else {
             theme.border
         };
-        let position = ["pr-summary", "pr-code", "pr-activity", "pr-checks"]
-            .iter()
-            .enumerate()
-            .map(|(index, key)| index as f32 * self.tab_fades.value_at(key, Instant::now()))
-            .sum::<f32>();
+        let now = Instant::now();
         let tabs = div()
             .id("pr-detail-nav")
             .debug_selector(|| "pr-detail-nav".into())
@@ -589,23 +585,7 @@ impl PullRequestDetailPage {
             })
             .flex()
             .items_center()
-            .child(
-                div()
-                    .absolute()
-                    .top(px(4.0))
-                    .bottom(px(4.0))
-                    .left(px(4.0))
-                    .right(px(4.0))
-                    .child(
-                        div()
-                            .absolute()
-                            .left(gpui::relative(position / 4.0))
-                            .w(gpui::relative(0.25))
-                            .h_full()
-                            .rounded(px(12.0))
-                            .bg(crate::theme::wash(0.10)),
-                    ),
-            )
+            .gap(px(2.0))
             .children(
                 [
                     (
@@ -625,7 +605,7 @@ impl PullRequestDetailPage {
                 ]
                 .into_iter()
                 .map(|(tab, label, id, glyph)| {
-                    let selected = self.tab_fades.value_at(id, Instant::now());
+                    let selected = self.tab_fades.value_at(id, now);
                     let hover_key = format!("pr-detail-{}-{id}", cx.entity_id());
                     let hover = crate::motion::hover_t(&hover_key);
                     let color =
@@ -639,36 +619,38 @@ impl PullRequestDetailPage {
                         .tab_index(0)
                         .aria_selected(tab == self.tab)
                         .text_color(color)
-                        .bg(crate::theme::wash(0.06 * hover * (1.0 - selected)))
+                        .bg(crate::theme::wash(0.10 * selected + 0.06 * hover * (1.0 - selected)))
                         .focus_visible(|style| style.bg(crate::theme::wash(0.16)))
                         .active(|style| style.bg(crate::theme::wash(0.12)))
                         .on_hover(crate::motion::hover_listener(hover_key))
                         .debug_selector(move || id.into())
                         .aria_label(label)
-                        .h(px(36.0))
+                        .h(px(32.0))
+                        .w(px(36.0 + 56.0 * selected))
                         .rounded(px(12.0))
-                        .px(px(2.0))
-                        .flex_1()
-                        .flex_shrink(1.0)
-                        .min_w_0()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .justify_center()
+                        .px(px(10.0))
+                        .flex_none()
+                        .overflow_hidden()
+                        .tooltip(move |_, cx| cx.new(|_| PrActionTooltip(label)).into())
                         .child(
                             crate::icons::icon(glyph)
-                                .size(px(14.0))
+                                .size(px(16.0))
                                 .text_color(color)
-                                .relative()
-                                .top(px(-selected))
                                 .flex_none(),
                         )
                         .child(
                             div()
-                                .min_w_0()
-                                .max_w_full()
-                                .truncate()
-                                .text_size(px(11.0))
-                                .child(label),
+                                .w(px(56.0 * selected))
+                                .flex_none()
+                                .overflow_hidden()
+                                .opacity(selected)
+                                .child(div()
+                                    .pl(px(6.0))
+                                    .w(px(56.0))
+                                    .whitespace_nowrap()
+                                    .text_size(px(11.0))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child(label)),
                         )
                         .on_click(cx.listener(move |page, _, _, cx| page.select_tab(tab, cx)))
                 }),
@@ -678,7 +660,7 @@ impl PullRequestDetailPage {
             .bottom(px(16.0))
             .left(px(12.0))
             .right(px(12.0))
-            .max_w(px(352.0))
+            .w(px(216.0))
             .mx_auto()
             .child(crate::frost::frosted(radius, crate::frost::MENU_BLUR, tabs))
             .into_any_element()
@@ -1182,15 +1164,21 @@ impl Render for PullRequestDetailPage {
                             column = column.child(
                                 div()
                                     .id(SharedString::from(format!("pr-check-{index}")))
-                                    .mt(px(if index == 0 { 8.0 } else { 0.0 }))
-                                    .min_h(px(44.0))
-                                    .py(px(8.0))
+                                    .debug_selector(move || format!("pr-check-{index}"))
+                                    .mt(px(if index == 0 { 12.0 } else { 4.0 }))
+                                    .mx(px(-12.0))
+                                    .px(px(12.0))
+                                    .min_h(px(40.0))
+                                    .py(px(6.0))
                                     .flex()
                                     .flex_wrap()
                                     .items_center()
                                     .gap(px(8.0))
-                                    .child(div().flex_1().min_w_0().child(name.clone()))
-                                    .child(status_chip(&status, &theme))
+                                    .child(div()
+                                        .id(SharedString::from(format!("pr-check-name-{index}")))
+                                        .debug_selector(move || format!("pr-check-name-{index}"))
+                                        .flex_1().min_w_0().child(name.clone()))
+                                    .child(div().flex_none().child(status_chip(&status, &theme)))
                                     .when(!link.is_empty(), |el| {
                                         el.cursor_pointer()
                                             .role(gpui::Role::Link)
@@ -1746,7 +1734,12 @@ mod tests {
                     page.error = None;
                     page.detail = Some(ChangeRequestDetail {
                         title: "Inspect a pull request with a very long title that must leave room for all actions".into(),
-                        number: 1, body: "A description".into(), ..Default::default()
+                        number: 1, body: "A description".into(),
+                        status_check_rollup: vec![zeron_proto::ChangeRequestCheck {
+                            name: "linux-browser".into(), conclusion: "SUCCESS".into(),
+                            details_url: "https://github.com/a/b/actions/runs/1".into(),
+                            ..Default::default()
+                        }], ..Default::default()
                     });
                     page.body = Some(crate::markdown::parse_full("A description"));
                     let review = "### Review notes\n\n**Strong** text and [a link](https://github.com).\n\n```rust\nlet answer = 42;\n```";
@@ -1844,6 +1837,10 @@ mod tests {
         );
         cx.run_until_parked();
         page.read_with(cx, |page, _| assert!(page.tab == Tab::Checks));
+        let check = cx.debug_bounds("pr-check-0").unwrap();
+        let check_name = cx.debug_bounds("pr-check-name-0").unwrap();
+        assert_eq!(check_name.left() - check.left(), px(12.0), "hover surface must inset its label");
+        assert!(check_name.top() > check.top() && check_name.bottom() < check.bottom());
         let code = cx.debug_bounds("pr-code").unwrap();
         cx.simulate_mouse_down(
             code.center(),
@@ -1866,7 +1863,8 @@ mod tests {
             assert!(viewport.size.height > px(60.0), "{viewport:?}");
             assert!(viewport.bottom() <= nav.top(), "diff must clear floating tabs");
             assert!(viewport.size.width <= px(720.0), "shared page column width");
-            assert!(nav.size.width <= px(352.0) && nav.size.height <= px(46.0));
+            assert_eq!(nav.size.width, px(216.0));
+            assert_eq!(nav.size.height, px(42.0));
             page.read_with(cx, |page, _| {
                 assert_eq!(page.scroll.scroll.max_offset().y, px(0.0), "Code has one vertical scroller");
             });
