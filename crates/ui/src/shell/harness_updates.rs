@@ -946,7 +946,10 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let result = engine.client().call(method, params).await;
             this.update(cx, |shell, cx| {
-                if let Err(error) = result {
+                if let Err(error) = result
+                    && !matches!(&error, zeron_rpc::RpcError::Failed(message)
+                        if method == methods::APPLY_HARNESS_UPDATE && message == "update cancelled")
+                {
                     shell.sidebar_notice = Some(format!("Agent update ({device}): {error}").into());
                 }
                 cx.notify();

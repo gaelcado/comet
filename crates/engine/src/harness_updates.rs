@@ -39,6 +39,7 @@ struct Preferences {
 
 #[derive(Clone, Copy)]
 enum LatestSource {
+    Claude,
     Npm(&'static str),
     Github {
         repository: &'static str,
@@ -53,6 +54,7 @@ enum UpdateCheck {
     Version(String),
     Available,
     Current,
+    Manual,
 }
 
 struct ProviderSpec {
@@ -180,7 +182,7 @@ fn provider(id: HarnessId) -> ProviderSpec {
     match id {
         HarnessId::ClaudeCode => ProviderSpec {
             version_args: &["--version"],
-            latest: LatestSource::Npm("@anthropic-ai/claude-code"),
+            latest: LatestSource::Claude,
             update_args: Some(&["update"]),
             manual_command: "claude update",
         },
@@ -250,6 +252,9 @@ fn provider(id: HarnessId) -> ProviderSpec {
 }
 
 fn update_plan(harness: HarnessId, executable: &Path) -> Result<UpdatePlan, String> {
+    if harness == HarnessId::ClaudeCode && claude_package_manager_command(executable).is_some() {
+        return Err("update Claude Code with its package manager".into());
+    }
     if let Some(args) = provider(harness).update_args {
         return Ok(UpdatePlan::Command {
             executable: executable.to_path_buf(),
@@ -563,12 +568,44 @@ impl HarnessUpdateCoordinator {
         let source = classify_source(&executable);
         let can_apply = can_apply_update(harness, &executable);
         let manual_command = (!can_apply)
-            .then(|| provider(harness).manual_command.to_string())
+            .then(|| {
+                claude_package_manager_command_for(harness, &executable)
+                    .unwrap_or_else(|| provider(harness).manual_command.to_string())
+            })
             .filter(|command| !command.is_empty());
         if self.settle_if_unmonitored(harness) {
             return Ok(());
         }
         let latest = match spec.latest {
+            LatestSource::Claude => {
+                let channel = if let Some(channel) = claude_cask_channel(&executable) {
+                    Some(channel)
+                } else {
+                    // Let the CLI resolve user, project, MDM and server-managed
+                    // policy. Guessing from a subset of its files can advertise
+                    // a release that its updater will never install.
+                    let lease = self.inner.registry.execution_lease(harness).await;
+                    let diagnostic =
+                        run_command_output(&executable, &["doctor"], COMMAND_TIMEOUT).await;
+                    drop(lease);
+                    diagnostic
+                        .ok()
+                        .and_then(|output| parse_claude_release_channel(&output))
+                };
+                self.mutate(harness, |status| {
+                    status.channel = channel.map(str::to_owned)
+                });
+                match channel {
+                    Some(channel) => self
+                        .npm_release("@anthropic-ai/claude-code", channel)
+                        .await
+                        .map(UpdateCheck::Version),
+                    // Older doctor commands can require a terminal or omit the
+                    // channel. Keep explicit checks/updates available, without
+                    // claiming a release or scheduling automatic installation.
+                    None => Ok(UpdateCheck::Manual),
+                }
+            }
             LatestSource::Npm(package) => self.npm_latest(package).await.map(UpdateCheck::Version),
             LatestSource::Github {
                 repository,
@@ -592,29 +629,7 @@ impl HarnessUpdateCoordinator {
                 drop(lease);
                 result
             }
-            LatestSource::Manual => {
-                if self.settle_if_unmonitored(harness) {
-                    return Ok(());
-                }
-                let registry = self.inner.registry.clone();
-                self.mutate(harness, |status| {
-                    status.installed_version = Some(installed.clone());
-                    status.latest_version = None;
-                    status.source = source;
-                    status.can_apply = can_apply;
-                    status.manual_command = manual_command.clone();
-                    status.phase = if status.policy == HarnessUpdatePolicy::Off
-                        || !registry.enabled_set().contains(&harness)
-                    {
-                        HarnessUpdatePhase::Dormant
-                    } else {
-                        HarnessUpdatePhase::ManualActionRequired
-                    };
-                    status.checked_at = Some(now_ms());
-                    status.error = None;
-                });
-                return Ok(());
-            }
+            LatestSource::Manual => Ok(UpdateCheck::Manual),
         };
         if self.settle_if_unmonitored(harness) {
             return Ok(());
@@ -632,6 +647,29 @@ impl HarnessUpdateCoordinator {
             // its CLI version. Preserve its verdict without inventing a release.
             Ok(UpdateCheck::Available) => (None, true),
             Ok(UpdateCheck::Current) => (None, false),
+            Ok(UpdateCheck::Manual) => {
+                let registry = self.inner.registry.clone();
+                self.mutate(harness, |status| {
+                    status.installed_version = Some(installed);
+                    status.latest_version = None;
+                    status.channel = None;
+                    status.source = source;
+                    status.can_apply = can_apply;
+                    status.manual_command =
+                        manual_command.or_else(|| Some(spec.manual_command.into()));
+                    status.phase = if status.policy == HarnessUpdatePolicy::Off
+                        || !registry.enabled_set().contains(&harness)
+                    {
+                        HarnessUpdatePhase::Dormant
+                    } else {
+                        HarnessUpdatePhase::ManualActionRequired
+                    };
+                    status.checked_at = Some(now_ms());
+                    status.error = None;
+                });
+                return Ok(());
+            }
+
             Err(error) => {
                 return self.fail_check_with_installed(harness, installed, source, error);
             }
@@ -674,12 +712,19 @@ impl HarnessUpdateCoordinator {
         // A provider probe and mutation must never overlap: a late check
         // result could otherwise overwrite Installing/Verifying state or
         // inspect a binary while its owner is replacing it.
-        let _operation = self.operation_gate(harness).lock_owned().await;
+        let _operation = tokio::select! {
+            biased;
+            _ = self.inner.shutdown.cancelled() => return Err("update cancelled".into()),
+            operation = self.operation_gate(harness).lock_owned() => operation,
+        };
         self.apply_locked(harness).await
     }
 
     /// Caller holds the provider operation lock through verification.
     async fn apply_locked(&self, harness: HarnessId) -> Result<String, String> {
+        if self.inner.shutdown.is_cancelled() {
+            return Err("update cancelled".into());
+        }
         let current = self
             .snapshot()
             .into_iter()
@@ -693,7 +738,9 @@ impl HarnessUpdateCoordinator {
         }
         let executable = self.executable(harness)?;
         let plan = update_plan(harness, &executable)?;
-        let cancel = CancellationToken::new();
+        // A request queued behind a check must inherit shutdown even if it
+        // reaches this point after shutdown's cancellation-map snapshot.
+        let cancel = self.inner.shutdown.child_token();
         {
             let mut cancellations = lock(&self.inner.cancellations);
             if cancellations.contains_key(&harness) {
@@ -1011,8 +1058,12 @@ impl HarnessUpdateCoordinator {
     }
 
     async fn npm_latest(&self, package: &str) -> Result<String, String> {
+        self.npm_release(package, "latest").await
+    }
+
+    async fn npm_release(&self, package: &str, channel: &str) -> Result<String, String> {
         let encoded = package.replace('/', "%2f");
-        let url = format!("https://registry.npmjs.org/{encoded}/latest");
+        let url = format!("https://registry.npmjs.org/{encoded}/{channel}");
         let response = self
             .inner
             .client
@@ -1503,9 +1554,7 @@ fn activate_codex_release(
 fn classify_source(path: &Path) -> HarnessInstallSource {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let text = format!("{}\n{}", path.display(), canonical.display()).to_ascii_lowercase();
-    if text.contains("homebrew") || text.contains("/cellar/") || text.contains("/caskroom/") {
-        HarnessInstallSource::Homebrew
-    } else if text.contains("/.cargo/bin/") {
+    if text.contains("/.cargo/bin/") {
         HarnessInstallSource::Cargo
     } else if text.contains("node_modules")
         || text.contains("/.nvm/")
@@ -1514,9 +1563,70 @@ fn classify_source(path: &Path) -> HarnessInstallSource {
         || text.contains("/pnpm/")
     {
         HarnessInstallSource::Npm
+    } else if text.contains("homebrew") || text.contains("/cellar/") || text.contains("/caskroom/")
+    {
+        HarnessInstallSource::Homebrew
     } else {
         HarnessInstallSource::Vendor
     }
+}
+
+fn claude_package_manager_command_for(harness: HarnessId, path: &Path) -> Option<String> {
+    (harness == HarnessId::ClaudeCode)
+        .then(|| claude_package_manager_command(path))
+        .flatten()
+}
+
+fn claude_package_manager_command(path: &Path) -> Option<String> {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = format!("{}\n{}", path.display(), canonical.display())
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    if let Some(channel) = claude_cask_channel(path) {
+        Some(if channel == "latest" {
+            "brew upgrade claude-code@latest".into()
+        } else {
+            "brew upgrade claude-code".into()
+        })
+    } else if text.contains("/winget/") || text.contains("/microsoft/winget/") {
+        Some("winget upgrade Anthropic.ClaudeCode".into())
+    } else if canonical.starts_with("/usr/bin")
+        || canonical.starts_with("/nix/store")
+        || canonical.starts_with("/snap")
+    {
+        Some("Update Claude Code with the system package manager that installed it".into())
+    } else {
+        None
+    }
+}
+
+/// Only actual cask paths establish Homebrew ownership. An npm install
+/// under /opt/homebrew/lib/node_modules belongs to npm, not a Claude cask.
+fn claude_cask_channel(path: &Path) -> Option<&'static str> {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = canonical
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    for owner in ["/caskroom/", "/cellar/"] {
+        if text.contains(&format!("{owner}claude-code@latest/")) {
+            return Some("latest");
+        }
+        if text.contains(&format!("{owner}claude-code/")) {
+            return Some("stable");
+        }
+    }
+    None
+}
+
+fn parse_claude_release_channel(output: &str) -> Option<&'static str> {
+    output.lines().find_map(
+        |line| match line.trim().strip_prefix("Auto-update channel:")?.trim() {
+            "stable" => Some("stable"),
+            "latest" => Some("latest"),
+            _ => None,
+        },
+    )
 }
 
 fn parse_hermes_update_check(output: &str) -> Result<UpdateCheck, String> {
@@ -2443,5 +2553,135 @@ esac
         .await
         .unwrap();
         assert!(!registry.update_pending(HarnessId::ClaudeCode));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shutdown_cancels_apply_queued_behind_provider_check() {
+        let (temp, coordinator) = automatic_fixture();
+        coordinator.check_one(HarnessId::Grok).await.unwrap();
+        let checking = coordinator
+            .operation_gate(HarnessId::Grok)
+            .lock_owned()
+            .await;
+        let applying = tokio::spawn({
+            let coordinator = coordinator.clone();
+            async move { coordinator.apply(HarnessId::Grok).await }
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        coordinator.shutdown().await;
+        // Queued work must settle without needing the old checker to finish.
+        let result = tokio::time::timeout(Duration::from_secs(1), applying)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.unwrap_err(), "update cancelled");
+        drop(checking);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("version")).unwrap(),
+            "1.0.0\n"
+        );
+        assert!(!coordinator.inner.registry.update_pending(HarnessId::Grok));
+        assert_eq!(
+            coordinator.apply(HarnessId::Grok).await.unwrap_err(),
+            "update cancelled"
+        );
+    }
+
+    #[test]
+    fn claude_channel_comes_from_vendor_diagnostics() {
+        for channel in ["stable", "latest"] {
+            let output = format!(
+                "Claude Code doctor\nAuto-update channel: {channel}\nNo installation issues found.\n"
+            );
+            assert_eq!(super::parse_claude_release_channel(&output), Some(channel));
+        }
+        for output in ["", "Claude 2.1.100", "Auto-update channel: unknown"] {
+            assert_eq!(super::parse_claude_release_channel(output), None);
+        }
+    }
+
+    #[test]
+    fn package_managed_claude_has_manual_guidance_and_cask_channel() {
+        for (path, command, channel) in [
+            (
+                "/opt/homebrew/Caskroom/claude-code/2.1.100/claude",
+                "brew upgrade claude-code",
+                "stable",
+            ),
+            (
+                "/opt/homebrew/Caskroom/claude-code@latest/2.1.110/claude",
+                "brew upgrade claude-code@latest",
+                "latest",
+            ),
+        ] {
+            let path = std::path::Path::new(path);
+            assert!(!super::can_apply_update(HarnessId::ClaudeCode, path));
+            assert_eq!(
+                super::claude_package_manager_command(path).as_deref(),
+                Some(command)
+            );
+            assert_eq!(super::claude_cask_channel(path).unwrap(), channel);
+        }
+        assert!(!super::can_apply_update(
+            HarnessId::ClaudeCode,
+            std::path::Path::new("/usr/bin/claude")
+        ));
+        assert!(super::can_apply_update(
+            HarnessId::ClaudeCode,
+            std::path::Path::new("/home/test/.local/bin/claude")
+        ));
+        let npm =
+            std::path::Path::new("/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js");
+        assert!(super::can_apply_update(HarnessId::ClaudeCode, npm));
+        assert_eq!(super::claude_cask_channel(npm), None);
+        assert_eq!(super::claude_package_manager_command(npm), None);
+        assert!(super::can_apply_update(
+            HarnessId::Pi,
+            std::path::Path::new("/usr/bin/pi")
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unknown_claude_channel_clears_stale_release_and_never_auto_installs() {
+        use std::os::unix::fs::PermissionsExt;
+        use zeron_proto::HarnessUpdatePolicy;
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("claude");
+        std::fs::write(&executable, "#!/bin/sh\ncase $1 in\n --version) echo '2.1.100 (Claude Code)' ;;\n doctor) echo 'Old diagnostic with no channel' ;;\n update) exit 42 ;;\nesac\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let registry = Arc::new(HarnessRegistry::new());
+        registry.register(Arc::new(ExecutableHarness(
+            executable,
+            HarnessId::ClaudeCode,
+        )));
+        let coordinator = super::HarnessUpdateCoordinator::new(temp.path(), registry);
+        super::lock(&coordinator.inner.prefs)
+            .policies
+            .insert(HarnessId::ClaudeCode, HarnessUpdatePolicy::AutoWhenIdle);
+        coordinator.mutate(HarnessId::ClaudeCode, |status| {
+            status.phase = HarnessUpdatePhase::Available;
+            status.latest_version = Some("2.1.110".into());
+            status.channel = Some("latest".into());
+        });
+        coordinator.check_one(HarnessId::ClaudeCode).await.unwrap();
+        tokio::task::yield_now().await;
+        let status = coordinator.status(HarnessId::ClaudeCode);
+        assert_eq!(status.phase, HarnessUpdatePhase::ManualActionRequired);
+        assert_eq!(status.channel, None);
+        assert_eq!(status.latest_version, None);
+        assert!(status.can_apply, "explicit vendor update remains available");
+        assert!(!coordinator.automatic_update_ready(HarnessId::ClaudeCode));
+        assert_eq!(status.manual_command.as_deref(), Some("claude update"));
+        assert!(
+            !coordinator
+                .inner
+                .registry
+                .update_pending(HarnessId::ClaudeCode)
+        );
+        coordinator.shutdown().await;
     }
 }
