@@ -9163,9 +9163,10 @@ impl Shell {
                     .min_w_0()
                     .h_full()
                     .flex()
-                    .when(main_content_width >= 1050.0, |el| {
-                        el.child(div().w(px(400.0)).flex_none().h_full().child(outlet))
-                    })
+                    .when(
+                        main_content_width >= 1050.0 && !detail.read(cx).immersive,
+                        |el| el.child(div().w(px(400.0)).flex_none().h_full().child(outlet)),
+                    )
                     .child(div().flex_1().min_w_0().h_full().child(detail))
                     .into_any_element();
             }
@@ -11754,6 +11755,9 @@ impl Render for Shell {
                     }
                     cx.notify();
                 },
+            ))
+            .on_action(cx.listener(
+                |_, _: &crate::pull_request_detail::TogglePullRequestFocus, _, cx| cx.notify(),
             ))
             // New session works from anywhere — `open_new_session` routes back
             // to chat itself, so Settings is not a dead spot.

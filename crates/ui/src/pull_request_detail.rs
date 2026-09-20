@@ -20,6 +20,10 @@ pub struct OpenPullRequest(pub String, pub Option<String>);
 #[action(namespace = shell, no_json)]
 pub struct ClosePullRequest;
 
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct TogglePullRequestFocus;
+
 pub fn open(url: &str, window: &mut Window, cx: &mut App) {
     open_on_device(url, None, window, cx);
 }
@@ -143,7 +147,8 @@ pub struct PullRequestDetailPage {
     code_scroll: gpui::UniformListScrollHandle,
     diff_error: Option<String>,
     tab: Tab,
-    scroll: gpui::ScrollHandle,
+    scroll: widgets::PageScroll,
+    pub(crate) immersive: bool,
     browser_context: BrowserContext,
     browser: Option<Entity<BrowserSurface>>,
     browser_events: Option<Subscription>,
@@ -174,7 +179,8 @@ impl PullRequestDetailPage {
             code_scroll: gpui::UniformListScrollHandle::new(),
             diff_error: None,
             tab: Tab::Summary,
-            scroll: gpui::ScrollHandle::new(),
+            scroll: widgets::PageScroll::default(),
+            immersive: false,
             browser_context,
             browser: None,
             browser_events: None,
@@ -275,7 +281,7 @@ impl PullRequestDetailPage {
 
     fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
-        self.scroll.set_offset(gpui::Point::default());
+        self.scroll.scroll.set_offset(gpui::Point::default());
         if tab == Tab::Code && self.diff.is_none() && self.diff_task.is_none() {
             self.load_diff(cx);
         }
@@ -289,6 +295,16 @@ fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Statefu
         "pr-copy-url" | "pr-copy-patch" => Some(crate::icons::COPY),
         "pr-detail-refresh" | "pr-retry-diff" => Some(crate::icons::REFRESH),
         "pr-external" => Some(crate::icons::ARROW_UP_RIGHT),
+        "pr-browser" => Some(crate::icons::GLOBAL),
+        "pr-native" => Some(crate::icons::PULL_REQUEST),
+        "pr-immersive" => Some(if label == "Show list" {
+            crate::icons::COLLAPSE_ARROWS
+        } else {
+            crate::icons::EXPAND_ARROWS
+        }),
+        "pr-summary" => Some(crate::icons::DOCUMENT),
+        "pr-code" => Some(crate::icons::FILE_CODE),
+        "pr-activity" => Some(crate::icons::CHAT_ROUND_LINE),
         _ => None,
     };
     widgets::ghost_action(theme)
@@ -305,20 +321,151 @@ fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Statefu
         .child(label)
 }
 
-fn field(label: &str, value: String, theme: &Theme) -> AnyElement {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusTone {
+    Neutral,
+    Positive,
+    Warning,
+    Negative,
+    Merged,
+}
+
+fn status_style(raw: &str) -> (String, &'static str, StatusTone) {
+    use crate::icons;
+    match raw.to_ascii_uppercase().replace(' ', "_").as_str() {
+        "OPEN" => ("Open".into(), icons::PULL_REQUEST, StatusTone::Positive),
+        "MERGED" => ("Merged".into(), icons::PULL_REQUEST, StatusTone::Merged),
+        "CLOSED" => ("Closed".into(), icons::CLOSE_CIRCLE, StatusTone::Negative),
+        "DRAFT" => ("Draft".into(), icons::DOCUMENT, StatusTone::Neutral),
+        "APPROVED" => ("Approved".into(), icons::CHECK, StatusTone::Positive),
+        "SUCCESS" => ("Passed".into(), icons::CHECK, StatusTone::Positive),
+        "FAILURE" | "ERROR" | "TIMED_OUT" | "ACTION_REQUIRED" => {
+            (humanize(raw), icons::CLOSE_CIRCLE, StatusTone::Negative)
+        }
+        "CHANGES_REQUESTED" => (
+            "Changes requested".into(),
+            icons::DANGER_TRIANGLE,
+            StatusTone::Warning,
+        ),
+        "REVIEW_REQUIRED" => (
+            "Awaiting review".into(),
+            icons::CLOCK_CIRCLE,
+            StatusTone::Warning,
+        ),
+        "IN_PROGRESS" | "PENDING" | "QUEUED" | "WAITING" => {
+            (humanize(raw), icons::CLOCK_CIRCLE, StatusTone::Warning)
+        }
+        _ => (humanize(raw), icons::DOCUMENT, StatusTone::Neutral),
+    }
+}
+
+fn humanize(raw: &str) -> String {
+    let text = raw.replace('_', " ").to_lowercase();
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+        .unwrap_or_else(|| "Not reported".into())
+}
+
+fn status_chip(raw: &str, theme: &Theme) -> AnyElement {
+    let (label, glyph, tone) = status_style(raw);
+    let color = match tone {
+        StatusTone::Neutral => theme.text_muted,
+        StatusTone::Positive => theme.success,
+        StatusTone::Warning => theme.warning,
+        StatusTone::Negative => theme.danger,
+        StatusTone::Merged => theme.code_text,
+    };
     div()
         .flex()
-        .flex_wrap()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(6.0))
+        .bg(color.opacity(0.08))
+        .text_color(theme.text)
+        .text_size(crate::typography::ui_rems(12.0))
+        .child(crate::icons::icon(glyph).size(px(14.0)).text_color(color))
+        .child(label)
+        .into_any_element()
+}
+
+fn section_heading(label: &str, glyph: &'static str, theme: &Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .child(
+            crate::icons::icon(glyph)
+                .size(px(16.0))
+                .text_color(theme.text_muted),
+        )
+        .child(widgets::row_title(theme, label))
+        .into_any_element()
+}
+
+fn field(label: &str, value: String, theme: &Theme) -> AnyElement {
+    let glyph = match label {
+        "Branch" => crate::icons::GIT_BRANCH,
+        "Status" => crate::icons::PULL_REQUEST,
+        "Review" => crate::icons::CHECKLIST,
+        _ => crate::icons::FILE_CODE,
+    };
+    let content = if matches!(label, "Status" | "Review") {
+        status_chip(&value, theme)
+    } else if label == "Changes" {
+        div()
+            .flex()
+            .flex_wrap()
+            .gap(px(6.0))
+            .children(value.split_whitespace().map(|word| {
+                div()
+                    .text_color(if word.starts_with('+') {
+                        theme.success
+                    } else if word.starts_with('−') {
+                        theme.danger
+                    } else {
+                        theme.text_muted
+                    })
+                    .child(word.to_owned())
+            }))
+            .into_any_element()
+    } else {
+        div()
+            .font_family(theme.font_mono.clone())
+            .text_size(crate::typography::ui_rems(12.0))
+            .child(value)
+            .into_any_element()
+    };
+    div()
+        .flex()
+        .items_start()
         .gap(px(12.0))
-        .py(px(6.0))
+        .py(px(7.0))
         .child(
             div()
-                .w(px(90.0))
+                .w(px(94.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
                 .text_color(theme.text_muted)
+                .child(crate::icons::icon(glyph).size(px(14.0)))
                 .child(SharedString::from(label.to_owned())),
         )
-        .child(div().flex_1().min_w_0().child(SharedString::from(value)))
+        .child(div().flex_1().min_w_0().child(content))
         .into_any_element()
+}
+
+impl crate::popover::ScrollRailHost for PullRequestDetailPage {
+    fn rail_bar(&mut self) -> &mut crate::popover::MenuScrollbarState {
+        self.scroll.rail_bar()
+    }
+    fn rail_scroll(&self) -> Option<gpui::ScrollHandle> {
+        self.scroll.rail_scroll()
+    }
 }
 
 impl Render for PullRequestDetailPage {
@@ -326,8 +473,10 @@ impl Render for PullRequestDetailPage {
         let theme = Theme::of(cx).clone();
         let url = self.url.clone();
         let copy_url = self.url.clone();
-        let toolbar = div()
-            .flex()
+        let toolbar = widgets::page_column()
+            .pt_0()
+            .pb_0()
+            .flex_row()
             .flex_wrap()
             .items_center()
             .gap(px(4.0))
@@ -337,6 +486,18 @@ impl Render for PullRequestDetailPage {
                 action("pr-back", "Back to board", &theme).on_click(|_, window, cx| {
                     window.dispatch_action(Box::new(ClosePullRequest), cx)
                 }),
+            )
+            .child(
+                action(
+                    "pr-immersive",
+                    if self.immersive { "Show list" } else { "Focus" },
+                    &theme,
+                )
+                .on_click(cx.listener(|page, _, window, cx| {
+                    page.immersive = !page.immersive;
+                    window.dispatch_action(Box::new(TogglePullRequestFocus), cx);
+                    cx.notify();
+                })),
             )
             .child(div().flex_1())
             .child(
@@ -367,43 +528,41 @@ impl Render for PullRequestDetailPage {
                 .child(browser.clone())
                 .into_any_element()
         } else {
-            let mut column = widgets::page_column()
-                .pt(px(16.0))
-                .text_size(px(13.0))
-                .text_color(theme.text)
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(8.0))
-                        .child(
-                            action(
-                                "pr-detail-refresh",
-                                if self.loading {
-                                    "Refreshing…"
-                                } else {
-                                    "Refresh"
-                                },
-                                &theme,
-                            )
-                            .on_click(cx.listener(|page, _, _, cx| {
-                                if !page.loading {
-                                    page.diff = None;
-                                    page.load(cx);
-                                    if page.tab == Tab::Code {
-                                        page.load_diff(cx);
-                                    }
-                                }
-                            })),
-                        )
-                        .child(action("pr-copy-url", "Copy link", &theme).on_click(
-                            move |_, _, cx| {
-                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                    copy_url.clone(),
-                                ))
+            let utilities = div().mt(px(16.0)).child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(8.0))
+                    .child(
+                        action(
+                            "pr-detail-refresh",
+                            if self.loading {
+                                "Refreshing…"
+                            } else {
+                                "Refresh"
                             },
-                        )),
-                );
+                            &theme,
+                        )
+                        .on_click(cx.listener(|page, _, _, cx| {
+                            if !page.loading {
+                                page.diff = None;
+                                page.load(cx);
+                                if page.tab == Tab::Code {
+                                    page.load_diff(cx);
+                                }
+                            }
+                        })),
+                    )
+                    .child(
+                        action("pr-copy-url", "Copy link", &theme).on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_url.clone()))
+                        }),
+                    ),
+            );
+            let mut column = widgets::page_column()
+                .pt(px(32.0))
+                .text_size(crate::typography::ui_rems(13.0))
+                .text_color(theme.text);
             if let Some(error) = &self.error {
                 column = column.child(widgets::error_strip(&theme, error.clone()));
             }
@@ -411,8 +570,8 @@ impl Render for PullRequestDetailPage {
                 column = column
                     .child(
                         div()
-                            .mt(px(20.0))
-                            .text_size(px(22.0))
+                            .text_size(crate::typography::ui_rems(22.0))
+                            .line_height(px(30.0))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(detail.title.clone()),
                     )
@@ -422,6 +581,7 @@ impl Render for PullRequestDetailPage {
                             .text_color(theme.text_muted)
                             .child(format!("#{} · {}", detail.number, detail.author.login)),
                     )
+                    .child(utilities)
                     .child(
                         div()
                             .mt(px(24.0))
@@ -464,6 +624,7 @@ impl Render for PullRequestDetailPage {
                             .mt(px(24.0))
                             .mb(px(20.0))
                             .flex()
+                            .flex_wrap()
                             .gap(px(8.0))
                             .children(
                                 [
@@ -484,7 +645,11 @@ impl Render for PullRequestDetailPage {
                     );
                 match self.tab {
                     Tab::Summary => {
-                        column = column.child(widgets::row_title(&theme, "Description"));
+                        column = column.child(section_heading(
+                            "Description",
+                            crate::icons::DOCUMENT,
+                            &theme,
+                        ));
                         if detail.body.is_empty() {
                             column = column.child(
                                 div()
@@ -515,11 +680,11 @@ impl Render for PullRequestDetailPage {
                                 ),
                             ));
                         }
-                        column = column.child(
-                            div()
-                                .mt(px(32.0))
-                                .child(widgets::row_title(&theme, "Checks")),
-                        );
+                        column = column.child(div().mt(px(32.0)).child(section_heading(
+                            "Checks",
+                            crate::icons::CHECKLIST,
+                            &theme,
+                        )));
                         if detail.status_check_rollup.is_empty() {
                             column = column.child(
                                 div()
@@ -553,12 +718,15 @@ impl Render for PullRequestDetailPage {
                                     .flex_wrap()
                                     .gap(px(12.0))
                                     .child(div().flex_1().min_w_0().child(name.clone()))
-                                    .child(status)
+                                    .child(status_chip(&status, &theme))
                                     .when(!link.is_empty(), |el| {
                                         el.cursor_pointer()
                                             .role(gpui::Role::Link)
                                             .tab_index(0)
                                             .aria_label(format!("Open {name}"))
+                                            .rounded(px(6.0))
+                                            .focus_visible(|style| style.bg(theme.selection))
+                                            .hover(|style| style.bg(theme.selection.opacity(0.5)))
                                             .on_click(move |_, _, cx| cx.open_url(&link))
                                     }),
                             );
@@ -590,97 +758,111 @@ impl Render for PullRequestDetailPage {
                                         .id(SharedString::from(format!("pr-file-{index}")))
                                         .role(gpui::Role::Button)
                                         .aria_label(format!("Jump to {path}"))
+                                        .focus_visible(|style| style.bg(theme.selection))
+                                        .hover(|style| style.bg(theme.selection.opacity(0.5)))
                                         .tab_index(0)
                                         .on_click(cx.listener(move |page, _, _, cx| {
                                             page.code_scroll
                                                 .scroll_to_item(offset, gpui::ScrollStrategy::Top);
                                             cx.notify();
                                         }))
-                                        .child(path.clone()),
+                                        .child(
+                                            crate::icons::icon(crate::icons::FILE_CODE)
+                                                .size(px(14.0))
+                                                .text_color(theme.text_muted),
+                                        )
+                                        .child(div().min_w_0().truncate().child(path.clone())),
                                 );
                             }
                             let rows = self.code_rows.clone();
                             let colors = theme.clone();
+                            let code_scroll = self.code_scroll.0.borrow().base_handle.clone();
                             column = column.child(
                                 div().mt(px(16.0)).h(px(440.0)).child(
-                                    gpui::uniform_list(
-                                        "pr-code-lines",
-                                        rows.len(),
-                                        move |range, _, _| {
-                                            range
-                                                .map(|index| {
-                                                    let row = &rows[index];
-                                                    let (wash, color, mark) = match row.kind {
-                                                        crate::changes::LineKind::Add => (
-                                                            colors.success.opacity(0.07),
-                                                            colors.success,
-                                                            "+",
-                                                        ),
-                                                        crate::changes::LineKind::Del => (
-                                                            colors.danger.opacity(0.07),
-                                                            colors.danger,
-                                                            "−",
-                                                        ),
-                                                        crate::changes::LineKind::Meta => (
-                                                            colors.selection,
-                                                            colors.text_muted,
-                                                            "",
-                                                        ),
-                                                        _ => (
-                                                            gpui::transparent_black(),
-                                                            colors.text,
-                                                            "",
-                                                        ),
-                                                    };
-                                                    div()
-                                                        .h(px(22.0))
-                                                        .flex()
-                                                        .items_center()
-                                                        .font_family(colors.font_mono.clone())
-                                                        .text_size(px(11.0))
-                                                        .bg(wash)
-                                                        .text_color(color)
-                                                        .child(
-                                                            div()
-                                                                .w(px(42.0))
-                                                                .flex_none()
-                                                                .text_right()
-                                                                .text_color(colors.text_muted)
-                                                                .child(row.old.clone()),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .w(px(42.0))
-                                                                .flex_none()
-                                                                .text_right()
-                                                                .text_color(colors.text_muted)
-                                                                .child(row.new.clone()),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .w(px(24.0))
-                                                                .flex_none()
-                                                                .text_center()
-                                                                .child(mark),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .min_w_0()
-                                                                .id(SharedString::from(format!(
-                                                                    "pr-line-{index}"
-                                                                )))
-                                                                .overflow_x_scroll()
-                                                                .whitespace_nowrap()
-                                                                .child(row.text.clone()),
-                                                        )
-                                                        .into_any_element()
-                                                })
-                                                .collect::<Vec<_>>()
-                                        },
+                                    crate::edge_fade::edge_faded(
+                                        16.0,
+                                        true,
+                                        true,
+                                        gpui::uniform_list(
+                                            "pr-code-lines",
+                                            rows.len(),
+                                            move |range, _, _| {
+                                                range
+                                                    .map(|index| {
+                                                        let row = &rows[index];
+                                                        let (wash, color, mark) = match row.kind {
+                                                            crate::changes::LineKind::Add => (
+                                                                colors.success.opacity(0.07),
+                                                                colors.success,
+                                                                "+",
+                                                            ),
+                                                            crate::changes::LineKind::Del => (
+                                                                colors.danger.opacity(0.07),
+                                                                colors.danger,
+                                                                "−",
+                                                            ),
+                                                            crate::changes::LineKind::Meta => (
+                                                                colors.selection,
+                                                                colors.text_muted,
+                                                                "",
+                                                            ),
+                                                            _ => (
+                                                                gpui::transparent_black(),
+                                                                colors.text,
+                                                                "",
+                                                            ),
+                                                        };
+                                                        div()
+                                                            .h(px(22.0))
+                                                            .flex()
+                                                            .items_center()
+                                                            .font_family(colors.font_mono.clone())
+                                                            .text_size(px(11.0))
+                                                            .bg(wash)
+                                                            .text_color(color)
+                                                            .child(
+                                                                div()
+                                                                    .w(px(42.0))
+                                                                    .flex_none()
+                                                                    .text_right()
+                                                                    .text_color(colors.text_muted)
+                                                                    .child(row.old.clone()),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .w(px(42.0))
+                                                                    .flex_none()
+                                                                    .text_right()
+                                                                    .text_color(colors.text_muted)
+                                                                    .child(row.new.clone()),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .w(px(24.0))
+                                                                    .flex_none()
+                                                                    .text_center()
+                                                                    .child(mark),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .flex_1()
+                                                                    .min_w_0()
+                                                                    .id(SharedString::from(
+                                                                        format!("pr-line-{index}"),
+                                                                    ))
+                                                                    .overflow_x_scroll()
+                                                                    .whitespace_nowrap()
+                                                                    .child(row.text.clone()),
+                                                            )
+                                                            .into_any_element()
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            },
+                                        )
+                                        .size_full()
+                                        .track_scroll(&self.code_scroll),
                                     )
-                                    .size_full()
-                                    .track_scroll(&self.code_scroll),
+                                    .fade_overflow_y(&code_scroll),
                                 ),
                             );
                         } else {
@@ -714,17 +896,30 @@ impl Render for PullRequestDetailPage {
                                     .flex()
                                     .flex_col()
                                     .gap(px(8.0))
-                                    .child(div().font_weight(gpui::FontWeight::MEDIUM).child(
-                                        format!(
-                                            "{} · {}",
-                                            comment.author.login,
-                                            if comment.state.is_empty() {
-                                                "Comment"
-                                            } else {
-                                                &comment.state
-                                            }
-                                        ),
-                                    ))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_wrap()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .child(
+                                                crate::icons::icon(crate::icons::CHAT_ROUND_LINE)
+                                                    .size(px(14.0))
+                                                    .text_color(theme.text_muted),
+                                            )
+                                            .child(
+                                                div().font_weight(gpui::FontWeight::MEDIUM).child(
+                                                    if comment.author.login.is_empty() {
+                                                        "Deleted account".to_owned()
+                                                    } else {
+                                                        comment.author.login.clone()
+                                                    },
+                                                ),
+                                            )
+                                            .when(!comment.state.is_empty(), |el| {
+                                                el.child(status_chip(&comment.state, &theme))
+                                            }),
+                                    )
                                     .child(
                                         div()
                                             .text_size(px(11.0))
@@ -747,14 +942,37 @@ impl Render for PullRequestDetailPage {
                 }
             } else if self.loading {
                 column = column.child(div().py(px(32.0)).child("Loading pull request…"));
+            } else {
+                column = column.child(utilities);
             }
+            let scroll = self.scroll.scroll.clone();
+            let rail = crate::popover::rail(self, "pr-detail-scrollbar", &theme, cx);
             div()
-                .id("pr-detail-scroll")
+                .id("pr-detail-scroll-host")
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
-                .track_scroll(&self.scroll)
-                .child(column)
+                .relative()
+                .on_hover(cx.listener(|page, hovered: &bool, _, cx| {
+                    if page.scroll.set_list_hovered(*hovered) {
+                        cx.notify();
+                    }
+                }))
+                .child(
+                    crate::edge_fade::edge_faded(
+                        24.0,
+                        true,
+                        true,
+                        div()
+                            .id("pr-detail-scroll")
+                            .debug_selector(|| "pr-detail-scroll".into())
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .child(column),
+                    )
+                    .fade_overflow_y(&scroll),
+                )
+                .children(rail)
                 .into_any_element()
         };
         div()
@@ -770,6 +988,18 @@ impl Render for PullRequestDetailPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_cues_distinguish_passed_pending_failed_and_skipped() {
+        assert_eq!(status_style("SUCCESS").2, StatusTone::Positive);
+        assert_eq!(status_style("IN_PROGRESS").2, StatusTone::Warning);
+        assert_eq!(status_style("FAILURE").2, StatusTone::Negative);
+        assert_eq!(status_style("SKIPPED").2, StatusTone::Neutral);
+        assert_eq!(status_style("CANCELLED").2, StatusTone::Neutral);
+        assert_eq!(status_style("MERGED").2, StatusTone::Merged);
+        assert_eq!(status_style("CHANGES_REQUESTED").0, "Changes requested");
+        assert_eq!(status_style("REVIEW_REQUIRED").0, "Awaiting review");
+    }
 
     #[test]
     fn pull_request_code_rows_preserve_sides_and_file_jump_offsets() {
@@ -841,5 +1071,39 @@ mod tests {
         cx.run_until_parked();
         page.read_with(cx, |page, _| assert!(page.tab == Tab::Code));
         assert!(cx.debug_bounds("pr-copy-patch").is_some());
+        let focus = cx.debug_bounds("pr-immersive").unwrap();
+        cx.simulate_mouse_down(
+            focus.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            focus.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        page.read_with(cx, |page, _| assert!(page.immersive));
+    }
+
+    #[gpui::test]
+    fn pull_request_error_keeps_retry_and_browser_actions(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let state = cx.new(|_| AppState::new());
+            PullRequestDetailPage::new(
+                state,
+                "https://github.com/a/b/pull/1".into(),
+                None,
+                BrowserContext::default(),
+                window,
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(px(320.0), px(800.0)));
+        cx.run_until_parked();
+        for selector in ["pr-detail-refresh", "pr-browser", "pr-external"] {
+            assert!(cx.debug_bounds(selector).is_some(), "{selector}");
+        }
     }
 }
