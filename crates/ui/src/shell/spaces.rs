@@ -1199,8 +1199,19 @@ mod pinned_session_tests {
             assert!(cx.debug_bounds("chat-time-archived").is_none());
             let pin = cx.debug_bounds("chat-archived-pin").unwrap();
             let archive = cx.debug_bounds("chat-archived-archive").unwrap();
-            assert!(archive.left() - pin.right() >= px(4.0));
-            assert_eq!(archive.right(), time.right());
+            assert_eq!(archive.left() - pin.right(), px(2.0));
+            assert_eq!(archive.right(), time.right() + px(4.0));
+            for (selector, target) in [
+                ("chat-archived-pin-surface", pin),
+                ("chat-archived-archive-surface", archive),
+            ] {
+                let surface = cx.debug_bounds(selector).unwrap();
+                assert_eq!(surface.center(), target.center());
+                assert_eq!(target.size, gpui::size(px(24.0), px(24.0)));
+                assert_eq!(surface.size, gpui::size(px(20.0), px(20.0)));
+                assert!(surface.top() >= archived.top() + px(4.0));
+                assert!(surface.bottom() <= archived.bottom() - px(4.0));
+            }
             assert_eq!(cx.debug_bounds("chat-archived").unwrap(), archived);
             cx.simulate_mouse_move(active.center(), None, gpui::Modifiers::default());
             assert_eq!(cx.debug_bounds("chat-time-archived").unwrap(), time);
@@ -1406,7 +1417,7 @@ mod pinned_session_tests {
             let pin = cx.debug_bounds("chat-older-pin").unwrap();
             let archive = cx.debug_bounds("chat-older-archive").unwrap();
             assert!(pin.right() <= archive.left());
-            assert_eq!(archive.right(), time.right());
+            assert_eq!(archive.right(), time.right() + px(4.0));
             for target in [pin.center(), archive.center()] {
                 cx.simulate_mouse_move(target, None, gpui::Modifiers::default());
                 assert_eq!(cx.debug_bounds("chat-older-pin").unwrap(), pin);

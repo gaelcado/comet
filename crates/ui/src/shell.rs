@@ -6756,8 +6756,10 @@ impl Shell {
             let pin_id = id.clone();
             let archive_id = id.clone();
             let action = |name: &str, label: &'static str, glyph, tone| {
+                let group = SharedString::from(format!("{row_id}-{name}-hover"));
                 div()
                     .id(SharedString::from(format!("{row_id}-{name}")))
+                    .group(group.clone())
                     .debug_selector({
                         let selector = format!("{row_id}-{name}");
                         move || selector.clone()
@@ -6769,16 +6771,35 @@ impl Shell {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(4.0))
                     .cursor_pointer()
-                    .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(icon(glyph).size(px(13.0)).text_color(tone))
+                    // Paint within the hit target so a compact row retains
+                    // breathing room around the button on every side.
+                    .child(
+                        div()
+                            .debug_selector({
+                                let selector = format!("{row_id}-{name}-surface");
+                                move || selector.clone()
+                            })
+                            .size(px(20.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.0))
+                            .group_hover(group.clone(), |s| s.bg(theme.glass_hover()))
+                            .child(
+                                icon(glyph)
+                                    .size(px(14.0))
+                                    .text_color(tone)
+                                    .group_hover(group, |s| s.text_color(theme.text)),
+                            ),
+                    )
             };
             div()
                 .flex()
                 .items_center()
-                .gap(px(4.0))
+                .gap(px(2.0))
                 .child(
                     action(
                         "pin",
@@ -7072,6 +7093,7 @@ impl Shell {
                                 // Separate session content from metadata while
                                 // keeping metadata internally grouped.
                                 .ml(px(4.0))
+                                .when(show_actions, |el| el.mr(px(-4.0)))
                                 .text_color(subline)
                                 .when((compact || !show_label) && remote && !show_actions, |el| {
                                     el.child(
