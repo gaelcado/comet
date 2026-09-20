@@ -243,6 +243,8 @@ pub struct PullRequestDetailPage {
     tab: Tab,
     tab_fades: crate::motion::HoverFades,
     files_expanded: bool,
+    files_motion: Option<crate::motion::DisclosureMotion>,
+    files_height: Rc<std::cell::Cell<f32>>,
     scroll: widgets::PageScroll,
     comment_input: Entity<crate::composer::ComposerInput>,
     comment_subscription: Option<Subscription>,
@@ -297,6 +299,8 @@ impl PullRequestDetailPage {
             tab: Tab::Summary,
             tab_fades,
             files_expanded: false,
+            files_motion: None,
+            files_height: Rc::new(std::cell::Cell::new(0.0)),
             scroll: widgets::PageScroll::default(),
             comment_input: cx.new(|cx| {
                 crate::composer::ComposerInput::with_context(
@@ -677,6 +681,27 @@ impl PullRequestDetailPage {
             .into_any_element()
     }
 
+    fn toggle_files(&mut self, cx: &mut Context<Self>) {
+        let height = self
+            .files_height
+            .get()
+            .max((self.code_files.len() as f32 * 28.0).min(168.0));
+        let previous = self.files_motion;
+        let from = previous
+            .filter(|motion| motion.animating())
+            .map(|motion| motion.current())
+            .unwrap_or(if self.files_expanded { height } else { 0.0 });
+        self.files_expanded = !self.files_expanded;
+        self.files_motion = (!crate::motion::reduced_motion(cx)).then(|| {
+            crate::motion::DisclosureMotion::new(
+                previous.map_or(1, |motion| motion.epoch + 1),
+                from,
+                if self.files_expanded { height } else { 0.0 },
+            )
+        });
+        cx.notify();
+    }
+
     fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         if self.tab == tab {
             return;
@@ -1002,17 +1027,6 @@ impl Render for PullRequestDetailPage {
                             .items_center()
                             .gap(px(8.0))
                             .child(
-                                crate::icons::icon(crate::icons::FOLDER_WITH_FILES)
-                                    .size(px(14.0))
-                                    .text_color(theme.text_muted),
-                            )
-                            .child(
-                                div()
-                                    .text_size(crate::typography::ui_rems(12.0))
-                                    .text_color(theme.text_muted)
-                                    .child(repository),
-                            )
-                            .child(
                                 div()
                                     .min_w_0()
                                     .text_color(theme.text_muted)
@@ -1029,8 +1043,18 @@ impl Render for PullRequestDetailPage {
                                         "Deleted account".to_owned()
                                     } else {
                                         detail.author.login.clone()
-                                    })
-                                    .child(format!("· #{}", detail.number)),
+                                    }),
+                            )
+                            .child(
+                                crate::icons::icon(crate::icons::FOLDER_WITH_FILES)
+                                    .size(px(14.0))
+                                    .text_color(theme.text_muted),
+                            )
+                            .child(
+                                div()
+                                    .text_size(crate::typography::ui_rems(12.0))
+                                    .text_color(theme.text_muted)
+                                    .child(format!("{repository} · #{}", detail.number)),
                             ),
                     )
                     .child(
@@ -1183,6 +1207,13 @@ impl Render for PullRequestDetailPage {
                                     cx.listener(|page, _, _, cx| page.load_diff(true, cx)),
                                 ));
                         } else if let Some(diff) = &self.diff {
+                            let files_reveal = self
+                                .files_motion
+                                .filter(|motion| motion.animating())
+                                .map_or(if self.files_expanded { 1.0 } else { 0.0 }, |motion| {
+                                    (motion.current() / motion.from.max(motion.to).max(1.0))
+                                        .clamp(0.0, 1.0)
+                                });
                             let patch = diff.clone();
                             column = column.child(
                                 div()
@@ -1195,17 +1226,17 @@ impl Render for PullRequestDetailPage {
                                             .aria_expanded(self.files_expanded)
                                             .child(self.code_files.len().to_string())
                                             .child(
-                                                crate::icons::icon(if self.files_expanded {
-                                                    crate::icons::ALT_ARROW_UP
-                                                } else {
-                                                    crate::icons::ALT_ARROW_DOWN
-                                                })
-                                                .size(px(12.0))
-                                                .text_color(theme.text_muted),
+                                                crate::icons::icon(crate::icons::ALT_ARROW_RIGHT)
+                                                    .size(px(12.0))
+                                                    .text_color(theme.text_muted)
+                                                    .with_transformation(
+                                                        gpui::Transformation::rotate(
+                                                            gpui::percentage(files_reveal * 0.25),
+                                                        ),
+                                                    ),
                                             )
                                             .on_click(cx.listener(|page, _, _, cx| {
-                                                page.files_expanded = !page.files_expanded;
-                                                cx.notify();
+                                                page.toggle_files(cx);
                                             })),
                                     )
                                     .justify_between()
@@ -1217,12 +1248,26 @@ impl Render for PullRequestDetailPage {
                                         },
                                     )),
                             );
-                            if self.files_expanded {
+                            let files_motion =
+                                self.files_motion.filter(|motion| motion.animating());
+                            if self.files_expanded || files_motion.is_some() {
+                                let height = self.files_height.clone();
                                 let mut file_list = div()
                                     .id("pr-file-list")
                                     .max_h(px(160.0))
                                     .overflow_y_scroll()
-                                    .mt(px(8.0));
+                                    .mt(px(8.0))
+                                    .relative()
+                                    .child(
+                                        gpui::canvas(
+                                            move |bounds, _, _| {
+                                                height.set(f32::from(bounds.size.height));
+                                            },
+                                            |_, _, _, _| {},
+                                        )
+                                        .absolute()
+                                        .inset_0(),
+                                    );
                                 for (index, (path, offset)) in self.code_files.iter().enumerate() {
                                     let offset = *offset;
                                     file_list = file_list.child(
@@ -1238,7 +1283,9 @@ impl Render for PullRequestDetailPage {
                                                     offset,
                                                     gpui::ScrollStrategy::Top,
                                                 );
-                                                page.files_expanded = false;
+                                                if page.files_expanded {
+                                                    page.toggle_files(cx);
+                                                }
                                                 cx.notify();
                                             }))
                                             .child(
@@ -1249,7 +1296,19 @@ impl Render for PullRequestDetailPage {
                                             .child(div().min_w_0().truncate().child(path.clone())),
                                     );
                                 }
-                                column = column.child(file_list);
+                                column = column.child(
+                                    div()
+                                        .overflow_hidden()
+                                        .when_some(files_motion, |el, motion| {
+                                            el.h(px(motion.current())).opacity(
+                                                0.35 + 0.65
+                                                    * (motion.current()
+                                                        / motion.from.max(motion.to).max(1.0))
+                                                    .clamp(0.0, 1.0),
+                                            )
+                                        })
+                                        .child(file_list),
+                                );
                             }
                             let rows = self.code_rows.clone();
                             let code_width = (self.code_width - 128.0) / 7.0
@@ -1453,7 +1512,9 @@ impl Render for PullRequestDetailPage {
                 .into_any_element()
         };
         let navigation = self.navigation(&theme, cx);
-        if self.tab_fades.tick_at(Instant::now()) {
+        if self.tab_fades.tick_at(Instant::now())
+            || self.files_motion.is_some_and(|motion| motion.animating())
+        {
             window.request_animation_frame();
         }
         let composer = (self.tab == Tab::Activity).then(|| self.comment_composer(&theme, cx));

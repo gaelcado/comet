@@ -182,41 +182,7 @@ struct ChatMenuState {
     page: ChatMenuPage,
 }
 
-/// Interruptible height tween for the sidebar's device/archive disclosures.
-/// The rendered element owns the frame clock; this state preserves the current
-/// interpolated height when a second click reverses an in-flight transition.
-#[derive(Clone, Copy)]
-pub(super) struct SidebarDisclosureMotion {
-    pub(super) epoch: u64,
-    pub(super) from: f32,
-    pub(super) to: f32,
-    started: std::time::Instant,
-}
-
-impl SidebarDisclosureMotion {
-    fn new(epoch: u64, from: f32, to: f32) -> Self {
-        Self {
-            epoch,
-            from,
-            to,
-            started: std::time::Instant::now(),
-        }
-    }
-
-    fn current(self) -> f32 {
-        let total = motion::COLLAPSE.total().as_secs_f32();
-        let raw = if total > 0.0 {
-            self.started.elapsed().as_secs_f32() / total
-        } else {
-            1.0
-        };
-        motion::lerp(self.from, self.to, motion::COLLAPSE.progress(raw))
-    }
-
-    fn animating(self) -> bool {
-        self.started.elapsed() < motion::COLLAPSE.total() + spaces::SIDEBAR_DISCLOSURE_TWEEN_GRACE
-    }
-}
+pub(super) use crate::motion::DisclosureMotion as SidebarDisclosureMotion;
 
 /// Vertical pane resize hitboxes yield the global titlebar. Keeping this in
 /// the shared constructor makes left/right seams mirror each other and avoids
@@ -281,8 +247,8 @@ fn composer_target_width(panel_width: f32, content_width: f32, docked: bool) -> 
     (content_width + 2.0 * Theme::SPACE_LG).min(panel_width)
 }
 
-fn titlebar_new_session_alpha(is_chat_route: bool, has_selected_chat: bool) -> f32 {
-    if is_chat_route && has_selected_chat {
+fn titlebar_new_session_alpha(route: &Route, has_selected_chat: bool) -> f32 {
+    if matches!(route, Route::PullRequests) || (matches!(route, Route::Chat) && has_selected_chat) {
         1.0
     } else {
         0.0
@@ -5877,10 +5843,10 @@ impl Shell {
     }
 
     /// The titlebar owns new-session creation regardless of sidebar state. It
-    /// is useful only while an existing session is selected.
+    /// remains available on PR screens, even without a selected session.
     pub(super) fn titlebar_plus_alpha(&self, cx: &App) -> f32 {
         titlebar_new_session_alpha(
-            matches!(self.route, Route::Chat),
+            &self.route,
             self.state.read(cx).selected_chat.is_some(),
         )
     }
@@ -12658,10 +12624,12 @@ mod tests {
 
     #[test]
     fn new_session_action_lives_in_the_titlebar_only_when_useful() {
-        assert_eq!(titlebar_new_session_alpha(true, true), 1.0);
-        assert_eq!(titlebar_new_session_alpha(true, false), 0.0);
-        assert_eq!(titlebar_new_session_alpha(false, true), 0.0);
-        assert_eq!(titlebar_new_session_alpha(false, false), 0.0);
+        assert_eq!(titlebar_new_session_alpha(&Route::Chat, true), 1.0);
+        assert_eq!(titlebar_new_session_alpha(&Route::Chat, false), 0.0);
+        assert_eq!(titlebar_new_session_alpha(&Route::PullRequests, false), 1.0);
+        assert_eq!(titlebar_new_session_alpha(&Route::PullRequests, true), 1.0);
+        assert_eq!(titlebar_new_session_alpha(&Route::Settings(SettingsSection::Devices), true), 0.0);
+        assert_eq!(titlebar_new_session_alpha(&Route::Settings(SettingsSection::Devices), false), 0.0);
     }
 
     #[test]

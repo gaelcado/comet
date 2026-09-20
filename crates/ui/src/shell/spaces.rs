@@ -1927,9 +1927,6 @@ pub(super) const SIDEBAR_DISCLOSURE_HEADER_HEIGHT: f32 = 28.0;
 pub(super) const SIDEBAR_DISCLOSURE_BODY_INSET: f32 = 4.0;
 const SIDEBAR_DISCLOSURE_SECTION_HEIGHT: f32 =
     SIDEBAR_SECTION_GAP + SIDEBAR_DISCLOSURE_HEADER_HEIGHT;
-pub(super) const SIDEBAR_DISCLOSURE_TWEEN_GRACE: std::time::Duration =
-    std::time::Duration::from_millis(120);
-
 /// Put this machine's device group first without disturbing the recency-based
 /// order of any remote groups. A targeted promotion is more truthful than a
 /// full name sort: local context leads, then the user's chosen chat sort wins.

@@ -1,4 +1,9 @@
-use std::{collections::HashSet, rc::Rc, time::Instant};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    time::Instant,
+};
 
 use chrono::{DateTime, Utc};
 use gpui::{
@@ -199,6 +204,8 @@ pub struct PullRequestsPage {
     )>,
     selected_url: Option<String>,
     collapsed_groups: HashSet<PullRequestGroup>,
+    group_motions: HashMap<PullRequestGroup, crate::motion::DisclosureMotion>,
+    group_heights: HashMap<PullRequestGroup, Rc<Cell<f32>>>,
     _search_events: Subscription,
     /// `None` keeps local calls direct; a value is forwarded by the relay.
     target_device: Option<String>,
@@ -245,6 +252,7 @@ impl PullRequestsPage {
                 page.view_items = None;
                 page.scroll.scroll.set_offset(gpui::Point::default());
                 page.collapsed_groups.clear();
+                page.group_motions.clear();
                 cx.notify();
             }
         });
@@ -280,6 +288,11 @@ impl PullRequestsPage {
             snapshots: Vec::new(),
             selected_url: None,
             collapsed_groups: HashSet::new(),
+            group_motions: HashMap::new(),
+            group_heights: PullRequestGroup::ALL
+                .into_iter()
+                .map(|group| (group, Rc::new(Cell::new(0.0))))
+                .collect(),
             _search_events: search_events,
             target_device: None,
             items: Vec::new(),
@@ -442,6 +455,7 @@ impl PullRequestsPage {
         self.request_task = None;
         self.target_device = target;
         self.collapsed_groups.clear();
+        self.group_motions.clear();
         self.items.clear();
         self.view_items = None;
         self.load_state = PullRequestsLoadState::Idle;
@@ -1286,108 +1300,114 @@ impl Render for PullRequestsPage {
                 div()
                     .mt(px(12.0))
                     .flex()
-                    .items_center()
-                    .gap(px(2.0))
-                    .children(
-                        [
-                            (
-                                ChangeRequestFilter::Authored,
-                                "Authored",
-                                "pr-filter-authored",
-                            ),
-                            (
-                                ChangeRequestFilter::Reviewing,
-                                "Reviewing",
-                                "pr-filter-reviewing",
-                            ),
-                            (ChangeRequestFilter::All, "All", "pr-filter-all"),
-                        ]
-                        .into_iter()
-                        .map(|(filter, label, id)| {
-                            let selected = self.filter_fades.value_at(id, Instant::now());
-                            let hover_key = format!("pr-filter-{}-{id}", cx.entity_id());
-                            let hover = crate::motion::hover_t(&hover_key);
-                            crate::surface_chrome::tab_frame(id, self.filter == filter, &theme)
-                                .bg(crate::theme::wash(
-                                    0.10 * selected + 0.06 * hover * (1.0 - selected),
-                                ))
-                                .text_color(crate::motion::mix(
-                                    theme.text_muted,
-                                    theme.text,
-                                    selected.max(hover),
-                                ))
-                                .on_hover(crate::motion::hover_listener(hover_key))
-                                .hover(move |style| {
-                                    style.bg(crate::theme::wash(
-                                        0.10 * selected + 0.06 * hover * (1.0 - selected),
-                                    ))
-                                })
-                                .debug_selector(move || id.into())
-                                .px(px(10.0))
-                                .child(label)
-                                .on_click(
-                                    cx.listener(move |page, _, _, cx| {
-                                        page.select_filter(filter, cx)
-                                    }),
-                                )
-                        }),
-                    ),
-            )
-            .child(
-                div()
-                    .mt(px(8.0))
-                    .flex()
                     .flex_wrap()
                     .items_center()
-                    .gap(px(Theme::SPACE_SM))
+                    .gap(px(12.0))
                     .child(
-                        crate::surface_chrome::input()
-                            .h(px(32.0))
-                            .min_w(px(160.0))
-                            .child(
-                                icon(icons::MAGNIFER)
-                                    .size(px(14.0))
-                                    .text_color(theme.text_muted),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .h(px(16.0))
-                                    .overflow_hidden()
-                                    .child(self.search.clone()),
-                            )
-                            .when(!self.query.is_empty(), |el| {
-                                el.child(
-                                    div()
-                                        .id("pull-requests-clear-search")
-                                        .role(gpui::Role::Button)
-                                        .aria_label("Clear search")
-                                        .tab_index(0)
-                                        .size(px(24.0))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(px(4.0))
-                                        .focus_visible(|style| style.bg(theme.glass_hover()))
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|page, _, _, cx| {
-                                            page.search
-                                                .update(cx, |input, cx| input.set_text("", cx));
-                                            page.query.clear();
-                                            page.view_items = None;
-                                            page.scroll.scroll.set_offset(gpui::Point::default());
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            icon(icons::CLOSE)
-                                                .size(px(12.0))
-                                                .text_color(theme.text_muted),
-                                        ),
-                                )
+                        div().flex().items_center().gap(px(2.0)).children(
+                            [
+                                (
+                                    ChangeRequestFilter::Authored,
+                                    "Authored",
+                                    "pr-filter-authored",
+                                ),
+                                (
+                                    ChangeRequestFilter::Reviewing,
+                                    "Reviewing",
+                                    "pr-filter-reviewing",
+                                ),
+                                (ChangeRequestFilter::All, "All", "pr-filter-all"),
+                            ]
+                            .into_iter()
+                            .map(|(filter, label, id)| {
+                                let selected = self.filter_fades.value_at(id, Instant::now());
+                                let hover_key = format!("pr-filter-{}-{id}", cx.entity_id());
+                                let hover = crate::motion::hover_t(&hover_key);
+                                crate::surface_chrome::tab_frame(id, self.filter == filter, &theme)
+                                    .bg(crate::theme::wash(
+                                        0.10 * selected + 0.06 * hover * (1.0 - selected),
+                                    ))
+                                    .text_color(crate::motion::mix(
+                                        theme.text_muted,
+                                        theme.text,
+                                        selected.max(hover),
+                                    ))
+                                    .on_hover(crate::motion::hover_listener(hover_key))
+                                    .hover(move |style| {
+                                        style.bg(crate::theme::wash(
+                                            0.10 * selected + 0.06 * hover * (1.0 - selected),
+                                        ))
+                                    })
+                                    .debug_selector(move || id.into())
+                                    .px(px(10.0))
+                                    .child(label)
+                                    .on_click(cx.listener(move |page, _, _, cx| {
+                                        page.select_filter(filter, cx)
+                                    }))
                             }),
+                        ),
                     )
-                    .child(self.render_sort_menu(&theme, cx)),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w(px(180.0))
+                            .items_center()
+                            .gap(px(Theme::SPACE_SM))
+                            .child(
+                                crate::surface_chrome::input()
+                                    .h(px(32.0))
+                                    .min_w(px(160.0))
+                                    .child(
+                                        icon(icons::MAGNIFER)
+                                            .size(px(14.0))
+                                            .text_color(theme.text_muted),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .h(px(16.0))
+                                            .overflow_hidden()
+                                            .child(self.search.clone()),
+                                    )
+                                    .when(!self.query.is_empty(), |el| {
+                                        el.child(
+                                            div()
+                                                .id("pull-requests-clear-search")
+                                                .role(gpui::Role::Button)
+                                                .aria_label("Clear search")
+                                                .tab_index(0)
+                                                .size(px(24.0))
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded(px(4.0))
+                                                .focus_visible(|style| {
+                                                    style.bg(theme.glass_hover())
+                                                })
+                                                .cursor_pointer()
+                                                .on_click(cx.listener(|page, _, _, cx| {
+                                                    page.search.update(cx, |input, cx| {
+                                                        input.set_text("", cx)
+                                                    });
+                                                    page.query.clear();
+                                                    page.view_items = None;
+                                                    page.scroll
+                                                        .scroll
+                                                        .set_offset(gpui::Point::default());
+                                                    cx.notify();
+                                                }))
+                                                .child(
+                                                    icon(icons::CLOSE)
+                                                        .size(px(12.0))
+                                                        .text_color(theme.text_muted),
+                                                ),
+                                        )
+                                    }),
+                            )
+                            .child(self.render_sort_menu(&theme, cx)),
+                    ),
             )
             .when(!self.query.is_empty(), |el| {
                 el.child(
@@ -1442,13 +1462,17 @@ impl Render for PullRequestsPage {
                 layout,
                 self.sort.field,
                 &self.collapsed_groups,
+                &self.group_motions,
+                &self.group_heights,
                 self.selected_url.as_deref(),
                 &theme,
                 cx,
             )
         };
         let scrollbar = popover::rail(self, "pull-requests-scrollbar", &theme, cx);
-        if self.filter_fades.tick_at(Instant::now()) {
+        if self.filter_fades.tick_at(Instant::now())
+            || self.group_motions.values().any(|motion| motion.animating())
+        {
             window.request_animation_frame();
         }
         // Keep the page actions reachable while browsing a long list. Only the
@@ -1555,6 +1579,8 @@ fn render_grouped_requests(
     layout: PullRequestTableLayout,
     sort_field: PullRequestSortField,
     collapsed: &HashSet<PullRequestGroup>,
+    motions: &HashMap<PullRequestGroup, crate::motion::DisclosureMotion>,
+    heights: &HashMap<PullRequestGroup, Rc<Cell<f32>>>,
     selected_url: Option<&str>,
     theme: &Theme,
     cx: &mut Context<PullRequestsPage>,
@@ -1573,6 +1599,15 @@ fn render_grouped_requests(
                 return None;
             }
             let closed = collapsed.contains(&group);
+            let measured = heights[&group].clone();
+            let full_height = measured.get().max(1.0);
+            let tween = motions
+                .get(&group)
+                .copied()
+                .filter(|motion| motion.animating());
+            let reveal = tween.map_or(if closed { 0.0 } else { 1.0 }, |motion| {
+                (motion.current() / full_height).clamp(0.0, 1.0)
+            });
             Some(
                 div()
                     .w_full()
@@ -1599,19 +1634,36 @@ fn render_grouped_requests(
                             .cursor_pointer()
                             .hover(|style| style.bg(crate::theme::ink(0.025)))
                             .on_click(cx.listener(move |page, _, _, cx| {
+                                let height = page.group_heights[&group].get();
+                                let previous = page.group_motions.get(&group).copied();
+                                let from = previous
+                                    .filter(|motion| motion.animating())
+                                    .map(|motion| motion.current())
+                                    .unwrap_or(if closed { 0.0 } else { height });
+                                if crate::motion::reduced_motion(cx) {
+                                    page.group_motions.remove(&group);
+                                } else {
+                                    page.group_motions.insert(
+                                        group,
+                                        crate::motion::DisclosureMotion::new(
+                                            previous.map_or(1, |motion| motion.epoch + 1),
+                                            from,
+                                            if closed { height } else { 0.0 },
+                                        ),
+                                    );
+                                }
                                 if !page.collapsed_groups.remove(&group) {
                                     page.collapsed_groups.insert(group);
                                 }
                                 cx.notify();
                             }))
                             .child(
-                                icon(if closed {
-                                    icons::ALT_ARROW_RIGHT
-                                } else {
-                                    icons::ALT_ARROW_DOWN
-                                })
-                                .size(px(14.0))
-                                .text_color(theme.text_muted),
+                                icon(icons::ALT_ARROW_RIGHT)
+                                    .size(px(14.0))
+                                    .text_color(theme.text_muted)
+                                    .with_transformation(gpui::Transformation::rotate(
+                                        gpui::percentage(reveal * 0.25),
+                                    )),
                             )
                             .child(
                                 div()
@@ -1630,15 +1682,41 @@ fn render_grouped_requests(
                                     .child(rows.len().to_string()),
                             ),
                     )
-                    .when(!closed, |el| {
-                        el.children(rows.into_iter().map(|item| {
+                    .when(!closed || tween.is_some(), |el| {
+                        let content = div()
+                            .w_full()
+                            .flex_none()
+                            .relative()
+                            .child(
+                                gpui::canvas(
+                                    move |bounds, _, _| {
+                                        measured.set(f32::from(bounds.size.height));
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .inset_0(),
+                            )
+                            .children(rows.into_iter().map(|item| {
+                                div()
+                                    .rounded(px(6.0))
+                                    .when(selected_url == Some(item.url.as_str()), |el| {
+                                        el.bg(theme.glass_hover())
+                                    })
+                                    .child(render_table_row(item, layout, sort_field, theme))
+                            }));
+                        el.child(
                             div()
-                                .rounded(px(6.0))
-                                .when(selected_url == Some(item.url.as_str()), |el| {
-                                    el.bg(theme.glass_hover())
+                                .w_full()
+                                .overflow_hidden()
+                                .when_some(tween, |el, motion| {
+                                    el.h(px(motion.current()))
+                                        .opacity(0.35 + 0.65 * reveal)
+                                        .relative()
+                                        .top(px(-3.0 * (1.0 - reveal)))
                                 })
-                                .child(render_table_row(item, layout, sort_field, theme))
-                        }))
+                                .child(content),
+                        )
                     })
                     .into_any_element(),
             )
@@ -2773,7 +2851,10 @@ mod tests {
         );
         cx.run_until_parked();
         page.read_with(cx, |page, _| {
-            assert!(page.collapsed_groups.contains(&PullRequestGroup::Review))
+            assert!(page.collapsed_groups.contains(&PullRequestGroup::Review));
+            let motion = page.group_motions[&PullRequestGroup::Review];
+            assert!(motion.from > 0.0, "collapse uses measured row height");
+            assert_eq!(motion.to, 0.0);
         });
         page.update(cx, |page, cx| {
             page.search
