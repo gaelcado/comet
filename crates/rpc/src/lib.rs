@@ -188,6 +188,8 @@ pub mod methods {
     /// Repository-scoped listing. A distinct method prevents old engines from
     /// silently ignoring the filter and issuing a global GitHub search.
     pub const LIST_REPOSITORY_CHANGE_REQUESTS: &str = "ListRepositoryChangeRequests";
+    /// Resolve a selected checkout through local Git metadata only.
+    pub const GET_CHANGE_REQUEST_REPOSITORY: &str = "GetChangeRequestRepository";
     pub const GET_CHANGE_REQUEST: &str = "GetChangeRequest";
     pub const GET_CHANGE_REQUEST_DIFF: &str = "GetChangeRequestDiff";
     pub const GET_CHECKOUT_DIFF: &str = "GetCheckoutDiff";

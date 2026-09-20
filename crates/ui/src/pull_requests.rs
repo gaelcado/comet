@@ -202,6 +202,8 @@ pub struct PullRequestsPage {
     repository_input: Entity<ComposerInput>,
     repository: Option<String>,
     repository_error: Option<String>,
+    initial_scope_attempted: bool,
+    initial_scope_task: Option<Task<()>>,
     _repository_events: Subscription,
     snapshots: Vec<(
         (Option<String>, String),
@@ -268,16 +270,19 @@ impl PullRequestsPage {
         let observe = cx.observe(&state, |page, _, cx| {
             if page.visible {
                 page.reconcile_target_device(cx);
+                page.initialize_repository(cx);
                 cx.notify();
             }
         });
-        Self {
+        let mut page = Self {
             state,
             search,
             query: String::new(),
             repository_input,
             repository: None,
             repository_error: None,
+            initial_scope_attempted: false,
+            initial_scope_task: None,
             _repository_events: repository_events,
             snapshots: Vec::new(),
             selected_url: None,
@@ -297,20 +302,96 @@ impl PullRequestsPage {
             content_width: None,
             device_menu: popover::Popup::default(),
             _observe: observe,
+        };
+        page.initialize_repository(cx);
+        page
+    }
+
+    fn initialize_repository(&mut self, cx: &mut Context<Self>) {
+        if self.repository.is_some() || self.initial_scope_attempted || !self.visible {
+            return;
         }
+        let state = self.state.read(cx);
+        let Some(engine) = state.engine().cloned() else {
+            return;
+        };
+        let current = state
+            .selected_space_row()
+            .map(|space| (space.path.clone(), space.device_id.clone()))
+            .or_else(|| {
+                state
+                    .selected_chat_row()
+                    .and_then(|chat| Some((chat.cwd.clone()?, chat.device_id.clone())))
+            });
+        let saved = crate::settings::current(cx);
+        let fallback = saved
+            .last_pull_request_repository
+            .filter(|repo| valid_repository_filter(repo))
+            .map(|repo| (repo, saved.last_pull_request_device));
+        let Some((cwd, device)) = current else {
+            if let Some((repo, target)) = fallback {
+                self.apply_initial_repository(repo, target, cx);
+            }
+            return;
+        };
+        let target = (Some(device.as_str()) != state.local_device_id.as_deref()).then_some(device);
+        let mut params = params_for_target(target.as_deref());
+        params["cwd"] = cwd.into();
+        self.initial_scope_attempted = true;
+        self.load_state = PullRequestsLoadState::Loading;
+        self.initial_scope_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(methods::GET_CHANGE_REQUEST_REPOSITORY, params)
+                .await;
+            let repository = result
+                .ok()
+                .and_then(|value| serde_json::from_value::<Option<String>>(value).ok())
+                .flatten();
+            let _ = this.update(cx, |page, cx| {
+                page.initial_scope_task = None;
+                // User selection cancels this task; never override their scope.
+                if page.repository.is_some() {
+                    return;
+                }
+                page.load_state = PullRequestsLoadState::Idle;
+                if let Some((repo, target)) = initial_repository_scope(repository, target, fallback)
+                {
+                    page.apply_initial_repository(repo, target, cx);
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn apply_initial_repository(
+        &mut self,
+        repository: String,
+        target: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.target_device = target;
+        self.repository_input
+            .update(cx, |input, cx| input.set_text(&repository, cx));
+        self.select_repository(cx);
     }
 
     /// Called whenever shell navigation makes the already-owned entity visible again.
     pub fn on_visible(&mut self, cx: &mut Context<Self>) {
         self.visible = true;
         self.reconcile_target_device(cx);
-        // Navigation never spends API quota. Refresh is an explicit action.
+        // Seed one scope only; subsequent navigation reuses its snapshot.
+        self.initialize_repository(cx);
         cx.notify();
     }
 
     /// Keep the retained route entity dormant while another outlet is active.
     pub fn on_hidden(&mut self) {
         self.visible = false;
+        if self.initial_scope_task.take().is_some() {
+            self.initial_scope_attempted = false;
+            self.load_state = PullRequestsLoadState::Idle;
+        }
     }
 
     fn close_device_menu(&mut self, cx: &mut Context<Self>) {
@@ -326,6 +407,8 @@ impl PullRequestsPage {
             return;
         }
 
+        self.initial_scope_task = None;
+        self.initial_scope_attempted = true;
         self.reset_for_target(target);
         cx.notify();
     }
@@ -373,6 +456,14 @@ impl PullRequestsPage {
             return;
         }
         self.repository_error = None;
+        self.initial_scope_task = None;
+        self.initial_scope_attempted = true;
+        let saved_repository = repository.clone();
+        let saved_device = self.target_device.clone();
+        crate::settings::update(crate::settings::SavePolicy::Debounced, cx, |settings| {
+            settings.last_pull_request_repository = Some(saved_repository);
+            settings.last_pull_request_device = saved_device;
+        });
         if self.repository.as_deref() != Some(&repository) {
             self.repository = Some(repository);
             self.reset_for_target(self.target_device.clone());
@@ -641,7 +732,7 @@ impl PullRequestsPage {
             PullRequestsLoadState::Failed(error) => error_copy(error),
             _ if self.repository.is_none() => (
                 "Choose a repository".into(),
-                "Load your open pull requests from one repository. Nothing is fetched until you choose.".into(),
+                "No GitHub repository was found for this project. Choose one to load your open pull requests.".into(),
             ),
             PullRequestsLoadState::Idle => (
                 "Ready when you are".into(),
@@ -1566,6 +1657,17 @@ fn normalized_target_device(
     }
 }
 
+fn initial_repository_scope(
+    current: Option<String>,
+    target: Option<String>,
+    fallback: Option<(String, Option<String>)>,
+) -> Option<(String, Option<String>)> {
+    current
+        .filter(|repo| valid_repository_filter(repo))
+        .map(|repo| (repo, target))
+        .or_else(|| fallback.filter(|(repo, _)| valid_repository_filter(repo)))
+}
+
 fn valid_repository_filter(value: &str) -> bool {
     let parts: Vec<_> = value.split('/').collect();
     parts.len() == 2
@@ -1789,6 +1891,51 @@ mod tests {
                 Theme::of(cx),
             ))
         }
+    }
+
+    #[test]
+    fn pull_request_default_scope_prefers_current_and_preserves_fallback_device() {
+        let saved = Some(("saved/repo".into(), Some("remote".into())));
+        assert_eq!(
+            initial_repository_scope(Some("current/repo".into()), None, saved.clone()),
+            Some(("current/repo".into(), None))
+        );
+        assert_eq!(initial_repository_scope(None, None, saved.clone()), saved);
+        assert!(initial_repository_scope(None, None, Some(("bad filter".into(), None))).is_none());
+    }
+
+    #[gpui::test]
+    fn pull_request_default_scope_reuses_cache_and_persists_selection(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext;
+        let temp = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            cx.set_global(Theme::default());
+            crate::settings::init(crate::settings::UiSettings::default(), temp.path(), cx);
+        });
+        let (page, cx) = cx.add_window_view(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            PullRequestsPage::new(state, cx)
+        });
+        page.update(cx, |page, cx| {
+            page.snapshots.push((
+                (Some("remote".into()), "saved/repo".into()),
+                vec![pull_request("saved/repo", 10, 1, 1, 1)],
+                Instant::now(),
+            ));
+            page.apply_initial_repository("saved/repo".into(), Some("remote".into()), cx);
+            assert_eq!(page.items[0].number, 10);
+            assert_eq!(page.load_state, PullRequestsLoadState::Ready);
+            let settings = crate::settings::current(cx);
+            let restored: crate::settings::UiSettings =
+                serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+            assert_eq!(
+                restored.last_pull_request_repository.as_deref(),
+                Some("saved/repo")
+            );
+            assert_eq!(restored.last_pull_request_device.as_deref(), Some("remote"));
+        });
     }
 
     #[gpui::test]

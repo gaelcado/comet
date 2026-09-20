@@ -168,6 +168,24 @@ impl ChangeRequestResolver {
         }
     }
 
+    /// Resolve just the selected checkout's identity. Local Git only: no
+    /// provider lookup, repository enumeration, or remote transport.
+    pub async fn repository_for_checkout(&self, cwd: &Path) -> Option<String> {
+        let remote = self
+            .inspector
+            .git_optional(cwd, &["remote", "get-url", "origin"])
+            .await;
+        let remote = match remote {
+            Some(remote) => parse_git_remote(&remote)?,
+            None => {
+                let source = self.inspect_checkout(cwd).await.ok()?;
+                parse_git_remote(source.branch.remote_url.as_deref()?)?
+            }
+        };
+        (remote.host.eq_ignore_ascii_case("github.com"))
+            .then(|| format!("{}/{}", remote.owner, remote.repository))
+    }
+
     pub async fn resolve_github(
         &self,
         cwd: &Path,
@@ -274,7 +292,7 @@ impl GitHubCli {
         cache.entries.retain(|entry| entry.0 != key);
         cache.entries.push((key, Instant::now(), result.clone()));
         if cache.entries.len() > 24 {
-            cache.entries.remove(0);
+            let _ = cache.entries.remove(0);
         }
         result
     }
@@ -432,7 +450,8 @@ impl GitHubCli {
             .into_iter()
             .map(to_list_item)
             .collect::<Result<Vec<_>, _>>()?;
-        items.retain(|item| item.repository.eq_ignore_ascii_case(repository));
+        // GitHub can return the canonical name of a renamed repository.
+        // Scope is enforced by the query, not by matching an old remote name.
         items.truncate(50);
         items.sort_by(|left, right| {
             right
@@ -1583,6 +1602,51 @@ mod tests {
         assert_eq!(requests[0].env, [("GH_PROMPT_DISABLED".into(), "1".into())]);
         assert_eq!(requests[0].timeout, GITHUB_TIMEOUT);
         assert_eq!(requests[0].output_limit, GITHUB_OUTPUT_LIMIT);
+    }
+
+    #[tokio::test]
+    async fn pr_default_repository_uses_only_local_origin_metadata() {
+        let runner =
+            FakeProcessRunner::with_responses([command_success("git@github.com:acme/zeron.git\n")]);
+        let resolver = ChangeRequestResolver {
+            inspector: GitCheckoutInspector::new(runner.clone()),
+            github: GitHubCli::with_runner(runner.clone()),
+        };
+        assert_eq!(
+            resolver
+                .repository_for_checkout(Path::new("/checkout"))
+                .await
+                .as_deref(),
+            Some("acme/zeron")
+        );
+        let requests = runner.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].program, "git");
+        assert_eq!(requests[0].args, ["remote", "get-url", "origin"]);
+        assert_eq!(requests[0].cwd.as_deref(), Some(Path::new("/checkout")));
+    }
+
+    #[tokio::test]
+    async fn pr_scoped_search_accepts_canonical_names_after_repository_rename() {
+        let json = search_response(vec![search_pull_request(
+            "acme/new-name",
+            1,
+            "PR",
+            "OPEN",
+            "UNKNOWN",
+            "2026-08-10T09:30:00Z",
+            "2026-08-19T12:00:00Z",
+            false,
+            None,
+        )]);
+        let (result, runner) = list_with(command_success(json)).await;
+        assert_eq!(result.unwrap()[0].repository, "acme/new-name");
+        assert!(
+            runner.requests()[0]
+                .args
+                .iter()
+                .any(|arg| arg.contains("repo:acme/zeron"))
+        );
     }
 
     #[tokio::test]

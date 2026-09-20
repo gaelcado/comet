@@ -819,6 +819,9 @@ pub struct UiSettings {
     pub transcript_compact_mode: bool,
     /// Destination shared by PR badges and the pull-request board.
     pub pull_request_destination: PullRequestDestination,
+    /// Last explicitly selected PR scope, restored when no project is selected.
+    pub last_pull_request_repository: Option<String>,
+    pub last_pull_request_device: Option<String>,
     /// Save edited workspace files automatically after the configured delay.
     pub files_autosave_enabled: bool,
     /// Idle time before an edited workspace file is saved automatically.
@@ -904,6 +907,8 @@ impl Default for UiSettings {
             open_web_links_in_zeron: true,
             transcript_compact_mode: false,
             pull_request_destination: PullRequestDestination::Native,
+            last_pull_request_repository: None,
+            last_pull_request_device: None,
             files_autosave_enabled: false,
             files_autosave_delay_ms: FILES_AUTOSAVE_DELAY_DEFAULT_MS,
             files_word_wrap: false,
@@ -2342,6 +2347,8 @@ mod tests {
             open_web_links_in_zeron: false,
             transcript_compact_mode: true,
             pull_request_destination: PullRequestDestination::External,
+            last_pull_request_repository: Some("acme/zeron".into()),
+            last_pull_request_device: Some("remote-device".into()),
             files_autosave_enabled: true,
             files_autosave_delay_ms: 1_500,
             files_word_wrap: true,

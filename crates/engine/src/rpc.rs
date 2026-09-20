@@ -1374,6 +1374,7 @@ fn forwardable(method: &str) -> bool {
             | methods::WATCH_CHECKOUT_CHANGE_REQUEST
             | methods::LIST_OPEN_CHANGE_REQUESTS
             | methods::LIST_REPOSITORY_CHANGE_REQUESTS
+            | methods::GET_CHANGE_REQUEST_REPOSITORY
             | methods::GET_CHANGE_REQUEST
             | methods::GET_CHANGE_REQUEST_DIFF
             | methods::GET_CHECKOUT_DIFF
@@ -2246,6 +2247,17 @@ impl RpcService for EngineRpc {
                     .map_err(|error| RpcError::Failed(error.to_string()))?
                     .filter_map(|status| async move { serde_json::to_value(status).ok() });
                 Ok(RpcReply::Stream(stream.boxed()))
+            }
+            methods::GET_CHANGE_REQUEST_REPOSITORY => {
+                #[derive(Deserialize)]
+                struct P {
+                    cwd: String,
+                }
+                let p: P = parse_params(params)?;
+                let repository = crate::source_control::ChangeRequestResolver::new()
+                    .repository_for_checkout(std::path::Path::new(&p.cwd))
+                    .await;
+                RpcReply::value(&repository)
             }
             methods::LIST_OPEN_CHANGE_REQUESTS | methods::LIST_REPOSITORY_CHANGE_REQUESTS => {
                 #[derive(Deserialize)]
@@ -3650,6 +3662,7 @@ mod tests {
         assert!(is_stream_method(methods::WATCH_WORKSPACE_GIT_STATUS));
         assert!(forwardable(methods::LIST_OPEN_CHANGE_REQUESTS));
         assert!(forwardable(methods::LIST_REPOSITORY_CHANGE_REQUESTS));
+        assert!(forwardable(methods::GET_CHANGE_REQUEST_REPOSITORY));
         assert!(forwardable(methods::GET_CHANGE_REQUEST));
         assert!(forwardable(methods::GET_CHANGE_REQUEST_DIFF));
         assert!(!is_stream_method(methods::GET_CHANGE_REQUEST));
