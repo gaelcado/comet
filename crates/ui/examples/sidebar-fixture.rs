@@ -1,6 +1,7 @@
 //! Isolated native sidebar review fixture. ZERON_SIDEBAR_COMPACT / ZERON_SIDEBAR_HIDE_LABEL select layout.
 //! With `appshots-fixture`, ZERON_SIDEBAR_CAPTURE_DIR exports disclosure,
 //! grouping, and hover states, then exits. ZERON_PALETTE_LIGHT selects light mode.
+//! ZERON_SIDEBAR_PROJECT_ICON seeds a device-local custom project icon.
 use gpui::{AppContext, Bounds, WindowBounds, WindowOptions, px, size};
 use zeron_ui::*;
 
@@ -23,6 +24,15 @@ fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(project_path.join("public")).unwrap();
         std::fs::write(project_path.join("public/favicon.svg"), r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="6" fill="#668cf5"/><path d="M7 6h11v3h-8v3h6v3h-6v4H7Z" fill="white"/></svg>"##).unwrap();
         settings.surface = zeron_theme::SurfacePreference::Frosted;
+        if let Some(icon) = std::env::var_os("ZERON_SIDEBAR_PROJECT_ICON") {
+            let directory = data.join("project-icons");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::copy(icon, directory.join("fixture.png")).unwrap();
+            settings.project_icon_overrides.insert(
+                format!("{:?}:local:project", Some("local")),
+                "fixture.png".into(),
+            );
+        }
         settings.save(&data).unwrap();
         settings::init(settings.clone(), data.clone(), cx);
         let fonts = typography::register_fonts(cx);
