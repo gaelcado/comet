@@ -39,6 +39,15 @@ impl OpenChangeRequestLookup for FixedOpenChangeRequests {
         assert_eq!(repository, "acme/zeron");
         Ok(self.0.clone())
     }
+    async fn list_filtered_open(
+        &self,
+        repository: &str,
+        filter: zeron_proto::ChangeRequestFilter,
+        refresh: bool,
+    ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        assert_eq!(filter, zeron_proto::ChangeRequestFilter::Reviewing);
+        self.list_authored_open(repository, refresh).await
+    }
     async fn detail(
         &self,
         url: &str,
@@ -1110,10 +1119,20 @@ async fn pull_request_list_dispatch_returns_provider_items() {
         .await;
     assert!(unscoped.is_err(), "legacy unscoped requests must never reach the provider");
 
+    for invalid in [
+        serde_json::json!({ "filter": "all" }),
+        serde_json::json!({ "repository": "acme/zeron", "filter": "unknown" }),
+    ] {
+        assert!(client
+            .call(zeron_rpc::methods::LIST_FILTERED_CHANGE_REQUESTS, invalid)
+            .await
+            .is_err());
+    }
+
     let listed: Vec<ChangeRequestListItem> = client
         .call_as(
-            zeron_rpc::methods::LIST_REPOSITORY_CHANGE_REQUESTS,
-            serde_json::json!({ "repository": "acme/zeron", "targetDeviceId": core.device_id }),
+            zeron_rpc::methods::LIST_FILTERED_CHANGE_REQUESTS,
+            serde_json::json!({ "repository": "acme/zeron", "filter": "reviewing", "targetDeviceId": core.device_id }),
         )
         .await
         .unwrap();

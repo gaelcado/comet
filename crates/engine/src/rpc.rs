@@ -1374,6 +1374,7 @@ fn forwardable(method: &str) -> bool {
             | methods::WATCH_CHECKOUT_CHANGE_REQUEST
             | methods::LIST_OPEN_CHANGE_REQUESTS
             | methods::LIST_REPOSITORY_CHANGE_REQUESTS
+            | methods::LIST_FILTERED_CHANGE_REQUESTS
             | methods::GET_CHANGE_REQUEST_REPOSITORY
             | methods::GET_CHANGE_REQUEST
             | methods::GET_CHANGE_REQUEST_DIFF
@@ -2259,10 +2260,14 @@ impl RpcService for EngineRpc {
                     .await;
                 RpcReply::value(&repository)
             }
-            methods::LIST_OPEN_CHANGE_REQUESTS | methods::LIST_REPOSITORY_CHANGE_REQUESTS => {
+            methods::LIST_OPEN_CHANGE_REQUESTS
+            | methods::LIST_REPOSITORY_CHANGE_REQUESTS
+            | methods::LIST_FILTERED_CHANGE_REQUESTS => {
                 #[derive(Deserialize)]
                 struct P {
                     repository: String,
+                    #[serde(default)]
+                    filter: zeron_proto::ChangeRequestFilter,
                     #[serde(default)]
                     refresh: bool,
                 }
@@ -2272,7 +2277,7 @@ impl RpcService for EngineRpc {
                 }
                 let items = self
                     .open_change_requests
-                    .list_authored_open(&p.repository, p.refresh)
+                    .list_filtered_open(&p.repository, p.filter, p.refresh)
                     .await
                     .map_err(change_request_rpc_error)?;
                 RpcReply::value(&items)
@@ -3662,6 +3667,7 @@ mod tests {
         assert!(is_stream_method(methods::WATCH_WORKSPACE_GIT_STATUS));
         assert!(forwardable(methods::LIST_OPEN_CHANGE_REQUESTS));
         assert!(forwardable(methods::LIST_REPOSITORY_CHANGE_REQUESTS));
+        assert!(forwardable(methods::LIST_FILTERED_CHANGE_REQUESTS));
         assert!(forwardable(methods::GET_CHANGE_REQUEST_REPOSITORY));
         assert!(forwardable(methods::GET_CHANGE_REQUEST));
         assert!(forwardable(methods::GET_CHANGE_REQUEST_DIFF));

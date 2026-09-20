@@ -826,6 +826,16 @@ pub struct ChangeRequestSummary {
     pub head_ref: String,
 }
 
+/// Relationship filter for one repository; never widens repository scope.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeRequestFilter {
+    #[default]
+    Authored,
+    All,
+    Reviewing,
+}
+
 /// Provider-neutral change request metadata for global listing surfaces.
 ///
 /// Unlike [`ChangeRequestSummary`], this contract is not tied to a checkout

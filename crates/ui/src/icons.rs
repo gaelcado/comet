@@ -88,6 +88,7 @@ icon_assets![
     (GIT_BRANCH, "git-branch"),
     // Provider-neutral pull-request glyph, drawn in the same linear family.
     (PULL_REQUEST, "pull-request"),
+    (PULL_REQUEST_DRAFT, "pull-request-draft"),
     // Compact history-ref glyphs, drawn in the same linear style.
     (CLOUD, "cloud"),
     (TAG, "tag"),

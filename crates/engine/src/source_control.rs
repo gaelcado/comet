@@ -128,6 +128,17 @@ pub trait OpenChangeRequestLookup: Send + Sync {
         repository: &str,
         refresh: bool,
     ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError>;
+    async fn list_filtered_open(
+        &self,
+        repository: &str,
+        filter: zeron_proto::ChangeRequestFilter,
+        refresh: bool,
+    ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        if filter != zeron_proto::ChangeRequestFilter::Authored {
+            return Err(ChangeRequestError::UnsupportedRepository);
+        }
+        self.list_authored_open(repository, refresh).await
+    }
     async fn detail(
         &self,
         _url: &str,
@@ -398,23 +409,43 @@ impl GitHubCli {
         repository: &str,
         refresh: bool,
     ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        self.list_filtered_open(
+            repository,
+            zeron_proto::ChangeRequestFilter::Authored,
+            refresh,
+        )
+        .await
+    }
+
+    pub async fn list_filtered_open(
+        &self,
+        repository: &str,
+        filter: zeron_proto::ChangeRequestFilter,
+        refresh: bool,
+    ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
         if !valid_pr_repository(repository) {
             return Err(ChangeRequestError::UnsupportedRepository);
         }
         let repository = repository.to_ascii_lowercase();
         let result = self
-            .cached_pr_request(format!("list:{repository}"), refresh, async {
-                serde_json::to_value(self.fetch_authored_open(&repository).await?)
+            .cached_pr_request(format!("list:{repository}:{filter:?}"), refresh, async {
+                serde_json::to_value(self.fetch_filtered_open(&repository, filter).await?)
                     .map_err(|_| ChangeRequestError::Decode)
             })
             .await?;
         serde_json::from_value(result).map_err(|_| ChangeRequestError::Decode)
     }
 
-    async fn fetch_authored_open(
+    async fn fetch_filtered_open(
         &self,
         repository: &str,
+        filter: zeron_proto::ChangeRequestFilter,
     ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        let qualifier = match filter {
+            zeron_proto::ChangeRequestFilter::All => "",
+            zeron_proto::ChangeRequestFilter::Authored => "author:@me ",
+            zeron_proto::ChangeRequestFilter::Reviewing => "review-requested:@me ",
+        };
         let request = ProcessRequest {
             program: "gh".into(),
             args: vec![
@@ -423,7 +454,7 @@ impl GitHubCli {
                 "-f".into(),
                 format!("query={GITHUB_SEARCH_QUERY}"),
                 "-f".into(),
-                format!("search=is:pr is:open author:@me repo:{repository} sort:updated-desc"),
+                format!("search=is:pr is:open {qualifier}repo:{repository} sort:updated-desc"),
             ],
             cwd: None,
             env: vec![
@@ -548,6 +579,14 @@ impl OpenChangeRequestLookup for GitHubCli {
         refresh: bool,
     ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
         GitHubCli::list_authored_open(self, repository, refresh).await
+    }
+    async fn list_filtered_open(
+        &self,
+        repository: &str,
+        filter: zeron_proto::ChangeRequestFilter,
+        refresh: bool,
+    ) -> Result<Vec<ChangeRequestListItem>, ChangeRequestError> {
+        GitHubCli::list_filtered_open(self, repository, filter, refresh).await
     }
     async fn detail(
         &self,
@@ -1650,6 +1689,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pr_filters_are_scoped_cached_and_never_prefetched() {
+        use zeron_proto::ChangeRequestFilter::{All, Authored, Reviewing};
+        let runner = FakeProcessRunner::with_responses(
+            (0..3).map(|_| command_success(search_response(vec![]))),
+        );
+        let github = GitHubCli::with_runner(runner.clone());
+        for (index, filter) in [All, Authored, Reviewing].into_iter().enumerate() {
+            github
+                .list_filtered_open("acme/zeron", filter, false)
+                .await
+                .unwrap();
+            assert_eq!(runner.requests().len(), index + 1);
+            github
+                .list_filtered_open("ACME/ZERON", filter, false)
+                .await
+                .unwrap();
+            assert_eq!(runner.requests().len(), index + 1);
+        }
+        let requests = runner.requests();
+        for (request, qualifier) in
+            requests
+                .iter()
+                .zip(["", "author:@me ", "review-requested:@me "])
+        {
+            assert_eq!(
+                request.args.last().unwrap(),
+                &format!("search=is:pr is:open {qualifier}repo:acme/zeron sort:updated-desc")
+            );
+        }
+        github
+            .list_filtered_open("acme/zeron", All, false)
+            .await
+            .unwrap();
+        assert_eq!(runner.requests().len(), 3);
+    }
+
+    #[tokio::test]
     async fn pr_cache_coalesces_reads_throttles_refresh_and_expires() {
         let runner = FakeProcessRunner::with_responses([
             command_success(search_response(vec![])),
@@ -1726,7 +1802,12 @@ mod tests {
         }
         let cache = github.pr_cache.lock().await;
         assert_eq!(cache.entries.len(), 24);
-        assert!(cache.entries.iter().all(|entry| entry.0 != "list:a/repo-0"));
+        assert!(
+            cache
+                .entries
+                .iter()
+                .all(|entry| entry.0 != "list:a/repo-0:Authored")
+        );
     }
 
     #[tokio::test]

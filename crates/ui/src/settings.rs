@@ -251,17 +251,16 @@ pub enum SavePolicy {
 #[serde(rename_all = "camelCase")]
 pub enum PullRequestDestination {
     #[default]
+    #[serde(alias = "browser")]
     Native,
-    Browser,
     External,
 }
 
 impl PullRequestDestination {
-    pub const ALL: [Self; 3] = [Self::Native, Self::Browser, Self::External];
+    pub const ALL: [Self; 2] = [Self::Native, Self::External];
     pub fn label(self) -> &'static str {
         match self {
             Self::Native => "PR view",
-            Self::Browser => "Zeron browser",
             Self::External => "Default browser",
         }
     }
@@ -1711,6 +1710,8 @@ mod tests {
             PullRequestDestination::Native
         );
         assert!(!legacy.open_web_links_in_zeron);
+        let browser: UiSettings = serde_json::from_str(r#"{"pullRequestDestination":"browser"}"#).unwrap();
+        assert_eq!(browser.pull_request_destination, PullRequestDestination::Native);
         for destination in PullRequestDestination::ALL {
             let settings = UiSettings {
                 pull_request_destination: destination,

@@ -6,7 +6,8 @@ use gpui::{
     Task, Window, div, prelude::*, px,
 };
 use zeron_proto::{
-    ChangeRequestListItem, ChangeRequestMergeability, ChangeRequestReviewDecision, Device,
+    ChangeRequestFilter, ChangeRequestListItem, ChangeRequestMergeability,
+    ChangeRequestReviewDecision, Device,
 };
 use zeron_rpc::{RpcError, capability_errors, methods};
 
@@ -45,16 +46,6 @@ enum PullRequestSortField {
     Changes,
     Opened,
     Updated,
-}
-
-impl PullRequestSortField {
-    fn key(self) -> &'static str {
-        match self {
-            Self::Changes => "changes",
-            Self::Opened => "opened",
-            Self::Updated => "updated",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,13 +104,7 @@ fn request_group(item: &ChangeRequestListItem) -> PullRequestGroup {
 
 fn request_glyph(item: &ChangeRequestListItem) -> &'static str {
     if item.is_draft {
-        icons::DOCUMENT
-    } else if item.mergeability == ChangeRequestMergeability::Conflicting {
-        icons::DANGER_TRIANGLE
-    } else if item.review_decision == ChangeRequestReviewDecision::Approved {
-        icons::CHECK
-    } else if item.review_decision == ChangeRequestReviewDecision::ChangesRequested {
-        icons::DANGER_TRIANGLE
+        icons::PULL_REQUEST_DRAFT
     } else {
         icons::PULL_REQUEST
     }
@@ -177,6 +162,7 @@ impl PullRequestSort {
         direction: SortDirection::Descending,
     };
 
+    #[cfg(test)]
     fn select(self, field: PullRequestSortField) -> Self {
         if self.field != field {
             return Self {
@@ -194,7 +180,7 @@ impl PullRequestSort {
     }
 }
 
-/// Ephemeral dashboard for open pull requests authored by the active GitHub CLI account.
+/// Repository-scoped dashboard with lazy, cached relationship filters.
 pub struct PullRequestsPage {
     state: Entity<AppState>,
     search: Entity<ComposerInput>,
@@ -206,7 +192,7 @@ pub struct PullRequestsPage {
     initial_scope_task: Option<Task<()>>,
     _repository_events: Subscription,
     snapshots: Vec<(
-        (Option<String>, String),
+        (Option<String>, String, ChangeRequestFilter),
         Vec<ChangeRequestListItem>,
         Instant,
     )>,
@@ -218,6 +204,7 @@ pub struct PullRequestsPage {
     items: Vec<ChangeRequestListItem>,
     view_items: Option<Rc<Vec<ChangeRequestListItem>>>,
     sort: PullRequestSort,
+    filter: ChangeRequestFilter,
     load_state: PullRequestsLoadState,
     last_loaded_at: Option<Instant>,
     generation: u64,
@@ -226,6 +213,7 @@ pub struct PullRequestsPage {
     scroll: widgets::PageScroll,
     content_width: Option<f32>,
     device_menu: popover::Popup<()>,
+    sort_menu: popover::Popup<()>,
     _observe: Subscription,
 }
 
@@ -292,6 +280,7 @@ impl PullRequestsPage {
             items: Vec::new(),
             view_items: None,
             sort: PullRequestSort::DEFAULT,
+            filter: ChangeRequestFilter::All,
             load_state: PullRequestsLoadState::Idle,
             last_loaded_at: None,
             generation: 0,
@@ -301,6 +290,7 @@ impl PullRequestsPage {
             scroll: widgets::PageScroll::default(),
             content_width: None,
             device_menu: popover::Popup::default(),
+            sort_menu: popover::Popup::default(),
             _observe: observe,
         };
         page.initialize_repository(cx);
@@ -388,6 +378,7 @@ impl PullRequestsPage {
     /// Keep the retained route entity dormant while another outlet is active.
     pub fn on_hidden(&mut self) {
         self.visible = false;
+        self.sort_menu = popover::Popup::default();
         if self.initial_scope_task.take().is_some() {
             self.initial_scope_attempted = false;
             self.load_state = PullRequestsLoadState::Idle;
@@ -433,7 +424,9 @@ impl PullRequestsPage {
         if let Some(index) = self
             .snapshots
             .iter()
-            .position(|((target, repo), _, _)| target == &self.target_device && repo == repository)
+            .position(|((target, repo, filter), _, _)| {
+                target == &self.target_device && repo == repository && filter == &self.filter
+            })
         {
             let snapshot = self.snapshots.remove(index);
             self.items = snapshot.1.clone();
@@ -500,11 +493,145 @@ impl PullRequestsPage {
         }
     }
 
-    fn select_sort(&mut self, field: PullRequestSortField, cx: &mut Context<Self>) {
-        self.sort = self.sort.select(field);
-        self.view_items = None;
-        self.scroll.scroll.set_offset(gpui::Point::default());
+    fn select_filter(&mut self, filter: ChangeRequestFilter, cx: &mut Context<Self>) {
+        self.close_sort_menu(cx);
+        if self.filter == filter {
+            return;
+        }
+        self.filter = filter;
+        self.reset_for_target(self.target_device.clone());
+        if self.last_loaded_at.is_none() {
+            self.load(false, cx);
+        }
         cx.notify();
+    }
+
+    fn close_sort_menu(&mut self, cx: &mut Context<Self>) {
+        if self.sort_menu.begin_close() {
+            popover::reap_popup(cx, |page: &mut Self| &mut page.sort_menu);
+            cx.notify();
+        }
+    }
+
+    fn render_sort_menu(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let options = [
+            (
+                PullRequestSortField::Updated,
+                SortDirection::Descending,
+                "Recently updated",
+                "pull-requests-sort-updated",
+            ),
+            (
+                PullRequestSortField::Updated,
+                SortDirection::Ascending,
+                "Least recently updated",
+                "pr-sort-updated-asc",
+            ),
+            (
+                PullRequestSortField::Opened,
+                SortDirection::Descending,
+                "Newest first",
+                "pull-requests-sort-opened",
+            ),
+            (
+                PullRequestSortField::Opened,
+                SortDirection::Ascending,
+                "Oldest first",
+                "pr-sort-opened-asc",
+            ),
+            (
+                PullRequestSortField::Changes,
+                SortDirection::Descending,
+                "Largest changes",
+                "pull-requests-sort-changes",
+            ),
+            (
+                PullRequestSortField::Changes,
+                SortDirection::Ascending,
+                "Smallest changes",
+                "pr-sort-changes-asc",
+            ),
+        ];
+        let label = options
+            .iter()
+            .find(|(field, direction, _, _)| {
+                *field == self.sort.field && *direction == self.sort.direction
+            })
+            .unwrap()
+            .2;
+        let mut trigger = crate::surface_chrome::tab("pr-sort", self.sort_menu.is_open(), theme)
+            .debug_selector(|| "pr-sort".into())
+            .h(px(32.0))
+            .px(px(8.0))
+            .aria_label(format!("Sort pull requests: {label}"))
+            .aria_expanded(self.sort_menu.is_open())
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|page, _, _, _| page.sort_menu.note_trigger_press()),
+            )
+            .on_key_down(cx.listener(|page, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    page.close_sort_menu(cx);
+                }
+            }))
+            .on_click(cx.listener(|page, event, _, cx| {
+                cx.stop_propagation();
+                let open = if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                    page.sort_menu.is_open()
+                } else {
+                    page.sort_menu.take_press_was_open()
+                };
+                if open {
+                    page.close_sort_menu(cx);
+                } else {
+                    page.sort_menu.open(());
+                }
+                cx.notify();
+            }))
+            .child(
+                icon(if self.sort.direction == SortDirection::Ascending {
+                    icons::ARROW_UP
+                } else {
+                    icons::ARROW_DOWN
+                })
+                .size(px(14.0)),
+            )
+            .child(label);
+        if self.sort_menu.get().is_some() {
+            let menu = popover::popover_card(theme)
+                .w(px(220.0))
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .on_mouse_down_out(cx.listener(|page, _, _, cx| page.close_sort_menu(cx)))
+                .child(popover::menu_heading(theme, "Sort pull requests"))
+                .children(options.into_iter().map(|(field, direction, label, id)| {
+                    let active = self.sort.field == field && self.sort.direction == direction;
+                    popover::menu_row(theme, active, id)
+                        .id(id)
+                        .debug_selector(move || id.into())
+                        .role(gpui::Role::Button)
+                        .tab_index(0)
+                        .aria_selected(active)
+                        .aria_label(label)
+                        .focus_visible(|style| style.bg(theme.glass_hover()))
+                        .child(label)
+                        .on_click(cx.listener(move |page, _, _, cx| {
+                            cx.stop_propagation();
+                            page.sort = PullRequestSort { field, direction };
+                            page.view_items = None;
+                            page.scroll.scroll.set_offset(gpui::Point::default());
+                            page.close_sort_menu(cx);
+                            cx.notify();
+                        }))
+                }));
+            trigger = trigger.child(popover::anchored_menu_below_end(
+                "pr-sort-menu",
+                menu.into_any_element(),
+                self.sort_menu.closing_since(),
+            ));
+        }
+        trigger.into_any_element()
     }
 
     fn load(&mut self, refresh: bool, cx: &mut Context<Self>) {
@@ -533,11 +660,12 @@ impl PullRequestsPage {
         let mut params = params_for_target(self.target_device.as_deref());
         params["repository"] = self.repository.clone().unwrap().into();
         params["refresh"] = refresh.into();
+        params["filter"] = serde_json::to_value(self.filter).unwrap();
         self.load_state = PullRequestsLoadState::Loading;
         self.request_task = Some(cx.spawn(async move |this, cx| {
             let result = engine
                 .client()
-                .call(methods::LIST_REPOSITORY_CHANGE_REQUESTS, params)
+                .call(methods::LIST_FILTERED_CHANGE_REQUESTS, params)
                 .await;
             this.update(cx, |page, cx| {
                 if !response_is_current(page.generation, generation) {
@@ -556,7 +684,11 @@ impl PullRequestsPage {
                 if succeeded {
                     let now = Instant::now();
                     page.last_loaded_at = Some(now);
-                    let key = (page.target_device.clone(), page.repository.clone().unwrap());
+                    let key = (
+                        page.target_device.clone(),
+                        page.repository.clone().unwrap(),
+                        page.filter,
+                    );
                     page.snapshots.retain(|(existing, _, _)| existing != &key);
                     page.snapshots.push((key, page.items.clone(), now));
                     if page.snapshots.len() > 12 {
@@ -740,7 +872,7 @@ impl PullRequestsPage {
             ),
             _ => (
                 "No open pull requests".to_string(),
-                "Pull requests authored by you will appear here.".to_string(),
+                "Pull requests matching this filter will appear here.".to_string(),
             ),
         };
         div()
@@ -851,7 +983,7 @@ impl Render for PullRequestsPage {
             .snapshots
             .iter()
             .rev()
-            .map(|((_, repo), _, _)| repo.clone())
+            .map(|((_, repo, _), _, _)| repo.clone())
             .collect();
         let mut seen = HashSet::new();
         recent.retain(|repo| seen.insert(repo.clone()));
@@ -928,7 +1060,7 @@ impl Render for PullRequestsPage {
                                 format!("{}m ago", at.elapsed().as_secs() / 60)
                             }
                         ),
-                        (Some(repo), None) => format!("{repo} · Your latest 50 open pull requests"),
+                        (Some(repo), None) => format!("{repo} · Latest 50 open pull requests"),
                         _ => "One repository at a time · No automatic refresh".into(),
                     }),
             )
@@ -1007,7 +1139,41 @@ impl Render for PullRequestsPage {
             .child(div().mt(px(16.0)).child(repository_filter))
             .child(
                 div()
-                    .mt(px(Theme::SPACE_LG))
+                    .mt(px(12.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(2.0))
+                    .children(
+                        [
+                            (ChangeRequestFilter::All, "All", "pr-filter-all"),
+                            (
+                                ChangeRequestFilter::Authored,
+                                "Authored",
+                                "pr-filter-authored",
+                            ),
+                            (
+                                ChangeRequestFilter::Reviewing,
+                                "Reviewing",
+                                "pr-filter-reviewing",
+                            ),
+                        ]
+                        .into_iter()
+                        .map(|(filter, label, id)| {
+                            crate::surface_chrome::tab(id, self.filter == filter, &theme)
+                                .debug_selector(move || id.into())
+                                .px(px(10.0))
+                                .child(label)
+                                .on_click(
+                                    cx.listener(move |page, _, _, cx| {
+                                        page.select_filter(filter, cx)
+                                    }),
+                                )
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .mt(px(8.0))
                     .flex()
                     .flex_wrap()
                     .items_center()
@@ -1059,26 +1225,7 @@ impl Render for PullRequestsPage {
                                 )
                             }),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(2.0))
-                            .p(px(3.0))
-                            .rounded(px(9.0))
-                            .bg(theme.glass_hover())
-                            .children(
-                                [
-                                    ("Updated", PullRequestSortField::Updated),
-                                    ("Opened", PullRequestSortField::Opened),
-                                    ("Changes", PullRequestSortField::Changes),
-                                ]
-                                .into_iter()
-                                .map(|(label, field)| {
-                                    render_sort_header(label, 80.0, field, self.sort, &theme, cx)
-                                }),
-                            ),
-                    ),
+                    .child(self.render_sort_menu(&theme, cx)),
             )
             .when(!self.query.is_empty(), |el| {
                 el.child(
@@ -1326,63 +1473,6 @@ fn render_grouped_requests(
                     })
                     .into_any_element(),
             )
-        }))
-        .into_any_element()
-}
-
-fn render_sort_header(
-    label: &'static str,
-    width: f32,
-    field: PullRequestSortField,
-    sort: PullRequestSort,
-    theme: &Theme,
-    cx: &mut Context<PullRequestsPage>,
-) -> AnyElement {
-    let active = sort.field == field;
-    let arrow = match sort.direction {
-        SortDirection::Ascending => icons::ARROW_UP,
-        SortDirection::Descending => icons::ARROW_DOWN,
-    };
-    div()
-        .id(SharedString::from(format!(
-            "pull-requests-sort-{}",
-            field.key()
-        )))
-        .debug_selector(move || format!("pull-requests-sort-{}", field.key()))
-        .w(px(width))
-        .h(px(26.0))
-        .justify_center()
-        .when(active, |el| el.bg(theme.surface_raised))
-        .role(gpui::Role::Button)
-        .aria_selected(active)
-        .aria_label(format!(
-            "Sort by {label}{}",
-            if active {
-                match sort.direction {
-                    SortDirection::Ascending => ", ascending",
-                    SortDirection::Descending => ", descending",
-                }
-            } else {
-                ""
-            }
-        ))
-        .tab_index(0)
-        .rounded(px(6.0))
-        .border_1()
-        .border_color(gpui::transparent_black())
-        .focus_visible(|style| style.border_color(theme.accent))
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(px(4.0))
-        .cursor_pointer()
-        .text_size(px(12.0))
-        .text_color(if active { theme.text } else { theme.text_muted })
-        .hover(|style| style.bg(crate::theme::ink(0.04)).text_color(theme.text))
-        .on_click(cx.listener(move |page, _, _, cx| page.select_sort(field, cx)))
-        .child(label)
-        .child(div().size(px(12.0)).flex_none().when(active, |element| {
-            element.child(icon(arrow).size(px(12.0)).text_color(theme.text))
         }))
         .into_any_element()
 }
@@ -1920,7 +2010,11 @@ mod tests {
         });
         page.update(cx, |page, cx| {
             page.snapshots.push((
-                (Some("remote".into()), "saved/repo".into()),
+                (
+                    Some("remote".into()),
+                    "saved/repo".into(),
+                    ChangeRequestFilter::All,
+                ),
                 vec![pull_request("saved/repo", 10, 1, 1, 1)],
                 Instant::now(),
             ));
@@ -1955,7 +2049,7 @@ mod tests {
             assert_eq!(page.load_state, PullRequestsLoadState::Idle);
             // No engine exists. Any accidental request would produce Network.
             page.snapshots.push((
-                (None, "acme/zeron".into()),
+                (None, "acme/zeron".into(), ChangeRequestFilter::All),
                 vec![pull_request("acme/zeron", 10, 1, 1, 1)],
                 Instant::now(),
             ));
@@ -1977,6 +2071,39 @@ mod tests {
             page.select_repository(cx);
             assert!(page.repository_error.is_some());
             assert_eq!(page.repository.as_deref(), Some("acme/zeron"));
+        });
+    }
+
+    #[gpui::test]
+    fn pull_request_filter_switches_restore_only_matching_snapshots(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let (page, cx) = cx.add_window_view(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            PullRequestsPage::new(state, cx)
+        });
+        page.update(cx, |page, cx| {
+            page.repository = Some("owner/repo".into());
+            for (filter, number) in [
+                (ChangeRequestFilter::All, 1),
+                (ChangeRequestFilter::Authored, 2),
+                (ChangeRequestFilter::Reviewing, 3),
+            ] {
+                page.snapshots.push((
+                    (None, "owner/repo".into(), filter),
+                    vec![pull_request("owner/repo", number, 1, 1, 1)],
+                    Instant::now(),
+                ));
+            }
+            for (filter, number) in [
+                (ChangeRequestFilter::Authored, 2),
+                (ChangeRequestFilter::Reviewing, 3),
+                (ChangeRequestFilter::All, 1),
+            ] {
+                page.select_filter(filter, cx);
+                assert_eq!(page.items[0].number, number);
+                // No engine is attached: a request would fail with Network.
+                assert_eq!(page.load_state, PullRequestsLoadState::Ready);
+            }
         });
     }
 
@@ -2038,6 +2165,18 @@ mod tests {
         let refresh = cx
             .debug_bounds("pull-requests-refresh")
             .expect("refresh rendered");
+        let sort = cx.debug_bounds("pr-sort").unwrap();
+        cx.simulate_mouse_down(
+            sort.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            sort.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
         for selector in [
             "pull-requests-sort-changes",
             "pull-requests-sort-opened",
@@ -2063,11 +2202,24 @@ mod tests {
         page.read_with(cx, |page, _| {
             assert_eq!(page.sort.field, PullRequestSortField::Changes)
         });
+        cx.run_until_parked();
+        // Popup exit uses wall-clock Instant as well as the executor timer.
+        std::thread::sleep(
+            crate::motion::MENU_OUT
+                .total()
+                .mul_f32(crate::motion::speed_scale())
+                + std::time::Duration::from_millis(30),
+        );
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
         let viewport = cx.debug_bounds("pull-requests-scroll").unwrap();
         assert!(
             viewport.size.height > px(100.0),
             "the filter must leave room for results: {viewport:?}"
         );
+        page.read_with(cx, |page, _| assert!(page.sort_menu.get().is_none()));
+        cx.simulate_mouse_move(viewport.center(), None, gpui::Modifiers::default());
         cx.simulate_event(gpui::ScrollWheelEvent {
             position: viewport.center(),
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-800.0))),

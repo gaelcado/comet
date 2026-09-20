@@ -11755,7 +11755,6 @@ impl Render for Shell {
                             this.state.clone(),
                             action.0.clone(),
                             target,
-                            this.browser_context.clone(),
                             this.pull_request_cache.clone(),
                             this.pull_requests_page
                                 .as_ref()
@@ -13764,7 +13763,7 @@ mod exit_regressions {
                         settings.window_geometry = geometry;
                         settings.open_web_links_in_zeron = open_links_in_zeron;
                         settings.pull_request_destination =
-                            settings::PullRequestDestination::Browser;
+                            settings::PullRequestDestination::External;
                         settings.terminal_font_family = terminal_family.clone();
                         settings.terminal_font_size = terminal_size;
                         settings.code_font_family = code_family.clone();
@@ -13789,7 +13788,7 @@ mod exit_regressions {
                         assert_eq!(current.open_web_links_in_zeron, open_links_in_zeron);
                         assert_eq!(
                             current.pull_request_destination,
-                            settings::PullRequestDestination::Browser
+                            settings::PullRequestDestination::External
                         );
                         assert_eq!(current.terminal_font_family, terminal_family);
                         assert_eq!(current.terminal_font_size, terminal_size);
@@ -13815,7 +13814,7 @@ mod exit_regressions {
                     assert_eq!(loaded.open_web_links_in_zeron, open_links_in_zeron);
                     assert_eq!(
                         loaded.pull_request_destination,
-                        settings::PullRequestDestination::Browser
+                        settings::PullRequestDestination::External
                     );
                     assert_eq!(loaded.terminal_font_family, terminal_family);
                     assert_eq!(loaded.terminal_font_size, terminal_size);
