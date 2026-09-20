@@ -6764,7 +6764,7 @@ impl Shell {
                     })
                     .role(gpui::Role::Button)
                     .aria_label(label)
-                    .size(px(20.0))
+                    .size(px(24.0))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -6778,7 +6778,7 @@ impl Shell {
             div()
                 .flex()
                 .items_center()
-                .gap(px(2.0))
+                .gap(px(4.0))
                 .child(
                     action(
                         "pin",
@@ -6879,9 +6879,11 @@ impl Shell {
         let corner = div()
             .id(SharedString::from(format!("{row_id}-corner")))
             .flex_none()
+            .min_w(px(24.0))
             .h(px(14.0))
             .flex()
             .items_center()
+            .justify_end()
             .child(corner_body)
             .into_any_element();
         let mut corner = Some(corner);
@@ -7020,29 +7022,34 @@ impl Shell {
                     // Trailing metadata must not set this line's height: its
                     // font metrics differ from the hover action controls.
                     .when(compact, |el| el.h(px(17.0)))
-                    .gap(px(if compact {
-                        4.0
-                    } else {
-                        SIDEBAR_ACTIVE_HARNESS_TITLE_GAP
-                    }))
-                    .children(project_icon)
-                    .when_some(
-                        harness.map(crate::pickers::harness_brand_icon),
-                        |el, (path, tint)| {
-                            el.child(
-                                icon(path)
-                                    .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
-                                    .flex_none()
-                                    .text_color(
-                                        tint.unwrap_or(subline).opacity(if archived_muted {
-                                            0.4
-                                        } else {
-                                            0.8
-                                        }),
-                                    ),
-                            )
-                        },
-                    )
+                    .gap(px(SIDEBAR_ACTIVE_HARNESS_TITLE_GAP))
+                    .when(project_icon.is_some() || harness.is_some(), |el| {
+                        el.child(
+                            div()
+                                .debug_selector({
+                                    let id = id.clone();
+                                    move || format!("chat-identity-{id}")
+                                })
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .children(project_icon)
+                                .when_some(
+                                    harness.map(crate::pickers::harness_brand_icon),
+                                    |el, (path, tint)| {
+                                        el.child(
+                                            icon(path)
+                                                .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
+                                                .flex_none()
+                                                .text_color(tint.unwrap_or(subline).opacity(
+                                                    if archived_muted { 0.4 } else { 0.8 },
+                                                )),
+                                        )
+                                    },
+                                ),
+                        )
+                    })
                     .child(sidebar_faded_label(
                         format!("chat-title-{content_id}").into(),
                         true,
@@ -7051,38 +7058,48 @@ impl Shell {
                             .line_height(px(17.0))
                             .child(popover::search_highlight(title, search_query, theme)),
                     ))
-                    .when((compact || !show_label) && remote && !show_actions, |el| {
-                        el.child(
-                            icon(icons::REMOTE_SERVER)
-                                .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
-                                .flex_none()
-                                .text_color(subline),
-                        )
-                    })
-                    .when(compact && !show_actions, |el| {
-                        el.children(change_request.clone().map(|summary| {
-                            if preview {
-                                crate::change_requests::pull_request_badge_preview(
-                                    format!("{row_id}-compact-pr").into(),
-                                    summary,
-                                    crate::change_requests::ChangeRequestBadgeSurface::Sidebar,
-                                    theme,
-                                )
-                            } else {
-                                crate::change_requests::pull_request_badge(
-                                    format!("{row_id}-compact-pr").into(),
-                                    summary,
-                                    crate::change_requests::ChangeRequestBadgeSurface::Sidebar,
-                                    theme,
-                                )
-                            }
-                        }))
-                    })
                     .when(compact || !show_label, |el| {
                         el.child(
                             div()
+                                .debug_selector({
+                                    let id = id.clone();
+                                    move || format!("chat-trailing-{id}")
+                                })
                                 .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                // Separate session content from metadata while
+                                // keeping metadata internally grouped.
+                                .ml(px(4.0))
                                 .text_color(subline)
+                                .when((compact || !show_label) && remote && !show_actions, |el| {
+                                    el.child(
+                                        icon(icons::REMOTE_SERVER)
+                                            .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
+                                            .flex_none()
+                                            .text_color(subline),
+                                    )
+                                })
+                                .when(compact && !show_actions, |el| {
+                                    el.children(change_request.clone().map(|summary| {
+                                        if preview {
+                                            crate::change_requests::pull_request_badge_preview(
+                                    format!("{row_id}-compact-pr").into(),
+                                    summary,
+                                    crate::change_requests::ChangeRequestBadgeSurface::Sidebar,
+                                    theme,
+                                )
+                                        } else {
+                                            crate::change_requests::pull_request_badge(
+                                    format!("{row_id}-compact-pr").into(),
+                                    summary,
+                                    crate::change_requests::ChangeRequestBadgeSurface::Sidebar,
+                                    theme,
+                                )
+                                        }
+                                    }))
+                                })
                                 .children(corner.take()),
                         )
                     }),

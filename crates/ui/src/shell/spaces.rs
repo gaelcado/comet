@@ -1181,6 +1181,12 @@ mod pinned_session_tests {
         let active = cx.debug_bounds("chat-older").unwrap();
         let archived = cx.debug_bounds("chat-archived").unwrap();
         assert_eq!(active.size, archived.size);
+        if compact || !show_label {
+            let title = cx.debug_bounds("chat-title-older").unwrap();
+            let metadata = cx.debug_bounds("chat-trailing-older").unwrap();
+            assert!(metadata.left() - title.right() >= px(12.0));
+            assert!(metadata.right() <= active.right() - px(Theme::SPACE_SM));
+        }
         assert_eq!(cx.debug_bounds("chat-branch-archived").is_some(), !compact);
         assert_eq!(
             cx.debug_bounds("chat-device-archived").is_some(),
@@ -1193,7 +1199,7 @@ mod pinned_session_tests {
             assert!(cx.debug_bounds("chat-time-archived").is_none());
             let pin = cx.debug_bounds("chat-archived-pin").unwrap();
             let archive = cx.debug_bounds("chat-archived-archive").unwrap();
-            assert!(pin.right() <= archive.left());
+            assert!(archive.left() - pin.right() >= px(4.0));
             assert_eq!(archive.right(), time.right());
             assert_eq!(cx.debug_bounds("chat-archived").unwrap(), archived);
             cx.simulate_mouse_move(active.center(), None, gpui::Modifiers::default());
@@ -2159,7 +2165,15 @@ fn sidebar_disclosure_header(theme: &Theme, label: SharedString, chevron: AnyEle
                 .child(label),
         ))
         .child(div().flex_1())
-        .child(chevron)
+        .child(
+            div()
+                .size(px(24.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(chevron),
+        )
 }
 
 /// One activatable row of the open dropdown, in nav order. `AddSpace` names
