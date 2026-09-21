@@ -8,6 +8,67 @@ use gpui::{AnyElement, Context, Pixels, ScrollHandle, SharedString, div, prelude
 use crate::popover::{self, MenuScrollbarMetrics, MenuScrollbarState, ScrollRailHost};
 use crate::theme::{Theme, ink};
 
+/// Shared by the modal and its dropdowns, so containment follows resizing.
+pub fn modal_bounds(viewport: gpui::Size<Pixels>) -> gpui::Bounds<Pixels> {
+    let width = f32::from(viewport.width);
+    let height = f32::from(viewport.height);
+    let margin = if width < 680.0 { 16.0 } else { 48.0 };
+    let size = gpui::size(
+        px((width - margin).max(0.0).min(1024.0)),
+        px((height - 80.0).max(0.0).min(720.0)),
+    );
+    gpui::Bounds::new(
+        gpui::point(
+            (viewport.width - size.width) / 2.0,
+            (viewport.height - size.height) / 2.0,
+        ),
+        size,
+    )
+}
+
+pub fn dropdown(
+    id: impl Into<SharedString>,
+    content: AnyElement,
+    closing: Option<std::time::Instant>,
+    trigger_height: f32,
+) -> AnyElement {
+    SettingsDropdown {
+        id: id.into(),
+        content,
+        closing,
+        trigger_height,
+    }
+    .into_any_element()
+}
+
+#[derive(IntoElement)]
+struct SettingsDropdown {
+    id: SharedString,
+    content: AnyElement,
+    closing: Option<std::time::Instant>,
+    trigger_height: f32,
+}
+
+impl RenderOnce for SettingsDropdown {
+    fn render(self, window: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
+        let bounds = modal_bounds(window.viewport_size());
+        let limits = gpui::Bounds::new(
+            bounds.origin + gpui::point(px(8.0), px(8.0)),
+            gpui::size(
+                (bounds.size.width - px(16.0)).max(px(1.0)),
+                (bounds.size.height - px(16.0)).max(px(1.0)),
+            ),
+        );
+        popover::contained_menu(
+            self.id,
+            self.content,
+            self.closing,
+            self.trigger_height,
+            limits,
+        )
+    }
+}
+
 /// Owned scroll + floating-scrollbar state for one settings page.
 ///
 /// This is the dedicated settings scroll container state. It wraps the same
@@ -193,7 +254,9 @@ pub fn page_header(theme: &Theme, title: &str, count: Option<usize>) -> gpui::Di
 pub fn page_subtitle(theme: &Theme, copy: impl Into<SharedString>) -> gpui::Div {
     div()
         .mt(px(4.0))
+        .min_w_0()
         .text_size(crate::typography::ui_rems(13.0))
+        .line_height(crate::typography::ui_rems(20.0))
         .text_color(theme.text_muted)
         .child(copy.into())
 }
@@ -215,11 +278,11 @@ pub fn field_label(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div {
 /// control works for a density picker, a layout picker or anything else where
 /// the choice is easier to show than to describe. Pair with [`option_card`].
 pub fn option_card_row() -> gpui::Div {
-    div().flex().flex_row().items_start().gap(px(12.0)).w_full()
+    div().flex().flex_row().items_start().gap(px(16.0)).w_full()
 }
 
 /// Default height of an [`option_card`] preview frame.
-pub const OPTION_CARD_HEIGHT: f32 = 88.0;
+pub const OPTION_CARD_HEIGHT: f32 = 148.0;
 /// Corner radius of the preview frame.
 ///
 /// Public because the preview has to round *itself* to this. gpui content masks
@@ -256,6 +319,7 @@ pub fn option_card(
         .child(
             div()
                 .h(px(OPTION_CARD_HEIGHT))
+                .flex_none()
                 .w_full()
                 .rounded(px(OPTION_CARD_RADIUS))
                 .overflow_hidden()
@@ -279,19 +343,34 @@ pub fn option_card(
                 } else {
                     theme.text_muted
                 })
-                .child(crate::icons::icon(icon_path).size(px(16.0)).flex_none())
+                .child(
+                    crate::icons::icon(icon_path)
+                        .size(px(16.0))
+                        .text_color(if selected {
+                            theme.accent
+                        } else {
+                            theme.text_muted
+                        }),
+                )
                 .child(label.into()),
         )
 }
 
-/// Shared settings groups remain transparent over the modal's single glass
-/// layer. Quiet separators mark rows without nesting another opaque card.
-pub fn section_card(_theme: &Theme) -> gpui::Div {
-    div().mt(px(24.0)).flex().flex_col()
+/// A quiet outline groups related settings without covering the shared material.
+pub fn section_card(theme: &Theme) -> gpui::Div {
+    div()
+        .mt(px(24.0))
+        .rounded(px(12.0))
+        .border_1()
+        .border_color(theme.border.opacity(0.7))
+        .overflow_hidden()
+        .flex()
+        .flex_col()
 }
 
 pub fn card_row(theme: &Theme, first: bool) -> gpui::Div {
     div()
+        .px(px(16.0))
         .py(px(16.0))
         .when(!first, |el| {
             el.border_t_1().border_color(theme.border.opacity(0.55))

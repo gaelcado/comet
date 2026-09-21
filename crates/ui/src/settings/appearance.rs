@@ -1867,10 +1867,11 @@ impl AppearancePage {
                     .text_color(theme.text_muted),
             )
             .when_some(self.font_menu(kind).get(), |trigger, _| {
-                trigger.child(popover::anchored_menu_below(
+                trigger.child(widgets::dropdown(
                     SharedString::from(format!("{slug}-font-menu")),
                     menu,
                     closing,
+                    36.0,
                 ))
             })
             .into_any_element()
@@ -1970,10 +1971,11 @@ impl AppearancePage {
                     .text_color(theme.text_muted),
             )
             .when_some(self.size_menu(kind).get(), |trigger, _| {
-                trigger.child(popover::anchored_menu_below(
+                trigger.child(widgets::dropdown(
                     SharedString::from(format!("{slug}-font-size-menu")),
                     menu,
                     closing,
+                    36.0,
                 ))
             })
             .into_any_element()
@@ -2136,7 +2138,7 @@ impl AppearancePage {
                         }),
                 )
                 .into_any_element();
-            trigger = trigger.child(popover::anchored_menu_below(
+            trigger = trigger.child(widgets::dropdown(
                 SharedString::from(format!(
                     "appearance-{}-theme-menu",
                     if appearance_kind.is_light() {
@@ -2147,6 +2149,7 @@ impl AppearancePage {
                 )),
                 menu,
                 closing,
+                34.0,
             ));
         }
 
@@ -2919,7 +2922,7 @@ impl AppearancePage {
             .into_iter()
             .partition(|entry| entry.source.is_linked());
         let mut rows = vec![
-            widgets::card_row(theme, false)
+            widgets::card_row(theme, true)
                 .child(widgets::row_tile(theme, icons::FOLDER_WITH_FILES))
                 .child(
                     div()
@@ -3119,8 +3122,10 @@ impl Render for AppearancePage {
                 )
                 .into_any_element(),
         );
+        let color_rows = settings_rows;
+        let mut settings_rows = Vec::new();
         settings_rows.push(
-            widgets::card_row(&theme, false)
+            widgets::card_row(&theme, true)
                 .child(widgets::row_tile(&theme, icons::WIDGET))
                 .child(
                     div()
@@ -3353,7 +3358,7 @@ impl Render for AppearancePage {
                 )
                 .into_any_element(),
         );
-        settings_rows.extend(self.render_theme_library_rows(&theme, cx));
+        let library_rows = self.render_theme_library_rows(&theme, cx);
         let library_warning = self
             .library_error
             .clone()
@@ -3387,12 +3392,13 @@ impl Render for AppearancePage {
                 div()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .items_center()
                     .justify_between()
-                    .gap(px(24.0))
+                    .gap(px(16.0))
                     .child(
                         div()
-                            .min_w_0()
+                            .min_w(px(160.0))
                             .flex_1()
                             .flex()
                             .flex_col()
@@ -3410,8 +3416,10 @@ impl Render for AppearancePage {
                     .child(
                         div()
                             .flex_none()
+                            .max_w_full()
                             .flex()
                             .flex_row()
+                            .flex_wrap()
                             .items_center()
                             .gap(px(8.0))
                             .child(picker)
@@ -3495,7 +3503,14 @@ impl Render for AppearancePage {
                                     .child(widgets::field_label(&theme, "Color scheme"))
                                     .child(widgets::option_card_row().children(cards)),
                             )
-                            .child(widgets::section_card(&theme).children(settings_rows))
+                            .child(widgets::section_card(&theme).children(color_rows))
+                            .child(
+                                div()
+                                    .mt(px(32.0))
+                                    .child(widgets::field_label(&theme, "Material and background"))
+                                    .child(widgets::section_card(&theme).mt(px(12.0)).children(settings_rows)),
+                            )
+                            .child(widgets::section_card(&theme).children(library_rows))
                             .child(font_section)
                             .when_some(library_warning, |page, warning| {
                                 page.child(

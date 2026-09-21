@@ -5787,10 +5787,7 @@ impl Shell {
                 window.focus_next(cx);
             });
         }
-        let viewport_width = f32::from(window.viewport_size().width);
-        let margin = if viewport_width < 680.0 { 16.0 } else { 48.0 };
-        let width = (viewport_width - margin).clamp(240.0, 1000.0);
-        let height = (f32::from(window.viewport_size().height) - 80.0).clamp(240.0, 760.0);
+        let bounds = settings::widgets::modal_bounds(window.viewport_size());
         let nav = self.render_settings_nav(section, &theme, cx);
         let outlet = self.settings_outlet(section, window, cx);
         let card = popover::popover_card_flush(&theme)
@@ -5801,8 +5798,8 @@ impl Shell {
             .track_focus(&self.settings_focus)
             .tab_group()
             .tab_stop(false)
-            .w(px(width))
-            .h(px(height))
+            .w(bounds.size.width)
+            .h(bounds.size.height)
             .rounded(px(16.0))
             .flex()
             .flex_col()

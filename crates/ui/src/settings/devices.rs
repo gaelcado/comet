@@ -435,7 +435,8 @@ impl Render for DevicesPage {
             })
             .collect();
 
-        let card = widgets::section_card(&theme);
+        // Each device already owns its card; the grid is only a layout host.
+        let card = div().mt(px(24.0)).flex().flex_col();
         let card = if rows.is_empty() {
             card.child(
                 div()
@@ -447,7 +448,13 @@ impl Render for DevicesPage {
                     .child(SharedString::from("No devices registered")),
             )
         } else {
-            let two_columns = f32::from(window.viewport_size().width) >= 800.0;
+            let modal_width = f32::from(widgets::modal_bounds(window.viewport_size()).size.width);
+            let rail_width = if f32::from(window.viewport_size().width) < 680.0 {
+                72.0
+            } else {
+                216.0
+            };
+            let two_columns = modal_width - rail_width - 48.0 >= 640.0;
             let mut rows = rows.into_iter();
             let mut grid = div().flex().flex_col().gap(px(16.0));
             while let Some(first) = rows.next() {
@@ -456,7 +463,9 @@ impl Render for DevicesPage {
                     .gap(px(16.0))
                     .child(div().flex_1().min_w_0().child(first));
                 if two_columns {
-                    row = row.child(div().flex_1().min_w_0().children(rows.next()));
+                    if let Some(second) = rows.next() {
+                        row = row.child(div().flex_1().min_w_0().child(second));
+                    }
                 }
                 grid = grid.child(row);
             }

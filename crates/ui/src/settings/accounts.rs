@@ -315,6 +315,7 @@ impl AccountsPage {
         let mut trigger =
             div()
                 .id("accounts-device-switcher")
+                .relative()
                 .flex_none()
                 .h(px(28.0))
                 .px(px(8.0))
@@ -433,10 +434,11 @@ impl AccountsPage {
                         )
                 }))
                 .into_any_element();
-            trigger = trigger.child(popover::anchored_menu(
+            trigger = trigger.child(widgets::dropdown(
                 "accounts-device-menu",
                 menu,
                 closing,
+                28.0,
             ));
         }
         trigger.into_any_element()
@@ -1410,7 +1412,7 @@ impl Render for AccountsPage {
                         let card = if rows.is_empty() {
                             card.child(
                                 div()
-                                    .px(px(0.0))
+                                    .px(px(16.0))
                                     .py(px(16.0))
                                     .text_size(crate::typography::ui_rems(12.0))
                                     .text_color(theme.text_muted)
@@ -1493,6 +1495,7 @@ impl Render for AccountsPage {
                                 div()
                                     .flex()
                                     .flex_row()
+                                    .flex_wrap()
                                     .items_center()
                                     .gap(px(10.0))
                                     .child(widgets::page_header(&theme, "Accounts", account_count))

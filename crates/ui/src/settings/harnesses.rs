@@ -383,7 +383,8 @@ impl HarnessesPage {
             };
             let interactive = !self.title_saving && (!is_model || settings.harness.is_some());
             let mut row = div()
-                .mt(px(12.0))
+                .relative()
+                .mt(px(16.0))
                 .child(widgets::row_title(
                     theme,
                     if is_model {
@@ -394,6 +395,12 @@ impl HarnessesPage {
                 ))
                 .child(
                     widgets::ghost_action(theme)
+                        .mt(px(6.0))
+                        .w_full()
+                        .min_h(px(36.0))
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(crate::theme::ink(0.025))
                         .id(if is_model {
                             "title-model"
                         } else {
@@ -416,7 +423,12 @@ impl HarnessesPage {
                                 }))
                         })
                         .when(!interactive, |el| el.opacity(0.5))
-                        .child(label),
+                        .child(div().flex_1().min_w_0().truncate().child(label))
+                        .child(
+                            crate::icons::icon(crate::icons::ALT_ARROW_DOWN)
+                                .size(px(14.0))
+                                .text_color(theme.text_muted),
+                        ),
                 );
             if self.title_menu == Some(is_model) {
                 let mut choices = vec![(
@@ -459,41 +471,41 @@ impl HarnessesPage {
                             }),
                     );
                 }
-                row =
-                    row.child(widgets::scroll_faded(
-                        if is_model {
-                            "title-model-fade"
-                        } else {
-                            "title-harness-fade"
-                        },
-                        div()
-                            .id(if is_model {
-                                "title-model-options"
-                            } else {
-                                "title-harness-options"
-                            })
-                            .max_h(px(240.0))
-                            .overflow_y_scroll()
-                            .children(choices.into_iter().enumerate().map(
-                                |(ix, (label, choice))| {
-                                    popover::menu_row(
-                                        theme,
-                                        &choice == settings,
-                                        format!("title-choice-{is_model}-{ix}"),
-                                    )
-                                    .id(("title-choice", ix))
-                                    .tab_index(0)
-                                    .role(gpui::Role::Button)
-                                    .focus_visible(|s| {
-                                        s.border_2().border_color(theme.accent).opacity(1.0)
-                                    })
-                                    .on_click(cx.listener(move |page, _, _, cx| {
-                                        page.load_titles(Some(choice.clone()), cx)
-                                    }))
-                                    .child(label)
-                                },
-                            )),
-                    ));
+                let menu = popover::popover_card(theme)
+                    .w(px(320.0))
+                    .on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                        page.title_menu = None;
+                        cx.notify();
+                    }))
+                    .flex()
+                    .flex_col()
+                    .children(
+                        choices
+                            .into_iter()
+                            .enumerate()
+                            .map(|(ix, (label, choice))| {
+                                popover::menu_row(
+                                    theme,
+                                    &choice == settings,
+                                    format!("title-choice-{is_model}-{ix}"),
+                                )
+                                .id(("title-choice", ix))
+                                .tab_index(0)
+                                .role(gpui::Role::Button)
+                                .focus_visible(|s| s.border_2().border_color(theme.accent))
+                                .on_click(cx.listener(move |page, _, _, cx| {
+                                    page.load_titles(Some(choice.clone()), cx)
+                                }))
+                                .child(div().min_w_0().child(label))
+                            }),
+                    )
+                    .into_any_element();
+                row = row.child(widgets::dropdown(
+                    format!("title-choice-menu-{is_model}"),
+                    menu,
+                    None,
+                    36.0,
+                ));
             }
             card = card.child(row);
         }
@@ -795,6 +807,7 @@ impl HarnessesPage {
         let mut trigger =
             div()
                 .id("harnesses-device-switcher")
+                .relative()
                 .flex_none()
                 .h(px(28.0))
                 .px(px(8.0))
@@ -913,7 +926,7 @@ impl HarnessesPage {
                         )
                 }))
                 .into_any_element();
-            trigger = trigger.child(popover::anchored_menu("harnesses-device-menu", menu, None));
+            trigger = trigger.child(widgets::dropdown("harnesses-device-menu", menu, None, 28.0));
         }
         trigger.into_any_element()
     }
