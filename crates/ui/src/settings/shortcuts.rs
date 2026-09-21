@@ -714,16 +714,25 @@ impl Render for ShortcutsPage {
                 .relative()
                 .size_full()
                 .on_hover(cx.listener(Self::on_scroll_hovered))
-                .child(crate::edge_fade::edge_faded(16.0, true, true,
-                    div().id("conversations-settings-page")
-                        .size_full().overflow_y_scroll().track_scroll(&self.scroll.scroll)
-                        .child(widgets::page_column()
-                            .child(widgets::page_header(&theme, "Conversations", None))
-                            .child(widgets::page_subtitle(&theme, "Choose how you send messages and interrupt agents. These settings stay on this device."))
-                            .child(send_behavior_row)
-                            .child(escape_behavior_row)
-                        )
-                ).fade_overflow_y(&self.scroll.scroll))
+                .child(
+                    crate::edge_fade::edge_faded(
+                        16.0,
+                        true,
+                        true,
+                        div()
+                            .id("conversations-settings-page")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll.scroll)
+                            .child(
+                                widgets::page_column()
+                                    .child(widgets::page_header(&theme, "Conversations", None))
+                                    .child(send_behavior_row)
+                                    .child(escape_behavior_row),
+                            ),
+                    )
+                    .fade_overflow_y(&self.scroll.scroll),
+                )
                 .children(scrollbar)
                 .into_any_element();
         }
@@ -803,9 +812,7 @@ impl Render for ShortcutsPage {
                                             .child(
                                                 widgets::page_subtitle(
                                                     &theme,
-                                                    "Click a binding, then press the key combination you \
-                                                     want to use. Changes apply immediately and stay on \
-                                                     this device.",
+                                                    "Click a binding, then press the new key combination.",
                                                 )
                                                 .max_w(px(512.0))
                                                 .line_height(px(20.0)),

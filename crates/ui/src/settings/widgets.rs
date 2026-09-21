@@ -371,7 +371,8 @@ pub fn section_card(theme: &Theme) -> gpui::Div {
 pub fn card_row(theme: &Theme, first: bool) -> gpui::Div {
     div()
         .px(px(16.0))
-        .py(px(16.0))
+        .py(px(10.0))
+        .min_h(px(56.0))
         .when(!first, |el| {
             el.border_t_1().border_color(theme.border.opacity(0.55))
         })
@@ -414,6 +415,8 @@ pub fn row_title(theme: &Theme, title: impl Into<SharedString>) -> gpui::Div {
 pub fn meta_line(theme: &Theme, fragments: Vec<AnyElement>) -> gpui::Div {
     let mut line = div()
         .mt(px(Theme::TEXT_STACK_GAP))
+        .min_w_0()
+        .max_w_full()
         .flex()
         .flex_row()
         .flex_wrap()
@@ -431,7 +434,7 @@ pub fn meta_line(theme: &Theme, fragments: Vec<AnyElement>) -> gpui::Div {
                     .child(SharedString::from("·")),
             );
         }
-        line = line.child(fragment);
+        line = line.child(div().min_w_0().max_w_full().child(fragment));
         first = false;
     }
     line
@@ -467,8 +470,7 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
         .child(label.into())
 }
 
-/// I/O geometry measured from drams.framer.website/drams/001, scaled to 60%:
-/// 79×40 track, 34px bevel, 32px face, 3px inset, 39px travel.
+/// A tinted glass track with one translucent thumb and a restrained light edge.
 /// The caller owns activation and accessibility; only the thumb interpolates.
 pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
     div()
@@ -502,7 +504,6 @@ impl SwitchTravel {
 
 impl RenderOnce for SwitchVisual {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
-        use gpui::{BoxShadow, linear_color_stop, linear_gradient, point};
         let now = std::time::Instant::now();
         let target = if self.on { 1.0 } else { 0.0 };
         let reduced = crate::motion::reduced_motion(cx);
@@ -531,29 +532,16 @@ impl RenderOnce for SwitchVisual {
         if (position - target).abs() > 0.001 {
             window.request_animation_frame();
         }
-        let scale = 0.6;
-        let shadow = |y: f32, blur: f32, spread: f32, alpha: f32, inset: bool| BoxShadow {
-            color: gpui::black().opacity(alpha),
-            offset: point(px(0.0), px(y * scale)),
-            blur_radius: px(blur * scale),
-            spread_radius: px(spread * scale),
-            inset,
-        };
-        let gradient = |top, bottom| {
-            linear_gradient(
-                180.0,
-                linear_color_stop(gpui::white().opacity(top), 0.0),
-                linear_color_stop(gpui::white().opacity(bottom), 1.0),
-            )
-        };
+        let dark = self.theme.appearance.is_dark();
         let track = if self.on {
-            self.theme.accent
+            self.theme.accent.opacity(if dark { 0.72 } else { 0.80 })
         } else {
-            crate::theme::grey(if self.theme.appearance.is_dark() {
-                0x58
-            } else {
-                0xe3
-            })
+            self.theme.ink(if dark { 0.14 } else { 0.10 })
+        };
+        let indicator = if self.on {
+            self.theme.on_accent
+        } else {
+            self.theme.text_muted
         };
         div()
             .relative()
@@ -564,55 +552,48 @@ impl RenderOnce for SwitchVisual {
                     .absolute()
                     .top(px(6.0))
                     .left_0()
-                    .w(px(79.0 * scale))
-                    .h(px(40.0 * scale))
+                    .w(px(48.0))
+                    .h(px(24.0))
                     .rounded_full()
                     .bg(track)
-                    .shadow(vec![shadow(1.0, 2.0, 0.0, 0.12, true)])
+                    .shadow(crate::theme::card_selected_shadows())
                     .child(
                         div()
                             .absolute()
-                            .top(px(12.0 * scale))
-                            .left(px(20.0 * scale))
-                            .w(px(2.0 * scale))
-                            .h(px(16.0 * scale))
+                            .top(px(8.0))
+                            .left(px(11.0))
+                            .w(px(1.5))
+                            .h(px(8.0))
                             .rounded_full()
-                            .bg(gpui::white())
+                            .bg(indicator)
                             .opacity(position),
                     )
                     .child(
                         div()
                             .absolute()
-                            .top(px(12.0 * scale))
-                            .left(px(52.0 * scale))
-                            .size(px(16.0 * scale))
+                            .top(px(8.0))
+                            .left(px(32.0))
+                            .size(px(8.0))
                             .rounded_full()
-                            .border(px(3.0 * scale))
-                            .border_color(gpui::white())
+                            .border(px(1.5))
+                            .border_color(indicator)
                             .opacity(1.0 - position),
                     ),
             )
             .child(
                 div()
                     .absolute()
-                    .top(px(6.0 + 3.0 * scale))
-                    .left(px((3.0 + 39.0 * position) * scale))
-                    .size(px(34.0 * scale))
+                    .top(px(8.0))
+                    .left(px(2.0 + 24.0 * position))
+                    .size(px(20.0))
                     .rounded_full()
-                    .bg(gradient(0.85, 0.25))
-                    .shadow(vec![
-                        shadow(1.0, 2.0, -0.5, 0.18, false),
-                        shadow(3.0, 7.0, -1.0, 0.12, false),
-                    ])
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(scale))
-                            .left(px(scale))
-                            .size(px(32.0 * scale))
-                            .rounded_full()
-                            .bg(gradient(0.55, 0.12)),
-                    ),
+                    .bg(gpui::linear_gradient(
+                        180.0,
+                        gpui::linear_color_stop(gpui::white().opacity(0.82), 0.0),
+                        gpui::linear_color_stop(gpui::white().opacity(0.38), 1.0),
+                    ))
+                    .border_1()
+                    .border_color(gpui::white().opacity(0.55)),
             )
     }
 }

@@ -5857,18 +5857,6 @@ impl Shell {
                             .flex_col()
                             .bg(crate::theme::ink(0.025))
                             .pt(px(Theme::SPACE_SM + Theme::SPACE_XS))
-                            .when(!compact, |el| {
-                                el.child(
-                                    div()
-                                        .flex_none()
-                                        .px(px(2.0 * Theme::SPACE_SM))
-                                        .pb(px(Theme::SPACE_SM))
-                                        .text_size(crate::typography::ui_rems(12.0))
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(theme.text_muted)
-                                        .child("Settings"),
-                                )
-                            })
                             .child(div().flex_1().min_h_0().child(nav))
                             .child(
                                 div().flex_none().p(px(Theme::SPACE_SM)).child(

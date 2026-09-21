@@ -264,24 +264,22 @@ impl Render for FilesSettingsPage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                crate::edge_fade::edge_faded(16.0, true, true, div()
-                    .id("files-settings-page")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll.scroll)
-                    .child(
-                        widgets::page_column()
-                            .child(widgets::page_header(&theme, "Files", None))
-                            .child(
-                                widgets::page_subtitle(
-                                    &theme,
-                                    "Control how workspace files are displayed and saved while you edit.",
-                                )
-                                .max_w(px(512.0))
-                                .line_height(px(20.0)),
-                            )
-                            .child(card),
-                    )).fade_overflow_y(&self.scroll.scroll),
+                crate::edge_fade::edge_faded(
+                    16.0,
+                    true,
+                    true,
+                    div()
+                        .id("files-settings-page")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll.scroll)
+                        .child(
+                            widgets::page_column()
+                                .child(widgets::page_header(&theme, "Files", None))
+                                .child(card),
+                        ),
+                )
+                .fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
     }

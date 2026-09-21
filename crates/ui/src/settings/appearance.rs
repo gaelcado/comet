@@ -1226,13 +1226,8 @@ fn bar(fraction: f32, tone: Hsla) -> gpui::Div {
 
 fn accent_helper(accent: AccentSelection) -> String {
     match accent {
-        AccentSelection::ThemeDefault => {
-            "Theme default · Uses the palette's intended color.".into()
-        }
-        AccentSelection::Preset(preset) => format!(
-            "{} · Controls, glyphs, selections, code, and activity.",
-            preset.label()
-        ),
+        AccentSelection::ThemeDefault => "Theme default".into(),
+        AccentSelection::Preset(preset) => preset.label().into(),
     }
 }
 
@@ -1247,14 +1242,14 @@ fn surface_label(surface: SurfacePreference) -> &'static str {
 fn surface_helper(surface: SurfacePreference, resolved: SurfaceTreatment) -> String {
     match surface {
         SurfacePreference::ThemeDefault => format!(
-            "Uses this theme's {} default.",
+            "Theme default: {}",
             match resolved {
                 SurfaceTreatment::Frosted => "frosted",
                 SurfaceTreatment::Opaque => "opaque",
             }
         ),
-        SurfacePreference::Frosted => "Theme-colored glass where supported.".into(),
-        SurfacePreference::Opaque => "Solid surfaces for every theme.".into(),
+        SurfacePreference::Frosted => "Translucent surfaces".into(),
+        SurfacePreference::Opaque => "Solid surfaces".into(),
     }
 }
 
@@ -1424,6 +1419,10 @@ fn compact_action(
     popover::btn_ghost(theme, label, id.clone())
         .id(id)
         .min_h(px(32.0))
+        .px(px(12.0))
+        .rounded(px(8.0))
+        .bg(crate::theme::card_selected_bg())
+        .shadow(crate::theme::card_selected_shadows())
         .flex()
         .items_center()
 }
@@ -2072,9 +2071,10 @@ impl AppearancePage {
                     .child(SharedString::from(selected_variant.name.clone())),
             )
             .child(
-                icons::icon(icons::SORT_VERTICAL)
+                icons::icon(icons::ALT_ARROW_DOWN)
                     .size(px(14.0))
-                    .text_color(theme.text_muted.opacity(if open { 0.9 } else { 0.45 })),
+                    .flex_none()
+                    .text_color(theme.text_muted),
             );
 
         if self.theme_menu(appearance_kind).get().is_some() {
@@ -3046,17 +3046,7 @@ impl Render for AppearancePage {
                         div()
                             .flex_1()
                             .min_w(px(160.0))
-                            .child(widgets::row_title(&theme, label))
-                            .child(widgets::meta_line(
-                                &theme,
-                                vec![
-                                    div()
-                                        .child(SharedString::from(
-                                            "Applied when this color scheme is active.",
-                                        ))
-                                        .into_any_element(),
-                                ],
-                            )),
+                            .child(widgets::row_title(&theme, label)),
                     )
                     .child(selector)
                     .into_any_element(),
@@ -3112,8 +3102,7 @@ impl Render for AppearancePage {
                 )
                 .child(
                     div()
-                        .w_full()
-                        .pl(px(36.0))
+                        .max_w_full()
                         .flex()
                         .flex_wrap()
                         .items_center()
@@ -3146,12 +3135,14 @@ impl Render for AppearancePage {
                 )
                 .child(
                     div()
-                        .w_full()
-                        .pl(px(36.0))
+                        .max_w_full()
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(px(2.0))
+                        .p(px(3.0))
+                        .rounded(px(10.0))
+                        .bg(crate::theme::ink(0.035))
                         .children(surface_controls),
                 )
                 .into_any_element(),
@@ -3184,9 +3175,6 @@ impl Render for AppearancePage {
                 div()
                     .child(SharedString::from(background.name.clone()))
                     .into_any_element(),
-                div()
-                    .child("Softened automatically on frosted themes.")
-                    .into_any_element(),
             ],
             Some(_) => vec![
                 div().child("Image unavailable").into_any_element(),
@@ -3194,11 +3182,7 @@ impl Render for AppearancePage {
                     .child("Choose a replacement or remove it.")
                     .into_any_element(),
             ],
-            None => vec![
-                div()
-                    .child("Add an image behind the composer on empty new threads.")
-                    .into_any_element(),
-            ],
+            None => vec![div().child("No image selected").into_any_element()],
         };
         settings_rows.push(
             widgets::card_row(&theme, false)
@@ -3207,13 +3191,12 @@ impl Render for AppearancePage {
                     div()
                         .flex_1()
                         .min_w(px(160.0))
-                        .child(widgets::row_title(&theme, "New thread composer background"))
+                        .child(widgets::row_title(&theme, "New thread background"))
                         .child(widgets::meta_line(&theme, background_meta)),
                 )
                 .child(
                     div()
-                        .w_full()
-                        .pl(px(36.0))
+                        .max_w_full()
                         .flex()
                         .flex_wrap()
                         .items_center()
@@ -3305,13 +3288,14 @@ impl Render for AppearancePage {
                     )
                     .child(
                         div()
-                            .flex_none()
-                            .ml(px(10.0))
-                            .max_w(px(430.0))
+                            .w(px(430.0))
+                            .max_w_full()
                             .flex()
                             .flex_wrap()
-                            .justify_end()
-                            .gap(px(6.0))
+                            .gap(px(2.0))
+                            .p(px(3.0))
+                            .rounded(px(10.0))
+                            .bg(crate::theme::ink(0.035))
                             .children(effect_controls),
                     )
                     .into_any_element(),
@@ -3478,50 +3462,55 @@ impl Render for AppearancePage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                crate::edge_fade::edge_faded(16.0, true, true, div()
-                    .id("appearance-page")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll.scroll)
-                    .child(
-                        widgets::page_column()
-                            .child(widgets::page_header(&theme, "Appearance", None))
-                            .child(
-                                widgets::page_subtitle(
-                                    &theme,
-                                    "Choose how Zeron looks. These settings stay on this device.",
-                                )
-                                .max_w(px(512.0))
-                                .line_height(px(20.0)),
-                            )
-                            .child(
-                                div()
-                                    .mt(px(32.0))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(12.0))
-                                    .child(widgets::field_label(&theme, "Color scheme"))
-                                    .child(widgets::option_card_row().children(cards)),
-                            )
-                            .child(widgets::section_card(&theme).children(color_rows))
-                            .child(
-                                div()
-                                    .mt(px(32.0))
-                                    .child(widgets::field_label(&theme, "Material and background"))
-                                    .child(widgets::section_card(&theme).mt(px(12.0)).children(settings_rows)),
-                            )
-                            .child(widgets::section_card(&theme).children(library_rows))
-                            .child(font_section)
-                            .when_some(library_warning, |page, warning| {
-                                page.child(
+                crate::edge_fade::edge_faded(
+                    16.0,
+                    true,
+                    true,
+                    div()
+                        .id("appearance-page")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll.scroll)
+                        .child(
+                            widgets::page_column()
+                                .child(widgets::page_header(&theme, "Appearance", None))
+                                .child(
                                     div()
-                                        .mt(px(8.0))
-                                        .text_size(crate::typography::ui_rems(11.5))
-                                        .text_color(theme.warning)
-                                        .child(warning),
+                                        .mt(px(24.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(12.0))
+                                        .child(widgets::field_label(&theme, "Color scheme"))
+                                        .child(widgets::option_card_row().children(cards)),
                                 )
-                            }),
-                    )).fade_overflow_y(&self.scroll.scroll),
+                                .child(widgets::section_card(&theme).children(color_rows))
+                                .child(
+                                    div()
+                                        .mt(px(24.0))
+                                        .child(widgets::field_label(
+                                            &theme,
+                                            "Material and background",
+                                        ))
+                                        .child(
+                                            widgets::section_card(&theme)
+                                                .mt(px(12.0))
+                                                .children(settings_rows),
+                                        ),
+                                )
+                                .child(widgets::section_card(&theme).children(library_rows))
+                                .child(font_section)
+                                .when_some(library_warning, |page, warning| {
+                                    page.child(
+                                        div()
+                                            .mt(px(8.0))
+                                            .text_size(crate::typography::ui_rems(11.5))
+                                            .text_color(theme.warning)
+                                            .child(warning),
+                                    )
+                                }),
+                        ),
+                )
+                .fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
             .children(modal)

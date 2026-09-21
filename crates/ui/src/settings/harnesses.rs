@@ -1247,9 +1247,7 @@ impl Render for HarnessesPage {
                             .child(
                                 widgets::page_subtitle(
                                     &theme,
-                                    "Install coding agents and choose which ones the composer offers. \
-                                     Installations and settings apply to the selected device. \
-                                     Downloads start only when you choose Install.",
+                                    "Install and enable agents on the selected device. Downloads start only when you choose Install.",
                                 )
                                 .max_w(px(512.0))
                                 .line_height(px(20.0)),
