@@ -460,22 +460,33 @@ pub enum SettingsSection {
     Files,
     Notifications,
     Shortcuts,
+    Conversations,
     Appshots,
     Archived,
 }
 
 impl SettingsSection {
-    pub const ALL: [SettingsSection; 9] = [
+    pub const ALL: [SettingsSection; 10] = [
         SettingsSection::Appearance,
         SettingsSection::Notifications,
-        SettingsSection::Files,
         SettingsSection::Shortcuts,
+        SettingsSection::Conversations,
+        SettingsSection::Files,
         SettingsSection::Appshots,
+        SettingsSection::Archived,
         SettingsSection::Harnesses,
         SettingsSection::Agents,
         SettingsSection::Devices,
-        SettingsSection::Archived,
     ];
+
+    fn category_heading(self) -> Option<&'static str> {
+        match self {
+            Self::Appearance => Some("PREFERENCES"),
+            Self::Conversations => Some("WORKSPACE"),
+            Self::Harnesses => Some("AGENTS & ACCESS"),
+            _ => None,
+        }
+    }
 
     /// Sidebar + header label (zeron settings-sidebar.tsx SECTIONS / __root.tsx
     /// `settingsTitle` — the same strings in both places).
@@ -488,6 +499,7 @@ impl SettingsSection {
             SettingsSection::Files => "Files",
             SettingsSection::Notifications => "Notifications",
             SettingsSection::Shortcuts => "Shortcuts",
+            SettingsSection::Conversations => "Conversations",
             SettingsSection::Appshots => "Appshots",
             SettingsSection::Archived => "Archived sessions",
         }
@@ -3881,9 +3893,18 @@ impl Shell {
     }
 
     fn close_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_focus_pending = false;
         self.route = Route::Chat;
         self.settings_restore_pending = true;
         cx.notify();
+    }
+
+    fn toggle_settings(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.route, Route::Settings(_)) {
+            self.close_settings(cx);
+        } else {
+            self.open_settings(SettingsSection::Appearance, cx);
+        }
     }
 
     // ---- back/forward (route history) ----
@@ -4080,7 +4101,9 @@ impl Shell {
                     None => Empty.into_any_element(),
                 }
             }
-            SettingsSection::Shortcuts | SettingsSection::Appshots => {
+            SettingsSection::Shortcuts
+            | SettingsSection::Conversations
+            | SettingsSection::Appshots => {
                 if self.shortcuts_page.is_none() {
                     let state = self.state.clone();
                     let keymap = self.settings.keymap.clone();
@@ -4141,7 +4164,10 @@ impl Shell {
                 match &self.shortcuts_page {
                     Some(page) => {
                         page.update(cx, |page, _| {
-                            page.show_appshots(section == SettingsSection::Appshots)
+                            page.show_section(
+                                section == SettingsSection::Appshots,
+                                section == SettingsSection::Conversations,
+                            )
                         });
                         page.clone().into_any_element()
                     }
@@ -5781,17 +5807,16 @@ impl Shell {
         if self.settings_focus_pending {
             self.settings_focus_pending = false;
             self.settings_return_focus = window.focused(cx);
-            let focus = self.settings_focus.clone();
-            window.on_next_frame(move |window, cx| {
-                window.focus(&focus, cx);
-                window.focus_next(cx);
-            });
+            // Keep keyboard dispatch in the dialog without selecting a control.
+            // Tab remains the explicit way to enter its navigation or content.
+            window.focus(&self.settings_focus, cx);
         }
+        let viewport_width = f32::from(window.viewport_size().width);
         let bounds = settings::widgets::modal_bounds(window.viewport_size());
-        let nav = self.render_settings_nav(section, &theme, cx);
+        let compact = viewport_width < 680.0;
+        let nav = self.render_settings_nav(section, compact, &theme, cx);
         let outlet = self.settings_outlet(section, window, cx);
         let card = popover::popover_card_flush(&theme)
-            .bg(theme.surface_overlay)
             .id("settings-modal")
             .role(gpui::Role::Dialog)
             .aria_label("Settings")
@@ -5830,36 +5855,47 @@ impl Shell {
                             .flex_none()
                             .flex()
                             .flex_col()
-                            .border_r_1()
-                            .border_color(theme.border)
-                            .bg(crate::theme::wash(0.025))
-                            .pt(px(6.0))
+                            .bg(crate::theme::ink(0.025))
+                            .pt(px(Theme::SPACE_SM + Theme::SPACE_XS))
+                            .when(!compact, |el| {
+                                el.child(
+                                    div()
+                                        .flex_none()
+                                        .px(px(2.0 * Theme::SPACE_SM))
+                                        .pb(px(Theme::SPACE_SM))
+                                        .text_size(crate::typography::ui_rems(12.0))
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme.text_muted)
+                                        .child("Settings"),
+                                )
+                            })
                             .child(div().flex_1().min_h_0().child(nav))
                             .child(
-                                div().p(px(6.0)).child(
+                                div().flex_none().p(px(Theme::SPACE_SM)).child(
                                     settings::widgets::ghost_action(&theme)
-                                        .rounded(px(10.0))
+                                        .rounded(px(8.0))
                                         .hover(|s| settings::widgets::ghost_hover(&theme, s))
-                                        .px(px(6.0))
+                                        .px(px(Theme::SPACE_SM))
                                         .flex()
                                         .items_center()
-                                        .gap(px(6.0))
+                                        .gap(px(8.0))
+                                        .when(compact, |el| el.justify_center())
                                         .id("settings-back")
                                         .role(gpui::Role::Button)
                                         .aria_label("Back to workspace")
                                         .tab_index(0)
                                         .w_full()
-                                        .min_h(px(30.0))
+                                        .min_h(px(36.0))
                                         .focus_visible(|s| s.border_2().border_color(theme.accent))
                                         .on_click(
                                             cx.listener(|this, _, _, cx| this.close_settings(cx)),
                                         )
                                         .child(
                                             icon(icons::ALT_ARROW_LEFT)
-                                                .size(px(14.0))
+                                                .size(px(16.0))
                                                 .text_color(theme.text_muted),
                                         )
-                                        .when(self.viewport_width >= 680.0, |el| el.child("Back")),
+                                        .when(!compact, |el| el.child("Back to workspace")),
                                 ),
                             ),
                     )
@@ -5907,13 +5943,15 @@ impl Shell {
                     .tab_stop(false),
             )
             .into_any_element();
+        // Use the command palette's material, including its opaque fallback.
+        let card = crate::frost::frosted(16.0, crate::frost::MENU_BLUR, card);
         // Keep settings in the normal overlay plane. Deferred pickers (1) and
         // child dialogs (2) must paint and hit-test above this surface.
         div()
             .absolute()
             .inset_0()
             .occlude()
-            .bg(popover::scrim_alpha(0.25))
+            .bg(popover::scrim_alpha(0.35))
             .flex()
             .items_center()
             .justify_center()
@@ -5926,6 +5964,7 @@ impl Shell {
     fn render_settings_nav(
         &mut self,
         section: SettingsSection,
+        compact: bool,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -5937,38 +5976,44 @@ impl Shell {
             SettingsSection::Files => icons::FOLDER,
             SettingsSection::Notifications => icons::BELL,
             SettingsSection::Shortcuts => icons::KEYBOARD,
+            SettingsSection::Conversations => icons::CHAT_ROUND_LINE,
             SettingsSection::Appshots => icons::MONITOR,
             SettingsSection::Archived => icons::ARCHIVE_MINIMALISTIC,
         };
-        let compact = self.viewport_width < 680.0;
         settings::widgets::scroll_faded(
             "settings-nav-scroll",
             div()
                 .id("settings-sections")
                 .role(gpui::Role::TabList)
                 .aria_label("Settings sections")
-                .w(px(if compact { 56.0 } else { 208.0 }))
+                .w(px(if compact { 72.0 } else { 216.0 }))
                 .overflow_y_scroll()
                 .flex_none()
                 .h_full()
                 .flex()
                 .flex_col()
                 .child(
-                    div().flex_1().px(px(6.0)).flex().flex_col().child(
-                        div().flex().flex_col().gap(px(2.0)).children(
-                            SettingsSection::ALL
-                                .into_iter()
-                                .filter(|item| {
-                                    *item != SettingsSection::Appshots
-                                        || crate::appshots::is_desktop()
-                                })
-                                .map(|item| {
-                                    let index = SettingsSection::ALL
-                                        .iter()
-                                        .position(|s| *s == item)
-                                        .unwrap();
-                                    let selected = item == section;
-                                    div()
+                    div()
+                        .flex_none()
+                        .px(px(Theme::SPACE_SM))
+                        .pb(px(Theme::SPACE_SM))
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div().flex().flex_col().gap(px(2.0)).children(
+                                SettingsSection::ALL
+                                    .into_iter()
+                                    .filter(|item| {
+                                        *item != SettingsSection::Appshots
+                                            || crate::appshots::is_desktop()
+                                    })
+                                    .map(|item| {
+                                        let index = SettingsSection::ALL
+                                            .iter()
+                                            .position(|s| *s == item)
+                                            .unwrap();
+                                        let selected = item == section;
+                                        let row = div()
                                         .id(SharedString::from(format!(
                                             "settings-nav-{}",
                                             item.label()
@@ -5976,10 +6021,13 @@ impl Shell {
                                         .flex()
                                         .flex_row()
                                         .items_center()
+                                        .when(compact, |el| el.justify_center())
                                         .gap(px(8.0))
-                                        .rounded(px(10.0))
-                                        .px(px(6.0))
+                                        .rounded(px(8.0))
+                                        .px(px(Theme::SPACE_SM))
                                         .py(px(6.0))
+                                        .min_h(px(32.0))
+                                        .flex_shrink_0()
                                         .text_size(crate::typography::ui_rems(13.0))
                                         .when(selected, |el| {
                                             // Same tokens as the main sidebar's session
@@ -6043,14 +6091,51 @@ impl Shell {
                                         .child(
                                             icon(section_icon(item))
                                                 .size(px(16.0))
-                                                .text_color(theme.text_muted),
+                                                .text_color(if selected {
+                                                    theme.text
+                                                } else {
+                                                    theme.text_muted
+                                                }),
                                         )
                                         .when(!compact, |el| {
                                             el.child(SharedString::from(item.label()))
-                                        })
-                                }),
+                                        });
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .flex_none()
+                                            .when_some(item.category_heading(), |group, heading| {
+                                                group
+                                                    .when(
+                                                        item != SettingsSection::Appearance,
+                                                        |el| {
+                                                            el.mt(px(
+                                                                Theme::SPACE_SM + Theme::SPACE_XS
+                                                            ))
+                                                        },
+                                                    )
+                                                    .when(!compact, |el| {
+                                                        el.child(
+                                                            div()
+                                                                .px(px(Theme::SPACE_SM))
+                                                                .pb(px(6.0))
+                                                                .text_size(
+                                                                    crate::typography::ui_rems(
+                                                                        10.0,
+                                                                    ),
+                                                                )
+                                                                .font_weight(
+                                                                    gpui::FontWeight::MEDIUM,
+                                                                )
+                                                                .text_color(theme.text_muted)
+                                                                .child(heading),
+                                                        )
+                                                    })
+                                            })
+                                            .child(row)
+                                    }),
+                            ),
                         ),
-                    ),
                 ),
         )
         .into_any_element()
@@ -10932,12 +11017,8 @@ impl Render for Shell {
                 }
             }))
             // Native Settings menu item and the platform convention (Cmd+, on
-            // macOS, Ctrl+, elsewhere) always land on the default section.
-            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
-                if !matches!(this.route, Route::Settings(_)) {
-                    this.open_settings(SettingsSection::Appearance, cx)
-                }
-            }))
+            // macOS, Ctrl+, elsewhere) toggle the modal from any section.
+            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.toggle_settings(cx)))
             // Chat-scoped, unlike new-session — `cycle_session` holds the guard
             // and says why.
             .on_action(cx.listener(|this, _: &NextSession, _, cx| this.cycle_session(true, cx)))
@@ -13934,7 +14015,11 @@ mod settings_modal_regressions {
         cx.update_window(host.into(), |_, window, cx| window.draw(cx).clear())
             .unwrap();
         host.update(cx, |host, window, cx| {
-            window.focus(&host.first, cx);
+            window.focus(&host.start, cx);
+            assert!(!host.first.is_focused(window));
+            assert!(!host.last.is_focused(window));
+            move_settings_focus(&host.start, &host.end, false, window, cx);
+            assert!(host.first.is_focused(window));
             for reverse in [false, false, true, true, true, false] {
                 let was_first = host.first.is_focused(window);
                 move_settings_focus(&host.start, &host.end, reverse, window, cx);
@@ -13986,6 +14071,11 @@ mod settings_modal_regressions {
                     shell.open_settings(section, cx);
                     assert_eq!(shell.nav.current().clone(), history);
                     assert_eq!(shell.state.read(cx).selected_chat, selected);
+                    shell.toggle_settings(cx);
+                    assert_eq!(shell.route, Route::Chat);
+                    assert!(!shell.settings_focus_pending);
+                    shell.toggle_settings(cx);
+                    assert_eq!(shell.route, Route::Settings(SettingsSection::Appearance));
                 }
                 shell.close_settings(cx);
                 assert_eq!(shell.route, Route::Chat);

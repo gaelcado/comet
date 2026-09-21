@@ -60,6 +60,7 @@ pub enum ShortcutsEvent {
 
 pub struct ShortcutsPage {
     appshots_page: bool,
+    conversations_page: bool,
     appshots_focus_pending: bool,
     scroll: crate::settings::widgets::PageScroll,
     /// Working copy (kept in sync with the shell via change events).
@@ -101,6 +102,7 @@ impl ShortcutsPage {
             .detach();
         Self {
             appshots_page: false,
+            conversations_page: false,
             appshots_focus_pending: false,
             scroll: crate::settings::widgets::PageScroll::default(),
             keymap,
@@ -124,12 +126,17 @@ impl ShortcutsPage {
     }
 
     pub fn show_appshots(&mut self, appshots: bool) {
-        if self.appshots_page != appshots {
+        self.show_section(appshots, false);
+    }
+
+    pub fn show_section(&mut self, appshots: bool, conversations: bool) {
+        if self.appshots_page != appshots || self.conversations_page != conversations {
             self.stop_recording();
             self.conflict_notice = None;
             self.appshots_page = appshots;
+            self.conversations_page = conversations;
             self.appshots_focus_pending = appshots;
-            // One scroll state serves both pages — rewind it so each opens
+            // One scroll state serves these pages — rewind it so each opens
             // at the top instead of where the other was left.
             self.scroll.reset();
             if appshots {
@@ -287,17 +294,19 @@ impl ShortcutsPage {
     ) -> gpui::Div {
         // zeron settings.shortcuts.tsx row: min-h-[72px] px-5 gap-5.
         div()
-            .min_h(px(56.0))
-            .px(px(0.0))
+            .min_h(px(64.0))
+            .px(px(16.0))
+            .py(px(12.0))
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .gap(px(20.0))
             .when(gx > 0, |el| el.border_t_1().border_color(theme.border))
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(160.0))
                     .flex()
                     .flex_col()
                     .child(
@@ -434,6 +443,8 @@ impl ShortcutsPage {
     ) -> Option<gpui::AnyElement> {
         let id = if self.appshots_page {
             "appshots-settings-page-scrollbar"
+        } else if self.conversations_page {
+            "conversations-settings-page-scrollbar"
         } else {
             "shortcuts-page-scrollbar"
         };
@@ -574,6 +585,12 @@ impl Render for ShortcutsPage {
                 .child(
                     widgets::toggle_switch(&theme, escape_stops_active_agent)
                         .id("escape-stops-active-agent-toggle")
+                        .debug_selector(|| "escape-stops-active-agent-toggle".into())
+                        .tab_index(0)
+                        .role(gpui::Role::Switch)
+                        .aria_label("Stop active agent with Escape")
+                        .aria_toggled(if escape_stops_active_agent { gpui::Toggled::True } else { gpui::Toggled::False })
+                        .focus_visible(|s| s.border_2().border_color(theme.accent))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.set_escape_stops_active_agent(!escape_stops_active_agent, cx);
@@ -628,6 +645,12 @@ impl Render for ShortcutsPage {
                             let selected = send_behavior == behavior;
                             div()
                                 .id(("composer-send-option", ix))
+                                .debug_selector(move || format!("composer-send-option-{ix}").into())
+                                .tab_index(0)
+                                .role(gpui::Role::Button)
+                                .aria_label(format!("Send messages with {label}"))
+                                .aria_selected(selected)
+                                .focus_visible(|s| s.border_2().border_color(theme.accent))
                                 .min_w(px(72.0))
                                 .px(px(12.0))
                                 .py(px(6.0))
@@ -684,6 +707,26 @@ impl Render for ShortcutsPage {
                     )
                     .child(send_behavior_control),
             );
+        if self.conversations_page {
+            let scrollbar = self.render_scrollbar(&theme, cx);
+            return div()
+                .id("conversations-settings-page-host")
+                .relative()
+                .size_full()
+                .on_hover(cx.listener(Self::on_scroll_hovered))
+                .child(crate::edge_fade::edge_faded(16.0, true, true,
+                    div().id("conversations-settings-page")
+                        .size_full().overflow_y_scroll().track_scroll(&self.scroll.scroll)
+                        .child(widgets::page_column()
+                            .child(widgets::page_header(&theme, "Conversations", None))
+                            .child(widgets::page_subtitle(&theme, "Choose how you send messages and interrupt agents. These settings stay on this device."))
+                            .child(send_behavior_row)
+                            .child(escape_behavior_row)
+                        )
+                ).fade_overflow_y(&self.scroll.scroll))
+                .children(scrollbar)
+                .into_any_element();
+        }
         // One card per group, each under its small section label — the flat
         // 16-row table read as one undifferentiated wall. `ix` (the id's
         // position in ALL) keys the interactive elements, so ids stay unique
@@ -743,10 +786,13 @@ impl Render for ShortcutsPage {
                                     .flex()
                                     .flex_row()
                                     .items_start()
+                                    .flex_wrap()
                                     .justify_between()
                                     .gap(px(24.0))
                                     .child(
                                         div()
+                                            .flex_1()
+                                            .min_w(px(200.0))
                                             .flex()
                                             .flex_col()
                                             .child(widgets::page_header(
@@ -802,7 +848,6 @@ impl Render for ShortcutsPage {
                                             .child(SharedString::from("Restore defaults"))
                                     }),
                             )
-                            .child(send_behavior_row.mt(px(32.0)))
                             .child(completion)
                             .child(
                                 div()
@@ -823,7 +868,7 @@ impl Render for ShortcutsPage {
                                     .text_color(theme.text_muted)
                                     .child(helper),
                             )
-                            .child(escape_behavior_row),
+                            ,
                     )).fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
@@ -834,6 +879,46 @@ impl Render for ShortcutsPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn conversation_controls_work_after_moving_out_of_shortcuts(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+        });
+        let (page, cx) = cx.add_window_view(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            let mut page = ShortcutsPage::new(
+                state,
+                KeymapConfig::default(),
+                false,
+                ComposerSendBehavior::Enter,
+                false,
+                false,
+                AppshotDestination::Automatic,
+                cx,
+            );
+            page.show_section(false, true);
+            page
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        let send = cx.debug_bounds("composer-send-option-1").unwrap();
+        cx.simulate_click(send.center(), gpui::Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let escape = cx.debug_bounds("escape-stops-active-agent-toggle").unwrap();
+        cx.simulate_click(escape.center(), gpui::Modifiers::default());
+        page.update(cx, |page, _| {
+            assert_eq!(page.composer_send_behavior, ComposerSendBehavior::ModEnter);
+            assert!(page.escape_stops_active_agent);
+            page.show_section(false, false);
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("composer-send-option-1").is_none());
+        assert!(
+            cx.debug_bounds("escape-stops-active-agent-toggle")
+                .is_none()
+        );
+    }
 
     #[gpui::test]
     fn appshots_setup_can_be_enabled_and_configured_by_keyboard(cx: &mut gpui::TestAppContext) {
