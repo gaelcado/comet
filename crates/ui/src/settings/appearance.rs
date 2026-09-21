@@ -3545,24 +3545,34 @@ mod tests {
     }
 
     #[test]
-    fn accent_helper_explains_default_and_override_scope() {
-        assert!(accent_helper(AccentSelection::ThemeDefault).contains("intended"));
-        let copy = accent_helper(AccentSelection::Preset(AccentPreset::Pink));
-        assert!(copy.starts_with("Pink ·"));
-        assert!(copy.contains("glyphs"));
+    fn accent_helper_names_the_selected_accent() {
+        assert_eq!(
+            accent_helper(AccentSelection::ThemeDefault),
+            "Theme default"
+        );
+        assert_eq!(
+            accent_helper(AccentSelection::Preset(AccentPreset::Pink)),
+            "Pink"
+        );
     }
 
     #[test]
-    fn surface_helper_explains_theme_default_and_global_overrides() {
-        let default = surface_helper(SurfacePreference::ThemeDefault, SurfaceTreatment::Opaque);
-        assert!(default.contains("opaque default"));
-        assert!(
-            surface_helper(SurfacePreference::Frosted, SurfaceTreatment::Opaque)
-                .contains("where supported")
+    fn surface_helper_distinguishes_inherited_and_explicit_materials() {
+        assert_eq!(
+            surface_helper(SurfacePreference::ThemeDefault, SurfaceTreatment::Opaque),
+            "Theme default: opaque"
         );
-        assert!(
-            surface_helper(SurfacePreference::Opaque, SurfaceTreatment::Frosted)
-                .contains("every theme")
+        assert_eq!(
+            surface_helper(SurfacePreference::ThemeDefault, SurfaceTreatment::Frosted),
+            "Theme default: frosted"
+        );
+        assert_eq!(
+            surface_helper(SurfacePreference::Frosted, SurfaceTreatment::Opaque),
+            "Translucent surfaces"
+        );
+        assert_eq!(
+            surface_helper(SurfacePreference::Opaque, SurfaceTreatment::Frosted),
+            "Solid surfaces"
         );
     }
 
