@@ -1742,13 +1742,19 @@ impl RpcService for EngineRpc {
             }
             methods::LIST_MODELS => {
                 let p: ListModelsParams = parse_params(params)?;
+                let lease = std::sync::Arc::new(self.registry.execution_lease(p.harness).await);
                 let harness = self
                     .registry
                     .resolve(p.harness)
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
-                let models = crate::model_catalogs::list(self.repos.data_dir(), harness, p.force)
-                    .await
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                let models = crate::model_catalogs::list_with_lease(
+                    self.repos.data_dir(),
+                    harness,
+                    p.force,
+                    Some(lease),
+                )
+                .await
+                .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&models)
             }
             methods::LIST_SKILLS => {

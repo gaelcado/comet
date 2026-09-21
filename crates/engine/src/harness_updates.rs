@@ -224,7 +224,7 @@ fn provider(id: HarnessId) -> ProviderSpec {
         },
         HarnessId::Opencode => ProviderSpec {
             version_args: &["--version"],
-            latest: LatestSource::Npm("opencode-ai"),
+            latest: LatestSource::Npm("@opencode/cli"),
             update_args: Some(&["upgrade"]),
             manual_command: "opencode upgrade",
         },

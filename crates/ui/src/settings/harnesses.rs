@@ -170,7 +170,6 @@ pub struct HarnessesPage {
     accounts_page: Option<Entity<AccountsPage>>,
     update_task: Option<Task<()>>,
     update_action_task: Option<Task<()>>,
-
 }
 
 impl HarnessesPage {
@@ -192,7 +191,6 @@ impl HarnessesPage {
             accounts_page: None,
             update_task: None,
             update_action_task: None,
-
         };
         page.load(cx);
         page
@@ -261,7 +259,6 @@ impl HarnessesPage {
         value
     }
 
-
     /// Escape that reached Settings unclaimed goes to the expanded provider's
     /// accounts (an open login) first. Returns whether it was consumed.
     pub(crate) fn dismiss_on_escape(&mut self, cx: &mut Context<Self>) -> bool {
@@ -271,7 +268,6 @@ impl HarnessesPage {
                 .as_ref()
                 .is_some_and(|accounts| accounts.update(cx, |page, cx| page.dismiss_on_escape(cx)))
     }
-
 
     fn supports_updates(&self, cx: &Context<Self>) -> bool {
         let state = self.state.read(cx);
@@ -296,7 +292,6 @@ impl HarnessesPage {
                     .read(cx)
                     .device_online(device, chrono::Utc::now())
             })
-
     }
 
     /// Retarget the page at another device: a different device is a different
@@ -1041,7 +1036,6 @@ impl HarnessesPage {
                             )
                         },
                     )
-
                     .child(
                         widgets::toggle_switch(
                             &theme,
@@ -1111,7 +1105,6 @@ impl popover::ScrollRailHost for HarnessesPage {
 
 impl Render for HarnessesPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-
         let theme = Theme::of(cx).for_settings_surface();
         let supports_updates = self.supports_updates(cx);
 
@@ -1204,7 +1197,6 @@ impl Render for HarnessesPage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-
                 crate::edge_fade::edge_faded(
                     16.0,
                     true,
@@ -1231,7 +1223,6 @@ impl Render for HarnessesPage {
                                                 .when(supports_updates, |el| el.child(check))
                                                 .child(switcher),
                                         ),
-
                                 )
                                 .children(error)
                                 .children(update_error)

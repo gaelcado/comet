@@ -312,11 +312,13 @@ impl Render for NotificationsPage {
                             .child(widgets::row_title(&theme, "Agent updates"))
                             .child(widgets::meta_line(
                                 &theme,
-                                vec![div()
-                                    .child(SharedString::from(
-                                        "Show a banner when monitored agent CLIs have updates.",
-                                    ))
-                                    .into_any_element()],
+                                vec![
+                                    div()
+                                        .child(SharedString::from(
+                                            "Show a banner when monitored agent CLIs have updates.",
+                                        ))
+                                        .into_any_element(),
+                                ],
                             )),
                     )
                     .child(
@@ -327,12 +329,7 @@ impl Render for NotificationsPage {
                             desktop,
                         )
                         .when(desktop, |el| {
-                            interactive_switch(
-                                el,
-                                accent,
-                                NotificationPreference::AgentUpdates,
-                                cx,
-                            )
+                            interactive_switch(el, accent, NotificationPreference::AgentUpdates, cx)
                         }),
                     ),
             )
