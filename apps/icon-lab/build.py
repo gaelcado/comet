@@ -3,7 +3,7 @@ from pathlib import Path
 import argparse,json,subprocess,sys,xml.etree.ElementTree as ET
 ROOT=Path(__file__).resolve().parent
 
-def svg(paths,stroke=1.5):
+def svg(paths,stroke=1.75):
     root=ET.Element('svg',{'xmlns':'http://www.w3.org/2000/svg','viewBox':'0 0 24 24','fill':'none','stroke':'currentColor','stroke-width':str(stroke),'stroke-linecap':'round','stroke-linejoin':'round'})
     for p in paths:
         attributes={'d':p['d']}
@@ -30,7 +30,7 @@ def build(refresh=False):
         i['references']=sorted({r for e in inventory['desktop']+inventory['ios'] if e['custom']==i['name'] for r in e['references']})
         i['status']='Used' if i['references'] else 'State / extension'
         if any(e['custom']==i['name'] for e in inventory['branchAdditions']):i['status']='Contribution'
-        for folder,paths,width in [('svg',i['paths'],1.5),('svg-small',i['smallPaths'],1.75)]:
+        for folder,paths,width in [('svg',i['paths'],1.75),('svg-small',i['smallPaths'],1.75)]:
             text=svg(paths,width);ET.fromstring(text);(ROOT/folder/(i['name']+'.svg')).write_text(text)
     payload={'icons':icons,'morphs':motions,'inventory':inventory,'baseline':json.loads((ROOT/'study-02.json').read_text()),'firstStudy':json.loads((ROOT/'study-01.json').read_text())}
     (ROOT/'catalog.json').write_text(json.dumps(icons,indent=2)+'\n')

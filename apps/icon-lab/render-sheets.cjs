@@ -3,14 +3,14 @@ const icons=JSON.parse(fs.readFileSync(P+'/catalog.json')),base=JSON.parse(fs.re
 const esc=s=>s.replaceAll('&','&amp;').replaceAll('<','&lt;');
 const start=(w,h,title)=>`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#f8f7f4"/><text x="25" y="38" font-family="sans-serif" font-size="20" fill="#262623">${esc(title)}</text>`;
 const text=(x,y,s,size=10)=>`<text x="${x}" y="${y}" font-family="sans-serif" font-size="${size}" fill="#666960">${esc(s)}</text>`;
-const glyph=(paths,x,y,size=24,stroke=1.5)=>`<g transform="translate(${x} ${y}) scale(${size/24})" stroke="#262623" fill="none" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">`+paths.map(p=>`<path d="${p.d}" fill="#262623" fill-opacity="${p.fill||0}" opacity="${p.opacity??1}"${p.stroke===0?' stroke="none"':''}/>`).join('')+'</g>';
+const glyph=(paths,x,y,size=24,stroke=1.75)=>`<g transform="translate(${x} ${y}) scale(${size/24})" stroke="#262623" fill="none" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">`+paths.map(p=>`<path d="${p.d}" fill="#262623" fill-opacity="${p.fill||0}" opacity="${p.opacity??1}"${p.stroke===0?' stroke="none"':''}/>`).join('')+'</g>';
 for(let part=0;part<3;part++){
  let sheet=start(1250,1430,`Optical audit ${part+1} / 12, 16, 20, 24px · light and dark`);
  icons.slice(part*45,part*45+45).forEach((i,j)=>{
   const x=j%5*250,y=70+Math.floor(j/5)*150;
   sheet+=text(x+15,y+18,i.name,11)+`<rect x="${x}" y="${y+80}" width="250" height="65" fill="#242623"/>`;
   [12,16,20,24].forEach((size,k)=>{
-   const paths=size<=16?i.smallPaths:i.paths,width=size<=16?1.75:1.5;
+   const paths=size<=16?i.smallPaths:i.paths,width=size<=16?1.75:1.75;
    sheet+=glyph(paths,x+25+k*55,y+42-size/2,size,width);
    sheet+=glyph(paths,x+25+k*55,y+112-size/2,size,width).replaceAll('#262623','#f5f4ef');
   });

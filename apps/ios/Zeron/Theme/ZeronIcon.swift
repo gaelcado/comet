@@ -97,7 +97,7 @@ private struct CustomIconCanvas: View, Animatable {
                 }
                 if contour.stroke != 0 {
                     layer.stroke(path, with: .foreground, style: StrokeStyle(
-                        lineWidth: (small ? 1.75 : 1.5) * scale, lineCap: .round, lineJoin: .round))
+                        lineWidth: 1.75 * scale, lineCap: .round, lineJoin: .round))
                 }
             }
         }
@@ -160,7 +160,7 @@ extension CustomIconLibrary {
         return UIGraphicsImageRenderer(size: CGSize(width: 18, height: 18), format: format).image { renderer in
             let context = renderer.cgContext
             context.scaleBy(x: 0.75, y: 0.75)
-            context.setLineWidth(1.5)
+            context.setLineWidth(1.75)
             context.setLineCap(.round)
             context.setLineJoin(.round)
             context.setStrokeColor(UIColor.black.cgColor)

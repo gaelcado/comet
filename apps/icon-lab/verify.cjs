@@ -3,7 +3,7 @@ const icons=JSON.parse(fs.readFileSync(__dirname+'/catalog.json')),morphs=JSON.p
 let frames=0,curves=0;
 assert.equal(new Set(icons.map(i=>i.name)).size,icons.length);
 // Exported artwork must be identical to the gallery's standard and optical masters.
-for(const i of icons)for(const [folder,key,width] of [['svg','paths',1.5],['svg-small','smallPaths',1.75]]){
+for(const i of icons)for(const [folder,key,width] of [['svg','paths',1.75],['svg-small','smallPaths',1.75]]){
  const xml=fs.readFileSync(`${__dirname}/${folder}/${i.name}.svg`,'utf8');
  assert(xml.includes(`stroke-width="${width}"`));
  assert.deepEqual([...xml.matchAll(/ d="([^"]+)"/g)].map(m=>m[1]),i[key].map(p=>p.d));

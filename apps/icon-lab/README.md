@@ -10,7 +10,7 @@ Continuous corners, clipped shoulders, open counters and deliberate contour brea
 
 Study 03 keeps the closed panel frames and gives open rails a short, inset travel. Slider tracks clear their circular knobs. Git states share node sizes and route anchors; draft dots extend into the ready route. Folder outlines, the wrench, lint, refresh, archive and muted controls receive further spacing corrections.
 
-`glyphs.json` is the editable source. `svg/` uses a 1.5-unit stroke on a 24-unit canvas. `svg-small/` provides 1.75-unit optical variants and simplified details for 12–16px. These are optical variants, not pixel-hinted masters. The gallery uses them at 16px and below; its inspector exports either size.
+`glyphs.json` is the editable source. `svg/` uses a 1.75-unit stroke on a 24-unit canvas. `svg-small/` provides 1.75-unit optical variants and simplified details for 12–16px. These are optical variants, not pixel-hinted masters. The gallery uses them at 16px and below; its inspector exports either size.
 
 ## Motion
 
@@ -42,7 +42,7 @@ Verification covers both optical exports, stroke bounds, all 36 transitions at 1
 
 Run `node export-native.cjs` after rebuilding the gallery to synchronize native assets and constants. Existing control constant names remain aliases for the new family. Provider marks and the app logo retain their assets. File/folder rendering uses the custom family; the old file-theme manifest remains only for recognizing filename references and its assets are no longer served by the app.
 
-`icons::icon(path)` selects the small optical SVG for static glyphs at 16px or below. `.morph("state-glyph")` opts a glyph into element-local motion; put it inside a control with a stable unique ID. Display size selects the optical master for every glyph, including motion: 1.75 units and small geometry at 16px or below, 1.5 units and standard geometry above 16px. Each transition has both optical banks, so its endpoints match the static exports. Initial mounts, unrelated icon changes and OS reduced motion render immediately. Unmounted elements stop requesting frames and their state expires with GPUI's frame state.
+`icons::icon(path)` selects the small optical SVG for static glyphs at 16px or below. `.morph("state-glyph")` opts a glyph into element-local motion; put it inside a control with a stable unique ID. Display size selects the optical master for every glyph, including motion: 1.75 units and small geometry at 16px or below, 1.75 units and standard geometry above 16px. Each transition has both optical banks, so its endpoints match the static exports. Initial mounts, unrelated icon changes and OS reduced motion render immediately. Unmounted elements stop requesting frames and their state expires with GPUI's frame state.
 
 The native bank contains the 36 reviewed transitions plus system-to-light for the three-way appearance selector. Each uses 97 vector poses per optical size from the gallery engine, selected by an interruptible critically damped progress value. This bounds SVG raster-cache identities; temporal progress is continuous while geometry is quantized to 1/96. At rest, exact endpoint SVGs are used.
 
@@ -60,3 +60,5 @@ Run `python3 audit-integration.py` to check the two native exports, compatibilit
 The iOS `CustomIconTests` decode every contour and motion frame, render all glyphs at 12/16/24px, and exercise every menu alias. App-owned compact loading indicators and Markdown task glyphs also use this family; branded loading artwork, determinate progress, and native system widgets retain their own rendering.
 
 Toolbar actions use 16px to match titlebar actions and menus; compact iOS queue actions use 14px consistently. Smaller disclosure/status glyphs and larger empty-state illustrations retain their distinct roles. Stroke widths are viewBox units and scale with the icon, as in the gallery.
+
+Current weight trial: all current glyphs, morphs and UIKit menu images use a uniform 1.75-unit stroke. The historical Study 02 comparison retains its original 1.5-unit stroke.

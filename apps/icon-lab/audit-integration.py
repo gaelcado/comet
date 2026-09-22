@@ -27,7 +27,7 @@ for icon in catalog:
 # Every optical motion endpoint must be the exact static drawing it replaces.
 native_bank = json.loads((repo / "crates/ui/assets/icon-motions.json").read_text())
 for motion in native_bank:
-    for field, prefix, stroke in [("frames", "", "1.5"), ("smallFrames", "small/", "1.75")]:
+    for field, prefix, stroke in [("frames", "", "1.75"), ("smallFrames", "small/", "1.75")]:
         frames = motion[field]
         assert len(frames) == 97
         for frame in frames:

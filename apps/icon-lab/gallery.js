@@ -6,7 +6,7 @@ const NS='http://www.w3.org/2000/svg';
 const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function svg(name,size=24,original=false){
  const i=original?baseline.find(i=>i.name===name):byName.get(name); if(!i) throw Error('Unknown icon '+name);
- return `<svg xmlns="${NS}" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${!original&&size<=16?1.75:1.5}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:${size}px;height:${size}px">${(!original&&size<=16?i.smallPaths||i.paths:i.paths).map(p=>`<path d="${p.d}"${p.fill?' fill="currentColor"':''}${p.stroke===0?' stroke="none"':''}/>`).join('')}</svg>`;
+ return `<svg xmlns="${NS}" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${original?1.5:1.75}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:${size}px;height:${size}px">${(!original&&size<=16?i.smallPaths||i.paths:i.paths).map(p=>`<path d="${p.d}"${p.fill?' fill="currentColor"':''}${p.stroke===0?' stroke="none"':''}/>`).join('')}</svg>`;
 }
 function exportSVG(name){return svg(name).replace(/ aria-hidden="true"/,'').replace(/ style="[^"]*"/,'').replace('><path','>\n  <path').replaceAll('/><path','/>\n  <path').replace('</svg>','\n</svg>')+'\n';}
 // A single point correspondence per contour, retained throughout the transition.
