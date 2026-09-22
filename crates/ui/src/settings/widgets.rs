@@ -470,7 +470,7 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
         .child(label.into())
 }
 
-/// A tinted glass track with one translucent thumb and a restrained light edge.
+/// A tinted glass track with the on/off marks nested beneath a sliding thumb.
 /// The caller owns activation and accessibility; only the thumb interpolates.
 pub fn toggle_switch(theme: &Theme, on: bool, key: impl Into<SharedString>) -> gpui::Div {
     let key: SharedString = key.into();
@@ -538,13 +538,8 @@ impl RenderOnce for SwitchVisual {
         let dark = self.theme.appearance.is_dark();
         let track = if self.on {
             let accent = self.theme.accent;
-            let lift = if dark { 0.52 } else { 0.32 };
-            gpui::hsla(
-                accent.h,
-                accent.s * (1.0 - lift),
-                accent.l + (1.0 - accent.l) * lift,
-                0.94,
-            )
+            let lift = if dark { 0.34 } else { 0.10 };
+            gpui::hsla(accent.h, accent.s, accent.l + (1.0 - accent.l) * lift, 0.98)
         } else {
             self.theme.ink(if dark { 0.18 } else { 0.10 })
         };
@@ -566,7 +561,29 @@ impl RenderOnce for SwitchVisual {
                         gpui::white().opacity(0.28)
                     } else {
                         self.theme.border.opacity(0.7)
-                    }),
+                    })
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(8.0))
+                            .left(px(12.0))
+                            .w(px(2.0))
+                            .h(px(8.0))
+                            .rounded_full()
+                            .bg(gpui::white().opacity(0.88))
+                            .opacity(position),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(8.0))
+                            .left(px(32.0))
+                            .size(px(8.0))
+                            .rounded_full()
+                            .border(px(1.5))
+                            .border_color(self.theme.text_muted.opacity(0.78))
+                            .opacity(1.0 - position),
+                    ),
             )
             .child(
                 div()

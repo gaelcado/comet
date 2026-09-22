@@ -5885,16 +5885,21 @@ impl Shell {
                             .flex()
                             .flex_col()
                             .relative()
-                            .child(div().size_full().child(outlet))
+                            // Inset the page viewport so its floating scroll
+                            // rail ends inside the modal's rounded corners.
+                            .child(div().flex_1().min_h_0().py(px(12.0)).child(outlet))
                             .child(
-                                div().absolute().top(px(10.0)).right(px(10.0)).child(
+                                div().absolute().top(px(12.0)).right(px(12.0)).child(
                                     div()
                                         .id("settings-close")
                                         .role(gpui::Role::Button)
                                         .aria_label("Close settings")
                                         .tab_index(0)
-                                        .size(px(32.0))
-                                        .rounded(px(8.0))
+                                        .size(px(30.0))
+                                        .rounded(px(9.0))
+                                        .bg(theme.ink(0.04))
+                                        .border_1()
+                                        .border_color(theme.border.opacity(0.45))
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -5905,9 +5910,9 @@ impl Shell {
                                             cx.listener(|this, _, _, cx| this.close_settings(cx)),
                                         )
                                         .child(
-                                            icon(icons::CLOSE)
-                                                .size(px(16.0))
-                                                .text_color(theme.text_muted),
+                                            icon(icons::QUEUE_CLOSE)
+                                                .size(px(20.0))
+                                                .text_color(theme.text),
                                         ),
                                 ),
                             ),
