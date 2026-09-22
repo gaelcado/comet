@@ -146,13 +146,13 @@ impl Render for NotificationsPage {
         let desktop = self.desktop;
         let background_only = self.background_only;
         let toggle = |id: &'static str, label: &'static str, enabled: bool, interactive: bool| {
-            // Keep the visual inside a 48×40 activation target.
+            // Keep the visual inside its 56×40 activation target.
             // Disabled subordinate controls remain named switches in the
             // accessibility tree, but have no focus or input handlers.
             div()
                 .id(id)
                 .flex_none()
-                .w(px(48.0))
+                .w(px(widgets::SWITCH_WIDTH))
                 .h(px(40.0))
                 .flex()
                 .items_center()

@@ -546,13 +546,18 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
         .child(label.into())
 }
 
+pub const SWITCH_WIDTH: f32 = 56.0;
+const SWITCH_THUMB_WIDTH: f32 = 31.0;
+const SWITCH_SIDE_INSET: f32 = 1.0;
+const SWITCH_MARK_SIZE: f32 = 9.0;
+
 /// A pill switch with the on/off marks nested beneath a sliding thumb.
 /// The caller owns activation and accessibility; only the thumb interpolates.
 pub fn toggle_switch(theme: &Theme, on: bool, key: impl Into<SharedString>) -> gpui::Div {
     let key: SharedString = key.into();
     div()
         .flex_none()
-        .w(px(52.0))
+        .w(px(SWITCH_WIDTH))
         .h(px(36.0))
         .child(SwitchVisual {
             theme: theme.clone(),
@@ -652,11 +657,15 @@ impl RenderOnce for SwitchVisual {
         }
         let dark = self.theme.appearance.is_dark();
         let track = switch_track_color(&self.theme, self.on);
+        let empty_width = SWITCH_WIDTH - SWITCH_THUMB_WIDTH - SWITCH_SIDE_INSET;
+        let mark_padding = (empty_width - SWITCH_MARK_SIZE) / 2.0;
+        let thumb_left = SWITCH_SIDE_INSET
+            + (SWITCH_WIDTH - SWITCH_THUMB_WIDTH - 2.0 * SWITCH_SIDE_INSET) * position;
         let track_element = div()
             .absolute()
             .top(px(6.0))
             .left_0()
-            .w(px(52.0))
+            .w(px(SWITCH_WIDTH))
             .h(px(24.0))
             .rounded_full()
             .bg(track)
@@ -673,13 +682,13 @@ impl RenderOnce for SwitchVisual {
                 div()
                     .absolute()
                     .inset_0()
-                    .px(px(9.0))
+                    .px(px(mark_padding))
                     .flex()
                     .items_center()
                     .justify_between()
                     .child(
                         div()
-                            .size(px(9.0))
+                            .size(px(SWITCH_MARK_SIZE))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -694,7 +703,7 @@ impl RenderOnce for SwitchVisual {
                     )
                     .child(
                         div()
-                            .size(px(9.0))
+                            .size(px(SWITCH_MARK_SIZE))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -711,8 +720,8 @@ impl RenderOnce for SwitchVisual {
         let thumb_element = div()
             .absolute()
             .top(px(7.0))
-            .left(px(1.0 + 19.0 * position))
-            .w(px(31.0))
+            .left(px(thumb_left))
+            .w(px(SWITCH_THUMB_WIDTH))
             .h(px(22.0))
             .rounded_full()
             .bg(switch_thumb_color(&self.theme))
@@ -723,7 +732,7 @@ impl RenderOnce for SwitchVisual {
             ));
         div()
             .relative()
-            .w(px(52.0))
+            .w(px(SWITCH_WIDTH))
             .h(px(36.0))
             .child(track_element)
             .child(thumb_element)
