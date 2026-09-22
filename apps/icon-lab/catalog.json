@@ -415,7 +415,7 @@
       "apps/ios/Zeron/Views/ArchivedShelf.swift:66",
       "apps/ios/Zeron/Views/HomeView.swift:175",
       "apps/ios/Zeron/Views/NewSessionView.swift:569",
-      "apps/ios/Zeron/Views/NewSessionView.swift:691",
+      "apps/ios/Zeron/Views/NewSessionView.swift:689",
       "crates/ui/src/changes.rs:3473",
       "crates/ui/src/changes.rs:3838",
       "crates/ui/src/changes.rs:4050",
@@ -456,7 +456,7 @@
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:143",
-      "apps/ios/Zeron/Views/NewSessionView.swift:691",
+      "apps/ios/Zeron/Views/NewSessionView.swift:689",
       "crates/ui/src/transcript.rs:5664"
     ],
     "status": "Used"
@@ -482,7 +482,7 @@
       "chevron-left"
     ],
     "references": [
-      "apps/ios/Zeron/Views/SpaceView.swift:234",
+      "apps/ios/Zeron/Views/SpaceView.swift:231",
       "crates/ui/src/shell.rs:5868",
       "crates/ui/src/shell.rs:7996"
     ],
@@ -509,12 +509,13 @@
       "chevron-right"
     ],
     "references": [
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:458",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:457",
       "apps/ios/Zeron/Views/ArchivedShelf.swift:66",
-      "apps/ios/Zeron/Views/SheetUI.swift:106",
+      "apps/ios/Zeron/Views/SheetUI.swift:104",
       "apps/ios/Zeron/Views/SignInView.swift:201",
-      "apps/ios/Zeron/Views/SpaceView.swift:322",
+      "apps/ios/Zeron/Views/SpaceView.swift:318",
       "crates/ui/src/changes.rs:3471",
+      "crates/ui/src/files/preview.rs:2184",
       "crates/ui/src/files/search.rs:655",
       "crates/ui/src/files/tree.rs:293",
       "crates/ui/src/pickers.rs:4206",
@@ -934,6 +935,7 @@
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:324",
       "apps/ios/Zeron/Views/SpaceView.swift:59",
+      "crates/ui/src/file_icons.rs:206",
       "crates/ui/src/files/preview.rs:2309",
       "crates/ui/src/pickers.rs:2784",
       "crates/ui/src/pickers.rs:2841",
@@ -987,8 +989,10 @@
     "legacy": [
       "folder-open"
     ],
-    "references": [],
-    "status": "State / extension"
+    "references": [
+      "crates/ui/src/file_icons.rs:204"
+    ],
+    "status": "Used"
   },
   {
     "name": "repository",
@@ -1074,7 +1078,7 @@
     ],
     "references": [
       "apps/ios/Zeron/Views/HomeView.swift:167",
-      "apps/ios/Zeron/Views/HomeView.swift:249"
+      "apps/ios/Zeron/Views/HomeView.swift:248"
     ],
     "status": "Used"
   },
@@ -1148,7 +1152,7 @@
     ],
     "references": [
       "apps/ios/Zeron/Views/NewSessionView.swift:131",
-      "apps/ios/Zeron/Views/SpaceView.swift:345",
+      "apps/ios/Zeron/Views/SpaceView.swift:340",
       "crates/ui/src/pickers.rs:2775",
       "crates/ui/src/settings/accounts.rs:300",
       "crates/ui/src/settings/devices.rs:263",
@@ -1540,8 +1544,8 @@
       "chats"
     ],
     "references": [
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:598",
-      "apps/ios/Zeron/Views/SpaceView.swift:89"
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:594",
+      "apps/ios/Zeron/Views/SpaceView.swift:88"
     ],
     "status": "Used"
   },
@@ -1582,7 +1586,7 @@
       "archive"
     ],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:289",
+      "apps/ios/Zeron/Views/HomeView.swift:288",
       "apps/ios/Zeron/Views/SpaceView.swift:36",
       "crates/ui/src/settings/archived.rs:161",
       "crates/ui/src/settings/archived.rs:272",
@@ -1637,7 +1641,7 @@
       "unarchive"
     ],
     "references": [
-      "apps/ios/Zeron/Views/ArchivedShelf.swift:116",
+      "apps/ios/Zeron/Views/ArchivedShelf.swift:115",
       "crates/ui/src/settings/archived.rs:246",
       "crates/ui/src/shell.rs:6055"
     ],
@@ -1671,7 +1675,7 @@
       "pin"
     ],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:450",
+      "apps/ios/Zeron/Views/HomeView.swift:448",
       "crates/ui/src/shell.rs:7919"
     ],
     "status": "Used"
@@ -1704,7 +1708,7 @@
       "pin-active"
     ],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:390"
+      "apps/ios/Zeron/Views/HomeView.swift:389"
     ],
     "status": "Used"
   },
@@ -1752,7 +1756,7 @@
       "unpin"
     ],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:450"
+      "apps/ios/Zeron/Views/HomeView.swift:448"
     ],
     "status": "Used"
   },
@@ -1878,9 +1882,9 @@
     ],
     "references": [
       "apps/ios/Zeron/Composer/ComposerView.swift:179",
-      "apps/ios/Zeron/Views/ArchivedShelf.swift:127",
-      "apps/ios/Zeron/Views/HomeView.swift:252",
-      "apps/ios/Zeron/Views/SpaceView.swift:74",
+      "apps/ios/Zeron/Views/ArchivedShelf.swift:126",
+      "apps/ios/Zeron/Views/HomeView.swift:251",
+      "apps/ios/Zeron/Views/SpaceView.swift:73",
       "crates/ui/src/comment_ui.rs:41",
       "crates/ui/src/files/preview.rs:2671",
       "crates/ui/src/pickers.rs:2286",
@@ -1926,15 +1930,15 @@
     ],
     "references": [
       "apps/ios/Zeron/Composer/Attachments.swift:496",
-      "apps/ios/Zeron/Composer/Attachments.swift:748",
+      "apps/ios/Zeron/Composer/Attachments.swift:746",
       "apps/ios/Zeron/Composer/QueuePanelView.swift:133",
-      "apps/ios/Zeron/Views/HomeView.swift:243",
-      "apps/ios/Zeron/Views/NewSessionView.swift:1017",
-      "apps/ios/Zeron/Views/NewSessionView.swift:652",
-      "apps/ios/Zeron/Views/NewSessionView.swift:751",
-      "apps/ios/Zeron/Views/NewSessionView.swift:813",
-      "apps/ios/Zeron/Views/NewSessionView.swift:942",
-      "apps/ios/Zeron/Views/SpaceView.swift:169",
+      "apps/ios/Zeron/Views/HomeView.swift:242",
+      "apps/ios/Zeron/Views/NewSessionView.swift:1010",
+      "apps/ios/Zeron/Views/NewSessionView.swift:651",
+      "apps/ios/Zeron/Views/NewSessionView.swift:748",
+      "apps/ios/Zeron/Views/NewSessionView.swift:809",
+      "apps/ios/Zeron/Views/NewSessionView.swift:936",
+      "apps/ios/Zeron/Views/SpaceView.swift:167",
       "crates/ui/src/history.rs:1800",
       "crates/ui/src/pickers.rs:2266",
       "crates/ui/src/queue.rs:473",
@@ -1974,7 +1978,6 @@
       "send"
     ],
     "references": [
-      "apps/ios/Zeron/Composer/ComposerView.swift:220",
       "crates/ui/src/composer.rs:8731"
     ],
     "status": "Used"
@@ -2033,6 +2036,7 @@
       "stop"
     ],
     "references": [
+      "apps/ios/Zeron/Composer/ComposerView.swift:215",
       "crates/ui/src/composer.rs:8729"
     ],
     "status": "Used"
@@ -2222,10 +2226,10 @@
     ],
     "references": [
       "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:230",
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:314",
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:556",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:313",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:553",
       "crates/ui/src/markdown/link_interaction.rs:338",
-      "crates/ui/src/markdown/render.rs:1959",
+      "crates/ui/src/markdown/render.rs:1957",
       "crates/ui/src/notice.rs:123",
       "crates/ui/src/shell.rs:7940",
       "crates/ui/src/shell.rs:8010",
@@ -2256,16 +2260,15 @@
       "check"
     ],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:211",
-      "apps/ios/Zeron/Views/Loaders.swift:232",
-      "apps/ios/Zeron/Views/NewSessionView.swift:875",
+      "apps/ios/Zeron/Views/HomeView.swift:210",
+      "apps/ios/Zeron/Views/Loaders.swift:180",
+      "apps/ios/Zeron/Views/NewSessionView.swift:870",
       "apps/ios/Zeron/Views/SessionHostPickerSheet.swift:32",
       "apps/ios/Zeron/Views/SheetUI.swift:68",
       "crates/ui/src/history.rs:3217",
       "crates/ui/src/history.rs:3258",
       "crates/ui/src/markdown/link_interaction.rs:381",
-      "crates/ui/src/markdown/render.rs:1957",
-      "crates/ui/src/markdown/render.rs:620",
+      "crates/ui/src/markdown/render.rs:1955",
       "crates/ui/src/pickers.rs:4247",
       "crates/ui/src/queue.rs:462",
       "crates/ui/src/settings/appearance.rs:1788",
@@ -2596,6 +2599,7 @@
     ],
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:320",
+      "crates/ui/src/file_icons.rs:230",
       "crates/ui/src/settings/appearance.rs:2776",
       "crates/ui/src/shell.rs:9326",
       "crates/ui/src/transcript.rs:7741"
@@ -2695,8 +2699,10 @@
       "file-code"
     ],
     "references": [
+      "crates/ui/src/file_icons.rs:227",
+      "crates/ui/src/file_icons.rs:229",
       "crates/ui/src/files/preview.rs:2255",
-      "crates/ui/src/markdown/render.rs:1860"
+      "crates/ui/src/markdown/render.rs:1858"
     ],
     "status": "Used"
   },
@@ -2735,8 +2741,10 @@
     "legacy": [
       "file-style"
     ],
-    "references": [],
-    "status": "State / extension"
+    "references": [
+      "crates/ui/src/file_icons.rs:215"
+    ],
+    "status": "Used"
   },
   {
     "name": "file-data",
@@ -2781,8 +2789,10 @@
     "legacy": [
       "file-data"
     ],
-    "references": [],
-    "status": "State / extension"
+    "references": [
+      "crates/ui/src/file_icons.rs:214"
+    ],
+    "status": "Used"
   },
   {
     "name": "file-markdown",
@@ -2827,8 +2837,10 @@
     "legacy": [
       "file-markdown"
     ],
-    "references": [],
-    "status": "State / extension"
+    "references": [
+      "crates/ui/src/file_icons.rs:212"
+    ],
+    "status": "Used"
   },
   {
     "name": "file-image",
@@ -2866,6 +2878,8 @@
       "file-image"
     ],
     "references": [
+      "crates/ui/src/file_icons.rs:217",
+      "crates/ui/src/file_icons.rs:223",
       "crates/ui/src/settings/appearance.rs:3137"
     ],
     "status": "Used"
@@ -2906,7 +2920,7 @@
       "image"
     ],
     "references": [
-      "apps/ios/Zeron/Composer/QueuePanelView.swift:206"
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:205"
     ],
     "status": "Used"
   },
@@ -2955,8 +2969,8 @@
     ],
     "references": [
       "apps/ios/Zeron/Composer/Appshots.swift:100",
-      "apps/ios/Zeron/Composer/Attachments.swift:585",
-      "apps/ios/Zeron/Composer/Attachments.swift:679"
+      "apps/ios/Zeron/Composer/Attachments.swift:584",
+      "apps/ios/Zeron/Composer/Attachments.swift:677"
     ],
     "status": "Used"
   },
@@ -3090,7 +3104,7 @@
     "references": [
       "crates/ui/src/files/mod.rs:1070",
       "crates/ui/src/files/preview.rs:2257",
-      "crates/ui/src/markdown/render.rs:1858",
+      "crates/ui/src/markdown/render.rs:1856",
       "crates/ui/src/settings/files.rs:215"
     ],
     "status": "Used"
@@ -3230,7 +3244,7 @@
     ],
     "references": [
       "crates/ui/src/changes.rs:3704",
-      "crates/ui/src/markdown/render.rs:2153"
+      "crates/ui/src/markdown/render.rs:2151"
     ],
     "status": "Used"
   },
@@ -3279,7 +3293,7 @@
     ],
     "references": [
       "crates/ui/src/changes.rs:3706",
-      "crates/ui/src/markdown/render.rs:2155"
+      "crates/ui/src/markdown/render.rs:2153"
     ],
     "status": "Used"
   },
@@ -5296,7 +5310,8 @@
       "checkbox"
     ],
     "references": [
-      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332"
+      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332",
+      "crates/ui/src/markdown/render.rs:613"
     ],
     "status": "Used"
   },
@@ -5328,7 +5343,8 @@
       "checkbox-checked"
     ],
     "references": [
-      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332"
+      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332",
+      "crates/ui/src/markdown/render.rs:611"
     ],
     "status": "Used"
   },
@@ -5736,7 +5752,7 @@
       "warning"
     ],
     "references": [
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:570",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:567",
       "crates/ui/src/notice.rs:77",
       "crates/ui/src/notice.rs:83",
       "crates/ui/src/settings/appearance.rs:2542",
@@ -5766,8 +5782,11 @@
     "legacy": [
       "loading"
     ],
-    "references": [],
-    "status": "State / extension"
+    "references": [
+      "crates/ui/src/loaders.rs:116",
+      "crates/ui/src/loaders.rs:217"
+    ],
+    "status": "Used"
   },
   {
     "name": "file-tree",

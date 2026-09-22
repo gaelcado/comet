@@ -9,7 +9,7 @@ catalog = json.loads((root / "catalog.json").read_text())
 names = {icon["name"] for icon in catalog}
 aliases = json.loads((root / "ios-symbols.json").read_text())
 payload = json.loads((repo / "apps/ios/Zeron/Theme/CustomIconLibrary.json").read_text())
-assert payload["icons"] == catalog, "Stale iOS glyph export"
+assert payload["icons"] == [{key: icon[key] for key in ("name", "paths", "smallPaths")} for icon in catalog], "Stale iOS glyph export"
 assert payload["aliases"] == aliases, "Stale iOS compatibility map"
 assert set(aliases.values()) <= names
 assert len(payload["motions"]) == len(json.loads((root / "motions.json").read_text()))

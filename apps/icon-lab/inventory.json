@@ -1,6 +1,6 @@
 {
   "source": "zeronsh/zeron",
-  "sha": "062729d388a32f14367e869ecae1fbe160d0f325",
+  "sha": "6a6cbc7abe92597f445cdbbb963bd1f0078932b4",
   "dirty": false,
   "desktop": [
     {
@@ -247,6 +247,7 @@
       "custom": "folder",
       "disposition": "Custom replacement",
       "references": [
+        "crates/ui/src/file_icons.rs:206",
         "crates/ui/src/shell.rs:5767",
         "crates/ui/src/pickers.rs:2784",
         "crates/ui/src/pickers.rs:2841",
@@ -590,7 +591,7 @@
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/settings/files.rs:215",
-        "crates/ui/src/markdown/render.rs:1858",
+        "crates/ui/src/markdown/render.rs:1856",
         "crates/ui/src/files/preview.rs:2257",
         "crates/ui/src/files/mod.rs:1070"
       ]
@@ -721,6 +722,7 @@
       "custom": "document",
       "disposition": "Custom replacement",
       "references": [
+        "crates/ui/src/file_icons.rs:230",
         "crates/ui/src/shell.rs:9326",
         "crates/ui/src/transcript.rs:7741",
         "crates/ui/src/settings/appearance.rs:2776"
@@ -741,7 +743,9 @@
       "custom": "file-code",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/markdown/render.rs:1860",
+        "crates/ui/src/file_icons.rs:227",
+        "crates/ui/src/file_icons.rs:229",
+        "crates/ui/src/markdown/render.rs:1858",
         "crates/ui/src/files/preview.rs:2255"
       ]
     },
@@ -750,21 +754,27 @@
       "asset": "file-style",
       "custom": "file-style",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/file_icons.rs:215"
+      ]
     },
     {
       "constant": "FILE_DATA",
       "asset": "file-data",
       "custom": "file-data",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/file_icons.rs:214"
+      ]
     },
     {
       "constant": "FILE_MARKDOWN",
       "asset": "file-markdown",
       "custom": "file-markdown",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/file_icons.rs:212"
+      ]
     },
     {
       "constant": "FILE_IMAGE",
@@ -772,6 +782,8 @@
       "custom": "file-image",
       "disposition": "Custom replacement",
       "references": [
+        "crates/ui/src/file_icons.rs:217",
+        "crates/ui/src/file_icons.rs:223",
         "crates/ui/src/settings/appearance.rs:3137"
       ]
     },
@@ -1041,8 +1053,7 @@
         "crates/ui/src/shell/spaces.rs:3434",
         "crates/ui/src/shell/actions_ui.rs:941",
         "crates/ui/src/markdown/link_interaction.rs:381",
-        "crates/ui/src/markdown/render.rs:620",
-        "crates/ui/src/markdown/render.rs:1957"
+        "crates/ui/src/markdown/render.rs:1955"
       ]
     },
     {
@@ -1058,7 +1069,7 @@
         "crates/ui/src/shell.rs:8047",
         "crates/ui/src/transcript.rs:6563",
         "crates/ui/src/markdown/link_interaction.rs:338",
-        "crates/ui/src/markdown/render.rs:1959"
+        "crates/ui/src/markdown/render.rs:1957"
       ]
     },
     {
@@ -1313,7 +1324,9 @@
       "asset": "chevron-right",
       "custom": "chevron-right",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/files/preview.rs:2184"
+      ]
     },
     {
       "constant": "EXPAND",
@@ -1368,7 +1381,9 @@
       "asset": "folder-open",
       "custom": "folder-open",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/file_icons.rs:204"
+      ]
     },
     {
       "constant": "REPOSITORY",
@@ -1589,7 +1604,7 @@
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/changes.rs:3704",
-        "crates/ui/src/markdown/render.rs:2153"
+        "crates/ui/src/markdown/render.rs:2151"
       ]
     },
     {
@@ -1599,7 +1614,7 @@
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/changes.rs:3706",
-        "crates/ui/src/markdown/render.rs:2155"
+        "crates/ui/src/markdown/render.rs:2153"
       ]
     },
     {
@@ -1804,14 +1819,18 @@
       "asset": "checkbox",
       "custom": "checkbox",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/markdown/render.rs:613"
+      ]
     },
     {
       "constant": "CHECKBOX_CHECKED",
       "asset": "checkbox-checked",
       "custom": "checkbox-checked",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/markdown/render.rs:611"
+      ]
     },
     {
       "constant": "WIFI",
@@ -1860,7 +1879,10 @@
       "asset": "loading",
       "custom": "loading",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/loaders.rs:116",
+        "crates/ui/src/loaders.rs:217"
+      ]
     },
     {
       "constant": "PULL_REQUEST_DRAFT",
@@ -1876,7 +1898,7 @@
       "custom": "archive",
       "references": [
         "apps/ios/Zeron/Views/SpaceView.swift:36",
-        "apps/ios/Zeron/Views/HomeView.swift:289"
+        "apps/ios/Zeron/Views/HomeView.swift:288"
       ]
     },
     {
@@ -1894,31 +1916,24 @@
       ]
     },
     {
-      "symbol": "arrow.up",
-      "custom": "send",
-      "references": [
-        "apps/ios/Zeron/Composer/ComposerView.swift:220"
-      ]
-    },
-    {
       "symbol": "arrow.up.bin",
       "custom": "unarchive",
       "references": [
-        "apps/ios/Zeron/Views/ArchivedShelf.swift:116"
+        "apps/ios/Zeron/Views/ArchivedShelf.swift:115"
       ]
     },
     {
       "symbol": "bubble.left.and.bubble.right",
       "custom": "chats",
       "references": [
-        "apps/ios/Zeron/Views/SpaceView.swift:89"
+        "apps/ios/Zeron/Views/SpaceView.swift:88"
       ]
     },
     {
       "symbol": "bubble.left.and.text.bubble.right",
       "custom": "chats",
       "references": [
-        "apps/ios/Zeron/Transcript/TranscriptView.swift:598"
+        "apps/ios/Zeron/Transcript/TranscriptView.swift:594"
       ]
     },
     {
@@ -1933,9 +1948,9 @@
       "custom": "check",
       "references": [
         "apps/ios/Zeron/Views/SheetUI.swift:68",
-        "apps/ios/Zeron/Views/HomeView.swift:211",
-        "apps/ios/Zeron/Views/Loaders.swift:232",
-        "apps/ios/Zeron/Views/NewSessionView.swift:875",
+        "apps/ios/Zeron/Views/HomeView.swift:210",
+        "apps/ios/Zeron/Views/Loaders.swift:180",
+        "apps/ios/Zeron/Views/NewSessionView.swift:870",
         "apps/ios/Zeron/Views/SessionHostPickerSheet.swift:32"
       ]
     },
@@ -1954,23 +1969,23 @@
         "apps/ios/Zeron/Views/HomeView.swift:175",
         "apps/ios/Zeron/Views/ArchivedShelf.swift:66",
         "apps/ios/Zeron/Views/NewSessionView.swift:569",
-        "apps/ios/Zeron/Views/NewSessionView.swift:691"
+        "apps/ios/Zeron/Views/NewSessionView.swift:689"
       ]
     },
     {
       "symbol": "chevron.left",
       "custom": "chevron-left",
       "references": [
-        "apps/ios/Zeron/Views/SpaceView.swift:234"
+        "apps/ios/Zeron/Views/SpaceView.swift:231"
       ]
     },
     {
       "symbol": "chevron.right",
       "custom": "chevron-right",
       "references": [
-        "apps/ios/Zeron/Transcript/TranscriptView.swift:458",
-        "apps/ios/Zeron/Views/SheetUI.swift:106",
-        "apps/ios/Zeron/Views/SpaceView.swift:322",
+        "apps/ios/Zeron/Transcript/TranscriptView.swift:457",
+        "apps/ios/Zeron/Views/SheetUI.swift:104",
+        "apps/ios/Zeron/Views/SpaceView.swift:318",
         "apps/ios/Zeron/Views/ArchivedShelf.swift:66",
         "apps/ios/Zeron/Views/SignInView.swift:201"
       ]
@@ -1980,14 +1995,14 @@
       "custom": "chevron-up",
       "references": [
         "apps/ios/Zeron/Composer/QueuePanelView.swift:143",
-        "apps/ios/Zeron/Views/NewSessionView.swift:691"
+        "apps/ios/Zeron/Views/NewSessionView.swift:689"
       ]
     },
     {
       "symbol": "desktopcomputer",
       "custom": "monitor",
       "references": [
-        "apps/ios/Zeron/Views/SpaceView.swift:345",
+        "apps/ios/Zeron/Views/SpaceView.swift:340",
         "apps/ios/Zeron/Views/NewSessionView.swift:131"
       ]
     },
@@ -2003,8 +2018,8 @@
       "custom": "copy",
       "references": [
         "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:230",
-        "apps/ios/Zeron/Transcript/TranscriptView.swift:314",
-        "apps/ios/Zeron/Transcript/TranscriptView.swift:556"
+        "apps/ios/Zeron/Transcript/TranscriptView.swift:313",
+        "apps/ios/Zeron/Transcript/TranscriptView.swift:553"
       ]
     },
     {
@@ -2025,7 +2040,7 @@
       "symbol": "exclamationmark.triangle",
       "custom": "warning",
       "references": [
-        "apps/ios/Zeron/Transcript/TranscriptView.swift:570"
+        "apps/ios/Zeron/Transcript/TranscriptView.swift:567"
       ]
     },
     {
@@ -2041,7 +2056,7 @@
       "custom": "folder-add",
       "references": [
         "apps/ios/Zeron/Views/HomeView.swift:167",
-        "apps/ios/Zeron/Views/HomeView.swift:249"
+        "apps/ios/Zeron/Views/HomeView.swift:248"
       ]
     },
     {
@@ -2084,7 +2099,7 @@
       "symbol": "photo",
       "custom": "image",
       "references": [
-        "apps/ios/Zeron/Composer/QueuePanelView.swift:206"
+        "apps/ios/Zeron/Composer/QueuePanelView.swift:205"
       ]
     },
     {
@@ -2092,29 +2107,29 @@
       "custom": "image-error",
       "references": [
         "apps/ios/Zeron/Composer/Appshots.swift:100",
-        "apps/ios/Zeron/Composer/Attachments.swift:585",
-        "apps/ios/Zeron/Composer/Attachments.swift:679"
+        "apps/ios/Zeron/Composer/Attachments.swift:584",
+        "apps/ios/Zeron/Composer/Attachments.swift:677"
       ]
     },
     {
       "symbol": "pin",
       "custom": "pin",
       "references": [
-        "apps/ios/Zeron/Views/HomeView.swift:450"
+        "apps/ios/Zeron/Views/HomeView.swift:448"
       ]
     },
     {
       "symbol": "pin.fill",
       "custom": "pin-active",
       "references": [
-        "apps/ios/Zeron/Views/HomeView.swift:390"
+        "apps/ios/Zeron/Views/HomeView.swift:389"
       ]
     },
     {
       "symbol": "pin.slash",
       "custom": "unpin",
       "references": [
-        "apps/ios/Zeron/Views/HomeView.swift:450"
+        "apps/ios/Zeron/Views/HomeView.swift:448"
       ]
     },
     {
@@ -2122,9 +2137,9 @@
       "custom": "plus",
       "references": [
         "apps/ios/Zeron/Composer/ComposerView.swift:179",
-        "apps/ios/Zeron/Views/SpaceView.swift:74",
-        "apps/ios/Zeron/Views/HomeView.swift:252",
-        "apps/ios/Zeron/Views/ArchivedShelf.swift:127"
+        "apps/ios/Zeron/Views/SpaceView.swift:73",
+        "apps/ios/Zeron/Views/HomeView.swift:251",
+        "apps/ios/Zeron/Views/ArchivedShelf.swift:126"
       ]
     },
     {
@@ -2139,6 +2154,13 @@
       "custom": "grid",
       "references": [
         "apps/ios/Zeron/Transcript/TranscriptRows.swift:327"
+      ]
+    },
+    {
+      "symbol": "stop",
+      "custom": "stop",
+      "references": [
+        "apps/ios/Zeron/Composer/ComposerView.swift:215"
       ]
     },
     {
@@ -2161,14 +2183,14 @@
       "references": [
         "apps/ios/Zeron/Composer/QueuePanelView.swift:133",
         "apps/ios/Zeron/Composer/Attachments.swift:496",
-        "apps/ios/Zeron/Composer/Attachments.swift:748",
-        "apps/ios/Zeron/Views/SpaceView.swift:169",
-        "apps/ios/Zeron/Views/HomeView.swift:243",
-        "apps/ios/Zeron/Views/NewSessionView.swift:652",
-        "apps/ios/Zeron/Views/NewSessionView.swift:751",
-        "apps/ios/Zeron/Views/NewSessionView.swift:813",
-        "apps/ios/Zeron/Views/NewSessionView.swift:942",
-        "apps/ios/Zeron/Views/NewSessionView.swift:1017"
+        "apps/ios/Zeron/Composer/Attachments.swift:746",
+        "apps/ios/Zeron/Views/SpaceView.swift:167",
+        "apps/ios/Zeron/Views/HomeView.swift:242",
+        "apps/ios/Zeron/Views/NewSessionView.swift:651",
+        "apps/ios/Zeron/Views/NewSessionView.swift:748",
+        "apps/ios/Zeron/Views/NewSessionView.swift:809",
+        "apps/ios/Zeron/Views/NewSessionView.swift:936",
+        "apps/ios/Zeron/Views/NewSessionView.swift:1010"
       ]
     }
   ],
@@ -2529,5 +2551,5 @@
     "crates/ui/assets/file-icons/folders/folder-zed.svg",
     "crates/ui/assets/file-icons/folders/folder.svg"
   ],
-  "boundary": "Product controls across desktop and iOS; provider, language, app and user-uploaded project identities retained. Website marketing artwork excluded. Literal and dispatch source scan; runtime-supplied image names require integration audit."
+  "boundary": "Product controls across desktop and iOS; provider, app and user-uploaded project identities retained; file types use custom family. Website marketing artwork excluded. Literal and dispatch source scan; runtime-supplied image names require integration audit."
 }
