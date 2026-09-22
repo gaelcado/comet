@@ -1,0 +1,3750 @@
+[
+  {
+    "name": "panel-left-open",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8.5 5 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "sidebar-minimalistic-left"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:5316"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "panel-left-closed",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M3.8 5 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "panel-right-open",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M15.5 5 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "sidebar-minimalistic"
+    ],
+    "references": [
+      "crates/ui/src/files/preview.rs:2303",
+      "crates/ui/src/shell/tabs.rs:293",
+      "crates/ui/src/shell/tabs.rs:310"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "panel-right-closed",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M20.2 5 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "panel-bottom-open",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M3.8 14.5 H20.2",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "panel-bottom-closed",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M3.8 18.7 H20.2",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "arrow-left",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M18 12 L6 12",
+        "fill": 0
+      },
+      {
+        "d": "M11 7 L6 12 L11 17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "arrow-left"
+    ],
+    "references": [
+      "crates/ui/src/browser/view.rs:408",
+      "crates/ui/src/shell.rs:5329",
+      "crates/ui/src/shell/spaces.rs:5498"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "arrow-right",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6 12 L18 12",
+        "fill": 0
+      },
+      {
+        "d": "M13 7 L18 12 L13 17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "arrow-right"
+    ],
+    "references": [
+      "crates/ui/src/browser/view.rs:419",
+      "crates/ui/src/changes.rs:4076",
+      "crates/ui/src/shell.rs:5336"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "arrow-up",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M12 18 L12 6",
+        "fill": 0
+      },
+      {
+        "d": "M7 11 L12 6 L17 11",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "arrow-up"
+    ],
+    "references": [
+      "crates/ui/src/composer.rs:7168",
+      "crates/ui/src/shell/spaces.rs:5541"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "arrow-down",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M12 6 L12 18",
+        "fill": 0
+      },
+      {
+        "d": "M7 13 L12 18 L17 13",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "arrow-down"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:45",
+      "crates/ui/src/shell/spaces.rs:5542"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "arrow-up-right",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6.5 17.5 L17.5 6.5",
+        "fill": 0
+      },
+      {
+        "d": "M8 6.5 H17.5 V16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "arrow-up-right"
+    ],
+    "references": [
+      "crates/ui/src/browser/view.rs:494",
+      "crates/ui/src/browser/view.rs:648",
+      "crates/ui/src/files/markdown_preview.rs:1131",
+      "crates/ui/src/markdown/link_interaction.rs:336",
+      "crates/ui/src/transcript.rs:7571"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "return",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M19 6.5 V11 Q19 14 16 14 H5",
+        "fill": 0
+      },
+      {
+        "d": "M9 10 L5 14 L9 18",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "return"
+    ],
+    "references": [
+      "crates/ui/src/browser/view.rs:485"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "chevron-down",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M7 10 L12 15 L17 10",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "alt-arrow-down"
+    ],
+    "references": [
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:145",
+      "apps/ios/Zeron/Views/ArchivedShelf.swift:66",
+      "apps/ios/Zeron/Views/HomeView.swift:175",
+      "apps/ios/Zeron/Views/NewSessionView.swift:567",
+      "apps/ios/Zeron/Views/NewSessionView.swift:689",
+      "crates/ui/src/changes.rs:3473",
+      "crates/ui/src/changes.rs:3834",
+      "crates/ui/src/changes.rs:4038",
+      "crates/ui/src/files/search.rs:570",
+      "crates/ui/src/files/tree.rs:259",
+      "crates/ui/src/history.rs:3976",
+      "crates/ui/src/pickers.rs:2543",
+      "crates/ui/src/settings/appearance.rs:1897",
+      "crates/ui/src/settings/appearance.rs:1994",
+      "crates/ui/src/shell/actions_ui.rs:1054",
+      "crates/ui/src/shell/spaces.rs:3309",
+      "crates/ui/src/terminal/panel.rs:1653",
+      "crates/ui/src/transcript.rs:5214",
+      "crates/ui/src/transcript.rs:6627",
+      "crates/ui/src/transcript.rs:7558"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "chevron-up",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M7 14 L12 9 L17 14",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "alt-arrow-up"
+    ],
+    "references": [
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:143",
+      "apps/ios/Zeron/Views/NewSessionView.swift:689",
+      "crates/ui/src/transcript.rs:5212"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "chevron-left",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M14 7 L9 12 L14 17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "alt-arrow-left"
+    ],
+    "references": [
+      "apps/ios/Zeron/Views/SpaceView.swift:234",
+      "crates/ui/src/shell.rs:5832",
+      "crates/ui/src/shell.rs:7985"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "chevron-right",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M10 7 L15 12 L10 17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "alt-arrow-right"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:456",
+      "apps/ios/Zeron/Views/ArchivedShelf.swift:66",
+      "apps/ios/Zeron/Views/SheetUI.swift:106",
+      "apps/ios/Zeron/Views/SignInView.swift:201",
+      "apps/ios/Zeron/Views/SpaceView.swift:322",
+      "crates/ui/src/changes.rs:3471",
+      "crates/ui/src/files/search.rs:572",
+      "crates/ui/src/files/tree.rs:261",
+      "crates/ui/src/pickers.rs:4059",
+      "crates/ui/src/shell.rs:7935",
+      "crates/ui/src/shell/spaces.rs:2134",
+      "crates/ui/src/shell/spaces.rs:5391",
+      "crates/ui/src/transcript.rs:7560"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "expand",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M9 4.5 H4.5 V9",
+        "fill": 0
+      },
+      {
+        "d": "M4.5 4.5 L9.5 9.5",
+        "fill": 0
+      },
+      {
+        "d": "M15 19.5 H19.5 V15",
+        "fill": 0
+      },
+      {
+        "d": "M19.5 19.5 L14.5 14.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "expand-arrows"
+    ],
+    "references": [
+      "crates/ui/src/history.rs:3628",
+      "crates/ui/src/shell.rs:11341",
+      "crates/ui/src/shell/tabs.rs:38"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "collapse",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M4.5 9.5 H9.5 V4.5",
+        "fill": 0
+      },
+      {
+        "d": "M4.5 4.5 L9.5 9.5",
+        "fill": 0
+      },
+      {
+        "d": "M19.5 14.5 H14.5 V19.5",
+        "fill": 0
+      },
+      {
+        "d": "M19.5 19.5 L14.5 14.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "collapse-arrows"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:11342",
+      "crates/ui/src/shell/tabs.rs:36"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "fold",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M7 4 L12 9 L17 4",
+        "fill": 0
+      },
+      {
+        "d": "M7 20 L12 15 L17 20",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "fold-vertical"
+    ],
+    "references": [
+      "crates/ui/src/changes.rs:3769",
+      "crates/ui/src/changes.rs:3902",
+      "crates/ui/src/history.rs:1661",
+      "crates/ui/src/history.rs:3630"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "unfold",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M7 9 L12 4 L17 9",
+        "fill": 0
+      },
+      {
+        "d": "M7 15 L12 20 L17 15",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "menu",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M5 7 H19",
+        "fill": 0
+      },
+      {
+        "d": "M5 12 H19",
+        "fill": 0
+      },
+      {
+        "d": "M5 17 H19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "more",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M6.4 12 C6.4 12.4971 5.99706 12.9 5.5 12.9 C5.00294 12.9 4.6 12.4971 4.6 12 C4.6 11.5029 5.00294 11.1 5.5 11.1 C5.99706 11.1 6.4 11.5029 6.4 12 Z",
+        "fill": 1
+      },
+      {
+        "d": "M12.9 12 C12.9 12.4971 12.4971 12.9 12 12.9 C11.5029 12.9 11.1 12.4971 11.1 12 C11.1 11.5029 11.5029 11.1 12 11.1 C12.4971 11.1 12.9 11.5029 12.9 12 Z",
+        "fill": 1
+      },
+      {
+        "d": "M19.4 12 C19.4 12.4971 18.9971 12.9 18.5 12.9 C18.0029 12.9 17.6 12.4971 17.6 12 C17.6 11.5029 18.0029 11.1 18.5 11.1 C18.9971 11.1 19.4 11.5029 19.4 12 Z",
+        "fill": 1
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:150"
+    ],
+    "status": "Contribution"
+  },
+  {
+    "name": "home",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M3.5 10.5 L10.2 4.8 Q12 3.3 13.8 4.8 L20.5 10.5",
+        "fill": 0
+      },
+      {
+        "d": "M6 9 V18 Q6 20 8 20 H16 Q18 20 18 18 V9",
+        "fill": 0
+      },
+      {
+        "d": "M10 20 V14 H14 V20",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "home"
+    ],
+    "references": [
+      "crates/ui/src/shell/spaces.rs:5244",
+      "crates/ui/src/shell/spaces.rs:5436"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "window-minimize",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M5 12 H19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "window-minimize"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:5512"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "window-maximize",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M7.0 4.5 H17.0 Q19.5 4.5 19.5 7.0 V17.0 Q19.5 19.5 17.0 19.5 H7.0 Q4.5 19.5 4.5 17.0 V7.0 Q4.5 4.5 7.0 4.5 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "window-maximize"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:5522"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "window-restore",
+    "category": "Navigation",
+    "paths": [
+      {
+        "d": "M7.0 8 H13.5 Q16.0 8 16.0 10.5 V17.0 Q16.0 19.5 13.5 19.5 H7.0 Q4.5 19.5 4.5 17.0 V10.5 Q4.5 8 7.0 8 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 5 H17 Q20 5 20 8 V16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "window-restore"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:5520"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "folder",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M3 8 Q3 5 6 5 H9 L11.5 7.5 H18 Q21 7.5 21 10.5 V17 Q21 20 18 20 H6 Q3 20 3 17 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "folder"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:324",
+      "apps/ios/Zeron/Views/SpaceView.swift:59",
+      "crates/ui/src/files/preview.rs:2530",
+      "crates/ui/src/pickers.rs:2625",
+      "crates/ui/src/pickers.rs:2682",
+      "crates/ui/src/pickers.rs:2765",
+      "crates/ui/src/pickers.rs:2846",
+      "crates/ui/src/pickers.rs:3200",
+      "crates/ui/src/settings/files.rs:124",
+      "crates/ui/src/settings/files.rs:156",
+      "crates/ui/src/shell.rs:5732",
+      "crates/ui/src/shell/command_palette.rs:52",
+      "crates/ui/src/shell/spaces.rs:3102",
+      "crates/ui/src/shell/spaces.rs:3110",
+      "crates/ui/src/shell/spaces.rs:3266",
+      "crates/ui/src/shell/spaces.rs:5276",
+      "crates/ui/src/shell/spaces.rs:5464"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "folder-open",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M3 8 Q3 5 6 5 H9 L11.5 7.5 H18 Q21 7.5 21 10.5 V17 Q21 20 18 20 H6 Q3 20 3 17 Z",
+        "fill": 0
+      },
+      {
+        "d": "M3 12 H21",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "repository",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M3 8 Q3 5 6 5 H9 L11.5 7.5 H18 Q21 7.5 21 10.5 V17 Q21 20 18 20 H6 Q3 20 3 17 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 13 L6.5 14.5 L8 16",
+        "fill": 0
+      },
+      {
+        "d": "M16 13 L17.5 14.5 L16 16",
+        "fill": 0
+      },
+      {
+        "d": "M13 12.5 L11 17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "folder-with-files"
+    ],
+    "references": [
+      "crates/ui/src/pickers.rs:2683",
+      "crates/ui/src/pickers.rs:2763",
+      "crates/ui/src/pickers.rs:2847",
+      "crates/ui/src/pickers.rs:3198",
+      "crates/ui/src/pickers.rs:3207",
+      "crates/ui/src/settings/appearance.rs:2897",
+      "crates/ui/src/shell.rs:9109",
+      "crates/ui/src/shell.rs:9318",
+      "crates/ui/src/shell.rs:9626",
+      "crates/ui/src/transcript.rs:7107"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "folder-add",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M3 8 Q3 5 6 5 H9 L11.5 7.5 H18 Q21 7.5 21 10.5 V17 Q21 20 18 20 H6 Q3 20 3 17 Z",
+        "fill": 0
+      },
+      {
+        "d": "M9 14 H15",
+        "fill": 0
+      },
+      {
+        "d": "M12 11 V17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Views/HomeView.swift:167",
+      "apps/ios/Zeron/Views/HomeView.swift:249"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "project",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M8 4 H16 Q20 4 20 8 V16 Q20 20 16 20 H8 Q4 20 4 16 V8 Q4 4 8 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 15.5 L12 8.5 L16 15.5",
+        "fill": 0
+      },
+      {
+        "d": "M10 13 H14",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "project-default"
+    ],
+    "references": [
+      "crates/ui/src/shell/spaces.rs:3109"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "monitor",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M5.5 4 H18.5 Q21 4 21 6.5 V14.5 Q21 17 18.5 17 H5.5 Q3 17 3 14.5 V6.5 Q3 4 5.5 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 17 V20",
+        "fill": 0
+      },
+      {
+        "d": "M8 20 H16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "monitor"
+    ],
+    "references": [
+      "apps/ios/Zeron/Views/NewSessionView.swift:129",
+      "apps/ios/Zeron/Views/SpaceView.swift:345",
+      "crates/ui/src/appearance.rs:54",
+      "crates/ui/src/pickers.rs:2616",
+      "crates/ui/src/settings/accounts.rs:300",
+      "crates/ui/src/settings/devices.rs:263",
+      "crates/ui/src/settings/harnesses.rs:709",
+      "crates/ui/src/settings/notifications.rs:354",
+      "crates/ui/src/shell.rs:5728",
+      "crates/ui/src/shell.rs:5735",
+      "crates/ui/src/shell/spaces.rs:5220",
+      "crates/ui/src/shell/spaces.rs:5419",
+      "crates/ui/src/transcript.rs:5486"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "laptop",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M7 4 H17 Q19 4 19 6 V14 Q19 16 17 16 H7 Q5 16 5 14 V6 Q5 4 7 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M5 16 L2.5 19 Q2 20 4 20 H20 Q22 20 21.5 19 L19 16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "laptop"
+    ],
+    "references": [
+      "crates/ui/src/settings/accounts.rs:298",
+      "crates/ui/src/settings/devices.rs:260",
+      "crates/ui/src/settings/harnesses.rs:707",
+      "crates/ui/src/shell/spaces.rs:3101",
+      "crates/ui/src/shell/spaces.rs:5217",
+      "crates/ui/src/shell/spaces.rs:5417"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "phone",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M9.5 2.5 H14.5 Q17 2.5 17 5.0 V19.0 Q17 21.5 14.5 21.5 H9.5 Q7 21.5 7 19.0 V5.0 Q7 2.5 9.5 2.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M10.5 18.5 H13.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "smartphone"
+    ],
+    "references": [
+      "crates/ui/src/settings/accounts.rs:299",
+      "crates/ui/src/settings/devices.rs:262",
+      "crates/ui/src/settings/harnesses.rs:708",
+      "crates/ui/src/shell/spaces.rs:5219",
+      "crates/ui/src/shell/spaces.rs:5418"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "server",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M6.5 3.5 H17.5 Q20 3.5 20 6.0 V8.0 Q20 10.5 17.5 10.5 H6.5 Q4 10.5 4 8.0 V6.0 Q4 3.5 6.5 3.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M6.5 13.5 H17.5 Q20 13.5 20 16.0 V18.0 Q20 20.5 17.5 20.5 H6.5 Q4 20.5 4 18.0 V16.0 Q4 13.5 6.5 13.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 7 H8.1",
+        "fill": 0
+      },
+      {
+        "d": "M8 17 H8.1",
+        "fill": 0
+      },
+      {
+        "d": "M13 7 H16",
+        "fill": 0
+      },
+      {
+        "d": "M13 17 H16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "remote-server"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:6046",
+      "crates/ui/src/shell.rs:6316"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "drive",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M6 5 H18 L21 15 V18 Q21 20 19 20 H5 Q3 20 3 18 V15 Z",
+        "fill": 0
+      },
+      {
+        "d": "M3 15 H21",
+        "fill": 0
+      },
+      {
+        "d": "M16 17.5 H17.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "hard-drive"
+    ],
+    "references": [
+      "crates/ui/src/shell/spaces.rs:5246",
+      "crates/ui/src/shell/spaces.rs:5438"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "cloud",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M7 18 H17 Q21 18 21 14 Q21 10 17 10 Q16 5 11 5 Q6 5 5.5 10 Q2.5 10.5 2.5 14 Q2.5 18 7 18 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "cloud"
+    ],
+    "references": [
+      "crates/ui/src/history.rs:1186",
+      "crates/ui/src/history.rs:1596"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "globe",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M20.5 12 C20.5 16.6944 16.6944 20.5 12 20.5 C7.30558 20.5 3.5 16.6944 3.5 12 C3.5 7.30558 7.30558 3.5 12 3.5 C16.6944 3.5 20.5 7.30558 20.5 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 3.5 C7 7 7 17 12 20.5 C17 17 17 7 12 3.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M4 9 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4 15 H20",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "globe",
+      "global"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:325",
+      "crates/ui/src/browser/view.rs:325",
+      "crates/ui/src/browser/view.rs:455",
+      "crates/ui/src/markdown/link_interaction.rs:332",
+      "crates/ui/src/settings/appearance.rs:2774",
+      "crates/ui/src/settings/devices.rs:261",
+      "crates/ui/src/shell.rs:7287",
+      "crates/ui/src/shell.rs:7299",
+      "crates/ui/src/shell.rs:9116",
+      "crates/ui/src/shell.rs:9333",
+      "crates/ui/src/shell.rs:9640",
+      "crates/ui/src/shell/spaces.rs:5218",
+      "crates/ui/src/transcript.rs:7108"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "browser",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M3.5 9 H20.5",
+        "fill": 0
+      },
+      {
+        "d": "M7 6.8 H7.1",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Composer/Appshots.swift:105"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "chat",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M7 4.5 H17 Q21 4.5 21 8.5 V14 Q21 18 17 18 H10 L5.5 21 V17.5 Q3 17 3 14 V8.5 Q3 4.5 7 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M7.5 9 H16.5",
+        "fill": 0
+      },
+      {
+        "d": "M7.5 13 H13.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "chat-round-line"
+    ],
+    "references": [
+      "crates/ui/src/comment_ui.rs:239",
+      "crates/ui/src/comment_ui.rs:96",
+      "crates/ui/src/comments.rs:185",
+      "crates/ui/src/composer.rs:4647",
+      "crates/ui/src/files/preview.rs:2864",
+      "crates/ui/src/files/preview.rs:2967",
+      "crates/ui/src/settings/notifications.rs:242",
+      "crates/ui/src/transcript.rs:7073",
+      "crates/ui/src/transcript.rs:7378",
+      "crates/ui/src/transcript.rs:7735"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "chats",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M7 4 H16 Q19 4 19 7 V12 Q19 15 16 15 H9 L5 18 V14 Q3 13.5 3 11 V7 Q3 4 7 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M21 10 V17 Q21 19 19 19 V22 L15 19 H11",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:596",
+      "apps/ios/Zeron/Views/SpaceView.swift:89"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "archive",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M4.5 4 H19.5 Q21 4 21 5.5 V7.5 Q21 9 19.5 9 H4.5 Q3 9 3 7.5 V5.5 Q3 4 4.5 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M5 9 V18 Q5 20 7 20 H17 Q19 20 19 18 V9",
+        "fill": 0
+      },
+      {
+        "d": "M10 12.5 H14",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "archive-minimalistic"
+    ],
+    "references": [
+      "apps/ios/Zeron/Views/HomeView.swift:289",
+      "apps/ios/Zeron/Views/SpaceView.swift:36",
+      "crates/ui/src/settings/archived.rs:161",
+      "crates/ui/src/settings/archived.rs:272",
+      "crates/ui/src/shell.rs:5736",
+      "crates/ui/src/shell.rs:6021",
+      "crates/ui/src/shell.rs:7918"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "unarchive",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M4.5 4 H19.5 Q21 4 21 5.5 V7.5 Q21 9 19.5 9 H4.5 Q3 9 3 7.5 V5.5 Q3 4 4.5 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M5 9 V18 Q5 20 7 20 H17 Q19 20 19 18 V9",
+        "fill": 0
+      },
+      {
+        "d": "M12 18 V11.5",
+        "fill": 0
+      },
+      {
+        "d": "M9.5 14 L12 11.5 L14.5 14",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "archive-up-minimalistic"
+    ],
+    "references": [
+      "apps/ios/Zeron/Views/ArchivedShelf.swift:116",
+      "crates/ui/src/settings/archived.rs:246",
+      "crates/ui/src/shell.rs:6019"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "pin",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M8 4.5 H16 L15 10 L18 14 H6 L9 10 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 14 V21",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "pin"
+    ],
+    "references": [
+      "apps/ios/Zeron/Views/HomeView.swift:450",
+      "crates/ui/src/shell.rs:7908"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "pin-active",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M8 4.5 H16 L15 10 L18 14 H6 L9 10 Z",
+        "fill": 1
+      },
+      {
+        "d": "M12 14 V21",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Views/HomeView.swift:390"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "unpin",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M8 4.5 H16 L15 10 L18 14 H6 L9 10 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 14 V21",
+        "fill": 0
+      },
+      {
+        "d": "M3.5 3.5 L20.5 20.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Views/HomeView.swift:450"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "clock",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M20.5 12 C20.5 16.6944 16.6944 20.5 12 20.5 C7.30558 20.5 3.5 16.6944 3.5 12 C3.5 7.30558 7.30558 3.5 12 3.5 C16.6944 3.5 20.5 7.30558 20.5 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 7 V12 L15.5 14",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "clock-circle"
+    ],
+    "references": [
+      "crates/ui/src/shell/spaces.rs:3104"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "calendar",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M6.5 5 H17.5 Q20.5 5 20.5 8 V17 Q20.5 20 17.5 20 H6.5 Q3.5 20 3.5 17 V8 Q3.5 5 6.5 5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 3 V7",
+        "fill": 0
+      },
+      {
+        "d": "M16 3 V7",
+        "fill": 0
+      },
+      {
+        "d": "M4 10 H20",
+        "fill": 0
+      },
+      {
+        "d": "M8 14 H8.1",
+        "fill": 0
+      },
+      {
+        "d": "M12 14 H12.1",
+        "fill": 0
+      },
+      {
+        "d": "M16 14 H16.1",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "calendar"
+    ],
+    "references": [
+      "crates/ui/src/shell/spaces.rs:3105"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "plus",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M5 12 H19",
+        "fill": 0
+      },
+      {
+        "d": "M12 5 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "plus"
+    ],
+    "references": [
+      "apps/ios/Zeron/Composer/ComposerView.swift:170",
+      "apps/ios/Zeron/Views/ArchivedShelf.swift:127",
+      "apps/ios/Zeron/Views/HomeView.swift:252",
+      "apps/ios/Zeron/Views/SpaceView.swift:74",
+      "crates/ui/src/comment_ui.rs:41",
+      "crates/ui/src/files/preview.rs:2892",
+      "crates/ui/src/pickers.rs:2206",
+      "crates/ui/src/shell.rs:5349",
+      "crates/ui/src/shell.rs:9334",
+      "crates/ui/src/shell.rs:9604",
+      "crates/ui/src/shell/actions_ui.rs:622",
+      "crates/ui/src/shell/actions_ui.rs:787",
+      "crates/ui/src/shell/spaces.rs:3591",
+      "crates/ui/src/shell/spaces.rs:4504",
+      "crates/ui/src/terminal/panel.rs:1626"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "close",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M6.5 6.5 L17.5 17.5",
+        "fill": 0
+      },
+      {
+        "d": "M17.5 6.5 L6.5 17.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "queue-close",
+      "close"
+    ],
+    "references": [
+      "apps/ios/Zeron/Composer/Attachments.swift:496",
+      "apps/ios/Zeron/Composer/Attachments.swift:748",
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:133",
+      "apps/ios/Zeron/Views/HomeView.swift:243",
+      "apps/ios/Zeron/Views/NewSessionView.swift:1015",
+      "apps/ios/Zeron/Views/NewSessionView.swift:650",
+      "apps/ios/Zeron/Views/NewSessionView.swift:749",
+      "apps/ios/Zeron/Views/NewSessionView.swift:811",
+      "apps/ios/Zeron/Views/NewSessionView.swift:940",
+      "apps/ios/Zeron/Views/SpaceView.swift:169",
+      "crates/ui/src/history.rs:1800",
+      "crates/ui/src/pickers.rs:2186",
+      "crates/ui/src/queue.rs:473",
+      "crates/ui/src/settings/appearance.rs:2589",
+      "crates/ui/src/shell.rs:5531",
+      "crates/ui/src/shell.rs:9513",
+      "crates/ui/src/terminal/panel.rs:1515"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "send",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M12 20 V4",
+        "fill": 0
+      },
+      {
+        "d": "M5.5 10.5 L12 4 L18.5 10.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Composer/ComposerView.swift:211"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "send-now",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M4 12 H20",
+        "fill": 0
+      },
+      {
+        "d": "M13.5 5.5 L20 12 L13.5 18.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "queue-send"
+    ],
+    "references": [
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:138",
+      "crates/ui/src/queue.rs:1029"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "stop",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M8 6 H16 Q18 6 18 8 V16 Q18 18 16 18 H8 Q6 18 6 16 V8 Q6 6 8 6 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "stop"
+    ],
+    "references": [],
+    "status": "Registered"
+  },
+  {
+    "name": "play",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M8 5.5 Q8 4 9.5 5 L19 11 Q20.5 12 19 13 L9.5 19 Q8 20 8 18.5 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "action-play"
+    ],
+    "references": [
+      "crates/ui/src/project_actions.rs:221"
+    ],
+    "status": "Contribution"
+  },
+  {
+    "name": "pause",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M8 5 V19",
+        "fill": 0
+      },
+      {
+        "d": "M16 5 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "Contribution"
+  },
+  {
+    "name": "paperclip",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M8.5 12.5 L14 7 Q16 5 18 7 Q20 9 18 11 L10.5 18.5 Q7 22 3.8 18.5 Q.5 15.2 4 11.7 L12 3.7 Q15.5 .5 19 3.7",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "queue-paperclip",
+      "paperclip"
+    ],
+    "references": [
+      "crates/ui/src/composer.rs:7671",
+      "crates/ui/src/icons.rs:15",
+      "crates/ui/src/queue.rs:904"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "edit",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M5 15.5 L15.5 5 Q17 3.5 18.5 5 L19 5.5 Q20.5 7 19 8.5 L8.5 19 H4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M13.5 7 L17 10.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "pen"
+    ],
+    "references": [
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:133",
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:322",
+      "crates/ui/src/comment_ui.rs:174",
+      "crates/ui/src/queue.rs:416",
+      "crates/ui/src/settings/devices.rs:390",
+      "crates/ui/src/shell.rs:7899",
+      "crates/ui/src/shell/spaces.rs:5709",
+      "crates/ui/src/transcript.rs:7105"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "compose",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M10 4 H7 Q3.5 4 3.5 7.5 V17 Q3.5 20.5 7 20.5 H16.5 Q20 20.5 20 17 V14",
+        "fill": 0
+      },
+      {
+        "d": "M10 11.5 L17 4.5 Q18.5 3 20 4.5 Q21.5 6 20 7.5 L13 14.5 L9 15.5 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "pen-new-square"
+    ],
+    "references": [
+      "crates/ui/src/shell/command_palette.rs:51"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "copy",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M10.5 8 H17.5 Q20 8 20 10.5 V18.5 Q20 21 17.5 21 H10.5 Q8 21 8 18.5 V10.5 Q8 8 10.5 8 Z",
+        "fill": 0
+      },
+      {
+        "d": "M15.5 4 H6.5 Q3 4 3 7.5 V15.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "copy"
+    ],
+    "references": [
+      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:230",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:312",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:554",
+      "crates/ui/src/markdown/link_interaction.rs:338",
+      "crates/ui/src/markdown/render.rs:1958",
+      "crates/ui/src/notice.rs:123",
+      "crates/ui/src/shell.rs:7929",
+      "crates/ui/src/shell.rs:7999",
+      "crates/ui/src/shell.rs:8017",
+      "crates/ui/src/shell.rs:8036",
+      "crates/ui/src/transcript.rs:6080"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "check",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M5 12 L9.5 16.5 L19 7",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "queue-check",
+      "check"
+    ],
+    "references": [
+      "apps/ios/Zeron/Views/HomeView.swift:211",
+      "apps/ios/Zeron/Views/Loaders.swift:232",
+      "apps/ios/Zeron/Views/NewSessionView.swift:873",
+      "apps/ios/Zeron/Views/SessionHostPickerSheet.swift:32",
+      "apps/ios/Zeron/Views/SheetUI.swift:68",
+      "crates/ui/src/history.rs:3217",
+      "crates/ui/src/history.rs:3258",
+      "crates/ui/src/markdown/link_interaction.rs:381",
+      "crates/ui/src/markdown/render.rs:1956",
+      "crates/ui/src/markdown/render.rs:620",
+      "crates/ui/src/pickers.rs:4101",
+      "crates/ui/src/queue.rs:462",
+      "crates/ui/src/settings/appearance.rs:1788",
+      "crates/ui/src/settings/appearance.rs:1944",
+      "crates/ui/src/settings/appearance.rs:2152",
+      "crates/ui/src/settings/appearance.rs:2416",
+      "crates/ui/src/settings/notifications.rs:205",
+      "crates/ui/src/shell.rs:5951",
+      "crates/ui/src/shell.rs:6060",
+      "crates/ui/src/shell/actions_ui.rs:938",
+      "crates/ui/src/shell/spaces.rs:3153",
+      "crates/ui/src/transcript.rs:6078"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "drag",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M9.7 6 C9.7 6.3866 9.3866 6.7 9 6.7 C8.6134 6.7 8.3 6.3866 8.3 6 C8.3 5.6134 8.6134 5.3 9 5.3 C9.3866 5.3 9.7 5.6134 9.7 6 Z",
+        "fill": 1
+      },
+      {
+        "d": "M9.7 12 C9.7 12.3866 9.3866 12.7 9 12.7 C8.6134 12.7 8.3 12.3866 8.3 12 C8.3 11.6134 8.6134 11.3 9 11.3 C9.3866 11.3 9.7 11.6134 9.7 12 Z",
+        "fill": 1
+      },
+      {
+        "d": "M9.7 18 C9.7 18.3866 9.3866 18.7 9 18.7 C8.6134 18.7 8.3 18.3866 8.3 18 C8.3 17.6134 8.6134 17.3 9 17.3 C9.3866 17.3 9.7 17.6134 9.7 18 Z",
+        "fill": 1
+      },
+      {
+        "d": "M15.7 6 C15.7 6.3866 15.3866 6.7 15 6.7 C14.6134 6.7 14.3 6.3866 14.3 6 C14.3 5.6134 14.6134 5.3 15 5.3 C15.3866 5.3 15.7 5.6134 15.7 6 Z",
+        "fill": 1
+      },
+      {
+        "d": "M15.7 12 C15.7 12.3866 15.3866 12.7 15 12.7 C14.6134 12.7 14.3 12.3866 14.3 12 C14.3 11.6134 14.6134 11.3 15 11.3 C15.3866 11.3 15.7 11.6134 15.7 12 Z",
+        "fill": 1
+      },
+      {
+        "d": "M15.7 18 C15.7 18.3866 15.3866 18.7 15 18.7 C14.6134 18.7 14.3 18.3866 14.3 18 C14.3 17.6134 14.6134 17.3 15 17.3 C15.3866 17.3 15.7 17.6134 15.7 18 Z",
+        "fill": 1
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "drag-handle",
+      "queue-drag-handle"
+    ],
+    "references": [
+      "crates/ui/src/queue.rs:496"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "microphone",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M12 3 H12 Q15 3 15 6 V12 Q15 15 12 15 H12 Q9 15 9 12 V6 Q9 3 12 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M6 10 V12 Q6 18 12 18 Q18 18 18 12 V10",
+        "fill": 0
+      },
+      {
+        "d": "M12 18 V21",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "Contribution"
+  },
+  {
+    "name": "microphone-off",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M12 3 H12 Q15 3 15 6 V12 Q15 15 12 15 H12 Q9 15 9 12 V6 Q9 3 12 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M6 10 V12 Q6 18 12 18 Q18 18 18 12 V10",
+        "fill": 0
+      },
+      {
+        "d": "M12 18 V21",
+        "fill": 0
+      },
+      {
+        "d": "M3.5 3.5 L20.5 20.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "waveform",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M4 10 V14",
+        "fill": 0
+      },
+      {
+        "d": "M8 6 V18",
+        "fill": 0
+      },
+      {
+        "d": "M12 3 V21",
+        "fill": 0
+      },
+      {
+        "d": "M16 7 V17",
+        "fill": 0
+      },
+      {
+        "d": "M20 10 V14",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "link",
+    "category": "Composer",
+    "paths": [
+      {
+        "d": "M10 7 L12.5 4.5 Q16 1 19.5 4.5 Q23 8 19.5 11.5 L17 14",
+        "fill": 0
+      },
+      {
+        "d": "M7 10 L4.5 12.5 Q1 16 4.5 19.5 Q8 23 11.5 19.5 L14 17",
+        "fill": 0
+      },
+      {
+        "d": "M8 16 L16 8",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "document",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M7 3 H14 L20 9 V18 Q20 21 17 21 H7 Q4 21 4 18 V6 Q4 3 7 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 3 V7 Q14 9 16 9 H20",
+        "fill": 0
+      },
+      {
+        "d": "M8 13 H16",
+        "fill": 0
+      },
+      {
+        "d": "M8 16.5 H13",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "document"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:320",
+      "crates/ui/src/settings/appearance.rs:2776",
+      "crates/ui/src/shell.rs:9319",
+      "crates/ui/src/transcript.rs:7103"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "document-add",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M7 3 H14 L20 9 V18 Q20 21 17 21 H7 Q4 21 4 18 V6 Q4 3 7 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 3 V7 Q14 9 16 9 H20",
+        "fill": 0
+      },
+      {
+        "d": "M8.5 15 H15.5",
+        "fill": 0
+      },
+      {
+        "d": "M12 11.5 V18.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "document-add"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:321",
+      "crates/ui/src/transcript.rs:7104"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "file-code",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M7 3 H14 L20 9 V18 Q20 21 17 21 H7 Q4 21 4 18 V6 Q4 3 7 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 3 V7 Q14 9 16 9 H20",
+        "fill": 0
+      },
+      {
+        "d": "M9.5 12 L7 14.5 L9.5 17",
+        "fill": 0
+      },
+      {
+        "d": "M14.5 12 L17 14.5 L14.5 17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "file-code"
+    ],
+    "references": [
+      "crates/ui/src/files/preview.rs:2463",
+      "crates/ui/src/markdown/render.rs:1860"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "file-style",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M7 3 H14 L20 9 V18 Q20 21 17 21 H7 Q4 21 4 18 V6 Q4 3 7 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 3 V7 Q14 9 16 9 H20",
+        "fill": 0
+      },
+      {
+        "d": "M8 13 Q12 10 16 13 Q12 13 8 17 H16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "file-style"
+    ],
+    "references": [],
+    "status": "Registered"
+  },
+  {
+    "name": "file-data",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M7 3 H14 L20 9 V18 Q20 21 17 21 H7 Q4 21 4 18 V6 Q4 3 7 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 3 V7 Q14 9 16 9 H20",
+        "fill": 0
+      },
+      {
+        "d": "M9 12 H8 V17 H9",
+        "fill": 0
+      },
+      {
+        "d": "M15 12 H16 V17 H15",
+        "fill": 0
+      },
+      {
+        "d": "M12 13 V13.1",
+        "fill": 0
+      },
+      {
+        "d": "M12 16 V16.1",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "file-data"
+    ],
+    "references": [],
+    "status": "Registered"
+  },
+  {
+    "name": "file-markdown",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M7 3 H14 L20 9 V18 Q20 21 17 21 H7 Q4 21 4 18 V6 Q4 3 7 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 3 V7 Q14 9 16 9 H20",
+        "fill": 0
+      },
+      {
+        "d": "M7.5 17 V12 L10 15 L12.5 12 V17",
+        "fill": 0
+      },
+      {
+        "d": "M16 12 V17",
+        "fill": 0
+      },
+      {
+        "d": "M14.5 15.5 L16 17 L17.5 15.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "file-markdown"
+    ],
+    "references": [],
+    "status": "Registered"
+  },
+  {
+    "name": "file-image",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M7 3 H14 L20 9 V18 Q20 21 17 21 H7 Q4 21 4 18 V6 Q4 3 7 3 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 3 V7 Q14 9 16 9 H20",
+        "fill": 0
+      },
+      {
+        "d": "M7 18 L10 14 L12.5 16.5 L15 13 L18 18",
+        "fill": 0
+      },
+      {
+        "d": "M9.2 11 C9.2 11.3866 8.8866 11.7 8.5 11.7 C8.1134 11.7 7.8 11.3866 7.8 11 C7.8 10.6134 8.1134 10.3 8.5 10.3 C8.8866 10.3 9.2 10.6134 9.2 11 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "file-image"
+    ],
+    "references": [
+      "crates/ui/src/settings/appearance.rs:3136"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "image",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M6 4 H18 Q21 4 21 7 V17 Q21 20 18 20 H6 Q3 20 3 17 V7 Q3 4 6 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M4 18 L9 12.5 L12.5 16 L16 11.5 L20.5 17",
+        "fill": 0
+      },
+      {
+        "d": "M9 8.5 C9 9.05228 8.55228 9.5 8 9.5 C7.44772 9.5 7 9.05228 7 8.5 C7 7.94772 7.44772 7.5 8 7.5 C8.55228 7.5 9 7.94772 9 8.5 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:206"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "image-error",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M6 4 H18 Q21 4 21 7 V17 Q21 20 18 20 H6 Q3 20 3 17 V7 Q3 4 6 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M4 18 L9 12.5 L12 15.5",
+        "fill": 0
+      },
+      {
+        "d": "M16 8 V12",
+        "fill": 0
+      },
+      {
+        "d": "M16 15 V15.1",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Composer/Appshots.swift:100",
+      "apps/ios/Zeron/Composer/Attachments.swift:585",
+      "apps/ios/Zeron/Composer/Attachments.swift:679"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "save",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M6 3.5 H16 L20.5 8 V17.5 Q20.5 20.5 17.5 20.5 H6 Q3.5 20.5 3.5 17.5 V6.5 Q3.5 3.5 6 3.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 3.5 V9 H15 V3.5",
+        "fill": 0
+      },
+      {
+        "d": "M9 14 H15 Q16 14 16 15 V19.5 Q16 20.5 15 20.5 H9 Q8 20.5 8 19.5 V15 Q8 14 9 14 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "floppy-disk"
+    ],
+    "references": [],
+    "status": "Registered"
+  },
+  {
+    "name": "trash",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M4 7 H20",
+        "fill": 0
+      },
+      {
+        "d": "M6 7 L7 19 Q7 21 9 21 H15 Q17 21 17 19 L18 7",
+        "fill": 0
+      },
+      {
+        "d": "M9 7 V3.5 H15 V7",
+        "fill": 0
+      },
+      {
+        "d": "M10 11 V17",
+        "fill": 0
+      },
+      {
+        "d": "M14 11 V17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "trash-bin-minimalistic"
+    ],
+    "references": [
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:147",
+      "crates/ui/src/queue.rs:432",
+      "crates/ui/src/settings/accounts.rs:833",
+      "crates/ui/src/shell.rs:7951",
+      "crates/ui/src/shell/spaces.rs:5723"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "eye",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M2.5 12 C7 4 17 4 21.5 12 C17 20 7 20 2.5 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14.5 12 C14.5 13.3807 13.3807 14.5 12 14.5 C10.6193 14.5 9.5 13.3807 9.5 12 C9.5 10.6193 10.6193 9.5 12 9.5 C13.3807 9.5 14.5 10.6193 14.5 12 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "eye"
+    ],
+    "references": [
+      "crates/ui/src/files/mod.rs:1015",
+      "crates/ui/src/files/preview.rs:2465",
+      "crates/ui/src/markdown/render.rs:1858",
+      "crates/ui/src/settings/files.rs:215"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "eye-closed",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M2.5 12 C7 19 17 19 21.5 12",
+        "fill": 0
+      },
+      {
+        "d": "M6 16 L4.5 18.5",
+        "fill": 0
+      },
+      {
+        "d": "M12 17.5 V20",
+        "fill": 0
+      },
+      {
+        "d": "M18 16 L19.5 18.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "eye-closed"
+    ],
+    "references": [
+      "crates/ui/src/files/mod.rs:1017"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "search",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M17 10.5 C17 14.0899 14.0899 17 10.5 17 C6.91015 17 4 14.0899 4 10.5 C4 6.91015 6.91015 4 10.5 4 C14.0899 4 17 6.91015 17 10.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M15.3 15.3 L20.5 20.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "magnifer",
+      "palette-search"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:323",
+      "crates/ui/src/files/mod.rs:993",
+      "crates/ui/src/history.rs:1709",
+      "crates/ui/src/history.rs:1742",
+      "crates/ui/src/pickers.rs:3457",
+      "crates/ui/src/popover.rs:931",
+      "crates/ui/src/transcript.rs:7106"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "wrap",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M4 6 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4 11 H16.5 Q21 11 21 15 Q21 19 16.5 19 H12",
+        "fill": 0
+      },
+      {
+        "d": "M15 16 L12 19 L15 22",
+        "fill": 0
+      },
+      {
+        "d": "M4 16 H7",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "wrap-text"
+    ],
+    "references": [
+      "crates/ui/src/changes.rs:3711",
+      "crates/ui/src/markdown/render.rs:2150"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "unwrap",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M4 6 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4 11 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4 16 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4 21 H12",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "split",
+    "category": "Git & changes",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 5 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "split-columns"
+    ],
+    "references": [
+      "crates/ui/src/changes.rs:3697"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "unified",
+    "category": "Git & changes",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M20.2 5 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "list",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M8 6 H20",
+        "fill": 0
+      },
+      {
+        "d": "M8 12 H20",
+        "fill": 0
+      },
+      {
+        "d": "M8 18 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4.65 6 C4.65 6.35899 4.35899 6.65 4 6.65 C3.64101 6.65 3.35 6.35899 3.35 6 C3.35 5.64101 3.64101 5.35 4 5.35 C4.35899 5.35 4.65 5.64101 4.65 6 Z",
+        "fill": 1
+      },
+      {
+        "d": "M4.65 12 C4.65 12.359 4.35899 12.65 4 12.65 C3.64101 12.65 3.35 12.359 3.35 12 C3.35 11.641 3.64101 11.35 4 11.35 C4.35899 11.35 4.65 11.641 4.65 12 Z",
+        "fill": 1
+      },
+      {
+        "d": "M4.65 18 C4.65 18.359 4.35899 18.65 4 18.65 C3.64101 18.65 3.35 18.359 3.35 18 C3.35 17.641 3.64101 17.35 4 17.35 C4.35899 17.35 4.65 17.641 4.65 18 Z",
+        "fill": 1
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "list"
+    ],
+    "references": [
+      "crates/ui/src/files/preview.rs:2549",
+      "crates/ui/src/settings/files.rs:185",
+      "crates/ui/src/shell.rs:9130",
+      "crates/ui/src/shell.rs:9327",
+      "crates/ui/src/shell.rs:9330",
+      "crates/ui/src/shell.rs:9669",
+      "crates/ui/src/shell/spaces.rs:3103",
+      "crates/ui/src/shell/spaces.rs:3111"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "grid",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M5.3 3.5 H8.2 Q10.0 3.5 10.0 5.3 V8.2 Q10.0 10.0 8.2 10.0 H5.3 Q3.5 10.0 3.5 8.2 V5.3 Q3.5 3.5 5.3 3.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M5.3 14 H8.2 Q10.0 14 10.0 15.8 V18.7 Q10.0 20.5 8.2 20.5 H5.3 Q3.5 20.5 3.5 18.7 V15.8 Q3.5 14 5.3 14 Z",
+        "fill": 0
+      },
+      {
+        "d": "M15.8 3.5 H18.7 Q20.5 3.5 20.5 5.3 V8.2 Q20.5 10.0 18.7 10.0 H15.8 Q14 10.0 14 8.2 V5.3 Q14 3.5 15.8 3.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M15.8 14 H18.7 Q20.5 14 20.5 15.8 V18.7 Q20.5 20.5 18.7 20.5 H15.8 Q14 20.5 14 18.7 V15.8 Q14 14 15.8 14 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "widget"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:327",
+      "crates/ui/src/settings/appearance.rs:3086",
+      "crates/ui/src/shell.rs:5729",
+      "crates/ui/src/transcript.rs:7112"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "branch",
+    "category": "Git & changes",
+    "paths": [
+      {
+        "d": "M8 5.5 C8 6.60457 7.10457 7.5 6 7.5 C4.89543 7.5 4 6.60457 4 5.5 C4 4.39543 4.89543 3.5 6 3.5 C7.10457 3.5 8 4.39543 8 5.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 18.5 C8 19.6046 7.10457 20.5 6 20.5 C4.89543 20.5 4 19.6046 4 18.5 C4 17.3954 4.89543 16.5 6 16.5 C7.10457 16.5 8 17.3954 8 18.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M20 6.5 C20 7.60457 19.1046 8.5 18 8.5 C16.8954 8.5 16 7.60457 16 6.5 C16 5.39543 16.8954 4.5 18 4.5 C19.1046 4.5 20 5.39543 20 6.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M6 7.5 V16.5",
+        "fill": 0
+      },
+      {
+        "d": "M18 8.5 V10 Q18 13.5 12 13.5 Q6 13.5 6 16.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "git-branch"
+    ],
+    "references": [
+      "crates/ui/src/history.rs:1185",
+      "crates/ui/src/pickers.rs:2696",
+      "crates/ui/src/pickers.rs:2785",
+      "crates/ui/src/pickers.rs:2840",
+      "crates/ui/src/shell.rs:6384",
+      "crates/ui/src/shell.rs:9136",
+      "crates/ui/src/shell.rs:9325",
+      "crates/ui/src/shell.rs:9683",
+      "crates/ui/src/shell/spaces.rs:3106",
+      "crates/ui/src/shell/spaces.rs:5288"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "pull-request",
+    "category": "Git & changes",
+    "paths": [
+      {
+        "d": "M8 5.5 C8 6.60457 7.10457 7.5 6 7.5 C4.89543 7.5 4 6.60457 4 5.5 C4 4.39543 4.89543 3.5 6 3.5 C7.10457 3.5 8 4.39543 8 5.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 18.5 C8 19.6046 7.10457 20.5 6 20.5 C4.89543 20.5 4 19.6046 4 18.5 C4 17.3954 4.89543 16.5 6 16.5 C7.10457 16.5 8 17.3954 8 18.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M20 18.5 C20 19.6046 19.1046 20.5 18 20.5 C16.8954 20.5 16 19.6046 16 18.5 C16 17.3954 16.8954 16.5 18 16.5 C19.1046 16.5 20 17.3954 20 18.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M6 7.5 V16.5",
+        "fill": 0
+      },
+      {
+        "d": "M13 5.5 H15 Q18 5.5 18 8.5 V16.5",
+        "fill": 0
+      },
+      {
+        "d": "M15 3 L12.5 5.5 L15 8",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "pull-request"
+    ],
+    "references": [
+      "crates/ui/src/change_requests.rs:185",
+      "crates/ui/src/shell/spaces.rs:3107"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "merge",
+    "category": "Git & changes",
+    "paths": [
+      {
+        "d": "M8 5.5 C8 6.60457 7.10457 7.5 6 7.5 C4.89543 7.5 4 6.60457 4 5.5 C4 4.39543 4.89543 3.5 6 3.5 C7.10457 3.5 8 4.39543 8 5.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M20 18.5 C20 19.6046 19.1046 20.5 18 20.5 C16.8954 20.5 16 19.6046 16 18.5 C16 17.3954 16.8954 16.5 18 16.5 C19.1046 16.5 20 17.3954 20 18.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 18.5 C8 19.6046 7.10457 20.5 6 20.5 C4.89543 20.5 4 19.6046 4 18.5 C4 17.3954 4.89543 16.5 6 16.5 C7.10457 16.5 8 17.3954 8 18.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M6 7.5 V16.5",
+        "fill": 0
+      },
+      {
+        "d": "M6 8 Q6 11 11 12 Q18 13 18 16.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "commit",
+    "category": "Git & changes",
+    "paths": [
+      {
+        "d": "M15.5 12 C15.5 13.933 13.933 15.5 12 15.5 C10.067 15.5 8.5 13.933 8.5 12 C8.5 10.067 10.067 8.5 12 8.5 C13.933 8.5 15.5 10.067 15.5 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M3 12 H8.5",
+        "fill": 0
+      },
+      {
+        "d": "M15.5 12 H21",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "tag",
+    "category": "Git & changes",
+    "paths": [
+      {
+        "d": "M4 5.5 Q4 3.5 6 3.5 H12 L21 12.5 L12.5 21 L4 12.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M9 7.5 C9 8.05228 8.55228 8.5 8 8.5 C7.44772 8.5 7 8.05228 7 7.5 C7 6.94772 7.44772 6.5 8 6.5 C8.55228 6.5 9 6.94772 9 7.5 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "tag"
+    ],
+    "references": [
+      "crates/ui/src/history.rs:1187"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "sort",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M4 6 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4 12 H15",
+        "fill": 0
+      },
+      {
+        "d": "M4 18 H10",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "sort"
+    ],
+    "references": [
+      "crates/ui/src/shell/spaces.rs:3380"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "sort-ascending",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M5 6 H13",
+        "fill": 0
+      },
+      {
+        "d": "M5 12 H11",
+        "fill": 0
+      },
+      {
+        "d": "M5 18 H9",
+        "fill": 0
+      },
+      {
+        "d": "M18 19 V5",
+        "fill": 0
+      },
+      {
+        "d": "M15 8 L18 5 L21 8",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "sort-vertical"
+    ],
+    "references": [
+      "crates/ui/src/settings/accounts.rs:370",
+      "crates/ui/src/settings/appearance.rs:2097",
+      "crates/ui/src/settings/harnesses.rs:778"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "sort-descending",
+    "category": "Workspace",
+    "paths": [
+      {
+        "d": "M5 6 H13",
+        "fill": 0
+      },
+      {
+        "d": "M5 12 H11",
+        "fill": 0
+      },
+      {
+        "d": "M5 18 H9",
+        "fill": 0
+      },
+      {
+        "d": "M18 5 V19",
+        "fill": 0
+      },
+      {
+        "d": "M15 16 L18 19 L21 16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "sun",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M16.2 12 C16.2 14.3196 14.3196 16.2 12 16.2 C9.6804 16.2 7.8 14.3196 7.8 12 C7.8 9.6804 9.6804 7.8 12 7.8 C14.3196 7.8 16.2 9.6804 16.2 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M19 12 L21.5 12",
+        "fill": 0
+      },
+      {
+        "d": "M16.9497 16.9497 L18.7175 18.7175",
+        "fill": 0
+      },
+      {
+        "d": "M12 19 L12 21.5",
+        "fill": 0
+      },
+      {
+        "d": "M7.05025 16.9497 L5.28249 18.7175",
+        "fill": 0
+      },
+      {
+        "d": "M5 12 L2.5 12",
+        "fill": 0
+      },
+      {
+        "d": "M7.05025 7.05025 L5.28249 5.28249",
+        "fill": 0
+      },
+      {
+        "d": "M12 5 L12 2.5",
+        "fill": 0
+      },
+      {
+        "d": "M16.9497 7.05025 L18.7175 5.28249",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "sun"
+    ],
+    "references": [
+      "crates/ui/src/appearance.rs:55"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "moon",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M20.5 12.5 C20.1 17.7 16.5 20.5 12 20.5 C7.3 20.5 3.5 16.7 3.5 12 C3.5 7.5 6.3 3.9 11.5 3.5 C8 9.5 14.5 16 20.5 12.5 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "moon"
+    ],
+    "references": [
+      "crates/ui/src/appearance.rs:56"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "appearance-system",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M5.5 4 H18.5 Q21 4 21 6.5 V14.5 Q21 17 18.5 17 H5.5 Q3 17 3 14.5 V6.5 Q3 4 5.5 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 17 V20",
+        "fill": 0
+      },
+      {
+        "d": "M8 20 H16",
+        "fill": 0
+      },
+      {
+        "d": "M12 4 V17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "settings",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M4 6 H10",
+        "fill": 0
+      },
+      {
+        "d": "M14 6 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4 12 H6",
+        "fill": 0
+      },
+      {
+        "d": "M10 12 H20",
+        "fill": 0
+      },
+      {
+        "d": "M4 18 H14",
+        "fill": 0
+      },
+      {
+        "d": "M18 18 H20",
+        "fill": 0
+      },
+      {
+        "d": "M14 6 C14 7.10457 13.1046 8 12 8 C10.8954 8 10 7.10457 10 6 C10 4.89543 10.8954 4 12 4 C13.1046 4 14 4.89543 14 6 Z",
+        "fill": 0
+      },
+      {
+        "d": "M10 12 C10 13.1046 9.10457 14 8 14 C6.89543 14 6 13.1046 6 12 C6 10.8954 6.89543 10 8 10 C9.10457 10 10 10.8954 10 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M18 18 C18 19.1046 17.1046 20 16 20 C14.8954 20 14 19.1046 14 18 C14 16.8954 14.8954 16 16 16 C17.1046 16 18 16.8954 18 18 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "settings-minimalistic"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:7340",
+      "crates/ui/src/shell/actions_ui.rs:738",
+      "crates/ui/src/shell/command_palette.rs:53"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "tuning",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M6 4 V9",
+        "fill": 0
+      },
+      {
+        "d": "M6 13 V20",
+        "fill": 0
+      },
+      {
+        "d": "M12 4 V14",
+        "fill": 0
+      },
+      {
+        "d": "M12 18 V20",
+        "fill": 0
+      },
+      {
+        "d": "M18 4 V6",
+        "fill": 0
+      },
+      {
+        "d": "M18 10 V20",
+        "fill": 0
+      },
+      {
+        "d": "M8 11 C8 12.1046 7.10457 13 6 13 C4.89543 13 4 12.1046 4 11 C4 9.89543 4.89543 9 6 9 C7.10457 9 8 9.89543 8 11 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 16 C14 17.1046 13.1046 18 12 18 C10.8954 18 10 17.1046 10 16 C10 14.8954 10.8954 14 12 14 C13.1046 14 14 14.8954 14 16 Z",
+        "fill": 0
+      },
+      {
+        "d": "M20 8 C20 9.10457 19.1046 10 18 10 C16.8954 10 16 9.10457 16 8 C16 6.89543 16.8954 6 18 6 C19.1046 6 20 6.89543 20 8 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "tuning"
+    ],
+    "references": [
+      "crates/ui/src/settings/appearance.rs:3058",
+      "crates/ui/src/settings/appearance.rs:3228",
+      "crates/ui/src/shell.rs:5731"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "key",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M12.5 8 C12.5 10.4853 10.4853 12.5 8 12.5 C5.51472 12.5 3.5 10.4853 3.5 8 C3.5 5.51472 5.51472 3.5 8 3.5 C10.4853 3.5 12.5 5.51472 12.5 8 Z",
+        "fill": 0
+      },
+      {
+        "d": "M11.5 11.5 L20 20",
+        "fill": 0
+      },
+      {
+        "d": "M16 16 L18.5 13.5",
+        "fill": 0
+      },
+      {
+        "d": "M18.5 18.5 L21 16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "key-minimalistic"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:5730"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "lock",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M7.5 10 H16.5 Q19 10 19 12.5 V18.5 Q19 21 16.5 21 H7.5 Q5 21 5 18.5 V12.5 Q5 10 7.5 10 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 10 V7 Q8 3 12 3 Q16 3 16 7 V10",
+        "fill": 0
+      },
+      {
+        "d": "M12 14.5 V16.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "unlock",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M7.5 10 H16.5 Q19 10 19 12.5 V18.5 Q19 21 16.5 21 H7.5 Q5 21 5 18.5 V12.5 Q5 10 7.5 10 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 10 V7 Q8 3 12 3 Q16 3 16 7 V7",
+        "fill": 0
+      },
+      {
+        "d": "M12 14.5 V16.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "keyboard",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M5.5 5 H18.5 Q21.5 5 21.5 8 V16 Q21.5 19 18.5 19 H5.5 Q2.5 19 2.5 16 V8 Q2.5 5 5.5 5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M7 9 H7.1",
+        "fill": 0
+      },
+      {
+        "d": "M12 9 H12.1",
+        "fill": 0
+      },
+      {
+        "d": "M17 9 H17.1",
+        "fill": 0
+      },
+      {
+        "d": "M7 12 H7.1",
+        "fill": 0
+      },
+      {
+        "d": "M12 12 H12.1",
+        "fill": 0
+      },
+      {
+        "d": "M17 12 H17.1",
+        "fill": 0
+      },
+      {
+        "d": "M8 15.5 H16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "keyboard"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:5734"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "command",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M8 8 H5.5 Q3 8 3 5.5 Q3 3 5.5 3 Q8 3 8 5.5 V18.5 Q8 21 5.5 21 Q3 21 3 18.5 Q3 16 5.5 16 H18.5 Q21 16 21 18.5 Q21 21 18.5 21 Q16 21 16 18.5 V5.5 Q16 3 18.5 3 Q21 3 21 5.5 Q21 8 18.5 8 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "command"
+    ],
+    "references": [
+      "crates/ui/src/composer.rs:5624"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "logout",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M10 4 H7 Q4 4 4 7 V17 Q4 20 7 20 H10",
+        "fill": 0
+      },
+      {
+        "d": "M10 12 H21",
+        "fill": 0
+      },
+      {
+        "d": "M17 8 L21 12 L17 16",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "logout-2"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:7323"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "user",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M21 12 C21 16.9706 16.9706 21 12 21 C7.02944 21 3 16.9706 3 12 C3 7.02944 7.02944 3 12 3 C16.9706 3 21 7.02944 21 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M15 9 C15 10.6569 13.6569 12 12 12 C10.3431 12 9 10.6569 9 9 C9 7.34315 10.3431 6 12 6 C13.6569 6 15 7.34315 15 9 Z",
+        "fill": 0
+      },
+      {
+        "d": "M5.5 18 Q7 14 12 14 Q17 14 18.5 18",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Views/HomeView.swift:111"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "star",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M12 3 L14.8 8.7 L21 9.6 L16.5 14 L17.6 20.2 L12 17.3 L6.4 20.2 L7.5 14 L3 9.6 L9.2 8.7 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "star"
+    ],
+    "references": [
+      "crates/ui/src/pickers.rs:3776"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "star-active",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M12 3 L14.8 8.7 L21 9.6 L16.5 14 L17.6 20.2 L12 17.3 L6.4 20.2 L7.5 14 L3 9.6 L9.2 8.7 Z",
+        "fill": 1
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "star-bold"
+    ],
+    "references": [
+      "crates/ui/src/pickers.rs:3395",
+      "crates/ui/src/pickers.rs:3774"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "bell",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M5 16 Q7 14 7 10 Q7 5 12 5 Q17 5 17 10 Q17 14 19 16 Z",
+        "fill": 0
+      },
+      {
+        "d": "M10 20 H14",
+        "fill": 0
+      },
+      {
+        "d": "M12 3 V5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "bell"
+    ],
+    "references": [
+      "crates/ui/src/settings/notifications.rs:315",
+      "crates/ui/src/shell.rs:5733"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "bell-off",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M5 16 Q7 14 7 10 Q7 5 12 5 Q17 5 17 10 Q17 14 19 16 Z",
+        "fill": 0
+      },
+      {
+        "d": "M10 20 H14",
+        "fill": 0
+      },
+      {
+        "d": "M12 3 V5",
+        "fill": 0
+      },
+      {
+        "d": "M3.5 3.5 L20.5 20.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "volume",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M3.5 9 H7 L12 5 V19 L7 15 H3.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M15 8 Q19 12 15 16",
+        "fill": 0
+      },
+      {
+        "d": "M18 5 Q25 12 18 19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "volume-loud"
+    ],
+    "references": [
+      "crates/ui/src/settings/notifications.rs:174"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "volume-off",
+    "category": "Settings",
+    "paths": [
+      {
+        "d": "M3.5 9 H7 L12 5 V19 L7 15 H3.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M16 9 L21 15",
+        "fill": 0
+      },
+      {
+        "d": "M21 9 L16 15",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "terminal",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M6 4.5 H18 Q21 4.5 21 7.5 V16.5 Q21 19.5 18 19.5 H6 Q3 19.5 3 16.5 V7.5 Q3 4.5 6 4.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M7 9 L10 12 L7 15",
+        "fill": 0
+      },
+      {
+        "d": "M13 15 H17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "terminal"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:319",
+      "crates/ui/src/pickers.rs:3330",
+      "crates/ui/src/pickers.rs:4668",
+      "crates/ui/src/shell.rs:9121",
+      "crates/ui/src/shell.rs:9332",
+      "crates/ui/src/shell.rs:9654",
+      "crates/ui/src/terminal/panel.rs:1568",
+      "crates/ui/src/transcript.rs:7102"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "agent",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M8 7 H16 Q20 7 20 11 V16 Q20 20 16 20 H8 Q4 20 4 16 V11 Q4 7 8 7 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 3 V7",
+        "fill": 0
+      },
+      {
+        "d": "M2 12 V15",
+        "fill": 0
+      },
+      {
+        "d": "M22 12 V15",
+        "fill": 0
+      },
+      {
+        "d": "M8.5 12 V13",
+        "fill": 0
+      },
+      {
+        "d": "M15.5 12 V13",
+        "fill": 0
+      },
+      {
+        "d": "M9 17 H15",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "bot"
+    ],
+    "references": [
+      "crates/ui/src/shell.rs:9331",
+      "crates/ui/src/shell/spaces.rs:3108",
+      "crates/ui/src/transcript.rs:7110",
+      "crates/ui/src/transcript.rs:7111"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "skills",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M5 18 L15 8 L18 11 L8 21 Z",
+        "fill": 0
+      },
+      {
+        "d": "M13 10 L16 13",
+        "fill": 0
+      },
+      {
+        "d": "M6 3 V9",
+        "fill": 0
+      },
+      {
+        "d": "M3 6 H9",
+        "fill": 0
+      },
+      {
+        "d": "M19 2 V6",
+        "fill": 0
+      },
+      {
+        "d": "M17 4 H21",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "Contribution"
+  },
+  {
+    "name": "bolt",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M13.5 2.5 L4.5 13 H11 L10.5 21.5 L19.5 11 H13 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "Contribution"
+  },
+  {
+    "name": "test",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M9 3.5 H15",
+        "fill": 0
+      },
+      {
+        "d": "M10 3.5 V10 L4.5 18 Q3 20.5 6 20.5 H18 Q21 20.5 19.5 18 L14 10 V3.5",
+        "fill": 0
+      },
+      {
+        "d": "M7.5 14 H16.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "action-test"
+    ],
+    "references": [
+      "crates/ui/src/project_actions.rs:222"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "lint",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M8 4 H18 Q20 4 20 6 V10",
+        "fill": 0
+      },
+      {
+        "d": "M8 4 L5 7 V10",
+        "fill": 0
+      },
+      {
+        "d": "M5 7 H8 V4",
+        "fill": 0
+      },
+      {
+        "d": "M4 16 L7.5 19.5 L14 13",
+        "fill": 0
+      },
+      {
+        "d": "M16 17 H20",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "action-lint"
+    ],
+    "references": [
+      "crates/ui/src/project_actions.rs:223"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "configure",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M14 3.5 Q19 2 21 7 L16 7 L14 10 L17 13 L21 12 Q19.5 17 14 15.5 L7 22 L2 17 L9 10 Q7.5 5 12 3 L11 8 L14 10",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "action-configure"
+    ],
+    "references": [
+      "crates/ui/src/project_actions.rs:224"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "build",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M3.5 7.5 L12 3 L20.5 7.5 V17 L12 21 L3.5 17 Z",
+        "fill": 0
+      },
+      {
+        "d": "M3.5 7.5 L12 12 L20.5 7.5",
+        "fill": 0
+      },
+      {
+        "d": "M12 12 V21",
+        "fill": 0
+      },
+      {
+        "d": "M8 5 L16.5 9.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "action-build"
+    ],
+    "references": [
+      "crates/ui/src/project_actions.rs:225"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "debug",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M12 7 H12 Q17 7 17 12 V15 Q17 20 12 20 H12 Q7 20 7 15 V12 Q7 7 12 7 Z",
+        "fill": 0
+      },
+      {
+        "d": "M9 7 V5 Q12 1 15 5 V7",
+        "fill": 0
+      },
+      {
+        "d": "M3 9 L7 11",
+        "fill": 0
+      },
+      {
+        "d": "M3 15 H7",
+        "fill": 0
+      },
+      {
+        "d": "M4 21 L8 18",
+        "fill": 0
+      },
+      {
+        "d": "M21 9 L17 11",
+        "fill": 0
+      },
+      {
+        "d": "M21 15 H17",
+        "fill": 0
+      },
+      {
+        "d": "M20 21 L16 18",
+        "fill": 0
+      },
+      {
+        "d": "M12 12 V19",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "action-debug"
+    ],
+    "references": [
+      "crates/ui/src/project_actions.rs:226"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "checklist",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M3 6 L4.5 7.5 L7 4.5",
+        "fill": 0
+      },
+      {
+        "d": "M10 6 H21",
+        "fill": 0
+      },
+      {
+        "d": "M3 13 L4.5 14.5 L7 11.5",
+        "fill": 0
+      },
+      {
+        "d": "M10 13 H21",
+        "fill": 0
+      },
+      {
+        "d": "M4 20 H6",
+        "fill": 0
+      },
+      {
+        "d": "M10 20 H21",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "checklist"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptRows.swift:326",
+      "crates/ui/src/history.rs:4227",
+      "crates/ui/src/transcript.rs:7109"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "checkbox",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M7 4 H17 Q20 4 20 7 V17 Q20 20 17 20 H7 Q4 20 4 17 V7 Q4 4 7 4 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "checkbox-checked",
+    "category": "Agents & tools",
+    "paths": [
+      {
+        "d": "M7 4 H17 Q20 4 20 7 V17 Q20 20 17 20 H7 Q4 20 4 17 V7 Q4 4 7 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 12 L11 15 L16.5 9",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [
+      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "refresh",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M20 10 Q18.5 3 11.5 3.5 Q5 4 3.5 10",
+        "fill": 0
+      },
+      {
+        "d": "M20 4.5 V10 H14.5",
+        "fill": 0
+      },
+      {
+        "d": "M4 14 Q5.5 21 12.5 20.5 Q19 20 20.5 14",
+        "fill": 0
+      },
+      {
+        "d": "M4 19.5 V14 H9.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "refresh"
+    ],
+    "references": [
+      "crates/ui/src/browser/view.rs:430",
+      "crates/ui/src/changes.rs:3884",
+      "crates/ui/src/files/mod.rs:285",
+      "crates/ui/src/history.rs:3974",
+      "crates/ui/src/settings/accounts.rs:1468",
+      "crates/ui/src/shell/actions_ui.rs:688"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "restart",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M4 10 Q5 3.5 12 3.5 Q20.5 3.5 20.5 12 Q20.5 20.5 12 20.5 Q7 20.5 4.5 17",
+        "fill": 0
+      },
+      {
+        "d": "M4 4.5 V10 H9.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "restart"
+    ],
+    "references": [
+      "crates/ui/src/settings/shortcuts.rs:594",
+      "crates/ui/src/settings/shortcuts.rs:786",
+      "crates/ui/src/shell.rs:7311"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "wifi",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M3 8 Q12 1 21 8",
+        "fill": 0
+      },
+      {
+        "d": "M6.5 12 Q12 7.5 17.5 12",
+        "fill": 0
+      },
+      {
+        "d": "M10 16 Q12 14.5 14 16",
+        "fill": 0
+      },
+      {
+        "d": "M12.7 20 C12.7 20.3866 12.3866 20.7 12 20.7 C11.6134 20.7 11.3 20.3866 11.3 20 C11.3 19.6134 11.6134 19.3 12 19.3 C12.3866 19.3 12.7 19.6134 12.7 20 Z",
+        "fill": 1
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "wifi-off",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M3 8 Q12 1 21 8",
+        "fill": 0
+      },
+      {
+        "d": "M6.5 12 Q12 7.5 17.5 12",
+        "fill": 0
+      },
+      {
+        "d": "M10 16 Q12 14.5 14 16",
+        "fill": 0
+      },
+      {
+        "d": "M12.7 20 C12.7 20.3866 12.3866 20.7 12 20.7 C11.6134 20.7 11.3 20.3866 11.3 20 C11.3 19.6134 11.6134 19.3 12 19.3 C12.3866 19.3 12.7 19.6134 12.7 20 Z",
+        "fill": 1
+      },
+      {
+        "d": "M3.5 3.5 L20.5 20.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "wifi-off"
+    ],
+    "references": [
+      "crates/ui/src/pickers.rs:2099",
+      "crates/ui/src/shell/spaces.rs:3300",
+      "crates/ui/src/shell/spaces.rs:3531"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "info",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M21 12 C21 16.9706 16.9706 21 12 21 C7.02944 21 3 16.9706 3 12 C3 7.02944 7.02944 3 12 3 C16.9706 3 21 7.02944 21 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 10.5 V16.5",
+        "fill": 0
+      },
+      {
+        "d": "M12 7.5 V7.6",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "info-circle"
+    ],
+    "references": [
+      "crates/ui/src/settings/appearance.rs:2519"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "success",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M21 12 C21 16.9706 16.9706 21 12 21 C7.02944 21 3 16.9706 3 12 C3 7.02944 7.02944 3 12 3 C16.9706 3 21 7.02944 21 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M7 12 L10.5 15.5 L17 9",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "error",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M21 12 C21 16.9706 16.9706 21 12 21 C7.02944 21 3 16.9706 3 12 C3 7.02944 7.02944 3 12 3 C16.9706 3 21 7.02944 21 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8.5 8.5 L15.5 15.5",
+        "fill": 0
+      },
+      {
+        "d": "M15.5 8.5 L8.5 15.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "close-circle"
+    ],
+    "references": [
+      "crates/ui/src/comment_ui.rs:125",
+      "crates/ui/src/composer.rs:4744",
+      "crates/ui/src/composer.rs:4962",
+      "crates/ui/src/files/preview.rs:3007"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "add",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M21 12 C21 16.9706 16.9706 21 12 21 C7.02944 21 3 16.9706 3 12 C3 7.02944 7.02944 3 12 3 C16.9706 3 21 7.02944 21 12 Z",
+        "fill": 0
+      },
+      {
+        "d": "M7 12 H17",
+        "fill": 0
+      },
+      {
+        "d": "M12 7 V17",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "add-circle"
+    ],
+    "references": [
+      "crates/ui/src/settings/accounts.rs:1410"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "warning",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M10.2 4.5 Q12 1.5 13.8 4.5 L21 17.5 Q22.5 20 19.5 20 H4.5 Q1.5 20 3 17.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M12 9 V13",
+        "fill": 0
+      },
+      {
+        "d": "M12 16.5 V16.6",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [
+      "danger-triangle"
+    ],
+    "references": [
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:568",
+      "crates/ui/src/notice.rs:77",
+      "crates/ui/src/notice.rs:83",
+      "crates/ui/src/settings/appearance.rs:2542",
+      "crates/ui/src/settings/notifications.rs:279",
+      "crates/ui/src/settings/widgets.rs:474",
+      "crates/ui/src/settings/widgets.rs:504",
+      "crates/ui/src/shell/actions_ui.rs:607"
+    ],
+    "status": "Used"
+  },
+  {
+    "name": "loading",
+    "category": "Status",
+    "paths": [
+      {
+        "d": "M20.5 12 C20.5 16.7 16.7 20.5 12 20.5 C7.3 20.5 3.5 16.7 3.5 12 C3.5 7.3 7.3 3.5 12 3.5",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
+  },
+  {
+    "name": "file-tree",
+    "category": "Files",
+    "paths": [
+      {
+        "d": "M5 4 V15 Q5 18 8 18 H11",
+        "fill": 0
+      },
+      {
+        "d": "M5 8 H11",
+        "fill": 0
+      },
+      {
+        "d": "M14 4 H18 Q20 4 20 6 V9 Q20 11 18 11 H14 Q12 11 12 9 V6 Q12 4 14 4 Z",
+        "fill": 0
+      },
+      {
+        "d": "M14 14 H18 Q20 14 20 16 V19 Q20 21 18 21 H14 Q12 21 12 19 V16 Q12 14 14 14 Z",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "Contribution"
+  },
+  {
+    "name": "pull-request-draft",
+    "category": "Git & changes",
+    "paths": [
+      {
+        "d": "M8 5.5 C8 6.60457 7.10457 7.5 6 7.5 C4.89543 7.5 4 6.60457 4 5.5 C4 4.39543 4.89543 3.5 6 3.5 C7.10457 3.5 8 4.39543 8 5.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M8 18.5 C8 19.6046 7.10457 20.5 6 20.5 C4.89543 20.5 4 19.6046 4 18.5 C4 17.3954 4.89543 16.5 6 16.5 C7.10457 16.5 8 17.3954 8 18.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M20 18.5 C20 19.6046 19.1046 20.5 18 20.5 C16.8954 20.5 16 19.6046 16 18.5 C16 17.3954 16.8954 16.5 18 16.5 C19.1046 16.5 20 17.3954 20 18.5 Z",
+        "fill": 0
+      },
+      {
+        "d": "M6 7.5 V16.5",
+        "fill": 0
+      },
+      {
+        "d": "M18 13 V13.1",
+        "fill": 0
+      },
+      {
+        "d": "M18 9 V9.1",
+        "fill": 0
+      },
+      {
+        "d": "M18 5 V5.1",
+        "fill": 0
+      }
+    ],
+    "note": "",
+    "legacy": [],
+    "references": [],
+    "status": "Contribution"
+  }
+]

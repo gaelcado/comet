@@ -1,0 +1,7 @@
+*.png
+*.zip
+__pycache__/
+contact-sheet.svg
+comparison-sheet.svg
+motion-sheet-*.svg
+verification.json

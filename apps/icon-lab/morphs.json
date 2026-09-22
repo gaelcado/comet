@@ -1,0 +1,326 @@
+[
+  {
+    "title": "Appearance",
+    "fromIcon": "sun",
+    "toIcon": "moon",
+    "context": "Light / dark appearance",
+    "duration": 300,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "System appearance",
+    "fromIcon": "moon",
+    "toIcon": "appearance-system",
+    "context": "Dark / follow system",
+    "duration": 260,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Left sidebar",
+    "fromIcon": "panel-left-open",
+    "toIcon": "panel-left-closed",
+    "context": "Project rail visibility",
+    "duration": 200,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "Right sidebar",
+    "fromIcon": "panel-right-open",
+    "toIcon": "panel-right-closed",
+    "context": "Inspector and side chats",
+    "duration": 200,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "Terminal panel",
+    "fromIcon": "panel-bottom-open",
+    "toIcon": "panel-bottom-closed",
+    "context": "Terminal visibility",
+    "duration": 200,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "Expand pane",
+    "fromIcon": "expand",
+    "toIcon": "collapse",
+    "context": "Expanded / restored pane",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Window size",
+    "fromIcon": "window-maximize",
+    "toIcon": "window-restore",
+    "context": "Maximize / restore window",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Disclosure",
+    "fromIcon": "chevron-right",
+    "toIcon": "chevron-down",
+    "context": "Tree, archive shelf and tool details",
+    "duration": 150,
+    "mode": "rotation",
+    "designNote": "Rigid rotation preserves the chevron or arrow silhouette through its midpoint."
+  },
+  {
+    "title": "Show more",
+    "fromIcon": "chevron-down",
+    "toIcon": "chevron-up",
+    "context": "Message and picker expansion",
+    "duration": 150,
+    "mode": "rotation",
+    "designNote": "Rigid rotation preserves the chevron or arrow silhouette through its midpoint."
+  },
+  {
+    "title": "Fold all",
+    "fromIcon": "fold",
+    "toIcon": "unfold",
+    "context": "Diff folding",
+    "duration": 180,
+    "mode": "rotation",
+    "designNote": "Rigid rotation preserves the chevron or arrow silhouette through its midpoint."
+  },
+  {
+    "title": "Diff layout",
+    "fromIcon": "unified",
+    "toIcon": "split",
+    "context": "Unified / split diff",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Line wrapping",
+    "fromIcon": "unwrap",
+    "toIcon": "wrap",
+    "context": "Code fence and diff wrapping",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Copy feedback",
+    "fromIcon": "copy",
+    "toIcon": "check",
+    "context": "Clipboard copy succeeds",
+    "duration": 240,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Run control",
+    "fromIcon": "play",
+    "toIcon": "stop",
+    "context": "Project action starts",
+    "duration": 220,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "Send control",
+    "fromIcon": "send",
+    "toIcon": "stop",
+    "context": "Composer starts a response",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Pause agent",
+    "fromIcon": "pause",
+    "toIcon": "play",
+    "context": "Pause / resume; proposed control",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Queue edit",
+    "fromIcon": "edit",
+    "toIcon": "close",
+    "context": "Enter / cancel editing queued prompt",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Favorite",
+    "fromIcon": "star",
+    "toIcon": "star-active",
+    "context": "Model favorite",
+    "duration": 180,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "Pin session",
+    "fromIcon": "pin",
+    "toIcon": "pin-active",
+    "context": "Pinned state",
+    "duration": 180,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "Unpin action",
+    "fromIcon": "pin",
+    "toIcon": "unpin",
+    "context": "Pin / unpin context-menu action",
+    "duration": 200,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Hidden files",
+    "fromIcon": "eye",
+    "toIcon": "eye-closed",
+    "context": "Show / hide ignored files",
+    "duration": 220,
+    "mode": "eyelid",
+    "designNote": "The upper lid closes into the lower arc; pupil retires and lashes appear."
+  },
+  {
+    "title": "Sound",
+    "fromIcon": "volume",
+    "toIcon": "volume-off",
+    "context": "Notification audio",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Notifications",
+    "fromIcon": "bell",
+    "toIcon": "bell-off",
+    "context": "Enable / silence notifications",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Connection",
+    "fromIcon": "wifi",
+    "toIcon": "wifi-off",
+    "context": "Connected / disconnected",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Credentials",
+    "fromIcon": "lock",
+    "toIcon": "unlock",
+    "context": "Secret lock state; proposed control",
+    "duration": 220,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "Dictation",
+    "fromIcon": "microphone",
+    "toIcon": "waveform",
+    "context": "Listening; voice contributions",
+    "duration": 240,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Mic mute",
+    "fromIcon": "microphone",
+    "toIcon": "microphone-off",
+    "context": "Mute / unmute; proposed control",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Recording control",
+    "fromIcon": "microphone",
+    "toIcon": "stop",
+    "context": "Start / stop dictation",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Checklist item",
+    "fromIcon": "checkbox",
+    "toIcon": "checkbox-checked",
+    "context": "Markdown task completion",
+    "duration": 180,
+    "mode": "morph",
+    "designNote": "Matched B\u00e9zier geometry retains exact curves and endpoints."
+  },
+  {
+    "title": "Archive action",
+    "fromIcon": "archive",
+    "toIcon": "unarchive",
+    "context": "Archive / restore session",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Folder disclosure",
+    "fromIcon": "folder",
+    "toIcon": "folder-open",
+    "context": "File tree open / closed",
+    "duration": 180,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Sort direction",
+    "fromIcon": "sort-ascending",
+    "toIcon": "sort-descending",
+    "context": "Ascending / descending",
+    "duration": 180,
+    "mode": "rotation",
+    "designNote": "Rigid rotation preserves the chevron or arrow silhouette through its midpoint."
+  },
+  {
+    "title": "Loading result",
+    "fromIcon": "loading",
+    "toIcon": "success",
+    "context": "Asynchronous work completes",
+    "duration": 240,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "Retry result",
+    "fromIcon": "error",
+    "toIcon": "refresh",
+    "context": "Error / retry action",
+    "duration": 220,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "PR merge",
+    "fromIcon": "pull-request",
+    "toIcon": "merge",
+    "context": "Open / merged pull request",
+    "duration": 260,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  },
+  {
+    "title": "PR draft",
+    "fromIcon": "pull-request-draft",
+    "toIcon": "pull-request",
+    "context": "Draft / ready for review",
+    "duration": 240,
+    "mode": "staged",
+    "designNote": "Shared shapes stay fixed while unrelated strokes exchange visibility."
+  }
+]
