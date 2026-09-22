@@ -537,12 +537,14 @@ impl RenderOnce for SwitchVisual {
         }
         let dark = self.theme.appearance.is_dark();
         let track = if self.on {
-            crate::theme::mix(
-                self.theme.accent,
-                gpui::white(),
-                if dark { 0.52 } else { 0.32 },
+            let accent = self.theme.accent;
+            let lift = if dark { 0.52 } else { 0.32 };
+            gpui::hsla(
+                accent.h,
+                accent.s * (1.0 - lift),
+                accent.l + (1.0 - accent.l) * lift,
+                0.94,
             )
-            .opacity(0.94)
         } else {
             self.theme.ink(if dark { 0.18 } else { 0.10 })
         };
