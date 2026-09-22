@@ -466,7 +466,8 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
-    pub const ALL: [SettingsSection; 10] = [
+    /// Sections shown in Settings. `Agents` is a legacy Accounts route alias.
+    pub const ALL: [SettingsSection; 9] = [
         SettingsSection::Appearance,
         SettingsSection::Notifications,
         SettingsSection::Shortcuts,
@@ -476,8 +477,21 @@ impl SettingsSection {
         SettingsSection::Files,
         SettingsSection::Appshots,
         SettingsSection::Archived,
-        SettingsSection::Agents,
     ];
+
+    /// The former Accounts page is folded into Agents. Keep its route alias
+    /// for old navigation entries and dev links without showing a hidden tab.
+    fn canonical(self) -> Self {
+        if self == Self::Agents {
+            Self::Harnesses
+        } else {
+            self
+        }
+    }
+
+    fn visible_in_nav(self) -> bool {
+        self != Self::Agents && (self != Self::Appshots || crate::appshots::is_desktop())
+    }
 
     fn category_heading(self) -> Option<&'static str> {
         match self {
@@ -1900,7 +1914,7 @@ impl Shell {
             Some("settings") | Some("settings/devices") => {
                 Route::Settings(SettingsSection::Devices)
             }
-            Some("settings/agents") => Route::Settings(SettingsSection::Agents),
+            Some("settings/agents") => Route::Settings(SettingsSection::Harnesses),
             Some("settings/harnesses") => Route::Settings(SettingsSection::Harnesses),
             Some("settings/appearance") => Route::Settings(SettingsSection::Appearance),
             Some("settings/notifications") => Route::Settings(SettingsSection::Notifications),
@@ -3872,6 +3886,7 @@ impl Shell {
     }
 
     fn open_settings(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        let section = section.canonical();
         self.command_palette = None;
         // Recreate per visit: the page's ListHarnesses load re-probes which
         // CLIs are installed, so installing one shows up on the next open.
@@ -3931,7 +3946,7 @@ impl Shell {
                 }
             }
             NavEntry::Settings(section) => {
-                self.route = Route::Settings(section);
+                self.route = Route::Settings(section.canonical());
             }
         }
         self.close_user_menu(cx);
@@ -5793,6 +5808,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let section = section.canonical();
         let theme = Theme::of(cx).for_settings_surface();
         if self.settings_focus_pending {
             self.settings_focus_pending = false;
@@ -5804,7 +5820,7 @@ impl Shell {
         let viewport_width = f32::from(window.viewport_size().width);
         let bounds = settings::widgets::modal_bounds(window.viewport_size());
         let compact = viewport_width < 680.0;
-        let nav = self.render_settings_nav(section, compact, &theme, cx);
+        let nav = self.render_settings_nav(section, compact, &theme, window, cx);
         let outlet = self.settings_outlet(section, window, cx);
         let card = popover::popover_card_flush(&theme)
             .id("settings-modal")
@@ -5939,6 +5955,7 @@ impl Shell {
         section: SettingsSection,
         compact: bool,
         theme: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let section_icon = |item: SettingsSection| match item {
@@ -5976,44 +5993,34 @@ impl Shell {
                             div().flex().flex_col().gap(px(2.0)).children(
                                 SettingsSection::ALL
                                     .into_iter()
-                                    .filter(|item| {
-                                        *item != SettingsSection::Agents
-                                            && (*item != SettingsSection::Appshots
-                                                || crate::appshots::is_desktop())
-                                    })
+                                    .filter(|item| item.visible_in_nav())
                                     .map(|item| {
                                         let index = SettingsSection::ALL
                                             .iter()
                                             .position(|s| *s == item)
                                             .unwrap();
                                         let selected = item == section;
-                                        let row = div()
-                                        .id(SharedString::from(format!(
-                                            "settings-nav-{}",
-                                            item.label()
-                                        )))
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
+                                        let key = format!("settings-nav-{}", item.label());
+                                        let hover_key = format!("{key}-hover");
+                                        let selection_t = settings::widgets::tab_selection_t(
+                                            window,
+                                            format!("{key}-selection"),
+                                            selected,
+                                            motion::reduced_motion(cx),
+                                        );
+                                        let tab_text = motion::hover_blend(
+                                            &hover_key,
+                                            motion::mix(theme.text_muted, theme.text, selection_t),
+                                            theme.text,
+                                        );
+                                        let row = settings::widgets::section_tab(
+                                            theme,
+                                            selected,
+                                            selection_t,
+                                            key.clone(),
+                                            hover_key,
+                                        )
                                         .when(compact, |el| el.justify_center())
-                                        .gap(px(8.0))
-                                        .rounded(px(8.0))
-                                        .px(px(Theme::SPACE_SM))
-                                        .py(px(6.0))
-                                        .min_h(px(32.0))
-                                        .flex_shrink_0()
-                                        .text_size(crate::typography::ui_rems(13.0))
-                                        .when(selected, |el| {
-                                            // Same tokens as the main sidebar's session
-                                            // rows — the two sidebars must feel alike.
-                                            el.bg(crate::theme::glass_selected_bg())
-                                                .font_weight(gpui::FontWeight::MEDIUM)
-                                        })
-                                        .text_color(if selected {
-                                            theme.text
-                                        } else {
-                                            theme.text_muted
-                                        })
                                         .role(gpui::Role::Tab)
                                         .aria_label(item.label())
                                         .aria_selected(selected)
@@ -6028,11 +6035,7 @@ impl Shell {
                                             move |this, event: &gpui::KeyDownEvent, window, cx| {
                                                 let items: Vec<_> = SettingsSection::ALL
                                                     .into_iter()
-                                                    .filter(|s| {
-                                                        *s != SettingsSection::Agents
-                                                            && (*s != SettingsSection::Appshots
-                                                                || crate::appshots::is_desktop())
-                                                    })
+                                                    .filter(|s| s.visible_in_nav())
                                                     .collect();
                                                 let current = items
                                                     .iter()
@@ -6059,18 +6062,13 @@ impl Shell {
                                         ))
                                         .focus_visible(|s| s.border_2().border_color(theme.accent))
                                         .cursor_pointer()
-                                        .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.open_settings(item, cx)
                                         }))
                                         .child(
                                             icon(section_icon(item))
                                                 .size(px(16.0))
-                                                .text_color(if selected {
-                                                    theme.text
-                                                } else {
-                                                    theme.text_muted
-                                                }),
+                                                .text_color(tab_text),
                                         )
                                         .when(!compact, |el| {
                                             el.child(SharedString::from(item.label()))
@@ -12412,8 +12410,8 @@ mod tests {
         nav.push(chat("a"));
         nav.push(chat("a"));
         assert_eq!(nav.len(), 1, "re-selecting the current route never stacks");
-        nav.push(NavEntry::Settings(SettingsSection::Agents));
-        nav.push(NavEntry::Settings(SettingsSection::Agents));
+        nav.push(NavEntry::Settings(SettingsSection::Harnesses));
+        nav.push(NavEntry::Settings(SettingsSection::Harnesses));
         assert_eq!(nav.len(), 2);
     }
 
@@ -14065,6 +14063,7 @@ mod settings_modal_regressions {
                 let selected = shell.state.read(cx).selected_chat.clone();
                 for section in SettingsSection::ALL {
                     shell.open_settings(section, cx);
+                    assert_eq!(shell.route, Route::Settings(section.canonical()));
                     assert_eq!(shell.nav.current().clone(), history);
                     assert_eq!(shell.state.read(cx).selected_chat, selected);
                     shell.toggle_settings(cx);
@@ -14073,6 +14072,8 @@ mod settings_modal_regressions {
                     shell.toggle_settings(cx);
                     assert_eq!(shell.route, Route::Settings(SettingsSection::Appearance));
                 }
+                shell.open_settings(SettingsSection::Agents, cx);
+                assert_eq!(shell.route, Route::Settings(SettingsSection::Harnesses));
                 shell.close_settings(cx);
                 assert_eq!(shell.route, Route::Chat);
                 assert_eq!(shell.nav.current().clone(), history);

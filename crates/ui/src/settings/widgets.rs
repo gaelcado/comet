@@ -744,6 +744,35 @@ mod switch_tests {
     use super::*;
 
     #[test]
+    fn tab_selection_reverses_from_its_current_opacity() {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let forward = TabSelectionTravel {
+            from: 0.0,
+            target: 1.0,
+            started: start,
+        };
+        let halfway = start + Duration::from_millis(75);
+        let current = forward.value(halfway);
+        let reverse = TabSelectionTravel {
+            from: current,
+            target: 0.0,
+            started: halfway,
+        };
+        assert_eq!(reverse.value(halfway), current);
+        assert_eq!(
+            reverse.value(
+                halfway
+                    + crate::motion::TAB_SLIDE
+                        .total()
+                        .mul_f32(crate::motion::speed_scale())
+            ),
+            0.0
+        );
+    }
+
+    #[test]
     fn dropdowns_stay_in_the_settings_content_pane() {
         for width in [600.0, 1200.0] {
             let viewport = gpui::size(px(width), px(700.0));
@@ -812,6 +841,100 @@ pub fn choice(theme: &Theme, selected: bool, key: impl Into<SharedString>) -> gp
         } else {
             gpui::FontWeight::NORMAL
         })
+}
+
+struct TabSelectionTravel {
+    from: f32,
+    target: f32,
+    started: std::time::Instant,
+}
+
+impl TabSelectionTravel {
+    fn value(&self, now: std::time::Instant) -> f32 {
+        let seconds = crate::motion::TAB_SLIDE.total().as_secs_f32() * crate::motion::speed_scale();
+        let elapsed = now.saturating_duration_since(self.started).as_secs_f32();
+        let progress = crate::motion::TAB_SLIDE.progress((elapsed / seconds).min(1.0));
+        self.from + (self.target - self.from) * progress
+    }
+}
+
+/// Retargetable selected-state fade for a settings tab. First paint and
+/// reduced-motion changes settle immediately instead of flashing an entrance.
+pub fn tab_selection_t(
+    window: &mut gpui::Window,
+    key: impl Into<SharedString>,
+    selected: bool,
+    reduced_motion: bool,
+) -> f32 {
+    let now = std::time::Instant::now();
+    let target = if selected { 1.0 } else { 0.0 };
+    let value = window.with_global_id(key.into().into(), |id, window| {
+        window.with_element_state(id, |previous: Option<TabSelectionTravel>, _| {
+            let mut travel = previous.unwrap_or(TabSelectionTravel {
+                from: target,
+                target,
+                started: now,
+            });
+            let current = travel.value(now);
+            if travel.target != target {
+                travel = TabSelectionTravel {
+                    from: current,
+                    target,
+                    started: now,
+                };
+            }
+            if reduced_motion {
+                travel.from = target;
+                travel.target = target;
+            }
+            (travel.value(now), travel)
+        })
+    });
+    if (value - target).abs() > 0.001 {
+        window.request_animation_frame();
+    }
+    value
+}
+
+/// One treatment for settings section tabs: the selected wash and text ease
+/// over Zeron's tab timing, while hover keeps the normal sidebar color fade.
+pub fn section_tab(
+    theme: &Theme,
+    selected: bool,
+    selection_t: f32,
+    id: impl Into<SharedString>,
+    hover_key: impl Into<SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    let hover_key = hover_key.into();
+    let base_bg = crate::motion::mix(
+        crate::theme::wash(0.0),
+        crate::theme::glass_selected_bg(),
+        selection_t,
+    );
+    let base_text = crate::motion::mix(theme.text_muted, theme.text, selection_t);
+    let hover_bg = if selected {
+        base_bg
+    } else {
+        theme.glass_hover()
+    };
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .rounded(px(8.0))
+        .px(px(Theme::SPACE_SM))
+        .py(px(6.0))
+        .min_h(px(32.0))
+        .flex_shrink_0()
+        .text_size(crate::typography::ui_rems(13.0))
+        .when(selected, |el| el.font_weight(gpui::FontWeight::MEDIUM))
+        .text_color(crate::motion::hover_blend(
+            &hover_key, base_text, theme.text,
+        ))
+        .bg(crate::motion::hover_blend(&hover_key, base_bg, hover_bg))
+        .id(id.into())
+        .on_hover(crate::motion::hover_listener(hover_key))
 }
 
 /// Settings actions share one size, corner radius, and hover language. Use
