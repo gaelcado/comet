@@ -5852,7 +5852,6 @@ impl Shell {
                                 div().flex_none().p(px(Theme::SPACE_SM)).child(
                                     settings::widgets::ghost_action(&theme)
                                         .rounded(px(8.0))
-                                        .hover(|s| settings::widgets::ghost_hover(&theme, s))
                                         .px(px(Theme::SPACE_SM))
                                         .flex()
                                         .items_center()
@@ -5890,21 +5889,11 @@ impl Shell {
                             .child(div().flex_1().min_h_0().py(px(12.0)).child(outlet))
                             .child(
                                 div().absolute().top(px(12.0)).right(px(12.0)).child(
-                                    div()
+                                    settings::widgets::icon_action(&theme)
                                         .id("settings-close")
                                         .role(gpui::Role::Button)
                                         .aria_label("Close settings")
                                         .tab_index(0)
-                                        .size(px(30.0))
-                                        .rounded(px(9.0))
-                                        .bg(theme.ink(0.04))
-                                        .border_1()
-                                        .border_color(theme.border.opacity(0.45))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(theme.glass_hover()))
                                         .focus_visible(|s| s.border_2().border_color(theme.accent))
                                         .on_click(
                                             cx.listener(|this, _, _, cx| this.close_settings(cx)),

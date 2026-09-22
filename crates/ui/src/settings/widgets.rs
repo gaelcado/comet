@@ -6,7 +6,7 @@
 use gpui::{AnyElement, Context, Pixels, ScrollHandle, SharedString, div, prelude::*, px};
 
 use crate::popover::{self, MenuScrollbarMetrics, MenuScrollbarState, ScrollRailHost};
-use crate::theme::{Theme, ink};
+use crate::theme::Theme;
 
 /// Shared by the modal and its dropdowns, so containment follows resizing.
 pub fn modal_bounds(viewport: gpui::Size<Pixels>) -> gpui::Bounds<Pixels> {
@@ -546,13 +546,13 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
         .child(label.into())
 }
 
-/// A compact oval switch with the on/off marks nested beneath a sliding thumb.
+/// A pill switch with the on/off marks nested beneath a sliding thumb.
 /// The caller owns activation and accessibility; only the thumb interpolates.
 pub fn toggle_switch(theme: &Theme, on: bool, key: impl Into<SharedString>) -> gpui::Div {
     let key: SharedString = key.into();
     div()
         .flex_none()
-        .w(px(46.0))
+        .w(px(52.0))
         .h(px(36.0))
         .child(SwitchVisual {
             theme: theme.clone(),
@@ -585,7 +585,7 @@ fn switch_track_color(theme: &Theme, on: bool) -> gpui::Hsla {
     let dark = theme.appearance.is_dark();
     if on {
         if dark {
-            theme.accent
+            theme.accent_strong
         } else {
             // Preserve the current light opaque treatment.
             let accent = theme.accent;
@@ -656,14 +656,14 @@ impl RenderOnce for SwitchVisual {
             .absolute()
             .top(px(6.0))
             .left_0()
-            .w(px(46.0))
+            .w(px(52.0))
             .h(px(24.0))
             .rounded_full()
             .bg(track)
             .border_1()
             .border_color(if self.on {
                 crate::theme::flatten(
-                    gpui::white().opacity(if self.theme.is_frost() { 0.32 } else { 0.20 }),
+                    gpui::white().opacity(if self.theme.is_frost() { 0.16 } else { 0.12 }),
                     track,
                 )
             } else {
@@ -673,7 +673,7 @@ impl RenderOnce for SwitchVisual {
                 div()
                     .absolute()
                     .inset_0()
-                    .px(px(7.0))
+                    .px(px(9.0))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -710,9 +710,9 @@ impl RenderOnce for SwitchVisual {
             );
         let thumb_element = div()
             .absolute()
-            .top(px(9.0))
-            .left(px(3.0 + 22.0 * position))
-            .size(px(18.0))
+            .top(px(7.0))
+            .left(px(1.0 + 28.0 * position))
+            .size(px(22.0))
             .rounded_full()
             .bg(switch_thumb_color(&self.theme))
             .border_1()
@@ -722,7 +722,7 @@ impl RenderOnce for SwitchVisual {
             ));
         div()
             .relative()
-            .w(px(46.0))
+            .w(px(52.0))
             .h(px(36.0))
             .child(track_element)
             .child(thumb_element)
@@ -753,13 +753,13 @@ mod switch_tests {
 
         let mut dark = Theme::dark();
         dark.surface_treatment = SurfaceTreatment::Opaque;
-        assert_eq!(switch_track_color(&dark, true), dark.accent);
+        assert_eq!(switch_track_color(&dark, true), dark.accent_strong);
         assert_eq!(switch_track_color(&dark, false).a, 1.0);
         assert_eq!(switch_thumb_color(&dark).a, 1.0);
         let opaque_off = switch_track_color(&dark, false);
 
         dark.surface_treatment = SurfaceTreatment::Frosted;
-        assert_eq!(switch_track_color(&dark, true), dark.accent);
+        assert_eq!(switch_track_color(&dark, true), dark.accent_strong);
         assert_eq!(switch_track_color(&dark, false).a, 1.0);
         assert_eq!(switch_thumb_color(&dark).a, 1.0);
         assert_ne!(switch_track_color(&dark, false), opaque_off);
@@ -804,28 +804,59 @@ pub fn choice(theme: &Theme, selected: bool, key: impl Into<SharedString>) -> gp
         })
 }
 
-/// A small quiet ghost action (`rounded-lg px-2.5 py-1.5 text-[12px]
-/// text-muted-foreground`). Caller adds id + click + leading icon child AND
-/// its own `.hover(..)` — gpui panics on a second hover, and the pages vary
-/// it (reveal opacity, 4% vs 6% washes).
-pub fn ghost_action(theme: &Theme) -> gpui::Div {
-    div()
+/// Settings actions share one size, corner radius, and hover language. Use
+/// outlined for selectors, quiet for secondary actions, and solid for commits.
+#[derive(Clone, Copy)]
+pub enum ActionTone {
+    Quiet,
+    Outlined,
+    Solid,
+}
+
+pub fn action_button(theme: &Theme, tone: ActionTone) -> gpui::Div {
+    let button = div()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(6.0))
         .rounded(px(8.0))
+        .min_h(px(32.0))
         .px(px(10.0))
-        .py(px(6.0))
-        .text_size(crate::typography::ui_rems(12.0))
-        .text_color(theme.text_muted)
-        .cursor_pointer()
+        .py(px(5.0))
+        .text_size(crate::typography::ui_rems(12.5))
+        .cursor_pointer();
+    match tone {
+        ActionTone::Quiet => button
+            .text_color(theme.text_muted)
+            .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text)),
+        ActionTone::Outlined => button
+            .bg(theme.input_glass_bg())
+            .border_1()
+            .border_color(theme.border)
+            .text_color(theme.text)
+            .hover(|s| s.bg(theme.glass_hover()).border_color(theme.border_strong)),
+        ActionTone::Solid => button
+            .bg(theme.solid)
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(theme.on_solid)
+            .hover(|s| s.opacity(0.9)),
+    }
 }
 
-/// The default ghost-action hover wash (`hover:bg-white/[0.06]
-/// hover:text-foreground`).
-pub fn ghost_hover(theme: &Theme, s: gpui::StyleRefinement) -> gpui::StyleRefinement {
-    s.bg(ink(0.06)).text_color(theme.text)
+pub fn text_action(theme: &Theme, tone: ActionTone, label: impl Into<SharedString>) -> gpui::Div {
+    action_button(theme, tone).child(label.into())
+}
+
+pub fn icon_action(theme: &Theme) -> gpui::Div {
+    action_button(theme, ActionTone::Outlined)
+        .size(px(32.0))
+        .min_h(px(32.0))
+        .p(px(0.0))
+        .justify_center()
+}
+
+pub fn ghost_action(theme: &Theme) -> gpui::Div {
+    action_button(theme, ActionTone::Quiet)
 }
 
 /// The dismissible red error strip (`flex items-start gap-2 rounded-xl border

@@ -460,13 +460,10 @@ impl HarnessesPage {
                     if is_model { "Model" } else { "Agent" },
                 ))
                 .child(
-                    widgets::ghost_action(theme)
+                    widgets::action_button(theme, widgets::ActionTone::Outlined)
                         .mt(px(6.0))
                         .w_full()
                         .min_h(px(36.0))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(crate::theme::ink(0.025))
                         .id(if is_model {
                             "title-model"
                         } else {
@@ -1204,11 +1201,9 @@ impl HarnessesPage {
                                 widgets::ghost_action(&theme)
                                     .id(("harness-install", ix))
                                     .when(self.installing.is_none(), |el| {
-                                        el.hover(|s| widgets::ghost_hover(&theme, s)).on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.install(harness, cx)
-                                            }),
-                                        )
+                                        el.on_click(cx.listener(move |this, _, _, cx| {
+                                            this.install(harness, cx)
+                                        }))
                                     })
                                     .child("Install"),
                             )
@@ -1218,7 +1213,6 @@ impl HarnessesPage {
                         el.child(
                             widgets::ghost_action(&theme)
                                 .id(("harness-cancel-install", ix))
-                                .hover(|s| widgets::ghost_hover(&theme, s))
                                 .on_click(cx.listener(|this, _, _, cx| this.cancel_install(cx)))
                                 .child("Cancel"),
                         )
@@ -1231,7 +1225,6 @@ impl HarnessesPage {
                             el.child(
                                 widgets::ghost_action(&theme)
                                     .id(("harness-sign-in", ix))
-                                    .hover(|s| widgets::ghost_hover(&theme, s))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.start_sign_in(harness, cx)
                                     }))
@@ -1243,7 +1236,6 @@ impl HarnessesPage {
                         el.child(
                             widgets::ghost_action(&theme)
                                 .id(("harness-cancel-sign-in", ix))
-                                .hover(|s| widgets::ghost_hover(&theme, s))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.cancel_sign_in(cx);
                                 }))
@@ -1254,7 +1246,6 @@ impl HarnessesPage {
                         el.child(
                             widgets::ghost_action(&theme)
                                 .id(("harness-retry-sign-in", ix))
-                                .hover(|s| widgets::ghost_hover(&theme, s))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.start_sign_in(harness, cx);
                                 }))
@@ -1353,7 +1344,6 @@ impl Render for HarnessesPage {
                         widgets::ghost_action(&theme)
                             .id("harnesses-retry")
                             .mt(px(8.0))
-                            .hover(|s| widgets::ghost_hover(&theme, s))
                             .tab_index(0)
                             .role(gpui::Role::Button)
                             .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))

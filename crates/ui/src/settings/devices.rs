@@ -183,7 +183,7 @@ impl DevicesPage {
                     .justify_end()
                     .gap(px(8.0))
                     .child(
-                        popover::btn_ghost(&theme, "Cancel", "rename-cancel")
+                        widgets::text_action(&theme, widgets::ActionTone::Quiet, "Cancel")
                             .id("rename-cancel")
                             .tab_index(0)
                             .role(gpui::Role::Button)
@@ -194,7 +194,7 @@ impl DevicesPage {
                             })),
                     )
                     .child(
-                        popover::btn_primary(&theme, "Rename")
+                        widgets::text_action(&theme, widgets::ActionTone::Solid, "Rename")
                             .id("rename-save")
                             .tab_index(0)
                             .role(gpui::Role::Button)
@@ -329,13 +329,9 @@ impl Render for DevicesPage {
                             .into_any_element(),
                     );
                 }
-                let id_button = div()
+                let id_button = widgets::action_button(&theme, widgets::ActionTone::Quiet)
                     .id(("device-id", ix))
                     .aria_label(format!("Copy device ID {}", device.id))
-                    .px(px(8.0))
-                    .py(px(5.0))
-                    .rounded(px(7.0))
-                    .bg(theme.ink(0.035))
                     .font_family(theme.font_mono.clone())
                     .text_size(crate::typography::ui_rems(10.5))
                     .text_color(if id_copied {
@@ -343,8 +339,6 @@ impl Render for DevicesPage {
                     } else {
                         theme.text_muted
                     })
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text))
                     .tab_index(0)
                     .role(gpui::Role::Button)
                     .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
@@ -410,7 +404,6 @@ impl Render for DevicesPage {
                             .child(
                                 widgets::ghost_action(&theme)
                                     .id(("device-rename", ix))
-                                    .hover(|s| widgets::ghost_hover(&theme, s))
                                     .tab_index(0)
                                     .role(gpui::Role::Button)
                                     .focus_visible(|s| {

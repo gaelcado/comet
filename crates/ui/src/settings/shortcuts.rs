@@ -776,11 +776,7 @@ impl Render for ShortcutsPage {
                                             .flex_none()
                                             .when(disabled, |el| el.opacity(0.35))
                                             .when(!disabled, |el| {
-                                                el.hover(|s| {
-                                                    s.bg(crate::theme::ink(0.04))
-                                                        .text_color(theme.text)
-                                                })
-                                                .on_click(
+                                                el.on_click(
                                                     cx.listener(|this, _, _, cx| {
                                                         this.keymap = KeymapConfig::default();
                                                         this.stop_recording();

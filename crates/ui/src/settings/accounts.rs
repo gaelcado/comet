@@ -889,8 +889,9 @@ impl AccountsPage {
                 )
                 .when(account.switchable, |el| {
                     el.child(
-                        crate::popover::btn_primary(
+                        widgets::text_action(
                             theme,
+                            widgets::ActionTone::Solid,
                             if is_busy { "Switching…" } else { "Switch" },
                         )
                         .id(("account-switch", ix))
@@ -1075,7 +1076,7 @@ impl AccountsPage {
                             .justify_end()
                             .gap(px(8.0))
                             .child(
-                                popover::btn_ghost(&theme, "Cancel", "login-cancel")
+                                widgets::text_action(&theme, widgets::ActionTone::Quiet, "Cancel")
                                     .id("login-cancel")
                                     .tab_index(0)
                                     .role(gpui::Role::Button)
@@ -1085,8 +1086,9 @@ impl AccountsPage {
                                     .on_click(cx.listener(|this, _, _, cx| this.cancel_login(cx))),
                             )
                             .child(
-                                popover::btn_primary(
+                                widgets::text_action(
                                     &theme,
+                                    widgets::ActionTone::Solid,
                                     if submitting {
                                         "Verifying…"
                                     } else {
@@ -1170,10 +1172,10 @@ impl AccountsPage {
                     })
                     .child(
                         div().mt(px(16.0)).flex().flex_row().justify_end().child(
-                            popover::btn_ghost(
+                            widgets::text_action(
                                 &theme,
+                                widgets::ActionTone::Quiet,
                                 if has_error { "Close" } else { "Cancel" },
-                                "login-cancel",
                             )
                             .id("login-cancel")
                             .tab_index(0)
@@ -1614,7 +1616,6 @@ impl Render for AccountsPage {
                                     .child(
                                         widgets::ghost_action(&theme)
                                             .id(add_id)
-                                            .hover(|s| widgets::ghost_hover(&theme, s))
                                             .tab_index(0)
                                             .role(gpui::Role::Button)
                                             .focus_visible(|s| {
@@ -1674,7 +1675,6 @@ impl Render for AccountsPage {
                                             .id("accounts-refresh")
                                             .flex_none()
                                             .text_size(crate::typography::ui_rems(12.5))
-                                            .hover(|s| widgets::ghost_hover(&theme, s))
                                             .when(refreshing, |el| el.opacity(0.5))
                                             .tab_index(0)
 .role(gpui::Role::Button)

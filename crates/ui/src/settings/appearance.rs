@@ -1415,16 +1415,7 @@ fn compact_action(
     label: &str,
     id: impl Into<SharedString>,
 ) -> gpui::Stateful<gpui::Div> {
-    let id = id.into();
-    popover::btn_ghost(theme, label, id.clone())
-        .id(id)
-        .min_h(px(32.0))
-        .px(px(12.0))
-        .rounded(px(8.0))
-        .bg(crate::theme::card_selected_bg())
-        .shadow(crate::theme::card_selected_shadows())
-        .flex()
-        .items_center()
+    widgets::text_action(theme, widgets::ActionTone::Outlined, label).id(id.into())
 }
 
 fn import_scene_preview(variant: &zeron_theme::ThemeVariant) -> AnyElement {
@@ -2623,8 +2614,9 @@ impl AppearancePage {
                     })),
             )
             .child(
-                popover::btn_primary(
+                widgets::text_action(
                     theme,
+                    widgets::ActionTone::Solid,
                     if compilation.is_some() {
                         "Import selected"
                     } else {
@@ -2739,7 +2731,7 @@ impl AppearancePage {
         }
         card = card.child(
             div().mt(px(16.0)).flex().justify_end().child(
-                popover::btn_primary(theme, "Done")
+                widgets::text_action(theme, widgets::ActionTone::Solid, "Done")
                     .id("theme-review-close")
                     .tab_index(0)
                     .role(gpui::Role::Button)
@@ -2939,7 +2931,7 @@ impl AppearancePage {
                         .child(widgets::row_title(theme, "Theme library")),
                 )
                 .child(
-                    popover::btn_primary(theme, "Add theme")
+                    widgets::text_action(theme, widgets::ActionTone::Solid, "Add theme")
                         .id("theme-library-add")
                         .tab_index(0)
                         .role(gpui::Role::Button)
