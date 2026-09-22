@@ -547,8 +547,11 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
 }
 
 pub const SWITCH_WIDTH: f32 = 56.0;
-const SWITCH_THUMB_WIDTH: f32 = 31.0;
-const SWITCH_SIDE_INSET: f32 = 1.0;
+const SWITCH_HEIGHT: f32 = 36.0;
+const SWITCH_TRACK_HEIGHT: f32 = 26.0;
+const SWITCH_SIDE_INSET: f32 = 3.0;
+const SWITCH_THUMB_WIDTH: f32 = 28.0;
+const SWITCH_THUMB_HEIGHT: f32 = SWITCH_TRACK_HEIGHT - 2.0 * SWITCH_SIDE_INSET;
 const SWITCH_MARK_SIZE: f32 = 9.0;
 
 /// A pill switch with the on/off marks nested beneath a sliding thumb.
@@ -558,7 +561,7 @@ pub fn toggle_switch(theme: &Theme, on: bool, key: impl Into<SharedString>) -> g
     div()
         .flex_none()
         .w(px(SWITCH_WIDTH))
-        .h(px(36.0))
+        .h(px(SWITCH_HEIGHT))
         .child(SwitchVisual {
             theme: theme.clone(),
             on,
@@ -627,6 +630,19 @@ fn switch_thumb_color(theme: &Theme) -> gpui::Hsla {
     crate::theme::flatten(gpui::white().opacity(white), theme.surface)
 }
 
+/// Frosted switches catch a little light across their rim and thumb. Both
+/// gradient stops are composited to opaque colors before painting.
+fn switch_surface_tones(theme: &Theme, base: gpui::Hsla, thumb: bool) -> (gpui::Hsla, gpui::Hsla) {
+    if !theme.is_frost() {
+        return (base, base);
+    }
+    let (light, shade) = if thumb { (0.12, 0.07) } else { (0.07, 0.09) };
+    (
+        crate::theme::flatten(gpui::white().opacity(light), base),
+        crate::theme::flatten(gpui::black().opacity(shade), base),
+    )
+}
+
 impl RenderOnce for SwitchVisual {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
         let now = std::time::Instant::now();
@@ -659,18 +675,25 @@ impl RenderOnce for SwitchVisual {
         }
         let dark = self.theme.appearance.is_dark();
         let track = switch_track_color(&self.theme, self.on);
+        let (track_light, track_shade) = switch_surface_tones(&self.theme, track, false);
+        let thumb = switch_thumb_color(&self.theme);
+        let (thumb_light, thumb_shade) = switch_surface_tones(&self.theme, thumb, true);
         let empty_width = SWITCH_WIDTH - SWITCH_THUMB_WIDTH - SWITCH_SIDE_INSET;
         let mark_padding = (empty_width - SWITCH_MARK_SIZE) / 2.0;
         let thumb_left = SWITCH_SIDE_INSET
             + (SWITCH_WIDTH - SWITCH_THUMB_WIDTH - 2.0 * SWITCH_SIDE_INSET) * position;
         let track_element = div()
             .absolute()
-            .top(px(6.0))
+            .top(px((SWITCH_HEIGHT - SWITCH_TRACK_HEIGHT) / 2.0))
             .left_0()
             .w(px(SWITCH_WIDTH))
-            .h(px(24.0))
+            .h(px(SWITCH_TRACK_HEIGHT))
             .rounded_full()
-            .bg(track)
+            .bg(gpui::linear_gradient(
+                180.0,
+                gpui::linear_color_stop(track_light, 0.0),
+                gpui::linear_color_stop(track_shade, 1.0),
+            ))
             .border_1()
             .border_color(if self.on {
                 crate::theme::flatten(
@@ -721,21 +744,40 @@ impl RenderOnce for SwitchVisual {
             );
         let thumb_element = div()
             .absolute()
-            .top(px(7.0))
+            .top(px((SWITCH_HEIGHT - SWITCH_THUMB_HEIGHT) / 2.0))
             .left(px(thumb_left))
             .w(px(SWITCH_THUMB_WIDTH))
-            .h(px(22.0))
+            .h(px(SWITCH_THUMB_HEIGHT))
             .rounded_full()
-            .bg(switch_thumb_color(&self.theme))
+            .bg(gpui::linear_gradient(
+                180.0,
+                gpui::linear_color_stop(thumb_light, 0.0),
+                gpui::linear_color_stop(thumb_shade, 1.0),
+            ))
             .border_1()
             .border_color(crate::theme::flatten(
-                gpui::black().opacity(if dark { 0.07 } else { 0.05 }),
-                switch_thumb_color(&self.theme),
-            ));
+                gpui::black().opacity(if dark { 0.10 } else { 0.08 }),
+                thumb,
+            ))
+            .when(self.theme.is_frost(), |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top(px(2.0))
+                        .left(px(8.0))
+                        .w(px(12.0))
+                        .h(px(1.0))
+                        .rounded_full()
+                        .bg(crate::theme::flatten(
+                            gpui::white().opacity(0.45),
+                            thumb_light,
+                        )),
+                )
+            });
         div()
             .relative()
             .w(px(SWITCH_WIDTH))
-            .h(px(36.0))
+            .h(px(SWITCH_HEIGHT))
             .child(track_element)
             .child(thumb_element)
     }
@@ -799,6 +841,10 @@ mod switch_tests {
         assert!(dark_on.l < dark.accent_strong.l);
         assert_eq!(switch_track_color(&dark, false).a, 1.0);
         assert_eq!(switch_thumb_color(&dark).a, 1.0);
+        assert_eq!(
+            switch_surface_tones(&dark, dark_on, false),
+            (dark_on, dark_on)
+        );
         let opaque_off = switch_track_color(&dark, false);
 
         dark.surface_treatment = SurfaceTreatment::Frosted;
@@ -806,11 +852,21 @@ mod switch_tests {
         assert_eq!(switch_track_color(&dark, false).a, 1.0);
         assert_eq!(switch_thumb_color(&dark).a, 1.0);
         assert_ne!(switch_track_color(&dark, false), opaque_off);
+        for (base, thumb) in [(dark_on, false), (switch_thumb_color(&dark), true)] {
+            let (light, shade) = switch_surface_tones(&dark, base, thumb);
+            assert_eq!((light.a, shade.a), (1.0, 1.0));
+            assert!(light.l > base.l && shade.l < base.l);
+        }
 
         let mut light = Theme::light();
         light.surface_treatment = SurfaceTreatment::Opaque;
         assert_eq!(switch_track_color(&light, true).a, 1.0);
         assert!(switch_track_color(&light, true).l > light.accent.l);
+        let light_on = switch_track_color(&light, true);
+        assert_eq!(
+            switch_surface_tones(&light, light_on, false),
+            (light_on, light_on)
+        );
     }
 
     #[test]
