@@ -397,9 +397,14 @@ impl HarnessesPage {
     }
 
     fn render_titles(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let mut card = widgets::section_card(theme).mt(px(20.0)).p(px(16.0))
+        let mut card = widgets::section_card(theme)
+            .mt(px(20.0))
+            .p(px(16.0))
             .child(widgets::row_title(theme, "Session titles"))
-            .child(widgets::page_subtitle(theme, "Choose the agent and model for automatic titles on this device. Claude Code and Codex support restricted title generation."));
+            .child(widgets::page_subtitle(
+                theme,
+                "Choose an agent to name sessions automatically.",
+            ));
         let Loadable::Ready(settings) = &self.title_settings else {
             let message = match &self.title_settings {
                 Loadable::Error(error) => error.clone(),

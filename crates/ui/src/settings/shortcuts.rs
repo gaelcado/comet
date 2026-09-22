@@ -272,7 +272,7 @@ impl ShortcutsPage {
         cx.stop_propagation();
     }
 
-    /// One shortcut row: label + description left, Reset when customized, and
+    /// One shortcut row: label left, Reset when customized, and
     /// the click-to-record combo chip (recording inverts it to
     /// white-on-black). `ix` is the id's position in [`ShortcutId::ALL`]
     /// (unique element ids across the group cards); `gx` is the row's place
@@ -286,16 +286,15 @@ impl ShortcutsPage {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        // zeron settings.shortcuts.tsx row: min-h-[72px] px-5 gap-5.
         div()
-            .min_h(px(64.0))
+            .min_h(px(56.0))
             .px(px(16.0))
-            .py(px(12.0))
+            .py(px(10.0))
             .flex()
             .flex_row()
             .flex_wrap()
             .items_center()
-            .gap(px(20.0))
+            .gap(px(12.0))
             .when(gx > 0, |el| el.border_t_1().border_color(theme.border))
             .child(
                 div()
@@ -303,20 +302,7 @@ impl ShortcutsPage {
                     .min_w(px(160.0))
                     .flex()
                     .flex_col()
-                    .child(
-                        div()
-                            .text_size(crate::typography::ui_rems(13.0))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(SharedString::from(id.label())),
-                    )
-                    .child(
-                        div()
-                            .mt(px(2.0))
-                            .text_size(crate::typography::ui_rems(12.0))
-                            .text_color(theme.text_muted)
-                            .child(SharedString::from(description(id))),
-                    ),
+                    .child(widgets::row_title(theme, id.label())),
             )
             .child(self.render_binding_control(id, ix, recording, theme, cx))
     }
@@ -503,33 +489,6 @@ fn group(id: ShortcutId) -> &'static str {
         | ShortcutId::PrevSession
         | ShortcutId::ArchiveSession => "Sessions",
         ShortcutId::JumpSession(_) => "Jump to session",
-    }
-}
-
-/// One-line purpose copy per shortcut (zeron lib/shortcuts.ts
-/// `SHORTCUT_DEFINITIONS` descriptions, verbatim).
-fn description(id: ShortcutId) -> &'static str {
-    match id {
-        ShortcutId::CaptureAppshot => {
-            "Capture the focused application from anywhere on your desktop."
-        }
-        ShortcutId::SaveFile => "Save the active workspace file.",
-        ShortcutId::BrowserReload => "Reload the focused browser tab.",
-        ShortcutId::ToggleSidebar => "Show or hide sessions and settings navigation.",
-        ShortcutId::ToggleChanges => "Show or hide the right sidebar for the current session.",
-        ShortcutId::ToggleFiles => "Show or hide the files panel for the current session.",
-        ShortcutId::ToggleTerminal => "Show or hide the terminal for the current session.",
-        ShortcutId::NewSession => "Open a blank session canvas to start a new session.",
-        ShortcutId::NewProject => "Open the new project dialog.",
-        ShortcutId::OpenModelPicker => "Open the model picker for the current session.",
-        ShortcutId::NextSession => "Select the next session in the sidebar, wrapping at the end.",
-        ShortcutId::PrevSession => {
-            "Select the previous session in the sidebar, wrapping at the start."
-        }
-        ShortcutId::ArchiveSession => "Move the current session to the archived shelf.",
-        // One line per slot would repeat itself nine times; the ordinal is
-        // already in the row's label.
-        ShortcutId::JumpSession(_) => "Open the session at this place in the sidebar list.",
     }
 }
 

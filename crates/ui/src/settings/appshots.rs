@@ -19,12 +19,12 @@ fn row(
                 .min_w(px(160.0))
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
+                .gap(px(2.0))
                 .child(widgets::row_title(theme, title.to_string()))
                 .child(
                     div()
                         .text_size(crate::typography::ui_rems(12.0))
-                        .line_height(px(18.0))
+                        .line_height(crate::typography::ui_rems(16.0))
                         .text_color(theme.text_muted)
                         .child(SharedString::from(description.to_string())),
                 ),

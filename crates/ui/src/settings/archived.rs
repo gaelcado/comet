@@ -364,39 +364,47 @@ impl Render for ArchivedPage {
             .size_full()
             .on_hover(cx.listener(Self::on_scroll_hovered))
             .child(
-                crate::edge_fade::edge_faded(16.0, true, true, div()
-                    .id("archived-page")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll.scroll)
-                    .child(
-                        widgets::page_column()
-                            .child(widgets::page_header(
-                                &theme,
-                                "Archived sessions",
-                                (count > 0).then_some(count),
-                            ))
-                            .child(widgets::page_subtitle(
-                                &theme,
-                                "Hidden from the sidebar, never deleted. Unarchiving puts a session back on its device.",
-                            ))
-                            .when_some(self.error.clone(), |el, message| {
-                                el.child(
-                                    widgets::error_strip(&theme, message)
-                                        .id("archived-error")
-                                        .cursor_pointer()
-                                        .tab_index(0)
-                                        .role(gpui::Role::Button)
-                                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.error = None;
-                                            cx.notify();
-                                        })),
-                                )
-                            })
-                            .child(body)
-                            .children(pagination),
-                    )).fade_overflow_y(&self.scroll.scroll),
+                crate::edge_fade::edge_faded(
+                    16.0,
+                    true,
+                    true,
+                    div()
+                        .id("archived-page")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll.scroll)
+                        .child(
+                            widgets::page_column()
+                                .child(widgets::page_header(
+                                    &theme,
+                                    "Archived sessions",
+                                    (count > 0).then_some(count),
+                                ))
+                                .child(widgets::page_subtitle(
+                                    &theme,
+                                    "Hidden from the sidebar until restored.",
+                                ))
+                                .when_some(self.error.clone(), |el, message| {
+                                    el.child(
+                                        widgets::error_strip(&theme, message)
+                                            .id("archived-error")
+                                            .cursor_pointer()
+                                            .tab_index(0)
+                                            .role(gpui::Role::Button)
+                                            .focus_visible(|s| {
+                                                s.border_2().border_color(theme.accent).opacity(1.0)
+                                            })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.error = None;
+                                                cx.notify();
+                                            })),
+                                    )
+                                })
+                                .child(body)
+                                .children(pagination),
+                        ),
+                )
+                .fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
     }

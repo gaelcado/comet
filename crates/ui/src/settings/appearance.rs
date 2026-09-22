@@ -74,9 +74,9 @@ impl FontKind {
 
     fn description(self) -> &'static str {
         match self {
-            Self::Ui => "Menus, sidebars, and conversation text.",
-            Self::Terminal => "Terminal panes and shell output. Fixed-width families only.",
-            Self::Code => "Code blocks, diffs, and workspace file editors.",
+            Self::Ui => "Menus and conversations",
+            Self::Terminal => "Terminal output · monospace only",
+            Self::Code => "Code, diffs, and files",
         }
     }
 
@@ -386,14 +386,14 @@ impl AppearancePage {
                     .min_w(px(200.0))
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
+                    .gap(px(2.0))
                     .child(widgets::field_label(theme, "Conversation width"))
                     .child(
                         div()
                             .text_size(typography::ui_rems(12.0))
-                            .line_height(px(18.0))
+                            .line_height(typography::ui_rems(16.0))
                             .text_color(theme.text_muted)
-                            .child("Maximum width of messages and the composer in conversations. Adapts to smaller windows."),
+                            .child("Maximum width for messages and the composer."),
                     ),
             )
             .child(
@@ -2928,15 +2928,7 @@ impl AppearancePage {
                     div()
                         .flex_1()
                         .min_w(px(160.0))
-                        .child(widgets::row_title(theme, "Theme library"))
-                        .child(widgets::meta_line(
-                            theme,
-                            vec![
-                                div()
-                                    .child("Import or link custom themes.")
-                                    .into_any_element(),
-                            ],
-                        )),
+                        .child(widgets::row_title(theme, "Theme library")),
                 )
                 .child(
                     popover::btn_primary(theme, "Add theme")
@@ -3325,7 +3317,7 @@ impl Render for AppearancePage {
                             vec![
                                 div()
                                     .child(SharedString::from(
-                                        "Fold a turn's thinking, tool calls, and narration into one collapsed row — only the reply shows.",
+                                        "Collapse thinking and tools; keep the reply visible.",
                                     ))
                                     .into_any_element(),
                             ],
@@ -3386,13 +3378,13 @@ impl Render for AppearancePage {
                             .flex_1()
                             .flex()
                             .flex_col()
-                            .gap(px(4.0))
+                            .gap(px(2.0))
                             .child(widgets::field_label(&theme, kind.label()))
                             .child(
                                 div()
                                     .max_w(px(520.0))
                                     .text_size(typography::ui_rems(12.0))
-                                    .line_height(px(18.0))
+                                    .line_height(typography::ui_rems(16.0))
                                     .text_color(theme.text_muted)
                                     .child(kind.description()),
                             ),

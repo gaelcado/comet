@@ -1690,10 +1690,6 @@ impl Render for AccountsPage {
                                     )
                                     .child(self.render_device_switcher(&theme, cx)),
                             )
-                            .child(widgets::page_subtitle(
-                                &theme,
-                                "Manage Claude Code, Codex, and Cursor logins on this device.",
-                            ))
                             .when_some(self.error.clone(), |el, message| {
                                 el.child(
                                     widgets::error_strip(&theme, message)
@@ -1718,10 +1714,7 @@ impl Render for AccountsPage {
                                     .line_height(px(19.0))
                                     .text_color(theme.text_muted)
                                     .child(SharedString::from(
-                                        "Switching rewrites the CLI\u{2019}s stored login, so new \
-                                         agent sessions use the selected account immediately. On \
-                                         macOS, an already-running Claude Code can hold the previous \
-                                         login for up to ~30 seconds (Keychain cache).",
+                                        "Account changes affect new sessions. On macOS, Claude Code may take about 30 seconds to pick up a switched account.",
                                     )),
                             ),
                     )).fade_overflow_y(&self.scroll.scroll),

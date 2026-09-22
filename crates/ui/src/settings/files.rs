@@ -113,15 +113,7 @@ impl Render for FilesSettingsPage {
                             .min_w(px(160.0))
                             .flex()
                             .flex_col()
-                            .child(widgets::row_title(&theme, "Autosave"))
-                            .child(widgets::meta_line(
-                                &theme,
-                                vec![
-                                    div()
-                                        .child("Save edited workspace files to disk automatically.")
-                                        .into_any_element(),
-                                ],
-                            )),
+                            .child(widgets::row_title(&theme, "Autosave")),
                     )
                     .child(
                         widgets::toggle_switch(&theme, autosave_enabled, "files-autosave")
@@ -155,14 +147,6 @@ impl Render for FilesSettingsPage {
                                 .flex()
                                 .flex_col()
                                 .child(widgets::row_title(&theme, "Autosave delay"))
-                                .child(widgets::meta_line(
-                                    &theme,
-                                    vec![div()
-                                        .child(
-                                            "Save files after editing has been idle for this long.",
-                                        )
-                                        .into_any_element()],
-                                ))
                                 .child(
                                     div()
                                         .mt(px(12.0))
@@ -183,15 +167,7 @@ impl Render for FilesSettingsPage {
                             .min_w(px(160.0))
                             .flex()
                             .flex_col()
-                            .child(widgets::row_title(&theme, "Word wrap"))
-                            .child(widgets::meta_line(
-                                &theme,
-                                vec![
-                                    div()
-                                        .child("Wrap long lines in every workspace file.")
-                                        .into_any_element(),
-                                ],
-                            )),
+                            .child(widgets::row_title(&theme, "Word wrap")),
                     )
                     .child(
                         widgets::toggle_switch(&theme, word_wrap, "files-word-wrap")
@@ -222,17 +198,7 @@ impl Render for FilesSettingsPage {
                             .min_w(px(160.0))
                             .flex()
                             .flex_col()
-                            .child(widgets::row_title(&theme, "Show all files"))
-                            .child(widgets::meta_line(
-                                &theme,
-                                vec![
-                                    div()
-                                        .child(
-                                            "Include hidden and ignored files in every file tree.",
-                                        )
-                                        .into_any_element(),
-                                ],
-                            )),
+                            .child(widgets::row_title(&theme, "Show hidden and ignored files")),
                     )
                     .child(
                         widgets::toggle_switch(&theme, show_all_files, "files-show-all")
@@ -240,7 +206,7 @@ impl Render for FilesSettingsPage {
                             .cursor_pointer()
                             .tab_index(0)
                             .role(gpui::Role::Switch)
-                            .aria_label("Show hidden files")
+                            .aria_label("Show hidden and ignored files")
                             .aria_toggled(if show_all_files {
                                 gpui::Toggled::True
                             } else {
