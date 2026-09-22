@@ -565,24 +565,34 @@ impl RenderOnce for SwitchVisual {
                     .child(
                         div()
                             .absolute()
-                            .top(px(8.0))
-                            .left(px(12.0))
-                            .w(px(2.0))
-                            .h(px(8.0))
-                            .rounded_full()
-                            .bg(gpui::white().opacity(0.88))
-                            .opacity(position),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(8.0))
-                            .left(px(32.0))
-                            .size(px(8.0))
-                            .rounded_full()
-                            .border(px(1.5))
-                            .border_color(self.theme.text_muted.opacity(0.78))
-                            .opacity(1.0 - position),
+                            .inset_0()
+                            .px(px(8.0))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .size(px(10.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .opacity(position)
+                                    .child(
+                                        div()
+                                            .w(px(2.5))
+                                            .h(px(10.0))
+                                            .rounded_full()
+                                            .bg(gpui::white().opacity(0.95)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .size(px(10.0))
+                                    .rounded_full()
+                                    .border(px(2.0))
+                                    .border_color(self.theme.text_muted.opacity(0.95))
+                                    .opacity(1.0 - position),
+                            ),
                     ),
             )
             .child(
