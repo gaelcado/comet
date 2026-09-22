@@ -198,6 +198,13 @@ impl HarnessesPage {
     }
 
     fn toggle_agent_details(&mut self, harness: HarnessId, cx: &mut Context<Self>) {
+        if !self.harnesses.ready().is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item.id == harness && descriptor_enabled(item))
+        }) {
+            return;
+        }
         if self.expanded_harness == Some(harness) {
             self.expanded_harness = None;
         } else {
@@ -240,11 +247,11 @@ impl HarnessesPage {
             .border_t_1()
             .border_color(theme.border.opacity(0.7))
             .px(px(16.0))
-            .pt(px(14.0))
-            .pb(px(16.0))
+            .pt(px(8.0))
+            .pb(px(12.0))
             .flex()
             .flex_col()
-            .gap(px(18.0))
+            .gap(px(12.0))
             .child(self.render_completion_for(harness, theme, cx))
             .when_some(accounts, |details, accounts| details.child(accounts));
         if motion::reduced_motion(cx) {
@@ -400,11 +407,7 @@ impl HarnessesPage {
         let mut card = widgets::section_card(theme)
             .mt(px(20.0))
             .p(px(16.0))
-            .child(widgets::row_title(theme, "Session titles"))
-            .child(widgets::page_subtitle(
-                theme,
-                "Choose an agent to name sessions automatically.",
-            ));
+            .child(widgets::row_title(theme, "Session titles"));
         let Loadable::Ready(settings) = &self.title_settings else {
             let message = match &self.title_settings {
                 Loadable::Error(error) => error.clone(),
@@ -414,6 +417,12 @@ impl HarnessesPage {
                 .child(div().mt(px(8.0)).child(message))
                 .into_any_element();
         };
+        let mut fields = div()
+            .mt(px(12.0))
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(12.0));
         for is_model in [false, true] {
             let label = if is_model {
                 settings
@@ -430,7 +439,7 @@ impl HarnessesPage {
                             id.clone()
                         }
                     })
-                    .unwrap_or_else(|| "Automatic (cheapest model)".into())
+                    .unwrap_or_else(|| "Automatic".into())
             } else {
                 settings
                     .harness
@@ -439,19 +448,16 @@ impl HarnessesPage {
                         HarnessId::Codex => "Codex".to_string(),
                         _ => format!("{id:?}"),
                     })
-                    .unwrap_or_else(|| "Automatic (session agent when supported)".into())
+                    .unwrap_or_else(|| "Session agent".into())
             };
             let interactive = !self.title_saving && (!is_model || settings.harness.is_some());
             let mut row = div()
                 .relative()
-                .mt(px(16.0))
-                .child(widgets::row_title(
+                .flex_1()
+                .min_w(px(220.0))
+                .child(widgets::field_label(
                     theme,
-                    if is_model {
-                        "Title model"
-                    } else {
-                        "Title harness"
-                    },
+                    if is_model { "Model" } else { "Agent" },
                 ))
                 .child(
                     widgets::ghost_action(theme)
@@ -492,7 +498,12 @@ impl HarnessesPage {
                 );
             if self.title_menu == Some(is_model) {
                 let mut choices = vec![(
-                    "Automatic".to_string(),
+                    if is_model {
+                        "Automatic"
+                    } else {
+                        "Session agent"
+                    }
+                    .to_string(),
                     TitleSettings {
                         harness: if is_model { settings.harness } else { None },
                         model: None,
@@ -532,14 +543,15 @@ impl HarnessesPage {
                     );
                 }
                 let menu = popover::popover_card(theme)
-                    .w(px(320.0))
+                    .w(px(260.0))
                     .on_mouse_down_out(cx.listener(|page, _, _, cx| {
                         page.title_menu = None;
                         cx.notify();
                     }))
                     .flex()
                     .flex_col()
-                    .children(
+                    .child(widgets::dropdown_rows(
+                        format!("title-choice-list-{is_model}"),
                         choices
                             .into_iter()
                             .enumerate()
@@ -557,9 +569,11 @@ impl HarnessesPage {
                                     page.load_titles(Some(choice.clone()), cx)
                                 }))
                                 .child(div().min_w_0().child(label))
+                                .into_any_element()
                             }),
-                    )
-                    .into_any_element();
+                        36.0,
+                        8.0,
+                    ));
                 row = row.child(widgets::dropdown(
                     format!("title-choice-menu-{is_model}"),
                     menu,
@@ -567,8 +581,9 @@ impl HarnessesPage {
                     36.0,
                 ));
             }
-            card = card.child(row);
+            fields = fields.child(row);
         }
+        card = card.child(fields);
         if let Loadable::Error(error) = &self.title_models {
             card = card.child(widgets::error_strip(theme, error.clone()));
         }
@@ -814,6 +829,9 @@ impl HarnessesPage {
                         if let Ok(list) = serde_json::from_value::<Vec<HarnessDescriptor>>(value) {
                             page.harnesses = Loadable::Ready(list);
                         }
+                        if !enabled && page.expanded_harness == Some(harness) {
+                            page.expanded_harness = None;
+                        }
                         // The composer caches its catalog per space — poke
                         // every Pickers to re-fetch, or the rail keeps the
                         // old set until restart.
@@ -940,52 +958,57 @@ impl HarnessesPage {
                 .flex_col()
                 .gap(px(2.0))
                 .child(popover::menu_heading(theme, "Devices"))
-                .children(devices.into_iter().enumerate().map(|(ix, d)| {
-                    let is_active = Some(d.id.as_str()) == effective.as_deref();
-                    let is_local = local_id.as_deref() == Some(d.id.as_str());
-                    let glyph = platform_glyph(&d.platform);
-                    let name: SharedString = d.name.clone().into();
-                    let pick_local = is_local;
-                    let pick_id = d.id.clone();
-                    popover::menu_row(theme, is_active, format!("harnesses-device-row-{ix}"))
-                        .id(("harnesses-device-row", ix))
-                        .tab_index(0)
-                        .role(gpui::Role::Button)
-                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            // Local device = no passthrough (calls stay direct).
-                            let target = (!pick_local).then(|| pick_id.clone());
-                            this.set_target_device(target, cx);
-                        }))
-                        .child(
-                            icon(glyph)
-                                .size(px(16.0))
-                                .flex_none()
-                                .text_color(theme.text_muted),
-                        )
-                        .child(div().flex_1().min_w_0().truncate().child(name))
-                        .when(is_local, |el| {
-                            el.child(
-                                div()
+                .child(widgets::dropdown_rows(
+                    "harnesses-device-list",
+                    devices.into_iter().enumerate().map(|(ix, d)| {
+                        let is_active = Some(d.id.as_str()) == effective.as_deref();
+                        let is_local = local_id.as_deref() == Some(d.id.as_str());
+                        let glyph = platform_glyph(&d.platform);
+                        let name: SharedString = d.name.clone().into();
+                        let pick_local = is_local;
+                        let pick_id = d.id.clone();
+                        popover::menu_row(theme, is_active, format!("harnesses-device-row-{ix}"))
+                            .id(("harnesses-device-row", ix))
+                            .tab_index(0)
+                            .role(gpui::Role::Button)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                // Local device = no passthrough (calls stay direct).
+                                let target = (!pick_local).then(|| pick_id.clone());
+                                this.set_target_device(target, cx);
+                            }))
+                            .child(
+                                icon(glyph)
+                                    .size(px(16.0))
                                     .flex_none()
-                                    .text_size(crate::typography::ui_rems(10.5))
-                                    .text_color(theme.text_muted)
-                                    .child(SharedString::from("You")),
+                                    .text_color(theme.text_muted),
                             )
-                        })
-                        .child(
-                            div()
-                                .size(px(6.0))
-                                .rounded_full()
-                                .flex_none()
-                                .bg(if is_local {
-                                    emerald
-                                } else {
-                                    crate::theme::ink(0.2)
-                                }),
-                        )
-                }))
-                .into_any_element();
+                            .child(div().flex_1().min_w_0().truncate().child(name))
+                            .when(is_local, |el| {
+                                el.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(crate::typography::ui_rems(10.5))
+                                        .text_color(theme.text_muted)
+                                        .child(SharedString::from("You")),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .size(px(6.0))
+                                    .rounded_full()
+                                    .flex_none()
+                                    .bg(if is_local {
+                                        emerald
+                                    } else {
+                                        crate::theme::ink(0.2)
+                                    }),
+                            )
+                            .into_any_element()
+                    }),
+                    28.0,
+                    32.0,
+                ));
             trigger = trigger.child(widgets::dropdown("harnesses-device-menu", menu, None, 28.0));
         }
         trigger.into_any_element()
@@ -1107,7 +1130,7 @@ impl HarnessesPage {
                             .size(px(16.0))
                             .text_color(tint.unwrap_or(theme.text_muted)),
                     );
-                let expanded = self.expanded_harness == Some(harness);
+                let expanded = enabled && self.expanded_harness == Some(harness);
                 let header = widgets::card_row(&theme, true)
                     .id(("harness-row", ix))
                     .when(!installed, |el| el.opacity(0.55))
@@ -1124,26 +1147,31 @@ impl HarnessesPage {
                             .flex_row()
                             .items_center()
                             .gap(px(12.0))
-                            .role(gpui::Role::Button)
-                            .aria_label(format!("{} preferences", descriptor.name))
-                            .aria_expanded(expanded)
-                            .tab_index(0)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme.glass_hover()))
-                            .focus_visible(|s| s.border_2().border_color(theme.accent))
-                            .on_click(cx.listener(move |page, _, _, cx| {
-                                page.toggle_agent_details(harness, cx)
-                            }))
-                            .on_key_down(cx.listener(
-                                move |page, event: &gpui::KeyDownEvent, _, cx| {
-                                    if !event.is_held
-                                        && matches!(event.keystroke.key.as_str(), "enter" | "space")
-                                    {
-                                        page.toggle_agent_details(harness, cx);
-                                        cx.stop_propagation();
-                                    }
-                                },
-                            ))
+                            .when(enabled, |el| {
+                                el.role(gpui::Role::Button)
+                                    .aria_label(format!("{} preferences", descriptor.name))
+                                    .aria_expanded(expanded)
+                                    .tab_index(0)
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme.glass_hover()))
+                                    .focus_visible(|s| s.border_2().border_color(theme.accent))
+                                    .on_click(cx.listener(move |page, _, _, cx| {
+                                        page.toggle_agent_details(harness, cx)
+                                    }))
+                                    .on_key_down(cx.listener(
+                                        move |page, event: &gpui::KeyDownEvent, _, cx| {
+                                            if !event.is_held
+                                                && matches!(
+                                                    event.keystroke.key.as_str(),
+                                                    "enter" | "space"
+                                                )
+                                            {
+                                                page.toggle_agent_details(harness, cx);
+                                                cx.stop_propagation();
+                                            }
+                                        },
+                                    ))
+                            })
                             .child(tile)
                             .child(
                                 div()
@@ -1156,15 +1184,17 @@ impl HarnessesPage {
                                         label.child(widgets::meta_line(&theme, meta))
                                     }),
                             )
-                            .child(
-                                crate::icons::icon(if expanded {
-                                    crate::icons::ALT_ARROW_DOWN
-                                } else {
-                                    crate::icons::ALT_ARROW_RIGHT
-                                })
-                                .size(px(14.0))
-                                .text_color(theme.text_muted),
-                            ),
+                            .when(enabled, |el| {
+                                el.child(
+                                    crate::icons::icon(if expanded {
+                                        crate::icons::ALT_ARROW_DOWN
+                                    } else {
+                                        crate::icons::ALT_ARROW_RIGHT
+                                    })
+                                    .size(px(14.0))
+                                    .text_color(theme.text_muted),
+                                )
+                            }),
                     )
                     .when(
                         offers_install(harness, installed, descriptor.can_install)

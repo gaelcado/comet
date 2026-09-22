@@ -5934,6 +5934,7 @@ impl Shell {
             .absolute()
             .inset_0()
             .occlude()
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .bg(popover::scrim_alpha(0.35))
             .flex()
             .items_center()

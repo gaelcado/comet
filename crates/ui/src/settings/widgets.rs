@@ -28,7 +28,7 @@ pub fn modal_bounds(viewport: gpui::Size<Pixels>) -> gpui::Bounds<Pixels> {
 
 pub fn dropdown(
     id: impl Into<SharedString>,
-    content: AnyElement,
+    content: gpui::Div,
     closing: Option<std::time::Instant>,
     trigger_height: f32,
 ) -> AnyElement {
@@ -44,21 +44,14 @@ pub fn dropdown(
 #[derive(IntoElement)]
 struct SettingsDropdown {
     id: SharedString,
-    content: AnyElement,
+    content: gpui::Div,
     closing: Option<std::time::Instant>,
     trigger_height: f32,
 }
 
 impl RenderOnce for SettingsDropdown {
     fn render(self, window: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
-        let bounds = modal_bounds(window.viewport_size());
-        let limits = gpui::Bounds::new(
-            bounds.origin + gpui::point(px(8.0), px(8.0)),
-            gpui::size(
-                (bounds.size.width - px(16.0)).max(px(1.0)),
-                (bounds.size.height - px(16.0)).max(px(1.0)),
-            ),
-        );
+        let limits = dropdown_limits(window.viewport_size());
         popover::contained_menu(
             self.id,
             self.content,
@@ -66,6 +59,86 @@ impl RenderOnce for SettingsDropdown {
             self.trigger_height,
             limits,
         )
+    }
+}
+
+fn dropdown_limits(viewport: gpui::Size<Pixels>) -> gpui::Bounds<Pixels> {
+    let bounds = modal_bounds(viewport);
+    let sidebar = if f32::from(viewport.width) < 680.0 {
+        72.0
+    } else {
+        216.0
+    };
+    gpui::Bounds::new(
+        bounds.origin + gpui::point(px(sidebar + 8.0), px(8.0)),
+        gpui::size(
+            (bounds.size.width - px(sidebar + 16.0)).max(px(1.0)),
+            (bounds.size.height - px(16.0)).max(px(1.0)),
+        ),
+    )
+}
+
+/// Scroll only a dropdown's options, keeping its frame and optional heading
+/// fixed. The available height follows the same placement budget as the card.
+pub fn dropdown_rows(
+    id: impl Into<SharedString>,
+    rows: impl IntoIterator<Item = AnyElement>,
+    trigger_height: f32,
+    chrome_height: f32,
+) -> AnyElement {
+    DropdownRows {
+        id: id.into(),
+        rows: rows.into_iter().collect(),
+        trigger_height,
+        chrome_height,
+    }
+    .into_any_element()
+}
+
+pub fn dropdown_list_height(
+    viewport: gpui::Size<Pixels>,
+    trigger_height: f32,
+    chrome_height: f32,
+) -> f32 {
+    let limits = modal_bounds(viewport);
+    let card_height = ((f32::from(limits.size.height) - 16.0 - trigger_height) / 2.0 - 6.0)
+        .max(1.0)
+        .min(320.0);
+    (card_height - chrome_height).max(1.0)
+}
+
+#[derive(IntoElement)]
+struct DropdownRows {
+    id: SharedString,
+    rows: Vec<AnyElement>,
+    trigger_height: f32,
+    chrome_height: f32,
+}
+
+impl RenderOnce for DropdownRows {
+    fn render(self, window: &mut gpui::Window, _: &mut gpui::App) -> impl IntoElement {
+        let key: SharedString = format!("{}-list-scroll", self.id).into();
+        let scroll = window.with_global_id(key.into(), |id, window| {
+            window.with_element_state(id, |previous: Option<ScrollHandle>, _| {
+                let scroll = previous.unwrap_or_default();
+                (scroll.clone(), scroll)
+            })
+        });
+        let list = div()
+            .id(format!("{}-list", self.id))
+            .debug_selector(|| "settings-dropdown-list".into())
+            .max_h(px(dropdown_list_height(
+                window.viewport_size(),
+                self.trigger_height,
+                self.chrome_height,
+            )))
+            .overflow_y_scroll()
+            .track_scroll(&scroll)
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .children(self.rows);
+        crate::edge_fade::edge_faded(12.0, true, true, list).fade_overflow_y(&scroll)
     }
 }
 
@@ -473,13 +546,13 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
         .child(label.into())
 }
 
-/// A tinted glass track with the on/off marks nested beneath a sliding thumb.
+/// A compact oval switch with the on/off marks nested beneath a sliding thumb.
 /// The caller owns activation and accessibility; only the thumb interpolates.
 pub fn toggle_switch(theme: &Theme, on: bool, key: impl Into<SharedString>) -> gpui::Div {
     let key: SharedString = key.into();
     div()
         .flex_none()
-        .w(px(48.0))
+        .w(px(46.0))
         .h(px(36.0))
         .child(SwitchVisual {
             theme: theme.clone(),
@@ -510,13 +583,7 @@ impl SwitchTravel {
 
 fn switch_track_color(theme: &Theme, on: bool) -> gpui::Hsla {
     let dark = theme.appearance.is_dark();
-    if theme.is_frost() {
-        if on {
-            theme.accent.opacity(if dark { 0.90 } else { 0.84 })
-        } else {
-            theme.ink(if dark { 0.24 } else { 0.14 })
-        }
-    } else if on {
+    if on {
         if dark {
             theme.accent
         } else {
@@ -528,20 +595,29 @@ fn switch_track_color(theme: &Theme, on: bool) -> gpui::Hsla {
             )
         }
     } else {
-        crate::theme::flatten(theme.ink(if dark { 0.18 } else { 0.10 }), theme.surface)
+        let opacity = match (dark, theme.is_frost()) {
+            (true, true) => 0.22,
+            (true, false) => 0.18,
+            (false, true) => 0.12,
+            (false, false) => 0.10,
+        };
+        crate::theme::flatten(theme.ink(opacity), theme.surface)
     }
 }
 
 fn switch_thumb_color(theme: &Theme) -> gpui::Hsla {
-    if theme.is_frost() {
-        gpui::white().opacity(if theme.appearance.is_dark() {
-            0.90
-        } else {
+    let white = if theme.is_frost() {
+        if theme.appearance.is_dark() {
             0.94
-        })
+        } else {
+            0.96
+        }
+    } else if theme.appearance.is_dark() {
+        0.96
     } else {
-        gpui::white()
-    }
+        1.0
+    };
+    crate::theme::flatten(gpui::white().opacity(white), theme.surface)
 }
 
 impl RenderOnce for SwitchVisual {
@@ -575,35 +651,35 @@ impl RenderOnce for SwitchVisual {
             window.request_animation_frame();
         }
         let dark = self.theme.appearance.is_dark();
-        let frosted = self.theme.is_frost();
         let track = switch_track_color(&self.theme, self.on);
         let track_element = div()
             .absolute()
             .top(px(6.0))
             .left_0()
-            .w(px(48.0))
+            .w(px(46.0))
             .h(px(24.0))
             .rounded_full()
             .bg(track)
             .border_1()
-            .border_color(if frosted {
-                gpui::white().opacity(if self.on { 0.42 } else { 0.30 })
-            } else if self.on {
-                gpui::white().opacity(0.28)
+            .border_color(if self.on {
+                crate::theme::flatten(
+                    gpui::white().opacity(if self.theme.is_frost() { 0.32 } else { 0.20 }),
+                    track,
+                )
             } else {
-                self.theme.border.opacity(0.7)
+                crate::theme::flatten(self.theme.border, track)
             })
             .child(
                 div()
                     .absolute()
                     .inset_0()
-                    .px(px(8.0))
+                    .px(px(7.0))
                     .flex()
                     .items_center()
                     .justify_between()
                     .child(
                         div()
-                            .size(px(10.0))
+                            .size(px(9.0))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -611,21 +687,21 @@ impl RenderOnce for SwitchVisual {
                             .child(
                                 div()
                                     .w(px(1.5))
-                                    .h(px(10.0))
+                                    .h(px(9.0))
                                     .rounded_full()
                                     .bg(gpui::white().opacity(0.96)),
                             ),
                     )
                     .child(
                         div()
-                            .size(px(10.0))
+                            .size(px(9.0))
                             .flex()
                             .items_center()
                             .justify_center()
                             .opacity(1.0 - position)
                             .child(
                                 div()
-                                    .size(px(9.0))
+                                    .size(px(8.0))
                                     .rounded_full()
                                     .border(px(1.25))
                                     .border_color(gpui::white().opacity(0.92)),
@@ -634,45 +710,42 @@ impl RenderOnce for SwitchVisual {
             );
         let thumb_element = div()
             .absolute()
-            .top(px(8.0))
-            .left(px(2.0 + 24.0 * position))
-            .size(px(20.0))
+            .top(px(9.0))
+            .left(px(3.0 + 22.0 * position))
+            .size(px(18.0))
             .rounded_full()
             .bg(switch_thumb_color(&self.theme))
             .border_1()
-            .border_color(if frosted {
-                gpui::white().opacity(0.68)
-            } else {
-                gpui::black().opacity(0.08)
-            })
-            .shadow(vec![
-                gpui::BoxShadow {
-                    color: gpui::black().opacity(if dark { 0.23 } else { 0.16 }),
-                    offset: gpui::point(px(0.0), px(1.0)),
-                    blur_radius: px(2.0),
-                    spread_radius: px(0.0),
-                    inset: false,
-                },
-                gpui::BoxShadow {
-                    color: gpui::black().opacity(if dark { 0.14 } else { 0.10 }),
-                    offset: gpui::point(px(0.0), px(3.0)),
-                    blur_radius: px(5.0),
-                    spread_radius: px(0.0),
-                    inset: false,
-                },
-            ]);
+            .border_color(crate::theme::flatten(
+                gpui::black().opacity(if dark { 0.16 } else { 0.10 }),
+                switch_thumb_color(&self.theme),
+            ));
         div()
             .relative()
-            .w(px(48.0))
+            .w(px(46.0))
             .h(px(36.0))
-            .child(crate::frost::frosted(12.0, 8.0, track_element))
-            .child(crate::frost::frosted(10.0, 6.0, thumb_element))
+            .child(track_element)
+            .child(thumb_element)
     }
 }
 
 #[cfg(test)]
 mod switch_tests {
     use super::*;
+
+    #[test]
+    fn dropdowns_stay_in_the_settings_content_pane() {
+        for width in [600.0, 1200.0] {
+            let viewport = gpui::size(px(width), px(700.0));
+            let modal = modal_bounds(viewport);
+            let limits = dropdown_limits(viewport);
+            let sidebar = if width < 680.0 { 72.0 } else { 216.0 };
+            assert!(limits.left() >= modal.left() + px(sidebar));
+            assert!(limits.right() <= modal.right());
+            assert!(limits.top() >= modal.top());
+            assert!(limits.bottom() <= modal.bottom());
+        }
+    }
 
     #[test]
     fn switch_material_keeps_dark_accent_and_opaque_fills() {
@@ -683,11 +756,13 @@ mod switch_tests {
         assert_eq!(switch_track_color(&dark, true), dark.accent);
         assert_eq!(switch_track_color(&dark, false).a, 1.0);
         assert_eq!(switch_thumb_color(&dark).a, 1.0);
+        let opaque_off = switch_track_color(&dark, false);
 
         dark.surface_treatment = SurfaceTreatment::Frosted;
-        assert!(switch_track_color(&dark, true).a < 1.0);
-        assert!(switch_track_color(&dark, false).a < 1.0);
-        assert!(switch_thumb_color(&dark).a < 1.0);
+        assert_eq!(switch_track_color(&dark, true), dark.accent);
+        assert_eq!(switch_track_color(&dark, false).a, 1.0);
+        assert_eq!(switch_thumb_color(&dark).a, 1.0);
+        assert_ne!(switch_track_color(&dark, false), opaque_off);
 
         let mut light = Theme::light();
         light.surface_treatment = SurfaceTreatment::Opaque;

@@ -416,61 +416,65 @@ impl AccountsPage {
 
         if self.device_menu.get().is_some() {
             let closing = self.device_menu.closing_since();
-            let menu = popover::popover_card(theme)
-                .w(px(220.0))
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.close_device_menu(cx);
-                }))
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(popover::menu_heading(theme, "Devices"))
-                .children(devices.into_iter().enumerate().map(|(ix, d)| {
-                    let is_active = Some(d.id.as_str()) == effective.as_deref();
-                    let is_local = local_id.as_deref() == Some(d.id.as_str());
-                    let glyph = platform_glyph(&d.platform);
-                    let name: SharedString = d.name.clone().into();
-                    let pick_local = is_local;
-                    let pick_id = d.id.clone();
-                    popover::menu_row(theme, is_active, format!("accounts-device-row-{ix}"))
-                        .id(("accounts-device-row", ix))
-                        .tab_index(0)
-                        .role(gpui::Role::Button)
-                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            // Local device = no passthrough (calls stay direct).
-                            let target = (!pick_local).then(|| pick_id.clone());
-                            this.set_target_device(target, cx);
-                        }))
-                        .child(
-                            icon(glyph)
-                                .size(px(16.0))
-                                .flex_none()
-                                .text_color(theme.text_muted),
-                        )
-                        .child(div().flex_1().min_w_0().truncate().child(name))
-                        .when(is_local, |el| {
-                            el.child(
-                                div()
-                                    .flex_none()
-                                    .text_size(crate::typography::ui_rems(10.5))
-                                    .text_color(theme.text_muted)
-                                    .child(SharedString::from("You")),
-                            )
-                        })
-                        .child(
-                            div()
-                                .size(px(6.0))
-                                .rounded_full()
-                                .flex_none()
-                                .bg(if is_local {
-                                    emerald
-                                } else {
-                                    crate::theme::ink(0.2)
-                                }),
-                        )
-                }))
-                .into_any_element();
+            let menu =
+                popover::popover_card(theme)
+                    .w(px(220.0))
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.close_device_menu(cx);
+                    }))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(popover::menu_heading(theme, "Devices"))
+                    .child(widgets::dropdown_rows(
+                        "accounts-device-list",
+                        devices.into_iter().enumerate().map(|(ix, d)| {
+                            let is_active = Some(d.id.as_str()) == effective.as_deref();
+                            let is_local = local_id.as_deref() == Some(d.id.as_str());
+                            let glyph = platform_glyph(&d.platform);
+                            let name: SharedString = d.name.clone().into();
+                            let pick_local = is_local;
+                            let pick_id = d.id.clone();
+                            popover::menu_row(theme, is_active, format!("accounts-device-row-{ix}"))
+                                .id(("accounts-device-row", ix))
+                                .tab_index(0)
+                                .role(gpui::Role::Button)
+                                .focus_visible(|s| {
+                                    s.border_2().border_color(theme.accent).opacity(1.0)
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    // Local device = no passthrough (calls stay direct).
+                                    let target = (!pick_local).then(|| pick_id.clone());
+                                    this.set_target_device(target, cx);
+                                }))
+                                .child(
+                                    icon(glyph)
+                                        .size(px(16.0))
+                                        .flex_none()
+                                        .text_color(theme.text_muted),
+                                )
+                                .child(div().flex_1().min_w_0().truncate().child(name))
+                                .when(is_local, |el| {
+                                    el.child(
+                                        div()
+                                            .flex_none()
+                                            .text_size(crate::typography::ui_rems(10.5))
+                                            .text_color(theme.text_muted)
+                                            .child(SharedString::from("You")),
+                                    )
+                                })
+                                .child(div().size(px(6.0)).rounded_full().flex_none().bg(
+                                    if is_local {
+                                        emerald
+                                    } else {
+                                        crate::theme::ink(0.2)
+                                    },
+                                ))
+                                .into_any_element()
+                        }),
+                        28.0,
+                        32.0,
+                    ));
             trigger = trigger.child(widgets::dropdown(
                 "accounts-device-menu",
                 menu,

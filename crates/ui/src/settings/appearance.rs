@@ -1700,6 +1700,7 @@ impl AppearancePage {
         theme: &Theme,
         availability: &FontAvailability,
         fixed: SharedString,
+        viewport: gpui::Size<gpui::Pixels>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let slug = kind.slug();
@@ -1781,14 +1782,15 @@ impl AppearancePage {
                         cx.notify();
                     }
                 }))
-                .child(
+                .child(popover::faded_menu_list(
+                    &scroll,
                     popover::menu_scroll_list(list_id, &scroll)
-                        .max_h(px(280.0))
+                        .max_h(px(widgets::dropdown_list_height(viewport, 36.0, 52.0)))
                         .flex()
                         .flex_col()
                         .gap(px(2.0))
                         .children(rows),
-                )
+                ))
                 .children(rail)
                 .into_any_element()
         };
@@ -1811,8 +1813,7 @@ impl AppearancePage {
                 theme,
                 self.font_search.clone().into_any_element(),
             ))
-            .child(list)
-            .into_any_element();
+            .child(list);
 
         let open = self.font_menu(kind).is_open();
         let closing = self.font_menu(kind).closing_since();
@@ -1927,8 +1928,12 @@ impl AppearancePage {
             .flex()
             .flex_col()
             .gap(px(2.0))
-            .children(rows)
-            .into_any_element();
+            .child(widgets::dropdown_rows(
+                format!("{slug}-font-size-list"),
+                rows,
+                36.0,
+                8.0,
+            ));
 
         let open = self.size_menu(kind).is_open();
         let closing = self.size_menu(kind).closing_since();
@@ -2094,7 +2099,8 @@ impl AppearancePage {
                 .flex_col()
                 .gap(px(2.0))
                 .child(popover::menu_heading(theme, heading))
-                .children(
+                .child(widgets::dropdown_rows(
+                    format!("appearance-theme-list-{appearance_kind:?}"),
                     registry
                         .variants_for(model_appearance(appearance_kind))
                         .enumerate()
@@ -2135,9 +2141,11 @@ impl AppearancePage {
                                         .text_color(theme.accent),
                                 )
                             })
+                            .into_any_element()
                         }),
-                )
-                .into_any_element();
+                    34.0,
+                    32.0,
+                ));
             trigger = trigger.child(widgets::dropdown(
                 SharedString::from(format!(
                     "appearance-{}-theme-menu",
@@ -3343,12 +3351,30 @@ impl Render for AppearancePage {
             .render_import_dialog(window.viewport_size(), &theme, window, cx)
             .or_else(|| self.render_review_dialog(window.viewport_size(), &theme, cx));
 
-        let ui_picker =
-            self.render_font_picker(FontKind::Ui, &theme, &availability, fixed.clone(), cx);
-        let terminal_picker =
-            self.render_font_picker(FontKind::Terminal, &theme, &availability, fixed.clone(), cx);
-        let code_picker =
-            self.render_font_picker(FontKind::Code, &theme, &availability, fixed.clone(), cx);
+        let ui_picker = self.render_font_picker(
+            FontKind::Ui,
+            &theme,
+            &availability,
+            fixed.clone(),
+            window.viewport_size(),
+            cx,
+        );
+        let terminal_picker = self.render_font_picker(
+            FontKind::Terminal,
+            &theme,
+            &availability,
+            fixed.clone(),
+            window.viewport_size(),
+            cx,
+        );
+        let code_picker = self.render_font_picker(
+            FontKind::Code,
+            &theme,
+            &availability,
+            fixed.clone(),
+            window.viewport_size(),
+            cx,
+        );
         let ui_size = self.render_size_picker(FontKind::Ui, &theme, fixed.clone(), cx);
         let terminal_size = self.render_size_picker(FontKind::Terminal, &theme, fixed.clone(), cx);
         let code_size = self.render_size_picker(FontKind::Code, &theme, fixed.clone(), cx);

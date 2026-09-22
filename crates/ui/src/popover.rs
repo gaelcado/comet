@@ -856,6 +856,7 @@ fn modal_with(
             .child(
                 div()
                     .occlude()
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                     .w(viewport.width)
                     .h(viewport.height)
                     .bg(scrim_alpha(scrim))
