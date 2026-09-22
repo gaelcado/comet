@@ -21,13 +21,6 @@ impl HarnessesPage {
         cx.notify();
     }
 
-    fn reset_completion(&mut self, harness: HarnessId, cx: &mut Context<Self>) {
-        settings::update(settings::SavePolicy::Immediate, cx, |settings| {
-            settings.skill_completion_by_harness.remove(&harness);
-        });
-        cx.notify();
-    }
-
     pub(super) fn render_completion_for(
         &self,
         harness: HarnessId,
@@ -36,28 +29,6 @@ impl HarnessesPage {
     ) -> AnyElement {
         let current = settings::current(cx);
         let preferences = current.skill_completion(harness);
-        let customized = current.skill_completion_by_harness.contains_key(&harness);
-        let header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.0))
-            .child(widgets::field_label(theme, "Skills & commands"))
-            .child(div().flex_1())
-            .when(customized, |header| {
-                header.child(
-                    widgets::ghost_action(theme)
-                        .id(format!("reset-completion-{harness:?}"))
-                        .role(gpui::Role::Button)
-                        .aria_label("Restore agent completion defaults")
-                        .tab_index(0)
-                        .focus_visible(|s| s.border_2().border_color(theme.accent))
-                        .on_click(
-                            cx.listener(move |page, _, _, cx| page.reset_completion(harness, cx)),
-                        )
-                        .child("Reset"),
-                )
-            });
         let rows = [
             (true, "Use $ for skills", preferences.dollar),
             (
@@ -71,11 +42,11 @@ impl HarnessesPage {
         .map(|(ix, (dollar, label, enabled))| {
             div()
                 .id(format!("completion-{harness:?}-{dollar}"))
-                .min_h(px(44.0))
-                .px(px(12.0))
-                .py(px(6.0))
+                .min_h(px(42.0))
+                .px(px(4.0))
+                .py(px(7.0))
                 .when(ix > 0, |row| {
-                    row.border_t_1().border_color(theme.border.opacity(0.65))
+                    row.border_t_1().border_color(theme.border.opacity(0.5))
                 })
                 .flex()
                 .flex_row()
@@ -107,20 +78,7 @@ impl HarnessesPage {
                     format!("completion-switch-{harness:?}-{dollar}"),
                 ))
         });
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(header)
-            .child(
-                div()
-                    .rounded(px(10.0))
-                    .border_1()
-                    .border_color(theme.border.opacity(0.7))
-                    .overflow_hidden()
-                    .children(rows),
-            )
-            .into_any_element()
+        div().flex().flex_col().children(rows).into_any_element()
     }
 }
 
@@ -129,7 +87,7 @@ mod completion_tests {
     use super::*;
 
     #[gpui::test]
-    fn completion_preferences_save_and_reset_one_agent(cx: &mut gpui::TestAppContext) {
+    fn completion_preferences_save_independently_per_agent(cx: &mut gpui::TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
         cx.update(|cx| settings::init(Default::default(), dir.path(), cx));
         let state = cx.new(|_| crate::state::AppState::new());
@@ -147,14 +105,8 @@ mod completion_tests {
                 .separate_from_slash
         );
         assert!(loaded.skill_completion(HarnessId::Opencode).dollar);
-        page.update(cx, |page, cx| {
-            page.reset_completion(HarnessId::ClaudeCode, cx)
-        });
-        let reset = settings::UiSettings::load(dir.path());
-        assert!(!reset.skill_completion(HarnessId::ClaudeCode).dollar);
-        assert!(reset.skill_completion(HarnessId::Opencode).dollar);
         assert!(
-            !reset
+            loaded
                 .skill_completion_by_harness
                 .contains_key(&HarnessId::ClaudeCode)
         );

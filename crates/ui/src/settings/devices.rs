@@ -329,60 +329,63 @@ impl Render for DevicesPage {
                             .into_any_element(),
                     );
                 }
-                // "Added {time ago}" — always present (zeron settings.devices.tsx).
-                if let Some(created) = device.created_at {
-                    meta.push(
-                        div()
-                            .child(SharedString::from(format!(
-                                "Added {}",
-                                format_last_seen(Some(created), now)
-                            )))
-                            .into_any_element(),
-                    );
-                }
-                meta.push(
-                    div()
-                        .id(("device-id", ix))
-                        .aria_label(format!("Copy device ID {}", device.id))
-                        .font_family(theme.font_mono.clone())
-                        .text_size(crate::typography::ui_rems(10.5))
-                        .text_color(if id_copied {
-                            theme.success_muted.opacity(0.9)
-                        } else {
-                            theme.text_muted
-                        })
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(theme.text_muted))
-                        .tab_index(0)
-                        .role(gpui::Role::Button)
-                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.copy_id(copy_id.clone(), cx);
-                        }))
-                        .child(SharedString::from(if id_copied {
-                            "Copied".to_string()
-                        } else {
-                            short_id(&device.id)
-                        }))
-                        .into_any_element(),
-                );
+                let id_button = div()
+                    .id(("device-id", ix))
+                    .aria_label(format!("Copy device ID {}", device.id))
+                    .px(px(8.0))
+                    .py(px(5.0))
+                    .rounded(px(7.0))
+                    .bg(theme.ink(0.035))
+                    .font_family(theme.font_mono.clone())
+                    .text_size(crate::typography::ui_rems(10.5))
+                    .text_color(if id_copied {
+                        theme.success_muted.opacity(0.9)
+                    } else {
+                        theme.text_muted
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text))
+                    .tab_index(0)
+                    .role(gpui::Role::Button)
+                    .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.copy_id(copy_id.clone(), cx);
+                    }))
+                    .child(SharedString::from(if id_copied {
+                        "Copied".to_string()
+                    } else {
+                        format!("ID · {}", short_id(&device.id))
+                    }));
 
                 div()
-                    .p(px(16.0))
+                    .p(px(14.0))
                     .rounded(px(12.0))
                     .bg(crate::theme::wash(0.035))
                     .border_1()
                     .border_color(theme.border)
                     .flex()
                     .flex_col()
-                    .gap(px(12.0))
+                    .gap(px(10.0))
                     .h_full()
                     .child(
                         div()
                             .flex()
-                            .items_center()
-                            .justify_between()
+                            .items_start()
+                            .gap(px(12.0))
                             .child(tile)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(2.0))
+                                    .child(
+                                        widgets::row_title(&theme, device.name.clone())
+                                            .text_size(crate::typography::ui_rems(14.0)),
+                                    )
+                                    .child(widgets::meta_line(&theme, meta)),
+                            )
                             .child(widgets::badge(
                                 &theme,
                                 if is_local {
@@ -396,40 +399,37 @@ impl Render for DevicesPage {
                     )
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
+                            .border_t_1()
+                            .border_color(theme.border.opacity(0.55))
+                            .pt(px(8.0))
                             .flex()
-                            .flex_col()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(8.0))
+                            .child(id_button)
                             .child(
-                                widgets::row_title(&theme, device.name.clone())
-                                    .text_size(crate::typography::ui_rems(15.0)),
-                            )
-                            .child(widgets::meta_line(&theme, meta)),
-                    )
-                    .child(
-                        // `opacity-70 hover:opacity-100` (zeron: also rises on
-                        // row hover — gpui has no group-hover, so the button's
-                        // own hover carries the reveal).
-                        widgets::ghost_action(&theme)
-                            .id(("device-rename", ix))
-                            .opacity(0.7)
-                            .hover(|s| {
-                                s.opacity(1.0)
-                                    .bg(crate::theme::ink(0.06))
-                                    .text_color(theme.text)
-                            })
-                            .tab_index(0)
-                            .role(gpui::Role::Button)
-                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_rename(rename_id.clone(), rename_name.clone(), cx);
-                            }))
-                            .child(
-                                crate::icons::icon(crate::icons::PEN)
-                                    .size(px(14.0))
-                                    .text_color(theme.text_muted),
-                            )
-                            .child(SharedString::from("Rename")),
+                                widgets::ghost_action(&theme)
+                                    .id(("device-rename", ix))
+                                    .hover(|s| widgets::ghost_hover(&theme, s))
+                                    .tab_index(0)
+                                    .role(gpui::Role::Button)
+                                    .focus_visible(|s| {
+                                        s.border_2().border_color(theme.accent).opacity(1.0)
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.open_rename(
+                                            rename_id.clone(),
+                                            rename_name.clone(),
+                                            cx,
+                                        );
+                                    }))
+                                    .child(
+                                        crate::icons::icon(crate::icons::PEN)
+                                            .size(px(14.0))
+                                            .text_color(theme.text_muted),
+                                    )
+                                    .child(SharedString::from("Rename")),
+                            ),
                     )
                     .into_any_element()
             })
