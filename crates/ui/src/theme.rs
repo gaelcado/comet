@@ -1005,7 +1005,7 @@ impl Theme {
         // against solid black raised this to 85–100%, effectively selecting
         // opaque material even when the user explicitly chose frost.
         if matches!(self.appearance, Appearance::Light) {
-            return self.surface_overlay.opacity(0.30);
+            return self.surface_overlay.opacity(0.45);
         }
         self.surface_overlay
             .opacity(self.contrast_checked_tint_alpha(
@@ -1055,7 +1055,7 @@ impl Theme {
             return tint;
         }
         if matches!(self.appearance, Appearance::Light) {
-            return tint.opacity(0.20);
+            return tint.opacity(0.35);
         }
         let window = flatten(self.glass(), self.adverse_backdrop());
         self.input_bg.opacity(self.contrast_checked_tint_alpha(
@@ -2678,8 +2678,8 @@ mod tests {
             assert!(light.is_frost());
             assert!(dark.glass_overlay().a < 1.0);
             assert!(light.glass_overlay().a < 1.0);
-            assert_eq!(light.glass_overlay().a, 0.30);
-            assert_eq!(light.input_glass_bg().a, 0.20);
+            assert_eq!(light.glass_overlay().a, 0.45);
+            assert_eq!(light.input_glass_bg().a, 0.35);
             assert_eq!(crate::popover::surface_bg(&dark).a, 0.15);
             assert_eq!(dark.for_popup().text_muted, dark.text.opacity(0.64));
             assert_eq!(dark.for_popup().text_faint, dark.text.opacity(0.48));
@@ -2814,9 +2814,9 @@ mod tests {
             }
             let popup = theme.for_popup();
             if matches!(theme.appearance, Appearance::Light) {
-                assert_eq!(crate::popover::surface_bg(&theme).a, 0.30);
-                assert_eq!(crate::popover::surface_bg(&popup).a, 0.30);
-                assert_eq!(theme.input_glass_bg().a, 0.20);
+                assert_eq!(crate::popover::surface_bg(&theme).a, 0.45);
+                assert_eq!(crate::popover::surface_bg(&popup).a, 0.45);
+                assert_eq!(theme.input_glass_bg().a, 0.35);
             } else {
                 assert_eq!(crate::popover::surface_bg(&theme).a, 0.15);
                 assert_eq!(crate::popover::surface_bg(&popup).a, 0.15);
