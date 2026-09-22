@@ -147,7 +147,7 @@ struct QueuePanel: View {
                 Button("Remove", zeronIcon: "trash", role: .destructive) { onAction(item, .remove) }
                     .disabled(!supportsActions || pending)
             } label: {
-                ZeronIcon(systemName: "ellipsis").iconSize(13)
+                ZeronIcon(systemName: "ellipsis").iconSize(14)
                     .foregroundStyle(Theme.textMuted).frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
@@ -163,7 +163,7 @@ struct QueuePanel: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            ZeronIcon(systemName: symbol).iconSize(11)
+            ZeronIcon(systemName: symbol).iconSize(14)
                 .foregroundStyle(enabled ? tone : Theme.textFaint.opacity(0.4))
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())

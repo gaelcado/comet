@@ -103,13 +103,15 @@ impl Element for Icon {
                     window.request_animation_frame();
                 }
             }
-        } else if bounds.size.width <= px(16.) && bounds.size.height <= px(16.) {
-            if let Some(name) = self.path.strip_prefix("custom-icons/") {
+        }
+        // Apply the same optical master to static endpoints and animated poses.
+        if bounds.size.width <= px(16.) && bounds.size.height <= px(16.) {
+            if let Some(name) = path.strip_prefix("custom-icons/") {
                 path = format!("custom-icons/small/{name}").into();
+            } else if let Some(frame) = path.strip_prefix("icon-motion/") {
+                path = format!("icon-motion/small/{frame}").into();
             }
         }
-        // Stateful icons retain the standard master at rest, avoiding an optical
-        // geometry jump at either end. Static icons select optical masters above.
         self.svg = std::mem::replace(&mut self.svg, svg()).path(path);
         self.svg
             .paint(id, inspector, bounds, layout, hitbox, window, cx);

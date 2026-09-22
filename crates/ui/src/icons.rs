@@ -89,7 +89,7 @@ mod tests {
             }
         }
         for m in transition::transitions() {
-            for frame in &m.frames {
+            for frame in m.frames.iter().chain(&m.small_frames) {
                 let render = renderer
                     .render_single_frame(frame.as_bytes(), 2.0 / 3.0)
                     .unwrap();

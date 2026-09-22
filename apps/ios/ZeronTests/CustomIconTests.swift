@@ -17,7 +17,8 @@ final class CustomIconTests: XCTestCase {
             XCTAssertNotNil(library.icons[motion.from])
             XCTAssertNotNil(library.icons[motion.to])
             XCTAssertEqual(motion.frames.count, 97)
-            for frame in motion.frames {
+            XCTAssertEqual(motion.smallFrames.count, 97)
+            for frame in motion.frames + motion.smallFrames {
                 XCTAssertFalse(frame.isEmpty)
                 for contour in frame {
                     XCTAssertFalse(SVGPathParser.path(from: contour.d).isEmpty)

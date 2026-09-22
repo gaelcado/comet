@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import re
+import xml.etree.ElementTree as ET
 
 root = Path(__file__).resolve().parent
 repo = root.parent.parent
@@ -16,11 +17,26 @@ assert len(payload["motions"]) == len(json.loads((root / "motions.json").read_te
 for motion in payload["motions"]:
     assert motion["from"] in names and motion["to"] in names
     assert len(motion["frames"]) == 97
+    assert len(motion["smallFrames"]) == 97
 for icon in catalog:
     for source, destination in [("svg", ""), ("svg-small", "small/")]:
         assert (root / source / (icon["name"] + ".svg")).read_bytes() == (
             repo / "crates/ui/assets/custom-icons" / (destination + icon["name"] + ".svg")
         ).read_bytes(), icon["name"]
+
+# Every optical motion endpoint must be the exact static drawing it replaces.
+native_bank = json.loads((repo / "crates/ui/assets/icon-motions.json").read_text())
+for motion in native_bank:
+    for field, prefix, stroke in [("frames", "", "1.5"), ("smallFrames", "small/", "1.75")]:
+        frames = motion[field]
+        assert len(frames) == 97
+        for frame in frames:
+            assert ET.fromstring(frame).attrib["stroke-width"] == stroke
+        for index, name in [(0, motion["from"]), (96, motion["to"])]:
+            static = ET.parse(repo / "crates/ui/assets" / name.replace("custom-icons/", "custom-icons/" + prefix))
+            assert [p.attrib["d"] for p in ET.fromstring(frames[index])] == [
+                p.attrib["d"] for p in static.getroot()
+            ], (name, field, "optical endpoint mismatch")
 
 calls = 0
 for path in (repo / "apps/ios/Zeron").rglob("*.swift"):

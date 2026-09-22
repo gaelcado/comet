@@ -75,11 +75,11 @@ private struct CustomIconCanvas: View, Animatable {
     var body: some View {
         Canvas { context, bounds in
             let library = CustomIconLibrary.shared
-            let stateful = library.motionNames.contains(name)
-            let small = size <= 16 && !stateful
+            let small = size <= 16
             let paths: [CustomIconLibrary.Contour]
             if let motion {
-                paths = library.motions[motion].frames[Int((min(1, max(0, progress)) * 96).rounded())]
+                let bank = library.motions[motion]
+                paths = (small ? bank.smallFrames : bank.frames)[Int((min(1, max(0, progress)) * 96).rounded())]
             } else {
                 guard let glyph = library.icons[name] else { return }
                 paths = small ? glyph.smallPaths : glyph.paths
@@ -121,6 +121,7 @@ struct CustomIconLibrary {
         let to: String
         let duration: Double
         let frames: [[Contour]]
+        let smallFrames: [[Contour]]
     }
     private struct Payload: Decodable {
         let icons: [Glyph]

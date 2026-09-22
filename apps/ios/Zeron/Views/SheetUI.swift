@@ -87,7 +87,7 @@ struct SheetLinkRow: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 if let systemImage {
-                    ZeronIcon(systemName: systemImage).iconSize(15)
+                    ZeronIcon(systemName: systemImage).iconSize(16)
                         .foregroundStyle(Theme.textMuted)
                         .frame(width: 22)
                 }

@@ -9,6 +9,8 @@ pub(super) struct Transition {
     pub to: String,
     pub duration: f64,
     pub frames: Vec<String>,
+    #[serde(rename = "smallFrames")]
+    pub small_frames: Vec<String>,
 }
 pub(super) fn transitions() -> &'static [Transition] {
     static BANK: OnceLock<Vec<Transition>> = OnceLock::new();
@@ -18,13 +20,17 @@ pub(super) fn transitions() -> &'static [Transition] {
     })
 }
 pub(super) fn asset(key: &str) -> Option<Cow<'static, [u8]>> {
+    let small = key.starts_with("small/");
+    let key = key.strip_prefix("small/").unwrap_or(key);
     let (motion, pose) = key.strip_suffix(".svg")?.split_once('/')?;
+    let transition = transitions().get(motion.parse::<usize>().ok()?)?;
+    let frames = if small {
+        &transition.small_frames
+    } else {
+        &transition.frames
+    };
     Some(Cow::Borrowed(
-        transitions()
-            .get(motion.parse::<usize>().ok()?)?
-            .frames
-            .get(pose.parse::<usize>().ok()?)?
-            .as_bytes(),
+        frames.get(pose.parse::<usize>().ok()?)?.as_bytes(),
     ))
 }
 
@@ -142,9 +148,17 @@ mod tests {
         assert_eq!(transitions().len(), 37);
         for (i, m) in transitions().iter().enumerate() {
             assert_eq!(m.frames.len(), 97);
+            assert_eq!(m.small_frames.len(), 97);
             for j in 0..97 {
                 let bytes = asset(&format!("{i}/{j}.svg")).unwrap();
                 usvg::Tree::from_data(&bytes, &usvg::Options::default()).unwrap();
+                let small = asset(&format!("small/{i}/{j}.svg")).unwrap();
+                usvg::Tree::from_data(&small, &usvg::Options::default()).unwrap();
+                assert!(
+                    std::str::from_utf8(&small)
+                        .unwrap()
+                        .contains("stroke-width=\"1.75\"")
+                );
             }
         }
         assert!(asset("0/97.svg").is_none());

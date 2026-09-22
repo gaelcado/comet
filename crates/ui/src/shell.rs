@@ -9095,7 +9095,7 @@ impl Shell {
                 .child(
                     icon(icon_path)
                         .morph("state-glyph")
-                        .size(px(15.0))
+                        .size(px(16.0))
                         .flex_none()
                         .text_color(muted),
                 )
@@ -9632,7 +9632,7 @@ impl Shell {
                                 }))
                                 .child(
                                     icon(icons::GLOBE)
-                                        .size(px(13.0))
+                                        .size(px(16.0))
                                         .text_color(theme.text_muted),
                                 )
                                 .child(SharedString::from("Browser")),
@@ -9646,7 +9646,7 @@ impl Shell {
                                 }))
                                 .child(
                                     icon(icons::TERMINAL)
-                                        .size(px(13.0))
+                                        .size(px(16.0))
                                         .text_color(theme.text_muted),
                                 )
                                 .child(SharedString::from("Terminal")),
@@ -9661,7 +9661,7 @@ impl Shell {
                                     }))
                                     .child(
                                         icon(icons::LIST)
-                                            .size(px(13.0))
+                                            .size(px(16.0))
                                             .text_color(theme.text_muted),
                                     )
                                     .child(SharedString::from("Diffs")),
@@ -9675,7 +9675,7 @@ impl Shell {
                                     }))
                                     .child(
                                         icon(icons::GIT_BRANCH)
-                                            .size(px(13.0))
+                                            .size(px(16.0))
                                             .text_color(theme.text_muted),
                                     )
                                     .child(SharedString::from("History")),
