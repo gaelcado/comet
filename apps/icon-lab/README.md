@@ -1,39 +1,39 @@
-# Zeron icon atelier · Study 02
+# Zeron icon atelier · Study 03
 
-135 original control glyphs, 36 state transitions, a preserved Study 01 design comparison, and separate small-size SVG exports. Gallery first: no native app source has been changed.
+135 original control glyphs, two optical sizes, and 36 reversible state transitions. The standalone gallery lives in `apps/icon-lab` on `design/custom-icon-library`. Native integration is a separate step.
 
-Open `index.html` directly, or serve this directory on localhost. No dependency installation or build is needed to view the gallery. Use **Refinements** for before/after comparisons, **The family** for the full inventory, and **In motion** for reversible playback and static scrubbing.
+Open `index.html`, or run `python3 -m http.server 8767 --bind 127.0.0.1` from this directory. Open http://localhost:8767. No dependencies are needed to view the gallery. **Refinements** compares Study 02 with 03; **The family** includes search, sizing and SVG exports; **In motion** supports playback, reversal and scrubbing; **Coverage** maps existing source names.
 
-## Design direction
+## Drawings
 
-Clipped shoulders, continuous corners, generous open counters, and deliberate contour breaks. The Zeron workspace tile, robot, folders, documents and skills wand share the clearest family traits. Navigation and universal controls keep familiar silhouettes. Round caps and a 1.5-unit stroke tie them together on a 24-unit canvas.
+Continuous corners, clipped shoulders, open counters and deliberate contour breaks form the family. All geometry is custom authored; the Central Icons reference informed the restrained line direction without downloading or tracing reference SVGs. Existing brand and language identities retain their artwork and licenses.
 
-Specific defects corrected include indistinguishable closed panel states, the accidental A project symbol, the closed-looking open folder, ambiguous file-style badge, crowded file-data marks, overprinted muted shapes, doubled save edges, and overly heavy grip dots. `CHANGES.md` lists each refined glyph and its reason.
+Study 03 keeps the closed panel frames and gives open rails a short, inset travel. Slider tracks clear their circular knobs. Git states share node sizes and route anchors; draft dots extend into the ready route. Folder outlines, the wrench, lint, refresh, archive and muted controls receive further spacing corrections.
 
-The supplied Central Icons reference informed the original restrained line direction. All geometry here is custom-authored. No reference SVG artwork was downloaded or traced. Identity assets retain their existing files and licenses.
-
-## Optical sizes
-
-`svg/` contains the standard 24-unit drawings at a 1.5-unit stroke. `svg-small/` contains optical variants for 12–16px use, using a 1.75-unit stroke and simplified details where appropriate. Filled grip dots are separately sized to survive small rendering. The small files retain a 24-unit coordinate system; these are optical variants, not pixel-hinted 16-unit masters. The gallery automatically uses the small artwork at 16px and below. The inspector exports either version explicitly.
+`glyphs.json` is the editable source. `svg/` uses a 1.5-unit stroke on a 24-unit canvas. `svg-small/` provides 1.75-unit optical variants and simplified details for 12–16px. These are optical variants, not pixel-hinted masters. The gallery uses them at 16px and below; its inspector exports either size.
 
 ## Motion
 
-`motion-geometry.js` is a pure geometry module, shared by the interactive gallery and rendered audit sheets. Matched contours use exact cubic Bézier interpolation with continuous De Casteljau subdivision, contour winding/start alignment, and exact original endpoints. Shared shapes are matched before contour indices. No uniform polyline resampling is used for motion.
+`motions.json` declares contour pairings and rigid rotation groups. `motion-geometry.js` produces exact SVG endpoints, matches cubic curves with De Casteljau subdivision, and preserves common frames. Arrows rotate as intact groups. Copy becomes a check, diff rows become an inset divider, and the eye closes along its lid. Unrelated contours use stroke erase/draw handoffs, labelled separately in the gallery.
 
-Chevrons and sort controls rotate rigidly, avoiding flattened intermediate silhouettes. The eye closes anatomically. Unrelated symbols exchange visibility with a restrained 6% scale change while common outlines stay fixed; those are labelled stroke handoffs rather than geometric morphs. Both paths remain readable during the exchange. Filled stars and pins interpolate fill opacity.
+`motion-state.js` uses critical damping and retains position and velocity when interrupted. Reduced motion snaps to the destination; hidden views stop their animation frames. Scrubbing intentionally exposes static intermediate poses. The theme button uses the same appearance morph.
 
-All changes are interruptible from the current pose. OS reduced motion and the manual override snap to the destination. Hidden views stop scheduling animation frames. The timeline deliberately shows static poses, including under reduced motion. No autoplay, bounce, or animated theme colors. Native GPUI/SwiftUI integration remains a separate step.
+## Build and verify
 
-## Sources and reproduction
+Run from this directory:
 
-- `build.py` + `polish.py`: original drawings, refinements, registry and symbol inventory. The source repository resolves to sibling `comet/`.
-- `study-01.json`: the explicit initial design baseline for comparison.
-- `catalog.json`, `inventory.json`, `INVENTORY.md`, `morphs.json`: geometry, mappings and state contexts.
-- `motion-geometry.js`, `gallery.js`, `gallery.css`, `index.html`, `data.js`: standalone gallery.
-- `verify.cjs`: geometry, endpoint and shared-contour regression checks.
-- `render-sheets.cjs`: full contact sheet, selected comparisons and all 36 transitions at five poses.
-- `package.py`: optical SVG exports, rendered sheets, verification and downloadable archive.
+```sh
+python3 build.py
+node verify.cjs
+python3 package.py
+```
 
-Rebuild with `python3 build.py`, then `python3 package.py`. Packaging needs Node and macOS `sips`; viewing needs only a browser.
+Python and Node use only their standard libraries. Packaging rebuilds and verifies before producing `zeron-icons.zip`, including the gallery, editable sources and all 270 SVGs. The generated archive is ignored by Git. To generate static audit sheets, run `node render-sheets.cjs`; on macOS, rasterize an individual sheet with `sips -s format png contact-sheet.svg --out contact-sheet.png`.
 
-The inventory is a source scan, not a runtime accessibility crawl. Current SHA and counts are recorded in `inventory.json`. All registered desktop controls, inspected iOS symbol literals/dispatch and contribution additions have targets. Provider logos, file/language identities, user-uploaded art and marketing artwork are outside this original-control redesign.
+Verification covers both optical exports, stroke bounds, all 36 transitions at 101 poses, exact endpoints, shared contours, inset panel rails, subdivision fidelity, reversal continuity and frame-rate independence. Visual quality still requires inspection; these checks do not establish every possible rendering is defect-free.
+
+`study-01.json` and `study-02.json` preserve comparison baselines. Generated `catalog.json`, `morphs.json` and `data.js` feed the gallery. Edit the canonical sources and rebuild instead of editing generated SVGs.
+
+## Coverage
+
+`inventory.json` records the source SHA and mappings. To rescan the containing Zeron repository and available contribution branches, use `python3 build.py --refresh-inventory`. This is a source scan of registered desktop assets, qualified Rust references, SwiftUI symbol literals and tool dispatch, not a runtime accessibility crawl. Dynamic image names need an integration audit. Provider logos, file/language identities, uploaded art and website marketing artwork are outside this control family.

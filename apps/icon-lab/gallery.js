@@ -11,7 +11,7 @@ function svg(name,size=24,original=false){
 function exportSVG(name){return svg(name).replace(/ aria-hidden="true"/,'').replace(/ style="[^"]*"/,'').replace('><path','>\n  <path').replaceAll('/><path','/>\n  <path').replace('</svg>','\n</svg>')+'\n';}
 // A single point correspondence per contour, retained throughout the transition.
 // Bézier segments are matched by shared shape, winding and starting corner.
-// Contours never get joined to unrelated subpaths. Missing parts collapse locally.
+// Browser path sampling below is diagnostic only; motion uses the shared Bézier engine.
 const samplingSVG=document.createElementNS(NS,'svg');
 samplingSVG.setAttribute('width','0');samplingSVG.setAttribute('height','0');
 samplingSVG.style.cssText='position:absolute;overflow:hidden;pointer-events:none';
@@ -22,7 +22,6 @@ function sample(p){
  const el=document.createElementNS(NS,'path');el.setAttribute('d',p.d);samplingSVG.append(el);
  const length=el.getTotalLength(); const points=Array.from({length:97},(_,i)=>{const q=el.getPointAtLength(length*i/96);return [q.x,q.y]});el.remove();samples.set(p.d,points);return points;
 }
-function collapsed(points){let x=0,y=0;points.forEach(p=>{x+=p[0];y+=p[1]});return points.map(()=>[x/points.length,y/points.length]);}
 const media=matchMedia('(prefers-reduced-motion: reduce)');
 let manualReduce=false,speed=1;
 const reduced=()=>media.matches||manualReduce;
@@ -32,7 +31,8 @@ class Morph {
   this.host=host;this.m=m;this.callback=callback;this.value=0;this.target=0;this.frame=0;
   this.a=byName.get(m.fromIcon).paths;this.b=byName.get(m.toIcon).paths;
   host.innerHTML=svg(m.fromIcon);this.svg=host.querySelector('svg');this.svg.removeAttribute('style');
-  this.plan=ZeronGeometry.plan(this.a,this.b,m.mode);
+  this.plan=ZeronGeometry.plan(this.a,this.b,m);
+  this.motion=new ZeronMotionState(0);
   controllers.push(this);this.draw(0);
  }
  draw(t){
@@ -47,15 +47,14 @@ class Morph {
   });
   this.callback(t,this.target);
  }
- set(t){cancelAnimationFrame(this.frame);this.target=t;this.draw(t);}
+ set(t){cancelAnimationFrame(this.frame);this.motion.snap(t);this.target=t;this.draw(t);}
  go(t){
   cancelAnimationFrame(this.frame);this.target=t;
-  if(reduced()||document.hidden){this.draw(t);return;}
-  const from=this.value,begin=performance.now(),duration=this.m.duration/speed*Math.max(.25,Math.abs(t-from));
+  if(reduced()||document.hidden){this.set(t);return;}
+  this.motion.retarget(t,performance.now(),this.m.duration,speed);
   const tick=now=>{
-   const p=Math.min(1,(now-begin)/duration),ease=1-Math.pow(1-p,3);
-   this.draw(from+(t-from)*ease);
-   if(p<1)this.frame=requestAnimationFrame(tick);else this.draw(t);
+   this.draw(this.motion.sample(now,this.m.duration,speed));
+   if(this.motion.active)this.frame=requestAnimationFrame(tick);
   };
   this.frame=requestAnimationFrame(tick);
  }
@@ -77,8 +76,9 @@ for(const title of ['Appearance','Left sidebar','Run control']){
  btn.addEventListener('click',()=>ctrl.toggle());heroControllers.push(ctrl);
 }
 $('#hero-replay').addEventListener('click',()=>{const to=heroControllers[0].target===1?0:1;heroControllers.forEach(c=>c.go(to))});
-$('#theme').innerHTML=svg('moon',18);$('#theme').addEventListener('click',()=>{
- const dark=document.body.classList.toggle('dark');$('#theme').innerHTML=svg(dark?'sun':'moon',18);$('#theme').setAttribute('aria-label',`Switch to ${dark?'light':'dark'} background`);
+const themeMotion=new Morph($('#theme'),morphs.find(m=>m.title==='Appearance'));themeMotion.set(1);
+$('#theme').addEventListener('click',()=>{
+ const dark=document.body.classList.toggle('dark');themeMotion.go(dark?0:1);$('#theme').setAttribute('aria-label',`Switch to ${dark?'light':'dark'} background`);
 });
 $('#search-icon').innerHTML=svg('search',17);
 $('#library-count').textContent=icons.length;$('#motion-count').textContent=morphs.length;$('#icon-total').textContent=icons.length;$('#motion-total').textContent=morphs.length;
@@ -103,17 +103,19 @@ document.addEventListener('keydown',e=>{
  if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)&&!$('#inspector').open){e.preventDefault();$('[data-view="library"]').click();$('#search').focus()}
 });
 const motionControllers=[];
+let groupPlayback=false;
 for(const m of morphs){
  const btn=document.createElement('button');btn.className='motion-card';btn.setAttribute('aria-label',`${m.title}: ${m.fromIcon} to ${m.toIcon}`);btn.setAttribute('aria-pressed','false');
- btn.innerHTML=`<div class="endpoints">${svg(m.fromIcon,16)}<span>→</span>${svg(m.toIcon,16)}</div><span class="duration">${m.duration} ms</span><div class="morph-display"></div><h3>${safe(m.title)}</h3><p>${safe(m.context)}<span class="motion-method">${m.mode==='staged'?'Shared contours + stroke handoff':m.mode==='eyelid'?'Anatomical eyelid closure':m.mode==='rotation'?'Rigid rotation':'Matched Bézier morph'}</span></p><div class="card-meta"><span class="card-state">${safe(m.fromIcon)}</span><span>Click to morph ↗</span></div>`;
+ btn.innerHTML=`<div class="endpoints">${svg(m.fromIcon,16)}<span>→</span>${svg(m.toIcon,16)}</div><span class="duration">${m.duration} ms</span><div class="morph-display"></div><h3>${safe(m.title)}</h3><p>${safe(m.context)}<span class="motion-method">${m.mode==='handoff'?'Stroke erase + draw':m.mode==='eyelid'?'Eyelid closure':m.mode==='rotation'?'Rigid rotation':m.mode==='copy'?'Sheet unfolds into check':m.mode==='diff'?'Rows become a divider':'Paired contour morph'}</span></p><div class="card-meta"><span class="card-state">${safe(m.fromIcon)}</span><span>Click to morph ↗</span></div>`;
  $('#motion-grid').append(btn);
  const ctrl=new Morph(btn.querySelector('.morph-display'),m,(t,target)=>{
   btn.querySelector('.card-state').textContent=t===0?m.fromIcon:t===1?m.toIcon:`${Math.round(t*100)}% → ${target===1?m.toIcon:m.fromIcon}`;
   btn.setAttribute('aria-pressed',String(target===1));
- });btn.addEventListener('click',()=>ctrl.toggle());motionControllers.push(ctrl);
+  if(groupPlayback&&motionControllers.length){const avg=motionControllers.reduce((n,c)=>n+c.value,0)/motionControllers.length;$('#timeline').value=Math.round(avg*100);$('#timeline-value').textContent=Math.round(avg*100)+'%'}
+ });btn.addEventListener('click',()=>{groupPlayback=false;ctrl.toggle()});motionControllers.push(ctrl);
 }
-$('#play-all').addEventListener('click',()=>{const t=motionControllers[0].target===1?0:1;motionControllers.forEach(c=>c.go(t));$('#timeline').value=t*100;$('#timeline-value').textContent=t*100+'%'});
-$('#timeline').addEventListener('input',e=>{const t=Number(e.target.value)/100;motionControllers.forEach(c=>c.set(t));$('#timeline-value').textContent=Math.round(t*100)+'%'});
+$('#play-all').addEventListener('click',()=>{const t=motionControllers[0].target===1?0:1;groupPlayback=true;motionControllers.forEach(c=>c.go(t))});
+$('#timeline').addEventListener('input',e=>{groupPlayback=false;const t=Number(e.target.value)/100;motionControllers.forEach(c=>c.set(t));$('#timeline-value').textContent=Math.round(t*100)+'%'});
 $('#coverage-stats').innerHTML=[[inventory.desktop.length,'Desktop registry entries'],[inventory.ios.length,'iOS symbol names'],[inventory.desktop.filter(e=>!e.custom).length,'Retained brand marks'],[inventory.fileIdentities.length,'Retained file identities']].map(([n,t])=>`<div class="stat"><strong>${n}</strong><span>${t}</span></div>`).join('');
 $('#coverage-table').innerHTML=inventory.desktop.map(e=>`<tr><td>${safe(e.asset)}</td><td>${e.custom?`<button class="map-glyph" data-icon="${e.custom}">${svg(e.custom,18)}${safe(e.custom)}</button>`:'<span class="retained">Retain identity</span>'}</td><td>${e.custom?(e.references.length?e.references.length+' source references':'Registered, no qualified references'):'Brand mark'}</td></tr>`).join('');
 $('#ios-table').innerHTML=inventory.ios.map(e=>`<tr><td>${safe(e.symbol)}</td><td><button class="map-glyph" data-icon="${e.custom}">${svg(e.custom,18)}${safe(e.custom)}</button></td><td>${e.references.length}</td></tr>`).join('');
@@ -124,7 +126,7 @@ let selected='sun';
 function inspect(name){
  selected=name;const i=byName.get(name);
  $('#inspect-title').textContent=name;$('#inspect-category').textContent=i.category+' · '+i.status;
- $('#inspect-preview').innerHTML=`<div class="compare-specimen">${svg(name,72,true)}<span>Study 01</span></div><div class="compare-specimen">${svg(name,72)}<span>Study 02</span></div>`;
+ $('#inspect-preview').innerHTML=`<div class="compare-specimen">${svg(name,72,true)}<span>Study 02</span></div><div class="compare-specimen">${svg(name,72)}<span>Study 03</span></div>`;
  $('#inspect-note').textContent=i.note||'Retained after the family audit; familiar control with balanced geometry.';
  $('#inspect-sizes').innerHTML=[12,16,20,24,32].map(s=>`<div class="size-sample"><i>${svg(name,s)}</i><span>${s}px</span></div>`).join('');
  $('#inspect-aliases').textContent=i.legacy.length?'Replaces: '+i.legacy.join(', '):'State partner or additional control for the custom family.';
@@ -142,7 +144,7 @@ $('#copy-svg').addEventListener('click',async()=>{
 });
 // Lightweight diagnostics are also visible as console-free text at ?verify=1.
 function verify(){
- const errors=[];for(const i of icons)for(const p of i.paths){const pts=sample(p);if(pts.some(q=>q.some(n=>!Number.isFinite(n))))errors.push(i.name+': nonfinite geometry');if(pts.some(([x,y])=>x<-.5||x>24.5||y<-.5||y>24.5))errors.push(i.name+': outside viewbox');}
+ const errors=[];for(const i of icons)for(const p of [...i.paths,...i.smallPaths]){const pts=sample(p);if(pts.some(q=>q.some(n=>!Number.isFinite(n))))errors.push(i.name+': nonfinite geometry');if(pts.some(([x,y])=>x<-.5||x>24.5||y<-.5||y>24.5))errors.push(i.name+': outside viewbox');}
  for(const c of motionControllers){for(const t of [0,.1,.25,.5,.75,.9,1]){c.set(t);if(c.svg.innerHTML.includes('NaN'))errors.push(c.m.title+': invalid morph')}c.set(0)}
  for(const e of [...inventory.desktop,...inventory.ios,...inventory.branchAdditions])if(e.custom&&!byName.has(e.custom))errors.push('Unmapped '+e.custom);
  return {icons:icons.length,morphs:morphs.length,errors};
@@ -150,9 +152,9 @@ function verify(){
 renderLibrary();motionPreference();
 if(location.search.includes('verify=1')){const v=verify(),p=document.createElement('pre');p.id='verification';p.style.cssText='position:fixed;bottom:5px;left:5px;background:var(--panel);padding:12px;border:1px solid var(--line);z-index:20';p.textContent=JSON.stringify(v);document.body.append(p)}
 
-const refined=icons.filter(i=>JSON.stringify(i.paths)!==JSON.stringify(baseline.find(b=>b.name===i.name)?.paths));
-$('#revision-summary').textContent=`${refined.length} glyphs refined, with simpler optical variants, intentional occlusion and shared frame geometry. Click any comparison for design notes and exports.`;
-$('#revision-grid').innerHTML=refined.map(i=>`<button class="revision-card" data-icon="${i.name}"><div class="revision-glyphs"><div>${svg(i.name,40,true)}<span>01</span></div><span class="revision-arrow">→</span><div>${svg(i.name,40)}<span>02</span></div><div class="small-specimen">${svg(i.name,16)}<span>16px</span></div></div><h3>${i.name}</h3><p>${safe(i.note||'Refined optical weight and more consistent spacing.')}</p></button>`).join('');
+const refined=icons.filter(i=>{const b=baseline.find(b=>b.name===i.name);return JSON.stringify([i.paths,i.smallPaths])!==JSON.stringify([b?.paths,b?.smallPaths])});
+$('#revision-summary').textContent=`${refined.length} glyphs refined, with floating inset rails, corrected slider and Git geometry, and refined optical spacing. Click any comparison for design notes and exports.`;
+$('#revision-grid').innerHTML=refined.map(i=>`<button class="revision-card" data-icon="${i.name}"><div class="revision-glyphs"><div>${svg(i.name,40,true)}<span>02</span></div><span class="revision-arrow">→</span><div>${svg(i.name,40)}<span>03</span></div><div class="small-specimen">${svg(i.name,16)}<span>16px</span></div></div><h3>${i.name}</h3><p>${safe(i.note||'Refined optical weight and more consistent spacing.')}</p></button>`).join('');
 $$('#revision-grid [data-icon]').forEach(b=>b.addEventListener('click',()=>inspect(b.dataset.icon)));
 // Direct review links keep each QA surface reproducible.
 const params=new URLSearchParams(location.search);
