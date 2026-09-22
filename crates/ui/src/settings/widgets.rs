@@ -549,8 +549,8 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
 pub const SWITCH_WIDTH: f32 = 56.0;
 const SWITCH_HEIGHT: f32 = 36.0;
 const SWITCH_TRACK_HEIGHT: f32 = 26.0;
-const SWITCH_SIDE_INSET: f32 = 3.0;
-const SWITCH_THUMB_WIDTH: f32 = 28.0;
+const SWITCH_SIDE_INSET: f32 = 2.0;
+const SWITCH_THUMB_WIDTH: f32 = 30.0;
 const SWITCH_THUMB_HEIGHT: f32 = SWITCH_TRACK_HEIGHT - 2.0 * SWITCH_SIDE_INSET;
 const SWITCH_MARK_SIZE: f32 = 9.0;
 
@@ -764,7 +764,7 @@ impl RenderOnce for SwitchVisual {
                     div()
                         .absolute()
                         .top(px(2.0))
-                        .left(px(8.0))
+                        .left(px(9.0))
                         .w(px(12.0))
                         .h(px(1.0))
                         .rounded_full()
