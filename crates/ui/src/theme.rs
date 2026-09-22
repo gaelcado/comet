@@ -932,13 +932,31 @@ impl Theme {
         self.element_hover
     }
 
-    /// Muted popup text is the theme foreground composited onto the glass.
-    /// Fixed opaque grays turn muddy over colorful or bright backgrounds.
+    /// Preserve the theme's text hierarchy on floating surfaces. Small labels
+    /// need readable contrast after both their alpha and the glass are painted;
+    /// replacing authored colors with fixed foreground opacities loses that.
     pub fn for_popup(&self) -> Self {
         let mut popup = self.clone();
         if self.is_frost() {
-            popup.text_muted = self.text.opacity(0.64);
-            popup.text_faint = self.text.opacity(0.48);
+            // Use the least coverage primary text allows. Correcting muted
+            // text can reduce the coverage requested by glass_overlay, so its
+            // previous result is not a stable background for this calculation.
+            let mut primary_surface = self.clone();
+            primary_surface.text_muted = self.text;
+            let background = flatten(primary_surface.glass_overlay(), self.adverse_backdrop());
+            for color in [
+                &mut popup.text_muted,
+                &mut popup.text_dim,
+                &mut popup.text_faint,
+            ] {
+                let original = *color;
+                for step in 0..=100 {
+                    *color = mix(original, self.text, step as f32 / 100.0);
+                    if painted_contrast(*color, background) >= 4.5 {
+                        break;
+                    }
+                }
+            }
         }
         popup
     }
@@ -962,51 +980,23 @@ impl Theme {
             ))
     }
 
-    /// Move toward the right pane tone while keeping the backdrop visible.
-    /// Solve the overlay in RGB: target = tint * alpha + canvas * (1 - alpha).
-    pub fn composer_sidebar_tint(&self) -> Hsla {
-        let target = if self.is_glass() {
-            flatten(self.bg.opacity(0.4), flatten(self.glass(), self.bg))
-        } else {
-            self.bg
-        };
-        // The transcript has no fill of its own: its canvas is the shell glass.
-        let canvas = flatten(self.glass(), self.bg);
-        let canvas = hsl_to_rgb(canvas.h, canvas.s, canvas.l);
-        let target = hsl_to_rgb(target.h, target.s, target.l);
-        let mut alpha: f32 = 0.60;
-        for (base, desired) in canvas.into_iter().zip(target) {
-            let needed = if desired > base {
-                (desired - base) / (1.0 - base).max(f32::EPSILON)
-            } else {
-                (base - desired) / base.max(f32::EPSILON)
-            };
-            alpha = alpha.max(needed);
-        }
-        let rgb = std::array::from_fn::<_, 3, _>(|i| {
-            ((target[i] - canvas[i] * (1.0 - alpha)) / alpha).clamp(0.0, 1.0)
-        });
-        let (h, s, l) = rgb_to_hsl(rgb[0], rgb[1], rgb[2]);
-        // Use the compensated hue, but leave 85% of the blurred backdrop visible.
-        hsla(h, s, l, 0.15)
-    }
-
     /// Shared fill for the composer, queue tray, and input panels. Without
     /// frost, composite the theme's input tint onto the page to preserve its
     /// color while hiding the transcript and overlapping surfaces underneath.
     /// Frosted surfaces retain their translucent, contrast-checked tint.
     pub fn input_glass_bg(&self) -> Hsla {
+        // input_bg may be a translucent white/black wash. Its resolved tone,
+        // not the wash's raw hue, must occlude arbitrary transcript content.
+        let tint = flatten(self.input_bg, self.bg);
         if !self.is_frost() {
-            return flatten(self.input_bg, self.bg);
+            return tint;
         }
         let base = if matches!(self.appearance, Appearance::Light) {
-            0.30
+            0.80
         } else {
-            self.input_bg.a
+            0.40
         };
-        let window = flatten(self.glass(), self.adverse_backdrop());
-        self.input_bg
-            .opacity(self.contrast_checked_tint_alpha(self.input_bg, base, window))
+        tint.opacity(self.contrast_checked_tint_alpha(tint, base, self.adverse_backdrop()))
     }
 
     /// Section-card fill (settings cards and similar in-panel cards). The
@@ -2747,62 +2737,95 @@ mod tests {
     }
 
     #[test]
-    fn popup_foregrounds_keep_glass_and_solid_theme_surfaces_unchanged() {
-        for mut theme in [Theme::dark(), Theme::light()] {
-            theme.surface_treatment = SurfaceTreatment::Frosted;
+    fn floating_surfaces_keep_text_readable_over_content() {
+        let registry = ThemeRegistry::builtin();
+        for variant in registry.families.iter().flat_map(|family| &family.variants) {
+            let theme = Theme::from_variant(
+                variant,
+                AccentSelection::ThemeDefault,
+                SurfacePreference::Frosted,
+            );
             let popup = theme.for_popup();
-            assert_eq!(popup.composer_sidebar_tint(), theme.composer_sidebar_tint());
-            assert_eq!(popup.surface_overlay, theme.surface_overlay);
-            assert_eq!(popup.text, theme.text);
-            for background in [
-                theme.bg,
-                hsla(0.60, 0.55, 0.35, 1.0),
-                hsla(0.57, 0.35, 0.82, 1.0),
+            for backdrop in [
+                grey(0),
+                grey(255),
+                hsla(0.60, 0.8, 0.35, 1.0),
+                hsla(0.12, 0.8, 0.75, 1.0),
             ] {
-                let primary = painted_contrast(popup.text, background);
-                let secondary = painted_contrast(popup.text_muted, background);
-                let hint = painted_contrast(popup.text_faint, background);
+                for (name, colors) in [("native", &theme), ("popup", &popup)] {
+                    let surface = flatten(crate::popover::surface_bg(colors), backdrop);
+                    assert!(
+                        painted_contrast(colors.text, surface) >= 4.5,
+                        "{} {name} primary",
+                        variant.id
+                    );
+                    assert!(
+                        painted_contrast(colors.text_muted, surface) >= 3.0,
+                        "{} {name} secondary",
+                        variant.id
+                    );
+                    if name == "popup" {
+                        for color in [colors.text_muted, colors.text_dim, colors.text_faint] {
+                            assert!(
+                                painted_contrast(color, surface) >= 4.5,
+                                "{} popup small text: {}",
+                                variant.id,
+                                painted_contrast(color, surface)
+                            );
+                        }
+                    }
+                }
+                let input = flatten(theme.input_glass_bg(), backdrop);
                 assert!(
-                    primary > secondary && secondary > hint,
-                    "glass text hierarchy collapsed on {background:?}"
+                    painted_contrast(theme.text, input) >= 4.5,
+                    "{} input",
+                    variant.id
                 );
                 assert!(
-                    flatten(popup.text_muted, background) != popup.text_muted,
-                    "muted text must blend with the background"
+                    painted_contrast(theme.text_muted, input) >= 3.0,
+                    "{} input secondary",
+                    variant.id
                 );
             }
+        }
+    }
+
+    #[test]
+    fn opaque_floating_surfaces_keep_their_existing_fill_and_text() {
+        for mut theme in [Theme::dark(), Theme::light()] {
             theme.surface_treatment = SurfaceTreatment::Opaque;
+            assert_eq!(crate::popover::surface_bg(&theme), theme.input_glass_bg());
+            assert_eq!(crate::popover::surface_bg(&theme).a, 1.0);
             assert_eq!(theme.for_popup().text_muted, theme.text_muted);
             assert_eq!(theme.for_popup().text_faint, theme.text_faint);
         }
     }
 
     #[test]
-    fn composer_tint_moves_toward_sidebar_without_hiding_backdrop() {
-        for mut theme in [Theme::dark(), Theme::light()] {
-            for (canvas, shell) in [
-                (theme.bg, theme.surface),
-                (hsla(0.58, 0.3, 0.12, 1.0), hsla(0.62, 0.25, 0.22, 1.0)),
-                (hsla(0.12, 0.2, 0.93, 1.0), hsla(0.08, 0.15, 0.82, 1.0)),
-            ] {
-                theme.bg = canvas;
-                theme.surface = shell;
-                let tint = theme.composer_sidebar_tint();
-                let expected = if theme.is_glass() {
-                    flatten(theme.bg.opacity(0.4), flatten(theme.glass(), theme.bg))
-                } else {
-                    theme.bg
-                };
-                let actual = flatten(tint, flatten(theme.glass(), theme.bg));
-                let base = flatten(theme.glass(), theme.bg);
-                let base_rgb = hsl_to_rgb(base.h, base.s, base.l);
-                let target_rgb = hsl_to_rgb(expected.h, expected.s, expected.l);
-                let actual_rgb = hsl_to_rgb(actual.h, actual.s, actual.l);
-                for i in 0..3 {
-                    assert!(actual_rgb[i] >= base_rgb[i].min(target_rgb[i]) - 0.0001);
-                    assert!(actual_rgb[i] <= base_rgb[i].max(target_rgb[i]) + 0.0001);
+    fn custom_popup_text_is_readable_and_preparation_is_idempotent() {
+        for id in ["zeron-dark", "zeron-light"] {
+            let mut variant = ThemeRegistry::builtin().variant(id).unwrap().clone();
+            variant.id = format!("custom-{id}");
+            variant.colors.text_muted = variant.colors.background;
+            variant.colors.text_faint = variant.colors.background;
+            let theme = Theme::from_variant(
+                &variant,
+                AccentSelection::ThemeDefault,
+                SurfacePreference::Frosted,
+            );
+            let popup = theme.for_popup();
+            let nested = popup.for_popup();
+            assert_eq!(popup.text_muted, nested.text_muted);
+            assert_eq!(popup.text_faint, nested.text_faint);
+            assert_eq!(
+                crate::popover::surface_bg(&popup),
+                crate::popover::surface_bg(&nested)
+            );
+            for level in [0, 32, 64, 128, 192, 255] {
+                let surface = flatten(crate::popover::surface_bg(&popup), grey(level));
+                for color in [popup.text, popup.text_muted, popup.text_faint] {
+                    assert!(painted_contrast(color, surface) >= 4.5, "{id} custom text");
                 }
-                assert_eq!(tint.a, 0.15);
             }
         }
     }

@@ -316,7 +316,7 @@ pub const PALETTE_ITEM_RADIUS: f32 = 14.0 - CARD_INSET;
 
 pub fn surface_bg(theme: &Theme) -> gpui::Hsla {
     if theme.is_frost() {
-        theme.composer_sidebar_tint()
+        theme.glass_overlay()
     } else {
         theme.input_glass_bg()
     }

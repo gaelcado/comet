@@ -225,7 +225,7 @@ fn queue_panel_surface(theme: &Theme) -> gpui::Div {
     div()
         .occlude()
         .rounded_t(px(PANEL_RADIUS))
-        .bg(crate::popover::surface_bg(theme))
+        .bg(theme.input_glass_bg())
         .border_1()
         .border_color(theme.border)
         .when(!theme.is_frost(), |el| el.shadow_lg())
