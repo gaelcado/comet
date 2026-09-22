@@ -493,8 +493,7 @@ struct AttachmentStripView: View {
                     Button {
                         remove(att.id)
                     } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .bold))
+                        ZeronIcon(systemName: "xmark").iconSize(8)
                             .foregroundStyle(Theme.text)
                             .frame(width: 18, height: 18)
                             .background(.black.opacity(0.65), in: Circle())
@@ -582,8 +581,7 @@ struct AttachmentThumbView: View {
                 Button {
                     cache.load(deviceId: deviceId, path: path)
                 } label: {
-                    Image(systemName: "photo.badge.exclamationmark")
-                        .font(.system(size: 16))
+                    ZeronIcon(systemName: "photo.badge.exclamationmark").iconSize(16)
                         .foregroundStyle(Theme.textFaint)
                         .frame(width: 112, height: 80)
                 }
@@ -676,7 +674,7 @@ struct GeneratedImageView: View {
                                    expectedMimeType: reference.mimeType)
                     }
                 } label: {
-                    Label("Generated image unavailable", systemImage: "photo.badge.exclamationmark")
+                    Label("Generated image unavailable", zeronIcon: "photo.badge.exclamationmark")
                         .font(.footnote)
                         .foregroundStyle(Theme.textFaint)
                         .frame(maxWidth: .infinity)
@@ -745,7 +743,7 @@ struct AttachmentLightbox: View {
             .onTapGesture { dismiss() }
             .overlay(alignment: .topTrailing) {
                 Button { dismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 17, weight: .medium))
+                    ZeronIcon(systemName: "xmark").iconSize(17)
                         .foregroundStyle(.white).frame(width: 44, height: 44)
                         .background(.black.opacity(0.6), in: Circle())
                 }

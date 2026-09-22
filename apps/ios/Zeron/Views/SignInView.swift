@@ -198,8 +198,7 @@ struct OrgPickerView: View {
                                     .font(Theme.sans(14, weight: .medium))
                                     .foregroundStyle(Theme.text)
                                 Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12))
+                                ZeronIcon(systemName: "chevron.right").iconSize(12)
                                     .foregroundStyle(Theme.textFaint)
                             }
                             .padding(.horizontal, 16)

@@ -140,14 +140,14 @@ struct QueuePanel: View {
                 if let primary { onAction(item, primary) }
             }
             Menu {
-                Button("Move up", systemImage: "chevron.up") { store.moveQueued(id: item.id, by: -1) }
+                Button("Move up", zeronIcon: "chevron.up") { store.moveQueued(id: item.id, by: -1) }
                     .disabled(index == 0 || gated)
-                Button("Move down", systemImage: "chevron.down") { store.moveQueued(id: item.id, by: 1) }
+                Button("Move down", zeronIcon: "chevron.down") { store.moveQueued(id: item.id, by: 1) }
                     .disabled(index >= count - 1 || gated)
-                Button("Remove", systemImage: "trash", role: .destructive) { onAction(item, .remove) }
+                Button("Remove", zeronIcon: "trash", role: .destructive) { onAction(item, .remove) }
                     .disabled(!supportsActions || pending)
             } label: {
-                Image(systemName: "ellipsis").font(.system(size: 13))
+                ZeronIcon(systemName: "ellipsis").iconSize(13)
                     .foregroundStyle(Theme.textMuted).frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
@@ -163,8 +163,7 @@ struct QueuePanel: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+            ZeronIcon(systemName: symbol).iconSize(11)
                 .foregroundStyle(enabled ? tone : Theme.textFaint.opacity(0.4))
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
@@ -203,7 +202,7 @@ private struct QueueAttachmentPreview: View {
                 Group {
                     if let thumbnail {
                         Image(uiImage: thumbnail).resizable().scaledToFill()
-                    } else { Image(systemName: "photo").foregroundStyle(Theme.textFaint) }
+                    } else { ZeronIcon(systemName: "photo").foregroundStyle(Theme.textFaint) }
                 }
                 .frame(width: 40, height: 28).clipped()
                 if extraCount > 0 {

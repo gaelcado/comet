@@ -18,9 +18,7 @@ use crate::theme::{GlyphPalette, Theme};
 
 // Shared with the terminal viewport (`zeron_proto::motion`) so both animate the
 // same loaders from the same numbers.
-pub use zeron_proto::motion::{
-    MARK_CELLS, MARK_SPREAD, MATRIX_SIDE, ZERON_CELLS, mark_cell_stagger,
-};
+pub use zeron_proto::motion::{MARK_CELLS, MARK_SPREAD, ZERON_CELLS, mark_cell_stagger};
 
 /// The animated zeron mark (zeron-loader.tsx `ZeronLoader`): the full logo
 /// pixel grid with a light wave sweeping tail→head. Each cell rests dim
@@ -104,14 +102,9 @@ pub fn zeron_loader(
         }))
 }
 
-pub use zeron_proto::motion::{GSPIN_DIM, GSPIN_ROW_TINTS};
+pub use zeron_proto::motion::GSPIN_ROW_TINTS;
 
-/// The gradient matrix spinner (WorkingIndicator), ported from zeron's
-/// gradient-spin.tsx: a 3×3 grid of round cells tinted per row from the
-/// sunrise gradient. Each cell pulses opacity once per 750ms period; the
-/// per-cell phase follows the "arrow-up" pattern (the pulse enters at the
-/// bottom edge and converges toward the top-center cell), so the wave reads
-/// as travelling upward.
+/// Shared custom loading glyph on the self-parking, reduced-motion-aware clock.
 pub fn gradient_spinner(
     _id: &'static str,
     _theme: &Theme,
@@ -119,36 +112,16 @@ pub fn gradient_spinner(
     view: EntityId,
     cx: &mut App,
 ) -> impl IntoElement {
-    let center = (MATRIX_SIDE as f32 - 1.0) / 2.0;
-    let max = MATRIX_SIDE as f32 - 1.0 + center;
-    let delta = motion::pulse_delta_slow(&GRADIENT_SPIN, view, cx);
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(cell_px / 2.0))
-        .children((0..MATRIX_SIDE).map(move |row| {
-            let tint: gpui::Hsla = gpui::rgb(GSPIN_ROW_TINTS[row]).into();
-            div()
-                .flex()
-                .flex_row()
-                .gap(px(cell_px / 2.0))
-                .children((0..MATRIX_SIDE).map(move |col| {
-                    // Distance of this cell from the wave origin, normalized
-                    // into a phase offset (gradient-spin's `--gspin-phase`).
-                    let d = MATRIX_SIDE as f32 - 1.0 - row as f32 + (col as f32 - center).abs();
-                    let phase = if max == 0.0 { 0.0 } else { d / (max + 1.0) };
-                    div()
-                        .size(px(cell_px))
-                        .rounded(px(cell_px / 2.0))
-                        .bg(tint)
-                        .opacity(motion::gspin_opacity(delta + phase, GSPIN_DIM))
-                }))
-        }))
+    let delta = motion::pulse_delta(&GRADIENT_SPIN, view, cx);
+    crate::icons::icon(crate::icons::LOADING)
+        .size(px(cell_px * 4.0))
+        .text_color(gpui::rgb(GSPIN_ROW_TINTS[1]))
+        .with_transformation(gpui::Transformation::rotate(gpui::radians(
+            delta * std::f32::consts::TAU,
+        )))
 }
 
-/// A 2×3 activity glyph sized for compact status slots. Its color is an
-/// explicit accent-preset role supplied by the caller, while brightness snakes
-/// around the grid's perimeter as a tiny radial chase.
+/// Compact custom loading glyph using the caller's accent palette.
 pub fn mini_glyph_spinner(
     key: impl Into<SharedString>,
     cell_px: f32,
@@ -160,7 +133,7 @@ pub fn mini_glyph_spinner(
 }
 
 /// Grayscale variant for surfaces where an accent would pull focus (the
-/// sidebar connection line): same grid, snake, and timing, color left to the
+/// sidebar connection line): same custom glyph and timing, color left to the
 /// caller.
 pub fn mini_mono_spinner(
     key: impl Into<SharedString>,
@@ -196,7 +169,7 @@ struct MiniSpinner {
 impl RenderOnce for MiniSpinner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         // Keep pulse invalidation separate from container state changes so
-        // cached sibling rows can be reused while these six cells animate.
+        // cached sibling rows can be reused while the glyph animates.
         let view = window.with_global_id(self.key.into(), |id, window| {
             window.with_element_state(id, |previous: Option<Entity<MiniSpinnerView>>, _| {
                 let view = previous.unwrap_or_else(|| {
@@ -217,7 +190,7 @@ impl RenderOnce for MiniSpinner {
         });
         view.cached(
             gpui::StyleRefinement::default()
-                .w(px(self.cell_px * 2.5))
+                .w(px(self.cell_px * 4.0))
                 .h(px(self.cell_px * 4.0)),
         )
     }
@@ -240,32 +213,13 @@ fn mini_spinner_cells(
     view: EntityId,
     cx: &mut App,
 ) -> impl IntoElement {
-    const COLS: usize = 2;
-    const ROWS: usize = 3;
-    /// Clockwise ring position of each `(row, col)` cell, top-left first:
-    /// (0,0) → (0,1) → (1,1) → (2,1) → (2,0) → (1,0).
-    const RING: [[usize; COLS]; ROWS] = [[0, 1], [5, 2], [4, 3]];
-    const RING_LEN: f32 = (COLS * ROWS) as f32;
     let delta = motion::pulse_delta(&GRADIENT_SPIN, view, cx);
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(cell_px / 2.0))
-        .children((0..ROWS).map(move |row| {
-            let tint = row_tints[row];
-            div()
-                .flex()
-                .flex_row()
-                .gap(px(cell_px / 2.0))
-                .children((0..COLS).map(move |col| {
-                    let phase = RING[row][col] as f32 / RING_LEN;
-                    div()
-                        .size(px(cell_px))
-                        .rounded(px(cell_px / 2.0))
-                        .bg(tint)
-                        .opacity(motion::gspin_opacity(delta + phase, GSPIN_DIM))
-                }))
-        }))
+    crate::icons::icon(crate::icons::LOADING)
+        .size(px(cell_px * 4.0))
+        .text_color(row_tints[1])
+        .with_transformation(gpui::Transformation::rotate(gpui::radians(
+            delta * std::f32::consts::TAU,
+        )))
 }
 
 /// Stroke width of [`upload_progress_ring`].

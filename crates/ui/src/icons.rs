@@ -1,4 +1,4 @@
-//! Original Zeron control family and retained provider/file identities.
+//! Original Zeron control family and retained provider/app identities.
 //! Generated from the reviewed icon atelier; see `apps/icon-lab/README.md`.
 use gpui::{AssetSource, Hsla, Result, SharedString};
 use std::borrow::Cow;
@@ -29,15 +29,15 @@ impl AssetSource for Assets {
         if let Some(key) = path.strip_prefix("icons/") {
             return Ok(IdentityAssets::get(key).map(|file| file.data));
         }
-        crate::file_icons::Assets.load(path)
+        Ok(None)
     }
     fn list(&self, prefix: &str) -> Result<Vec<SharedString>> {
-        let mut paths: Vec<SharedString> = CustomAssets::iter()
+        let paths: Vec<SharedString> = CustomAssets::iter()
             .map(|p| format!("custom-icons/{p}").into())
             .chain(IdentityAssets::iter().map(|p| format!("icons/{p}").into()))
             .filter(|p: &SharedString| p.starts_with(prefix))
             .collect();
-        paths.extend(crate::file_icons::Assets.list(prefix)?);
+
         Ok(paths)
     }
 }

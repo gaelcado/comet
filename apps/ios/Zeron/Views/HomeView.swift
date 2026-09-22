@@ -108,7 +108,7 @@ struct HomeView: View {
                         }
                         Button("Sign out", role: .destructive) { model.signOut() }
                     } label: {
-                        Image(systemName: "person.circle")
+                        ZeronIcon(systemName: "person.circle")
                     }
                 }
             }
@@ -164,7 +164,7 @@ struct HomeView: View {
             Button {
                 showNewSpace = true
             } label: {
-                Label("New space…", systemImage: "folder.badge.plus")
+                Label("New space…", zeronIcon: "folder.badge.plus")
             }
         } label: {
             HStack(spacing: 5) {
@@ -172,8 +172,7 @@ struct HomeView: View {
                     .font(Theme.sans(16, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                ZeronIcon(systemName: "chevron.down").iconSize(9)
                     .foregroundStyle(Theme.textFaint)
             }
             // Keep long space names from swallowing the whole bar; the owning
@@ -208,7 +207,7 @@ struct HomeView: View {
                     Text(title)
                     if let subtitle { Text(subtitle) }
                 } icon: {
-                    Image(systemName: "checkmark")
+                    ZeronIcon(systemName: "checkmark")
                 }
             } else {
                 Text(title)
@@ -240,16 +239,16 @@ struct HomeView: View {
             Button {
                 showProjectlessDevices = true
             } label: {
-                Label("Session without a project…", systemImage: "xmark")
+                Label("Session without a project…", zeronIcon: "xmark")
             }
             .accessibilityIdentifier("new-projectless-session")
             Button {
                 showNewSpace = true
             } label: {
-                Label("New space…", systemImage: "folder.badge.plus")
+                Label("New space…", zeronIcon: "folder.badge.plus")
             }
         } label: {
-            Image(systemName: "plus")
+            ZeronIcon(systemName: "plus")
         }
         .accessibilityLabel("New session")
         .accessibilityIdentifier("new-session")
@@ -286,7 +285,7 @@ struct HomeView: View {
                             model.archive(chatId: chat.id)
                         }
                     } label: {
-                        Label("Archive", systemImage: "archivebox")
+                        Label("Archive", zeronIcon: "archivebox")
                     }
                     .tint(Theme.surfaceRaised)
                 }
@@ -387,8 +386,7 @@ struct ChatRow: View {
             // Line 2: the session title.
             HStack(spacing: 6) {
                 if model.isPinned(chatId: chat.id) {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 11, weight: .medium))
+                    ZeronIcon(systemName: "pin.fill").iconSize(11)
                         .foregroundStyle(Theme.textMuted)
                 }
                 Text(chat.displayTitle)
@@ -447,7 +445,7 @@ extension View {
                     model.setPinned(chatId: chat.id, pinned: !pinned)
                 }
             } label: {
-                Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin")
+                Label(pinned ? "Unpin" : "Pin", zeronIcon: pinned ? "pin.slash" : "pin")
             }
             .tint(Theme.accent)
             .disabled(!model.pinsReady)

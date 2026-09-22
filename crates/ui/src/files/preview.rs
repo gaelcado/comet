@@ -2181,7 +2181,7 @@ impl FilesSurface {
                         .mx(px(4.0))
                         .text_size(px(11.0))
                         .text_color(theme.text_faint.opacity(0.65))
-                        .child("›"),
+                        .child(crate::icons::icon(crate::icons::CHEVRON_RIGHT).size(px(11.0))),
                 );
             }
             crumbs = crumbs.child(

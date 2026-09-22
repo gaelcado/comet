@@ -29,7 +29,7 @@ struct SessionHostPickerSheet: View {
                                     }
                                     Spacer()
                                     if selectedDeviceId == device.id {
-                                        Image(systemName: "checkmark")
+                                        ZeronIcon(systemName: "checkmark")
                                     }
                                 }
                             }

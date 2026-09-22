@@ -128,7 +128,7 @@ struct NewSessionView: View {
                     showHostPicker = true
                 } label: {
                     Label(deviceId.map(model.deviceName) ?? "Select a device",
-                          systemImage: "desktopcomputer")
+                          zeronIcon: "desktopcomputer")
                         .font(Theme.sans(13, weight: .medium))
                 }
                 .accessibilityIdentifier("session-host")
@@ -566,8 +566,7 @@ struct ComposerChip: View {
                     .font(Theme.sans(13, weight: .medium))
                     .foregroundStyle(Theme.text.opacity(0.9))
                     .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                ZeronIcon(systemName: "chevron.down").iconSize(9)
                     .foregroundStyle(Theme.textFaint)
             }
             .padding(.horizontal, 13)
@@ -649,8 +648,7 @@ struct ModelPickerSheet: View {
                     Button {
                         dismiss()
                     } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                        ZeronIcon(systemName: "xmark").iconSize(13)
                     }
                     .accessibilityLabel("Close")
                 }
@@ -688,8 +686,7 @@ struct ModelPickerSheet: View {
                         .font(Theme.sans(10.5))
                         .foregroundStyle(Theme.textFaint)
                 }
-                Image(systemName: open ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                ZeronIcon(systemName: open ? "chevron.up" : "chevron.down").iconSize(9)
                     .foregroundStyle(Theme.textFaint)
             }
             .padding(.horizontal, 4)
@@ -748,8 +745,7 @@ struct TraitPickerSheet: View {
                     Button {
                         dismiss()
                     } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                        ZeronIcon(systemName: "xmark").iconSize(13)
                     }
                     .accessibilityLabel("Close")
                 }
@@ -810,8 +806,7 @@ struct ModelOptionPickerSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button { dismiss() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                        ZeronIcon(systemName: "xmark").iconSize(13)
                     }
                     .accessibilityLabel("Close")
                 }
@@ -872,8 +867,7 @@ struct PickRow: View {
                         .controlSize(.small)
                         .tint(selected ? Theme.bg : Theme.textMuted)
                 } else {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .semibold))
+                    ZeronIcon(systemName: "checkmark").iconSize(13)
                         .foregroundStyle(Theme.bg)
                         .opacity(selected ? 1 : 0)
                 }
@@ -939,8 +933,7 @@ struct RefPickerSheet: View {
                     Button {
                         dismiss()
                     } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                        ZeronIcon(systemName: "xmark").iconSize(13)
                     }
                     .accessibilityLabel("Close")
                 }
@@ -1014,8 +1007,7 @@ struct CheckoutPickerSheet: View {
                     Button {
                         dismiss()
                     } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                        ZeronIcon(systemName: "xmark").iconSize(13)
                     }
                     .accessibilityLabel("Close")
                 }

@@ -37,7 +37,7 @@ struct PullRequestBadge: View {
         } label: {
             HStack(spacing: composer ? 6 : 0) {
                 if composer {
-                    LineIconView(.pullRequest, size: 14, color: summary.state.badgeColor.opacity(0.9))
+                    LineIconView(summary.state == .merged ? .merge : .pullRequest, size: 14, color: summary.state.badgeColor.opacity(0.9))
                 }
                 Text("#\(summary.number)")
                     .font(Theme.mono(composer ? 12 : 10, weight: .medium))

@@ -599,29 +599,27 @@ pub fn render_block(
                                 cx.stop_propagation()
                             })
                             .accessibility_label(label)
-                            .size(px(16.0))
+                            .size(px(20.0))
                             .border_1()
                             .rounded(px(3.0))
-                            .border_color(if task.checked {
-                                theme.accent
-                            } else {
-                                theme.border
-                            })
-                            .bg(if task.checked {
-                                theme.accent
-                            } else {
-                                gpui::transparent_black()
-                            })
+                            .border_color(gpui::transparent_black())
                             .flex()
                             .items_center()
                             .justify_center()
-                            .when(task.checked, |checkbox| {
-                                checkbox.child(
-                                    crate::icons::icon(crate::icons::CHECK)
-                                        .size(px(12.0))
-                                        .text_color(theme.bg),
-                                )
-                            })
+                            .child(
+                                crate::icons::icon(if task.checked {
+                                    crate::icons::CHECKBOX_CHECKED
+                                } else {
+                                    crate::icons::CHECKBOX
+                                })
+                                .morph("task-state-glyph")
+                                .size(px(18.0))
+                                .text_color(if task.checked {
+                                    theme.accent
+                                } else {
+                                    theme.text_muted
+                                }),
+                            )
                             .on_change(move |_, _, window, cx| {
                                 cx.stop_propagation();
                                 if let Some(toggle) = &toggle {

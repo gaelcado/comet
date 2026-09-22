@@ -97,12 +97,12 @@ struct AppshotCardView: View {
                         Image(uiImage: image).resizable().scaledToFit()
                             .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.72), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
                     case .loading: ProgressView().tint(Theme.textMuted)
-                    case .error: Label("Appshot unavailable", systemImage: "photo.badge.exclamationmark")
+                    case .error: Label("Appshot unavailable", zeronIcon: "photo.badge.exclamationmark")
                             .font(Theme.sans(12)).foregroundStyle(Theme.textMuted)
                     }
                 }
                 .frame(height: 120)
-                Label("\(source.appName) · Appshot", systemImage: "macwindow")
+                Label("\(source.appName) · Appshot", zeronIcon: "macwindow")
                     .font(Theme.sans(11)).foregroundStyle(Theme.textMuted).lineLimit(1)
                 Text(source.title).font(Theme.sans(12.5, weight: .medium))
                     .foregroundStyle(Theme.text).lineLimit(2).multilineTextAlignment(.center)

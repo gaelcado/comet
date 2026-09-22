@@ -24,10 +24,10 @@ for const,old in registry:
 sf=collections.defaultdict(list)
 for p in (REPO/'apps/ios/Zeron').rglob('*.swift'):
  for n,l in enumerate(p.read_text().splitlines(),1):
-  if any(s in l for s in ['systemName:', 'systemImage:', 'iconButton(', 'case "exec":','case "readFile", "applyPatch":','case "writeFile":','case "editFile":','case "search":','case "glob":','case "webFetch",','case "todo":','default: return "square.grid']):
+  if any(s in l for s in ['ZeronIcon(', 'zeronIcon:', 'systemName:', 'systemImage:', 'iconButton(', 'case "exec":','case "readFile", "applyPatch":','case "writeFile":','case "editFile":','case "search":','case "glob":','case "webFetch",','case "todo":','default: return "square.grid']):
    for symbol in re.findall(r'"([a-z][a-z0-9.]+)"',l):
     if symbol not in ['exec','search','glob','todo']: sf[symbol].append(f'{p.relative_to(REPO)}:{n}')
-sfmap={'doc.on.doc':'copy','photo.badge.exclamationmark':'image-error','macwindow':'browser','plus':'plus','arrow.up':'send','arrow.right':'send-now','chevron.up':'chevron-up','chevron.down':'chevron-down','trash':'trash','ellipsis':'more','photo':'image','xmark':'close','arrow.down':'arrow-down','chevron.right':'chevron-right','exclamationmark.triangle':'warning','bubble.left.and.text.bubble.right':'chats','checkmark':'check','archivebox':'archive','folder':'folder','bubble.left.and.bubble.right':'chats','chevron.left':'chevron-left','desktopcomputer':'monitor','person.circle':'user','folder.badge.plus':'folder-add','pin.fill':'pin-active','pin.slash':'unpin','pin':'pin','arrow.up.bin':'unarchive','checkmark.square.fill':'checkbox-checked','square':'checkbox','terminal':'terminal','doc.text':'document','doc.badge.plus':'document-add','pencil':'edit','magnifyingglass':'search','globe':'globe','checklist':'checklist','square.grid.2x2':'grid'}
+sfmap=json.loads((ROOT/'ios-symbols.json').read_text())
 ios=[dict(symbol=k,custom=sfmap.get(k),references=v) for k,v in sorted(sf.items()) if k in sfmap]
 # Declared active branches are inspected without changing their checkouts.
 branch_additions=[]
@@ -38,6 +38,6 @@ for branch in ['codex/rich-composer','codex/native-interactions','codex/compact-
   if c not in {name for name,_ in registry}: branch_additions.append(dict(branch=branch,constant=c,asset=a,custom=aliases.get(a,a)))
 sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=REPO,text=True).strip()
 dirty=bool(subprocess.check_output(['git','status','--porcelain','--','crates/ui/src','apps/ios'],cwd=REPO,text=True).strip())
-inv={'source':'zeronsh/zeron','sha':sha,'dirty':dirty,'desktop':entries,'ios':ios,'branchAdditions':branch_additions,'fileIdentities':[str(p.relative_to(REPO)) for p in sorted((REPO/'crates/ui/assets/file-icons').rglob('*.svg'))], 'boundary':'Product controls across desktop and iOS; provider, language, app and user-uploaded project identities retained. Website marketing artwork excluded. Literal and dispatch source scan; runtime-supplied image names require integration audit.'}
+inv={'source':'zeronsh/zeron','sha':sha,'dirty':dirty,'desktop':entries,'ios':ios,'branchAdditions':branch_additions,'fileIdentities':[str(p.relative_to(REPO)) for p in sorted((REPO/'crates/ui/assets/file-icons').rglob('*.svg'))], 'boundary':'Product controls across desktop and iOS; provider, app and user-uploaded project identities retained; file types use custom family. Website marketing artwork excluded. Literal and dispatch source scan; runtime-supplied image names require integration audit.'}
 (ROOT/'inventory.json').write_text(json.dumps(inv,indent=2)+'\n')
 print(f'Scanned {len(entries)} desktop entries and {len(ios)} iOS symbols at {sha[:12]}')

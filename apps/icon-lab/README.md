@@ -1,12 +1,12 @@
 # Zeron icon atelier · Study 03
 
-135 original control glyphs, two optical sizes, and 36 reversible state transitions. The standalone gallery lives in `apps/icon-lab` on `design/custom-icon-library`. The desktop integration lives in `crates/ui/src/icons` and `crates/ui/assets/custom-icons`. iOS retains its current symbol rendering.
+135 original control glyphs, two optical sizes, and 36 reversible state transitions. The standalone gallery lives in `apps/icon-lab` on `design/custom-icon-library`. The desktop integration lives in `crates/ui/src/icons` and `crates/ui/assets/custom-icons`. iOS uses the same vector source through SwiftUI Canvas and custom UIKit menu images.
 
 Open `index.html`, or run `python3 -m http.server 8767 --bind 127.0.0.1` from this directory. Open http://localhost:8767. No dependencies are needed to view the gallery. **Refinements** compares Study 02 with 03; **The family** includes search, sizing and SVG exports; **In motion** supports playback, reversal and scrubbing; **Coverage** maps existing source names.
 
 ## Drawings
 
-Continuous corners, clipped shoulders, open counters and deliberate contour breaks form the family. All geometry is custom authored; the Central Icons reference informed the restrained line direction without downloading or tracing reference SVGs. Existing brand and language identities retain their artwork and licenses.
+Continuous corners, clipped shoulders, open counters and deliberate contour breaks form the family. All geometry is custom authored; the Central Icons reference informed the restrained line direction without downloading or tracing reference SVGs. Existing provider and app brand identities retain their artwork and licenses.
 
 Study 03 keeps the closed panel frames and gives open rails a short, inset travel. Slider tracks clear their circular knobs. Git states share node sizes and route anchors; draft dots extend into the ready route. Folder outlines, the wrench, lint, refresh, archive and muted controls receive further spacing corrections.
 
@@ -36,11 +36,11 @@ Verification covers both optical exports, stroke bounds, all 36 transitions at 1
 
 ## Coverage
 
-`inventory.json` records the source SHA and mappings. To rescan the containing Zeron repository and available contribution branches, use `python3 build.py --refresh-inventory`. This is a source scan of registered desktop assets, qualified Rust references, SwiftUI symbol literals and tool dispatch, not a runtime accessibility crawl. Dynamic image names need an integration audit. Provider logos, file/language identities, uploaded art and website marketing artwork are outside this control family.
+`inventory.json` records the source SHA and mappings. To rescan the containing Zeron repository and available contribution branches, use `python3 build.py --refresh-inventory`. This is a source scan of registered desktop assets, qualified Rust references, SwiftUI symbol literals and tool dispatch, not a runtime accessibility crawl. Dynamic image names need an integration audit. File and folder identities use the custom family too. Provider/app logos, uploaded art, OS-owned chrome, progress visualizations, and website marketing artwork remain outside this control family.
 
 ## Native desktop integration
 
-Run `node export-native.cjs` after rebuilding the gallery to synchronize native assets and constants. Existing control constant names remain aliases for the new family. Provider marks, the app logo and language/file identities retain their assets.
+Run `node export-native.cjs` after rebuilding the gallery to synchronize native assets and constants. Existing control constant names remain aliases for the new family. Provider marks and the app logo retain their assets. File/folder rendering uses the custom family; the old file-theme manifest remains only for recognizing filename references and its assets are no longer served by the app.
 
 `icons::icon(path)` selects the small optical SVG for static glyphs at 16px or below. `.morph("state-glyph")` opts a glyph into element-local motion; put it inside a control with a stable unique ID. Stateful glyphs retain the standard master at rest and in motion to avoid an optical-size jump. Initial mounts, unrelated icon changes and OS reduced motion render immediately. Unmounted elements stop requesting frames and their state expires with GPUI's frame state.
 
@@ -49,3 +49,12 @@ The native bank contains the 36 reviewed transitions plus system-to-light for th
 Connected controls include appearance navigation, left/right panes, pane expansion, unified/split diffs, wrapping, fold/disclosure controls, hidden files, favorites, copy confirmation, PR merged state, queue actions and composer send/stop. The protocol currently exposes open/closed/merged PR states, not draft; draft geometry remains available for future data support. Additional gallery concepts do not create new app behaviors automatically.
 
 Validate with `cargo check -p zeron-ui --lib` and `cargo test -p zeron-ui --lib icons:: -- --test-threads=1`. Runtime review should use an isolated development app, never the production instance hosting the coding session.
+
+
+## iOS integration and coverage guard
+
+Run `node export-ios.cjs` to generate the SwiftUI payload from the same 135 glyphs and 36 motion banks. `ios-symbols.json` is the explicit compatibility map for existing call-site names. `ZeronIcon` draws custom paths, uses both optical sizes, and animates supported state pairs with an interruptible spring. Reduced motion snaps. Menu labels use template images rasterized from the same paths because UIKit menus require an Image.
+
+Run `python3 audit-integration.py` to check the two native exports, compatibility mappings, static Swift call sites, and absence of legacy SF Symbol rendering. Dynamic tool dispatch remains explicit in the inventory. This guard covers source integration; it does not establish runtime frame timing or replace interactive UI review.
+
+The iOS `CustomIconTests` decode every contour and motion frame, render all glyphs at 12/16/24px, and exercise every menu alias. App-owned compact loading indicators and Markdown task glyphs also use this family; branded loading artwork, determinate progress, and native system widgets retain their own rendering.

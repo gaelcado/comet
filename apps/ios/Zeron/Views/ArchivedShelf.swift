@@ -63,8 +63,7 @@ struct ArchivedSection: View {
                 Rectangle()
                     .fill(Theme.border.opacity(0.6))
                     .frame(height: 1)
-                Image(systemName: open ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                ZeronIcon(systemName: open ? "chevron.down" : "chevron.right").iconSize(10)
                     .foregroundStyle(Theme.textMuted.opacity(0.5))
             }
             .padding(.horizontal, 10)
@@ -113,7 +112,7 @@ struct ArchivedSection: View {
                     model.unarchive(chatId: chat.id)
                 }
             } label: {
-                Label("Unarchive", systemImage: "arrow.up.bin")
+                Label("Unarchive", zeronIcon: "arrow.up.bin")
             }
             .tint(Theme.surfaceRaised)
         }
@@ -124,8 +123,7 @@ struct ArchivedSection: View {
             shown = max(shown, Self.initialCount) + Self.pageSize
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .medium))
+                ZeronIcon(systemName: "plus").iconSize(12)
                     .foregroundStyle(Theme.textMuted.opacity(0.55))
                 Text("Show \(min(remaining, Self.pageSize)) more")
                     .font(Theme.sans(15))
