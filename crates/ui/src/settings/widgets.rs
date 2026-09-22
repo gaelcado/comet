@@ -236,6 +236,7 @@ pub fn page_header(theme: &Theme, title: &str, count: Option<usize>) -> gpui::Di
         .child(
             div()
                 .text_size(crate::typography::ui_rems(16.0))
+                .line_height(crate::typography::ui_rems(20.0))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(theme.text)
                 .child(SharedString::from(title.to_string())),
@@ -253,10 +254,10 @@ pub fn page_header(theme: &Theme, title: &str, count: Option<usize>) -> gpui::Di
 /// Subtitle under the headline: `mt-1 text-[13px] text-muted-foreground`.
 pub fn page_subtitle(theme: &Theme, copy: impl Into<SharedString>) -> gpui::Div {
     div()
-        .mt(px(4.0))
+        .mt(px(2.0))
         .min_w_0()
         .text_size(crate::typography::ui_rems(13.0))
-        .line_height(crate::typography::ui_rems(20.0))
+        .line_height(crate::typography::ui_rems(17.0))
         .text_color(theme.text_muted)
         .child(copy.into())
 }
@@ -405,6 +406,7 @@ pub fn row_title(theme: &Theme, title: impl Into<SharedString>) -> gpui::Div {
     div()
         .min_w_0()
         .text_size(crate::typography::ui_rems(ROW_TITLE_SIZE))
+        .line_height(crate::typography::ui_rems(17.0))
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(theme.text)
         .child(title.into())
@@ -424,6 +426,7 @@ pub fn meta_line(theme: &Theme, fragments: Vec<AnyElement>) -> gpui::Div {
         .gap_x(px(8.0))
         .gap_y(px(2.0))
         .text_size(crate::typography::ui_rems(ROW_DESCRIPTION_SIZE))
+        .line_height(crate::typography::ui_rems(16.0))
         .text_color(theme.text_muted);
     let mut first = true;
     for fragment in fragments {
@@ -505,6 +508,42 @@ impl SwitchTravel {
     }
 }
 
+fn switch_track_color(theme: &Theme, on: bool) -> gpui::Hsla {
+    let dark = theme.appearance.is_dark();
+    if theme.is_frost() {
+        if on {
+            theme.accent.opacity(if dark { 0.90 } else { 0.84 })
+        } else {
+            theme.ink(if dark { 0.24 } else { 0.14 })
+        }
+    } else if on {
+        if dark {
+            theme.accent
+        } else {
+            // Preserve the current light opaque treatment.
+            let accent = theme.accent;
+            crate::theme::flatten(
+                gpui::hsla(accent.h, accent.s, accent.l + (1.0 - accent.l) * 0.10, 0.98),
+                theme.surface,
+            )
+        }
+    } else {
+        crate::theme::flatten(theme.ink(if dark { 0.18 } else { 0.10 }), theme.surface)
+    }
+}
+
+fn switch_thumb_color(theme: &Theme) -> gpui::Hsla {
+    if theme.is_frost() {
+        gpui::white().opacity(if theme.appearance.is_dark() {
+            0.90
+        } else {
+            0.94
+        })
+    } else {
+        gpui::white()
+    }
+}
+
 impl RenderOnce for SwitchVisual {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
         let now = std::time::Instant::now();
@@ -536,105 +575,126 @@ impl RenderOnce for SwitchVisual {
             window.request_animation_frame();
         }
         let dark = self.theme.appearance.is_dark();
-        let track = if self.on {
-            let accent = self.theme.accent;
-            let lift = if dark { 0.34 } else { 0.10 };
-            gpui::hsla(accent.h, accent.s, accent.l + (1.0 - accent.l) * lift, 0.98)
-        } else {
-            self.theme.ink(if dark { 0.18 } else { 0.10 })
-        };
+        let frosted = self.theme.is_frost();
+        let track = switch_track_color(&self.theme, self.on);
+        let track_element = div()
+            .absolute()
+            .top(px(6.0))
+            .left_0()
+            .w(px(48.0))
+            .h(px(24.0))
+            .rounded_full()
+            .bg(track)
+            .border_1()
+            .border_color(if frosted {
+                gpui::white().opacity(if self.on { 0.42 } else { 0.30 })
+            } else if self.on {
+                gpui::white().opacity(0.28)
+            } else {
+                self.theme.border.opacity(0.7)
+            })
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .size(px(10.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .opacity(position)
+                            .child(
+                                div()
+                                    .w(px(1.5))
+                                    .h(px(10.0))
+                                    .rounded_full()
+                                    .bg(gpui::white().opacity(0.96)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .size(px(10.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .opacity(1.0 - position)
+                            .child(
+                                div()
+                                    .size(px(9.0))
+                                    .rounded_full()
+                                    .border(px(1.25))
+                                    .border_color(gpui::white().opacity(0.92)),
+                            ),
+                    ),
+            );
+        let thumb_element = div()
+            .absolute()
+            .top(px(8.0))
+            .left(px(2.0 + 24.0 * position))
+            .size(px(20.0))
+            .rounded_full()
+            .bg(switch_thumb_color(&self.theme))
+            .border_1()
+            .border_color(if frosted {
+                gpui::white().opacity(0.68)
+            } else {
+                gpui::black().opacity(0.08)
+            })
+            .shadow(vec![
+                gpui::BoxShadow {
+                    color: gpui::black().opacity(if dark { 0.23 } else { 0.16 }),
+                    offset: gpui::point(px(0.0), px(1.0)),
+                    blur_radius: px(2.0),
+                    spread_radius: px(0.0),
+                    inset: false,
+                },
+                gpui::BoxShadow {
+                    color: gpui::black().opacity(if dark { 0.14 } else { 0.10 }),
+                    offset: gpui::point(px(0.0), px(3.0)),
+                    blur_radius: px(5.0),
+                    spread_radius: px(0.0),
+                    inset: false,
+                },
+            ]);
         div()
             .relative()
             .w(px(48.0))
             .h(px(36.0))
-            .child(
-                div()
-                    .absolute()
-                    .top(px(6.0))
-                    .left_0()
-                    .w(px(48.0))
-                    .h(px(24.0))
-                    .rounded_full()
-                    .bg(track)
-                    .border_1()
-                    .border_color(if self.on {
-                        gpui::white().opacity(0.28)
-                    } else {
-                        self.theme.border.opacity(0.7)
-                    })
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .px(px(8.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .size(px(10.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .opacity(position)
-                                    .child(
-                                        div()
-                                            .w(px(1.5))
-                                            .h(px(10.0))
-                                            .rounded_full()
-                                            .bg(gpui::white().opacity(0.96)),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .size(px(10.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .opacity(1.0 - position)
-                                    .child(
-                                        div()
-                                            .size(px(9.0))
-                                            .rounded_full()
-                                            .border(px(1.25))
-                                            .border_color(gpui::white().opacity(0.92)),
-                                    ),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top(px(8.0))
-                    .left(px(2.0 + 24.0 * position))
-                    .size(px(20.0))
-                    .rounded_full()
-                    .bg(gpui::white())
-                    .border_1()
-                    .border_color(gpui::black().opacity(0.08))
-                    .shadow(vec![
-                        gpui::BoxShadow {
-                            color: gpui::black().opacity(if dark { 0.23 } else { 0.16 }),
-                            offset: gpui::point(px(0.0), px(1.0)),
-                            blur_radius: px(2.0),
-                            spread_radius: px(0.0),
-                            inset: false,
-                        },
-                        gpui::BoxShadow {
-                            color: gpui::black().opacity(if dark { 0.14 } else { 0.10 }),
-                            offset: gpui::point(px(0.0), px(3.0)),
-                            blur_radius: px(5.0),
-                            spread_radius: px(0.0),
-                            inset: false,
-                        },
-                    ]),
-            )
+            .child(crate::frost::frosted(12.0, 8.0, track_element))
+            .child(crate::frost::frosted(10.0, 6.0, thumb_element))
     }
 }
 
 #[cfg(test)]
 mod switch_tests {
     use super::*;
+
+    #[test]
+    fn switch_material_keeps_dark_accent_and_opaque_fills() {
+        use zeron_theme::SurfaceTreatment;
+
+        let mut dark = Theme::dark();
+        dark.surface_treatment = SurfaceTreatment::Opaque;
+        assert_eq!(switch_track_color(&dark, true), dark.accent);
+        assert_eq!(switch_track_color(&dark, false).a, 1.0);
+        assert_eq!(switch_thumb_color(&dark).a, 1.0);
+
+        dark.surface_treatment = SurfaceTreatment::Frosted;
+        assert!(switch_track_color(&dark, true).a < 1.0);
+        assert!(switch_track_color(&dark, false).a < 1.0);
+        assert!(switch_thumb_color(&dark).a < 1.0);
+
+        let mut light = Theme::light();
+        light.surface_treatment = SurfaceTreatment::Opaque;
+        assert_eq!(switch_track_color(&light, true).a, 1.0);
+        assert!(switch_track_color(&light, true).l > light.accent.l);
+    }
+
     #[test]
     fn switch_reversal_keeps_current_position_and_settles() {
         use std::time::{Duration, Instant};
