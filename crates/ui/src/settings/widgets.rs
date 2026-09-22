@@ -590,7 +590,9 @@ fn switch_track_color(theme: &Theme, on: bool) -> gpui::Hsla {
     let dark = theme.appearance.is_dark();
     if on {
         if dark {
-            theme.accent_strong
+            // Keep the accent saturated and opaque, but give the enabled
+            // track more depth against the dark settings surface.
+            crate::theme::flatten(gpui::black().opacity(0.14), theme.accent_strong)
         } else {
             // Preserve the current light opaque treatment.
             let accent = theme.accent;
@@ -792,13 +794,15 @@ mod switch_tests {
 
         let mut dark = Theme::dark();
         dark.surface_treatment = SurfaceTreatment::Opaque;
-        assert_eq!(switch_track_color(&dark, true), dark.accent_strong);
+        let dark_on = switch_track_color(&dark, true);
+        assert_eq!(dark_on.a, 1.0);
+        assert!(dark_on.l < dark.accent_strong.l);
         assert_eq!(switch_track_color(&dark, false).a, 1.0);
         assert_eq!(switch_thumb_color(&dark).a, 1.0);
         let opaque_off = switch_track_color(&dark, false);
 
         dark.surface_treatment = SurfaceTreatment::Frosted;
-        assert_eq!(switch_track_color(&dark, true), dark.accent_strong);
+        assert_eq!(switch_track_color(&dark, true), dark_on);
         assert_eq!(switch_track_color(&dark, false).a, 1.0);
         assert_eq!(switch_thumb_color(&dark).a, 1.0);
         assert_ne!(switch_track_color(&dark, false), opaque_off);
@@ -978,14 +982,6 @@ pub fn action_button(theme: &Theme, tone: ActionTone) -> gpui::Div {
 
 pub fn text_action(theme: &Theme, tone: ActionTone, label: impl Into<SharedString>) -> gpui::Div {
     action_button(theme, tone).child(label.into())
-}
-
-pub fn icon_action(theme: &Theme) -> gpui::Div {
-    action_button(theme, ActionTone::Outlined)
-        .size(px(32.0))
-        .min_h(px(32.0))
-        .p(px(0.0))
-        .justify_center()
 }
 
 pub fn ghost_action(theme: &Theme) -> gpui::Div {

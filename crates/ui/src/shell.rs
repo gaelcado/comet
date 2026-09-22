@@ -5905,8 +5905,20 @@ impl Shell {
                             .child(div().flex_1().min_h_0().py(px(12.0)).child(outlet))
                             .child(
                                 div().absolute().top(px(12.0)).right(px(12.0)).child(
-                                    settings::widgets::icon_action(&theme)
+                                    div()
                                         .id("settings-close")
+                                        .size(px(24.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(6.0))
+                                        .cursor_pointer()
+                                        .bg(motion::hover_blend(
+                                            "settings-close",
+                                            theme.glass_hover().opacity(0.0),
+                                            theme.glass_hover(),
+                                        ))
+                                        .on_hover(motion::hover_listener("settings-close"))
                                         .role(gpui::Role::Button)
                                         .aria_label("Close settings")
                                         .tab_index(0)
@@ -5916,7 +5928,7 @@ impl Shell {
                                         )
                                         .child(
                                             icon(icons::QUEUE_CLOSE)
-                                                .size(px(20.0))
+                                                .size(px(16.0))
                                                 .text_color(theme.text),
                                         ),
                                 ),
