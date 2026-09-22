@@ -1,6 +1,6 @@
-//! Composer completion preferences in Settings → Shortcuts.
+//! Composer completion preferences in Settings → Agents.
 
-use super::ShortcutsPage;
+use super::HarnessesPage;
 use crate::{popover::Loadable, settings, settings::widgets, theme::Theme};
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 use zeron_engine::registry::HarnessDescriptor;
@@ -15,34 +15,7 @@ fn active_agents(list: &[HarnessDescriptor]) -> Vec<(HarnessId, &'static str)> {
         .collect()
 }
 
-impl ShortcutsPage {
-    pub(crate) fn load_completion_harnesses(&mut self, cx: &mut Context<Self>) {
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            self.completion_harnesses =
-                Loadable::Error("Connect this device to load its active agents.".into());
-            return;
-        };
-        self.completion_harnesses = Loadable::Loading;
-        self.completion_task = Some(cx.spawn(async move |this, cx| {
-            let result = engine
-                .client()
-                .call(zeron_rpc::methods::LIST_HARNESSES, serde_json::json!({}))
-                .await;
-            this.update(cx, |page, cx| {
-                page.completion_harnesses = match result {
-                    Ok(value) => match serde_json::from_value(value) {
-                        Ok(list) => Loadable::Ready(list),
-                        Err(error) => Loadable::Error(error.to_string()),
-                    },
-                    Err(error) => Loadable::Error(error.to_string()),
-                };
-                cx.notify();
-            })
-            .ok();
-        }));
-        cx.notify();
-    }
-
+impl HarnessesPage {
     fn toggle_completion(&mut self, harness: HarnessId, dollar: bool, cx: &mut Context<Self>) {
         settings::update(settings::SavePolicy::Immediate, cx, |settings| {
             let mut preferences = settings.skill_completion(harness);
@@ -73,10 +46,9 @@ impl ShortcutsPage {
         let header = div()
             .flex()
             .items_center()
-            .justify_between()
+            .justify_end()
             .flex_wrap()
             .gap(px(12.0))
-            .child(widgets::field_label(theme, "Composer completion"))
             .when(customized, |header| {
                 header.child(
                     widgets::ghost_action(theme)
@@ -99,54 +71,51 @@ impl ShortcutsPage {
                         .child("Restore defaults"),
                 )
             });
-        let mut section = div().mt(px(28.0)).flex().flex_col().gap(px(12.0))
-            .child(div().flex().flex_col().gap(px(4.0)).child(header)
-                .child(widgets::page_subtitle(theme, "For active agents on this device. Completion preferences apply across your devices.")
-                    .mt(px(0.0)).line_height(px(20.0))));
-        match &self.completion_harnesses {
+        let mut section = div().flex().flex_col().gap(px(12.0));
+        if customized {
+            section = section.child(header);
+        }
+        match &self.harnesses {
             Loadable::Idle | Loadable::Loading => {
                 section = section.child(widgets::page_subtitle(theme, "Loading active agents…"));
             }
             Loadable::Error(_) => {
-                section =
-                    section.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .flex_wrap()
-                            .gap(px(12.0))
-                            .child(widgets::page_subtitle(
-                                theme,
-                                "Unable to load active agents.",
-                            ))
-                            .child(
-                                widgets::ghost_action(theme)
-                                    .id("retry-completion-agents")
-                                    .role(gpui::Role::Button)
-                                    .aria_label("Retry loading active agents")
-                                    .tab_index(0)
-                                    .border_1()
-                                    .border_color(gpui::transparent_black())
-                                    .focus_visible(|s| s.border_color(theme.accent))
-                                    .on_click(cx.listener(|page, _, _, cx| {
-                                        page.load_completion_harnesses(cx)
-                                    }))
-                                    .on_key_down(cx.listener(
-                                        |page, event: &gpui::KeyDownEvent, _, cx| {
-                                            if !event.is_held
-                                                && matches!(
-                                                    event.keystroke.key.as_str(),
-                                                    "enter" | "space"
-                                                )
-                                            {
-                                                cx.stop_propagation();
-                                                page.load_completion_harnesses(cx);
-                                            }
-                                        },
-                                    ))
-                                    .child("Retry"),
-                            ),
-                    );
+                section = section.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .flex_wrap()
+                        .gap(px(12.0))
+                        .child(widgets::page_subtitle(
+                            theme,
+                            "Unable to load active agents.",
+                        ))
+                        .child(
+                            widgets::ghost_action(theme)
+                                .id("retry-completion-agents")
+                                .role(gpui::Role::Button)
+                                .aria_label("Retry loading active agents")
+                                .tab_index(0)
+                                .border_1()
+                                .border_color(gpui::transparent_black())
+                                .focus_visible(|s| s.border_color(theme.accent))
+                                .on_click(cx.listener(|page, _, _, cx| page.load(cx)))
+                                .on_key_down(cx.listener(
+                                    |page, event: &gpui::KeyDownEvent, _, cx| {
+                                        if !event.is_held
+                                            && matches!(
+                                                event.keystroke.key.as_str(),
+                                                "enter" | "space"
+                                            )
+                                        {
+                                            cx.stop_propagation();
+                                            page.load(cx);
+                                        }
+                                    },
+                                ))
+                                .child("Retry"),
+                        ),
+                );
             }
             Loadable::Ready(list) => {
                 let agents = active_agents(list);
@@ -292,18 +261,7 @@ mod completion_tests {
         let dir = tempfile::tempdir().unwrap();
         cx.update(|cx| settings::init(Default::default(), dir.path(), cx));
         let state = cx.new(|_| crate::state::AppState::new());
-        let page = cx.new(|cx| {
-            ShortcutsPage::new(
-                state,
-                Default::default(),
-                false,
-                Default::default(),
-                false,
-                false,
-                crate::appshots::AppshotDestination::Automatic,
-                cx,
-            )
-        });
+        let page = cx.new(|cx| HarnessesPage::new(state, cx));
         page.update(cx, |page, cx| {
             page.toggle_completion(HarnessId::ClaudeCode, true, cx);
             page.toggle_completion(HarnessId::ClaudeCode, false, cx);

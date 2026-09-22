@@ -179,6 +179,7 @@ impl LoginFlow {
 
 pub struct AccountsPage {
     state: Entity<AppState>,
+    embedded: bool,
     scroll: widgets::PageScroll,
     /// Which device's logins are shown; `None` = this device (no passthrough).
     /// Retargeted by the page-header device switcher (zeron parity: the
@@ -200,6 +201,23 @@ pub struct AccountsPage {
 
 impl AccountsPage {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
+        Self::new_with_layout(state, false, None, cx)
+    }
+
+    pub fn new_embedded(
+        state: Entity<AppState>,
+        target_device: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_layout(state, true, target_device, cx)
+    }
+
+    fn new_with_layout(
+        state: Entity<AppState>,
+        embedded: bool,
+        target_device: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let observe = cx.observe(&state, |_, _, cx| cx.notify());
         let code_input = cx.new(|cx| ComposerInput::new("Paste the authorization code", cx));
         let code_events = cx.subscribe(&code_input, |this: &mut Self, _, event, cx| {
@@ -209,8 +227,9 @@ impl AccountsPage {
         });
         let mut page = Self {
             state,
+            embedded,
             scroll: widgets::PageScroll::default(),
-            target_device: None,
+            target_device,
             device_menu: popover::Popup::default(),
             snapshot: Loadable::Idle,
             busy_account: None,
@@ -242,7 +261,7 @@ impl AccountsPage {
         }
     }
 
-    fn set_target_device(&mut self, target: Option<String>, cx: &mut Context<Self>) {
+    pub(crate) fn set_target_device(&mut self, target: Option<String>, cx: &mut Context<Self>) {
         self.close_device_menu(cx);
         if self.target_device == target {
             cx.notify();
@@ -1477,6 +1496,55 @@ impl Render for AccountsPage {
             }
         };
 
+        if self.embedded {
+            return div()
+                .id("accounts-embedded")
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(8.0))
+                        .child(
+                            widgets::ghost_action(&theme)
+                                .id("accounts-refresh")
+                                .when(refreshing, |el| el.opacity(0.5))
+                                .tab_index(0)
+                                .role(gpui::Role::Button)
+                                .aria_label("Refresh accounts")
+                                .focus_visible(|s| s.border_2().border_color(theme.accent))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.load(force_usage_for(LoadTrigger::Refresh), cx)
+                                }))
+                                .child(crate::icons::icon(crate::icons::REFRESH).size(px(16.0)))
+                                .child("Refresh"),
+                        ),
+                )
+                .when_some(self.error.clone(), |el, message| {
+                    el.child(
+                        widgets::error_strip(&theme, message)
+                            .id("accounts-action-error")
+                            .role(gpui::Role::Button)
+                            .aria_label("Dismiss account error")
+                            .tab_index(0)
+                            .cursor_pointer()
+                            .focus_visible(|s| s.border_2().border_color(theme.accent))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.error = None;
+                                cx.notify();
+                            })),
+                    )
+                })
+                .children(sections)
+                .when_some(dialog, |el, dialog| el.child(dialog))
+                .into_any_element();
+        }
         let scrollbar = popover::rail(self, "accounts-page-scrollbar", &theme, cx);
         div()
             .id("accounts-page-host")
@@ -1566,6 +1634,7 @@ impl Render for AccountsPage {
             )
             .children(scrollbar)
             .when_some(dialog, |el, dialog| el.child(dialog))
+            .into_any_element()
     }
 }
 

@@ -31,11 +31,16 @@ use zeron_proto::Model;
 use zeron_proto::{AgentLoginPoll, AgentLoginStart, AgentLoginStatus, HarnessId};
 use zeron_rpc::methods;
 
+use crate::motion;
 use crate::pickers::visible_harnesses;
 use crate::popover::{self, Loadable};
+use crate::settings::accounts::AccountsPage;
 use crate::settings::widgets;
 use crate::state::AppState;
 use crate::theme::Theme;
+
+#[path = "completion.rs"]
+mod completion;
 
 /// One-line blurb per agent; the catalog descriptor does not carry one.
 pub fn blurb(harness: HarnessId) -> &'static str {
@@ -137,6 +142,9 @@ pub struct HarnessesPage {
     sign_in: Option<SignIn>,
     sign_in_failure: Option<SignInFailure>,
     sign_in_task: Option<Task<()>>,
+    completion_open: bool,
+    accounts_open: bool,
+    accounts_page: Option<Entity<AccountsPage>>,
 }
 
 struct SignIn {
@@ -157,6 +165,12 @@ struct SignInFailure {
     harness: HarnessId,
     message: String,
     phase: SignInPhase,
+}
+
+#[derive(Clone, Copy)]
+enum AgentDisclosure {
+    Completion,
+    Accounts,
 }
 
 impl SignInPhase {
@@ -199,9 +213,141 @@ impl HarnessesPage {
             sign_in: None,
             sign_in_failure: None,
             sign_in_task: None,
+            completion_open: false,
+            accounts_open: false,
+            accounts_page: None,
         };
         page.load(cx);
         page
+    }
+
+    pub(crate) fn reveal_accounts(&mut self, cx: &mut Context<Self>) {
+        if self.accounts_page.is_none() {
+            let state = self.state.clone();
+            let target = self.target_device.clone();
+            self.accounts_page = Some(cx.new(|cx| AccountsPage::new_embedded(state, target, cx)));
+        }
+        self.accounts_open = true;
+        cx.notify();
+    }
+
+    fn toggle_disclosure(&mut self, kind: AgentDisclosure, cx: &mut Context<Self>) {
+        match kind {
+            AgentDisclosure::Completion => self.completion_open = !self.completion_open,
+            AgentDisclosure::Accounts => {
+                if self.accounts_open {
+                    self.accounts_open = false;
+                } else {
+                    self.reveal_accounts(cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn render_disclosure(
+        &self,
+        kind: AgentDisclosure,
+        theme: &Theme,
+        body: Option<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (id, title, detail, open) = match kind {
+            AgentDisclosure::Completion => (
+                "agents-completion-disclosure",
+                "Skills & commands",
+                "$ skills and / commands for each agent",
+                self.completion_open,
+            ),
+            AgentDisclosure::Accounts => (
+                "agents-accounts-disclosure",
+                "Accounts",
+                "Agent logins and usage",
+                self.accounts_open,
+            ),
+        };
+        let reduced_motion = motion::reduced_motion(cx);
+        let chevron = crate::icons::icon(if open {
+            crate::icons::ALT_ARROW_DOWN
+        } else {
+            crate::icons::ALT_ARROW_RIGHT
+        })
+        .size(px(16.0))
+        .text_color(theme.text_muted);
+        let chevron: AnyElement = if reduced_motion {
+            chevron.into_any_element()
+        } else {
+            motion::fade_quick(
+                if open {
+                    format!("{id}-open")
+                } else {
+                    format!("{id}-closed")
+                },
+                chevron,
+            )
+            .into_any_element()
+        };
+        widgets::section_card(theme)
+            .mt(px(0.0))
+            .child(
+                div()
+                    .id(id)
+                    .w_full()
+                    .min_h(px(58.0))
+                    .px(px(16.0))
+                    .py(px(11.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.0))
+                    .role(gpui::Role::Button)
+                    .aria_label(title)
+                    .aria_expanded(open)
+                    .tab_index(0)
+                    .focus_visible(|s| s.border_2().border_color(theme.accent))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.glass_hover()))
+                    .on_click(cx.listener(move |page, _, _, cx| page.toggle_disclosure(kind, cx)))
+                    .on_key_down(cx.listener(move |page, event: &gpui::KeyDownEvent, _, cx| {
+                        if !event.is_held
+                            && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                        {
+                            page.toggle_disclosure(kind, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.0))
+                            .child(widgets::row_title(theme, title))
+                            .child(
+                                div()
+                                    .text_size(crate::typography::ui_rems(11.5))
+                                    .text_color(theme.text_muted)
+                                    .child(detail),
+                            ),
+                    )
+                    .child(chevron),
+            )
+            .when_some(body, |card, body| {
+                let content = div()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .px(px(16.0))
+                    .pt(px(12.0))
+                    .pb(px(16.0))
+                    .child(body);
+                if reduced_motion {
+                    card.child(content)
+                } else {
+                    card.child(motion::menu_in(format!("{id}-content"), content))
+                }
+            })
+            .into_any_element()
     }
 
     /// Params with the `targetDeviceId` passthrough merged in.
@@ -229,6 +375,11 @@ impl HarnessesPage {
         self.installing = None;
         self.install_task = None;
         self.target_device = target;
+        if let Some(accounts) = &self.accounts_page {
+            accounts.update(cx, |page, cx| {
+                page.set_target_device(self.target_device.clone(), cx)
+            });
+        }
         self.error = None;
         self.sign_in_failure = None;
         self.harnesses = Loadable::Idle;
@@ -1220,6 +1371,20 @@ impl Render for HarnessesPage {
             .map(|message| widgets::error_strip(&theme, message).into_any_element());
         let switcher = self.render_device_switcher(&theme, cx);
         let titles = self.render_titles(&theme, cx);
+        let completion = self
+            .completion_open
+            .then(|| self.render_completion(&theme, cx));
+        let accounts = if self.accounts_open {
+            self.accounts_page
+                .clone()
+                .map(|page| page.into_any_element())
+        } else {
+            None
+        };
+        let completion_disclosure =
+            self.render_disclosure(AgentDisclosure::Completion, &theme, completion, cx);
+        let accounts_disclosure =
+            self.render_disclosure(AgentDisclosure::Accounts, &theme, accounts, cx);
         let scrollbar = popover::rail(self, "harnesses-page-scrollbar", &theme, cx);
 
         div()
@@ -1254,7 +1419,16 @@ impl Render for HarnessesPage {
                             )
                             .children(error)
                             .child(body)
-                            .child(titles),
+                            .child(titles)
+                            .child(
+                                div()
+                                    .mt(px(24.0))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(10.0))
+                                    .child(completion_disclosure)
+                                    .child(accounts_disclosure),
+                            ),
                     )).fade_overflow_y(&self.scroll.scroll),
             )
             .children(scrollbar)
@@ -1264,6 +1438,31 @@ impl Render for HarnessesPage {
 #[cfg(test)]
 mod tests {
     use super::SignInPhase;
+
+    #[gpui::test]
+    fn expanded_agent_preferences_render_in_one_page(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            crate::settings::init(Default::default(), dir.path(), cx);
+            gpui_base::init(cx);
+            cx.set_global(crate::theme::Theme::default());
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| crate::state::AppState::new());
+            super::HarnessesPage::new(state, cx)
+        });
+        window
+            .update(cx, |page, _, cx| {
+                page.toggle_disclosure(super::AgentDisclosure::Completion, cx);
+                page.reveal_accounts(cx);
+                assert!(page.completion_open && page.accounts_open);
+                assert!(page.accounts_page.is_some());
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+    }
 
     #[test]
     fn explicit_sign_in_requires_installed_antigravity() {

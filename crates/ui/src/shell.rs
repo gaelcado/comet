@@ -470,13 +470,13 @@ impl SettingsSection {
         SettingsSection::Appearance,
         SettingsSection::Notifications,
         SettingsSection::Shortcuts,
+        SettingsSection::Harnesses,
+        SettingsSection::Devices,
         SettingsSection::Conversations,
         SettingsSection::Files,
         SettingsSection::Appshots,
         SettingsSection::Archived,
-        SettingsSection::Harnesses,
         SettingsSection::Agents,
-        SettingsSection::Devices,
     ];
 
     fn category_heading(self) -> Option<&'static str> {
@@ -3878,11 +3878,6 @@ impl Shell {
         if section == SettingsSection::Harnesses {
             self.harnesses_page = None;
         }
-        if section == SettingsSection::Shortcuts
-            && let Some(page) = &self.shortcuts_page
-        {
-            page.update(cx, |page, cx| page.load_completion_harnesses(cx));
-        }
         if !matches!(self.route, Route::Settings(_)) {
             self.settings_focus_pending = true;
         }
@@ -3936,11 +3931,6 @@ impl Shell {
                 }
             }
             NavEntry::Settings(section) => {
-                if section == SettingsSection::Shortcuts
-                    && let Some(page) = &self.shortcuts_page
-                {
-                    page.update(cx, |page, cx| page.load_completion_harnesses(cx));
-                }
                 self.route = Route::Settings(section);
             }
         }
@@ -5992,8 +5982,9 @@ impl Shell {
                                 SettingsSection::ALL
                                     .into_iter()
                                     .filter(|item| {
-                                        *item != SettingsSection::Appshots
-                                            || crate::appshots::is_desktop()
+                                        *item != SettingsSection::Agents
+                                            && (*item != SettingsSection::Appshots
+                                                || crate::appshots::is_desktop())
                                     })
                                     .map(|item| {
                                         let index = SettingsSection::ALL
@@ -6043,8 +6034,9 @@ impl Shell {
                                                 let items: Vec<_> = SettingsSection::ALL
                                                     .into_iter()
                                                     .filter(|s| {
-                                                        *s != SettingsSection::Appshots
-                                                            || crate::appshots::is_desktop()
+                                                        *s != SettingsSection::Agents
+                                                            && (*s != SettingsSection::Appshots
+                                                                || crate::appshots::is_desktop())
                                                     })
                                                     .collect();
                                                 let current = items
