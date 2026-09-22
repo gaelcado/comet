@@ -12821,25 +12821,46 @@ mod exit_regressions {
                 cx,
             )
         });
-        window
-            .update(cx, |shell, window, cx| {
-                shell.pending_workspace_command = Some(WorkspaceCommand::Settings);
-                let _ = shell.render(window, cx);
-                assert!(matches!(shell.route, Route::Settings(_)));
-                shell.pending_workspace_command = Some(WorkspaceCommand::New);
-                let _ = shell.render(window, cx);
-                assert!(matches!(shell.route, Route::Chat));
-                assert!(shell.state.read(cx).selected_chat.is_none());
-                shell.pending_workspace_command = Some(WorkspaceCommand::Resume);
-                let _ = shell.render(window, cx);
-                assert!(shell.command_palette.is_some());
-                shell.close_command_palette(window, cx);
-                shell.pending_workspace_command = Some(WorkspaceCommand::Model);
-                let _ = shell.render(window, cx);
-                assert!(shell.composer.read(cx).pickers().read(cx).is_open());
-                assert!(shell.pending_workspace_command.is_none());
-            })
-            .unwrap();
+        for command in [
+            WorkspaceCommand::Settings,
+            WorkspaceCommand::New,
+            WorkspaceCommand::Resume,
+            WorkspaceCommand::Model,
+        ] {
+            window
+                .update(cx, |shell, window, cx| {
+                    if matches!(command, WorkspaceCommand::Model) {
+                        shell.close_command_palette(window, cx);
+                    }
+                    shell.pending_workspace_command = Some(command);
+                    cx.notify();
+                })
+                .unwrap();
+            // Render through the window's arena, as production does. Calling
+            // Shell::render directly allocates modal children in the fallback
+            // arena, which does not belong to this test App's lifecycle.
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            window
+                .update(cx, |shell, _, cx| {
+                    match command {
+                        WorkspaceCommand::Settings => {
+                            assert!(matches!(shell.route, Route::Settings(_)));
+                        }
+                        WorkspaceCommand::New => {
+                            assert!(matches!(shell.route, Route::Chat));
+                            assert!(shell.state.read(cx).selected_chat.is_none());
+                        }
+                        WorkspaceCommand::Resume => assert!(shell.command_palette.is_some()),
+                        WorkspaceCommand::Model => {
+                            assert!(shell.composer.read(cx).pickers().read(cx).is_open());
+                        }
+                        _ => unreachable!(),
+                    }
+                    assert!(shell.pending_workspace_command.is_none());
+                })
+                .unwrap();
+        }
     }
 
     #[gpui::test]
