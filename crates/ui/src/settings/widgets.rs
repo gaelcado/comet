@@ -579,19 +579,26 @@ impl RenderOnce for SwitchVisual {
                                     .opacity(position)
                                     .child(
                                         div()
-                                            .w(px(2.5))
-                                            .h(px(10.0))
+                                            .w(px(1.5))
+                                            .h(px(8.0))
                                             .rounded_full()
-                                            .bg(gpui::white().opacity(0.95)),
+                                            .bg(gpui::white().opacity(0.9)),
                                     ),
                             )
                             .child(
                                 div()
                                     .size(px(10.0))
-                                    .rounded_full()
-                                    .border(px(2.0))
-                                    .border_color(self.theme.text_muted.opacity(0.95))
-                                    .opacity(1.0 - position),
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .opacity(1.0 - position)
+                                    .child(
+                                        div()
+                                            .size(px(8.0))
+                                            .rounded_full()
+                                            .border(px(1.5))
+                                            .border_color(self.theme.text_muted.opacity(0.88)),
+                                    ),
                             ),
                     ),
             )
