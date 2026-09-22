@@ -8693,50 +8693,48 @@ impl Composer {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = Theme::of(cx);
-        // Zeron composer-actions.tsx: a size-7 filled circle — up-arrow to
-        // send/queue, a dark rounded square on the same light circle to stop.
-        match mode {
-            SendButtonMode::Stop => div()
-                .id("composer-stop")
-                .size(px(28.0))
-                .flex_none()
-                .rounded_full()
-                .bg(theme.text)
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .hover(|s| s.opacity(0.85))
-                .on_click(cx.listener(|this, _, _, cx| this.interrupt_selected(cx)))
-                .child(div().size(px(11.0)).rounded(px(3.0)).bg(theme.bg))
-                .into_any_element(),
-            SendButtonMode::Send | SendButtonMode::Queue => {
-                // Share the submission guard with Enter, including pending
-                // edits and the new-session runnable-agent check.
-                let blocked = self.send_blocked(cx);
-                div()
-                    .id("composer-send")
-                    .size(px(28.0))
-                    .flex_none()
-                    .rounded_full()
-                    .bg(theme.text)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(blocked, |el| el.opacity(0.35))
-                    .when(!blocked, |el| {
-                        el.cursor_pointer()
-                            .hover(|s| s.opacity(0.85))
-                            .on_click(cx.listener(|this, _, _, cx| this.on_submit(cx)))
-                    })
-                    .child(
-                        crate::icons::icon(crate::icons::ARROW_UP)
-                            .size(px(14.0))
-                            .text_color(theme.bg),
-                    )
-                    .into_any_element()
-            }
-        }
+        let stopping = mode == SendButtonMode::Stop;
+        let blocked = !stopping && self.send_blocked(cx);
+        div()
+            .id("composer-primary-action")
+            .role(gpui::Role::Button)
+            .aria_label(if stopping {
+                "Stop response"
+            } else if mode == SendButtonMode::Queue {
+                "Queue message"
+            } else {
+                "Send message"
+            })
+            .size(px(28.0))
+            .flex_none()
+            .rounded_full()
+            .bg(theme.text)
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(blocked, |el| el.opacity(0.35))
+            .when(!blocked, |el| {
+                el.cursor_pointer()
+                    .hover(|s| s.opacity(0.85))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if stopping {
+                            this.interrupt_selected(cx);
+                        } else {
+                            this.on_submit(cx);
+                        }
+                    }))
+            })
+            .child(
+                crate::icons::icon(if stopping {
+                    crate::icons::STOP
+                } else {
+                    crate::icons::SEND
+                })
+                .morph("send-stop-glyph")
+                .size(px(18.0))
+                .text_color(theme.bg),
+            )
+            .into_any_element()
     }
 }
 

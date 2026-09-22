@@ -955,6 +955,7 @@ impl Composer {
             .tooltip_show_delay(std::time::Duration::from_millis(350))
             .child(
                 icon(glyph)
+                    .morph("queue-action-glyph")
                     .size(px(QUEUE_ICON_SIZE))
                     .text_color(theme.text_muted.opacity(0.8))
                     .group_hover(own, |s| s.text_color(theme.text)),

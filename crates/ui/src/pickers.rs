@@ -3931,6 +3931,7 @@ impl Pickers {
                     } else {
                         crate::icons::STAR
                     })
+                    .morph("state-glyph")
                     .size(px(13.0))
                     .text_color(if is_fav {
                         theme.warning

@@ -375,7 +375,11 @@ impl Shell {
                             )
                             .child(header_icon_button(
                                 "toggle-changes",
-                                icons::SIDEBAR_MINIMALISTIC,
+                                if self.right_pane_open(cx) {
+                                    icons::PANEL_RIGHT_OPEN
+                                } else {
+                                    icons::PANEL_RIGHT_CLOSED
+                                },
                                 &theme,
                                 cx.listener(|this, _, _, cx| this.toggle_right_pane(cx)),
                             )),

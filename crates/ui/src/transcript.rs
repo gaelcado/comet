@@ -6562,6 +6562,7 @@ impl Transcript {
                         } else {
                             crate::icons::COPY
                         })
+                        .morph("state-glyph")
                         .size(px(14.0))
                         .text_color(theme.text_muted),
                     )

@@ -1,10 +1,11 @@
 {
   "source": "zeronsh/zeron",
-  "sha": "83724af569ad2fbaa5c021bbdb397ce5d6284ec3",
+  "sha": "5a5abc88975db24b44b8550b945aa89d7af2bcc2",
+  "dirty": true,
   "desktop": [
     {
       "constant": "PROJECT_DEFAULT",
-      "asset": "project-default",
+      "asset": "project",
       "custom": "project",
       "disposition": "Custom replacement",
       "references": [
@@ -13,21 +14,21 @@
     },
     {
       "constant": "REMOTE_SERVER",
-      "asset": "remote-server",
+      "asset": "server",
       "custom": "server",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:6076",
-        "crates/ui/src/shell.rs:6346"
+        "crates/ui/src/shell.rs:6082",
+        "crates/ui/src/shell.rs:6352"
       ]
     },
     {
       "constant": "FAST_TIER",
-      "asset": "fast-tier",
+      "asset": "bolt",
       "custom": "bolt",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/pickers.rs:4891"
+        "crates/ui/src/pickers.rs:4892"
       ]
     },
     {
@@ -36,11 +37,10 @@
       "custom": "monitor",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5758",
-        "crates/ui/src/shell.rs:5765",
+        "crates/ui/src/shell.rs:5763",
+        "crates/ui/src/shell.rs:5770",
         "crates/ui/src/transcript.rs:5938",
         "crates/ui/src/pickers.rs:2775",
-        "crates/ui/src/appearance.rs:54",
         "crates/ui/src/settings/harnesses.rs:765",
         "crates/ui/src/settings/accounts.rs:300",
         "crates/ui/src/settings/devices.rs:263",
@@ -73,9 +73,9 @@
       "custom": "globe",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:9112",
-        "crates/ui/src/shell.rs:9328",
-        "crates/ui/src/shell.rs:9621",
+        "crates/ui/src/shell.rs:9124",
+        "crates/ui/src/shell.rs:9340",
+        "crates/ui/src/shell.rs:9634",
         "crates/ui/src/markdown/link_interaction.rs:332",
         "crates/ui/src/browser/view.rs:328",
         "crates/ui/src/browser/view.rs:458"
@@ -97,7 +97,7 @@
     },
     {
       "constant": "PEN_NEW_SQUARE",
-      "asset": "pen-new-square",
+      "asset": "compose",
       "custom": "compose",
       "disposition": "Custom replacement",
       "references": [
@@ -113,7 +113,7 @@
     },
     {
       "constant": "MORE_HORIZONTAL",
-      "asset": "more-horizontal",
+      "asset": "more",
       "custom": "more",
       "disposition": "Custom replacement",
       "references": [
@@ -123,7 +123,7 @@
     },
     {
       "constant": "SORT_VERTICAL",
-      "asset": "sort-vertical",
+      "asset": "sort-ascending",
       "custom": "sort-ascending",
       "disposition": "Custom replacement",
       "references": [
@@ -134,14 +134,14 @@
     },
     {
       "constant": "DRAG_HANDLE",
-      "asset": "drag-handle",
+      "asset": "drag",
       "custom": "drag",
       "disposition": "Custom replacement",
       "references": []
     },
     {
       "constant": "QUEUE_DRAG_HANDLE",
-      "asset": "queue-drag-handle",
+      "asset": "drag",
       "custom": "drag",
       "disposition": "Custom replacement",
       "references": [
@@ -150,16 +150,16 @@
     },
     {
       "constant": "QUEUE_SEND",
-      "asset": "queue-send",
+      "asset": "send-now",
       "custom": "send-now",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/queue.rs:1029"
+        "crates/ui/src/queue.rs:1030"
       ]
     },
     {
       "constant": "QUEUE_CHECK",
-      "asset": "queue-check",
+      "asset": "check",
       "custom": "check",
       "disposition": "Custom replacement",
       "references": [
@@ -168,7 +168,7 @@
     },
     {
       "constant": "QUEUE_CLOSE",
-      "asset": "queue-close",
+      "asset": "close",
       "custom": "close",
       "disposition": "Custom replacement",
       "references": [
@@ -177,7 +177,7 @@
     },
     {
       "constant": "QUEUE_PAPERCLIP",
-      "asset": "queue-paperclip",
+      "asset": "paperclip",
       "custom": "paperclip",
       "disposition": "Custom replacement",
       "references": [
@@ -186,7 +186,7 @@
     },
     {
       "constant": "CLOCK_CIRCLE",
-      "asset": "clock-circle",
+      "asset": "clock",
       "custom": "clock",
       "disposition": "Custom replacement",
       "references": [
@@ -208,10 +208,10 @@
       "custom": "list",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:9126",
-        "crates/ui/src/shell.rs:9322",
-        "crates/ui/src/shell.rs:9325",
-        "crates/ui/src/shell.rs:9650",
+        "crates/ui/src/shell.rs:9138",
+        "crates/ui/src/shell.rs:9334",
+        "crates/ui/src/shell.rs:9337",
+        "crates/ui/src/shell.rs:9663",
         "crates/ui/src/settings/files.rs:185",
         "crates/ui/src/shell/spaces.rs:3292",
         "crates/ui/src/files/preview.rs:2328"
@@ -219,11 +219,11 @@
     },
     {
       "constant": "FOLDER_WITH_FILES",
-      "asset": "folder-with-files",
+      "asset": "repository",
       "custom": "repository",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/transcript.rs:7744",
+        "crates/ui/src/transcript.rs:7745",
         "crates/ui/src/pickers.rs:2842",
         "crates/ui/src/pickers.rs:2922",
         "crates/ui/src/pickers.rs:3006",
@@ -247,7 +247,7 @@
       "custom": "folder",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5762",
+        "crates/ui/src/shell.rs:5767",
         "crates/ui/src/pickers.rs:2784",
         "crates/ui/src/pickers.rs:2841",
         "crates/ui/src/pickers.rs:2924",
@@ -266,21 +266,21 @@
     },
     {
       "constant": "FLOPPY_DISK",
-      "asset": "floppy-disk",
+      "asset": "save",
       "custom": "save",
       "disposition": "Custom replacement",
       "references": []
     },
     {
       "constant": "GIT_BRANCH",
-      "asset": "git-branch",
+      "asset": "branch",
       "custom": "branch",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:6414",
-        "crates/ui/src/shell.rs:9132",
-        "crates/ui/src/shell.rs:9320",
-        "crates/ui/src/shell.rs:9664",
+        "crates/ui/src/shell.rs:6420",
+        "crates/ui/src/shell.rs:9144",
+        "crates/ui/src/shell.rs:9332",
+        "crates/ui/src/shell.rs:9677",
         "crates/ui/src/pickers.rs:2855",
         "crates/ui/src/pickers.rs:2944",
         "crates/ui/src/pickers.rs:2999",
@@ -295,7 +295,7 @@
       "custom": "pull-request",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/change_requests.rs:185",
+        "crates/ui/src/change_requests.rs:156",
         "crates/ui/src/shell/spaces.rs:3296"
       ]
     },
@@ -320,29 +320,25 @@
     },
     {
       "constant": "SIDEBAR_MINIMALISTIC",
-      "asset": "sidebar-minimalistic",
+      "asset": "panel-right-open",
       "custom": "panel-right-open",
       "disposition": "Custom replacement",
-      "references": [
-        "crates/ui/src/shell/tabs.rs:378"
-      ]
+      "references": []
     },
     {
       "constant": "SIDEBAR_MINIMALISTIC_LEFT",
-      "asset": "sidebar-minimalistic-left",
+      "asset": "panel-left-open",
       "custom": "panel-left-open",
       "disposition": "Custom replacement",
-      "references": [
-        "crates/ui/src/shell.rs:5346"
-      ]
+      "references": []
     },
     {
       "constant": "KEY_MINIMALISTIC",
-      "asset": "key-minimalistic",
+      "asset": "key",
       "custom": "key",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5760"
+        "crates/ui/src/shell.rs:5765"
       ]
     },
     {
@@ -351,7 +347,7 @@
       "custom": "keyboard",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5764"
+        "crates/ui/src/shell.rs:5769"
       ]
     },
     {
@@ -360,7 +356,7 @@
       "custom": "arrow-left",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5359",
+        "crates/ui/src/shell.rs:5363",
         "crates/ui/src/shell/spaces.rs:5973",
         "crates/ui/src/browser/view.rs:411"
       ]
@@ -371,8 +367,8 @@
       "custom": "arrow-right",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5366",
-        "crates/ui/src/changes.rs:4076",
+        "crates/ui/src/shell.rs:5370",
+        "crates/ui/src/changes.rs:4088",
         "crates/ui/src/browser/view.rs:422"
       ]
     },
@@ -382,7 +378,6 @@
       "custom": "arrow-up",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/composer.rs:8733",
         "crates/ui/src/shell/spaces.rs:6016"
       ]
     },
@@ -401,7 +396,7 @@
       "custom": "arrow-up-right",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/transcript.rs:8225",
+        "crates/ui/src/transcript.rs:8226",
         "crates/ui/src/markdown/link_interaction.rs:336",
         "crates/ui/src/browser/view.rs:497",
         "crates/ui/src/browser/view.rs:655",
@@ -419,16 +414,16 @@
     },
     {
       "constant": "ALT_ARROW_DOWN",
-      "asset": "alt-arrow-down",
+      "asset": "chevron-down",
       "custom": "chevron-down",
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/transcript.rs:5666",
-        "crates/ui/src/transcript.rs:7223",
-        "crates/ui/src/transcript.rs:8212",
+        "crates/ui/src/transcript.rs:7224",
+        "crates/ui/src/transcript.rs:8213",
         "crates/ui/src/changes.rs:3473",
-        "crates/ui/src/changes.rs:3834",
-        "crates/ui/src/changes.rs:4038",
+        "crates/ui/src/changes.rs:3838",
+        "crates/ui/src/changes.rs:4050",
         "crates/ui/src/pickers.rs:2702",
         "crates/ui/src/history.rs:3976",
         "crates/ui/src/settings/appearance.rs:1897",
@@ -442,7 +437,7 @@
     },
     {
       "constant": "ALT_ARROW_UP",
-      "asset": "alt-arrow-up",
+      "asset": "chevron-up",
       "custom": "chevron-up",
       "disposition": "Custom replacement",
       "references": [
@@ -451,76 +446,69 @@
     },
     {
       "constant": "EXPAND_ARROWS",
-      "asset": "expand-arrows",
+      "asset": "expand",
       "custom": "expand",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:11398",
+        "crates/ui/src/shell.rs:11423",
         "crates/ui/src/history.rs:3628",
         "crates/ui/src/shell/tabs.rs:38"
       ]
     },
     {
       "constant": "COLLAPSE_ARROWS",
-      "asset": "collapse-arrows",
+      "asset": "collapse",
       "custom": "collapse",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:11399",
+        "crates/ui/src/shell.rs:11424",
         "crates/ui/src/shell/tabs.rs:36"
       ]
     },
     {
       "constant": "FOLD_VERTICAL",
-      "asset": "fold-vertical",
+      "asset": "fold",
       "custom": "fold",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/changes.rs:3769",
-        "crates/ui/src/changes.rs:3902",
         "crates/ui/src/history.rs:1661",
         "crates/ui/src/history.rs:3630"
       ]
     },
     {
       "constant": "SPLIT_COLUMNS",
-      "asset": "split-columns",
+      "asset": "split",
       "custom": "split",
       "disposition": "Custom replacement",
-      "references": [
-        "crates/ui/src/changes.rs:3697"
-      ]
+      "references": []
     },
     {
       "constant": "WRAP_TEXT",
-      "asset": "wrap-text",
+      "asset": "wrap",
       "custom": "wrap",
       "disposition": "Custom replacement",
-      "references": [
-        "crates/ui/src/changes.rs:3711",
-        "crates/ui/src/markdown/render.rs:2150"
-      ]
+      "references": []
     },
     {
       "constant": "ALT_ARROW_LEFT",
-      "asset": "alt-arrow-left",
+      "asset": "chevron-left",
       "custom": "chevron-left",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5862",
-        "crates/ui/src/shell.rs:7990"
+        "crates/ui/src/shell.rs:5868",
+        "crates/ui/src/shell.rs:7996"
       ]
     },
     {
       "constant": "ALT_ARROW_RIGHT",
-      "asset": "alt-arrow-right",
+      "asset": "chevron-right",
       "custom": "chevron-right",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:7940",
-        "crates/ui/src/transcript.rs:8214",
+        "crates/ui/src/shell.rs:7946",
+        "crates/ui/src/transcript.rs:8215",
         "crates/ui/src/changes.rs:3471",
-        "crates/ui/src/pickers.rs:4205",
+        "crates/ui/src/pickers.rs:4206",
         "crates/ui/src/shell/spaces.rs:2149",
         "crates/ui/src/shell/spaces.rs:3357",
         "crates/ui/src/shell/spaces.rs:5866",
@@ -530,7 +518,7 @@
     },
     {
       "constant": "SMARTPHONE",
-      "asset": "smartphone",
+      "asset": "phone",
       "custom": "phone",
       "disposition": "Custom replacement",
       "references": [
@@ -543,11 +531,11 @@
     },
     {
       "constant": "ARCHIVE_UP_MINIMALISTIC",
-      "asset": "archive-up-minimalistic",
+      "asset": "unarchive",
       "custom": "unarchive",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:6049",
+        "crates/ui/src/shell.rs:6055",
         "crates/ui/src/settings/archived.rs:246"
       ]
     },
@@ -557,7 +545,7 @@
       "custom": "refresh",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/changes.rs:3884",
+        "crates/ui/src/changes.rs:3888",
         "crates/ui/src/history.rs:3974",
         "crates/ui/src/settings/accounts.rs:1468",
         "crates/ui/src/shell/actions_ui.rs:691",
@@ -571,14 +559,14 @@
       "custom": "restart",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:7316",
+        "crates/ui/src/shell.rs:7322",
         "crates/ui/src/settings/shortcuts.rs:604",
         "crates/ui/src/settings/shortcuts.rs:796"
       ]
     },
     {
       "constant": "ADD_CIRCLE",
-      "asset": "add-circle",
+      "asset": "add",
       "custom": "add",
       "disposition": "Custom replacement",
       "references": [
@@ -591,7 +579,6 @@
       "custom": "tuning",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5761",
         "crates/ui/src/settings/appearance.rs:3059",
         "crates/ui/src/settings/appearance.rs:3229"
       ]
@@ -605,7 +592,7 @@
         "crates/ui/src/settings/files.rs:215",
         "crates/ui/src/markdown/render.rs:1858",
         "crates/ui/src/files/preview.rs:2257",
-        "crates/ui/src/files/mod.rs:1073"
+        "crates/ui/src/files/mod.rs:1070"
       ]
     },
     {
@@ -615,7 +602,7 @@
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/settings/appearance.rs:3271",
-        "crates/ui/src/files/mod.rs:1075"
+        "crates/ui/src/files/mod.rs:1072"
       ]
     },
     {
@@ -624,8 +611,7 @@
       "custom": "paperclip",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/icons.rs:15",
-        "crates/ui/src/composer.rs:9244"
+        "crates/ui/src/composer.rs:9242"
       ]
     },
     {
@@ -634,20 +620,20 @@
       "custom": "pin",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:7913"
+        "crates/ui/src/shell.rs:7919"
       ]
     },
     {
       "constant": "PEN",
-      "asset": "pen",
+      "asset": "edit",
       "custom": "edit",
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/comment_ui.rs:174",
-        "crates/ui/src/shell.rs:7904",
-        "crates/ui/src/transcript.rs:7742",
-        "crates/ui/src/transcript.rs:8033",
-        "crates/ui/src/transcript.rs:8390",
+        "crates/ui/src/shell.rs:7910",
+        "crates/ui/src/transcript.rs:7743",
+        "crates/ui/src/transcript.rs:8034",
+        "crates/ui/src/transcript.rs:8391",
         "crates/ui/src/queue.rs:416",
         "crates/ui/src/settings/devices.rs:390",
         "crates/ui/src/shell/spaces.rs:6184"
@@ -655,24 +641,24 @@
     },
     {
       "constant": "ARCHIVE_MINIMALISTIC",
-      "asset": "archive-minimalistic",
+      "asset": "archive",
       "custom": "archive",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5766",
-        "crates/ui/src/shell.rs:6051",
-        "crates/ui/src/shell.rs:7923",
+        "crates/ui/src/shell.rs:5771",
+        "crates/ui/src/shell.rs:6057",
+        "crates/ui/src/shell.rs:7929",
         "crates/ui/src/settings/archived.rs:161",
         "crates/ui/src/settings/archived.rs:272"
       ]
     },
     {
       "constant": "TRASH_BIN_MINIMALISTIC",
-      "asset": "trash-bin-minimalistic",
+      "asset": "trash",
       "custom": "trash",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:7956",
+        "crates/ui/src/shell.rs:7962",
         "crates/ui/src/queue.rs:432",
         "crates/ui/src/settings/accounts.rs:833",
         "crates/ui/src/shell/spaces.rs:6198"
@@ -680,40 +666,40 @@
     },
     {
       "constant": "SETTINGS_MINIMALISTIC",
-      "asset": "settings-minimalistic",
+      "asset": "settings",
       "custom": "settings",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:7345",
+        "crates/ui/src/shell.rs:7351",
         "crates/ui/src/shell/command_palette.rs:53",
         "crates/ui/src/shell/actions_ui.rs:741"
       ]
     },
     {
       "constant": "LOGOUT_2",
-      "asset": "logout-2",
+      "asset": "logout",
       "custom": "logout",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:7328"
+        "crates/ui/src/shell.rs:7334"
       ]
     },
     {
       "constant": "MAGNIFER",
-      "asset": "magnifer",
+      "asset": "search",
       "custom": "search",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/transcript.rs:7743",
+        "crates/ui/src/transcript.rs:7744",
         "crates/ui/src/pickers.rs:3593",
         "crates/ui/src/history.rs:1709",
         "crates/ui/src/history.rs:1742",
-        "crates/ui/src/files/mod.rs:1041"
+        "crates/ui/src/files/mod.rs:1038"
       ]
     },
     {
       "constant": "PALETTE_SEARCH",
-      "asset": "palette-search",
+      "asset": "search",
       "custom": "search",
       "disposition": "Custom replacement",
       "references": [
@@ -735,8 +721,8 @@
       "custom": "document",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:9314",
-        "crates/ui/src/transcript.rs:7740",
+        "crates/ui/src/shell.rs:9326",
+        "crates/ui/src/transcript.rs:7741",
         "crates/ui/src/settings/appearance.rs:2776"
       ]
     },
@@ -746,7 +732,7 @@
       "custom": "document-add",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/transcript.rs:7741"
+        "crates/ui/src/transcript.rs:7742"
       ]
     },
     {
@@ -791,13 +777,13 @@
     },
     {
       "constant": "GLOBAL",
-      "asset": "global",
+      "asset": "globe",
       "custom": "globe",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:7292",
-        "crates/ui/src/shell.rs:7304",
-        "crates/ui/src/transcript.rs:7745",
+        "crates/ui/src/shell.rs:7298",
+        "crates/ui/src/shell.rs:7310",
+        "crates/ui/src/transcript.rs:7746",
         "crates/ui/src/settings/devices.rs:261",
         "crates/ui/src/settings/appearance.rs:2774",
         "crates/ui/src/shell/spaces.rs:5693"
@@ -809,24 +795,24 @@
       "custom": "checklist",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/transcript.rs:7746",
+        "crates/ui/src/transcript.rs:7747",
         "crates/ui/src/history.rs:4227"
       ]
     },
     {
       "constant": "WIDGET",
-      "asset": "widget",
+      "asset": "grid",
       "custom": "grid",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5759",
-        "crates/ui/src/transcript.rs:7749",
+        "crates/ui/src/shell.rs:5764",
+        "crates/ui/src/transcript.rs:7750",
         "crates/ui/src/settings/appearance.rs:3087"
       ]
     },
     {
       "constant": "MAGIC_STICK_3",
-      "asset": "magic-stick-3",
+      "asset": "skills",
       "custom": "skills",
       "disposition": "Custom replacement",
       "references": [
@@ -846,7 +832,7 @@
     },
     {
       "constant": "CLOSE_CIRCLE",
-      "asset": "close-circle",
+      "asset": "error",
       "custom": "error",
       "disposition": "Custom replacement",
       "references": [
@@ -858,7 +844,7 @@
     },
     {
       "constant": "INFO_CIRCLE",
-      "asset": "info-circle",
+      "asset": "info",
       "custom": "info",
       "disposition": "Custom replacement",
       "references": [
@@ -867,7 +853,7 @@
     },
     {
       "constant": "DANGER_TRIANGLE",
-      "asset": "danger-triangle",
+      "asset": "warning",
       "custom": "warning",
       "disposition": "Custom replacement",
       "references": [
@@ -882,16 +868,16 @@
     },
     {
       "constant": "CHAT_ROUND_LINE",
-      "asset": "chat-round-line",
+      "asset": "chat",
       "custom": "chat",
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/comment_ui.rs:96",
         "crates/ui/src/comment_ui.rs:239",
         "crates/ui/src/composer.rs:5888",
-        "crates/ui/src/transcript.rs:7710",
-        "crates/ui/src/transcript.rs:8032",
-        "crates/ui/src/transcript.rs:8389",
+        "crates/ui/src/transcript.rs:7711",
+        "crates/ui/src/transcript.rs:8033",
+        "crates/ui/src/transcript.rs:8390",
         "crates/ui/src/comments.rs:185",
         "crates/ui/src/settings/notifications.rs:242",
         "crates/ui/src/files/preview.rs:2643",
@@ -900,13 +886,13 @@
     },
     {
       "constant": "BOT",
-      "asset": "bot",
+      "asset": "agent",
       "custom": "agent",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:9326",
-        "crates/ui/src/transcript.rs:7747",
+        "crates/ui/src/shell.rs:9338",
         "crates/ui/src/transcript.rs:7748",
+        "crates/ui/src/transcript.rs:7749",
         "crates/ui/src/shell/spaces.rs:3297"
       ]
     },
@@ -916,13 +902,13 @@
       "custom": "bell",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5763",
+        "crates/ui/src/shell.rs:5768",
         "crates/ui/src/settings/notifications.rs:315"
       ]
     },
     {
       "constant": "VOLUME_LOUD",
-      "asset": "volume-loud",
+      "asset": "volume",
       "custom": "volume",
       "disposition": "Custom replacement",
       "references": [
@@ -935,12 +921,12 @@
       "custom": "terminal",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:9117",
-        "crates/ui/src/shell.rs:9327",
-        "crates/ui/src/shell.rs:9635",
-        "crates/ui/src/transcript.rs:7739",
+        "crates/ui/src/shell.rs:9129",
+        "crates/ui/src/shell.rs:9339",
+        "crates/ui/src/shell.rs:9648",
+        "crates/ui/src/transcript.rs:7740",
         "crates/ui/src/pickers.rs:3470",
-        "crates/ui/src/pickers.rs:4810",
+        "crates/ui/src/pickers.rs:4811",
         "crates/ui/src/terminal/panel.rs:1568"
       ]
     },
@@ -951,9 +937,9 @@
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/comment_ui.rs:41",
-        "crates/ui/src/shell.rs:5379",
-        "crates/ui/src/shell.rs:9329",
-        "crates/ui/src/shell.rs:9599",
+        "crates/ui/src/shell.rs:5383",
+        "crates/ui/src/shell.rs:9341",
+        "crates/ui/src/shell.rs:9612",
         "crates/ui/src/pickers.rs:2286",
         "crates/ui/src/shell/spaces.rs:3574",
         "crates/ui/src/shell/spaces.rs:3999",
@@ -970,8 +956,8 @@
       "custom": "close",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5561",
-        "crates/ui/src/shell.rs:9508",
+        "crates/ui/src/shell.rs:5565",
+        "crates/ui/src/shell.rs:9521",
         "crates/ui/src/pickers.rs:2266",
         "crates/ui/src/history.rs:1800",
         "crates/ui/src/settings/appearance.rs:2589",
@@ -985,7 +971,7 @@
       "custom": "window-minimize",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5542"
+        "crates/ui/src/shell.rs:5546"
       ]
     },
     {
@@ -994,7 +980,7 @@
       "custom": "window-maximize",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5552"
+        "crates/ui/src/shell.rs:5556"
       ]
     },
     {
@@ -1003,12 +989,12 @@
       "custom": "window-restore",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5550"
+        "crates/ui/src/shell.rs:5554"
       ]
     },
     {
       "constant": "HARD_DRIVE",
-      "asset": "hard-drive",
+      "asset": "drive",
       "custom": "drive",
       "disposition": "Custom replacement",
       "references": [
@@ -1031,7 +1017,9 @@
       "asset": "stop",
       "custom": "stop",
       "disposition": "Custom replacement",
-      "references": []
+      "references": [
+        "crates/ui/src/composer.rs:8729"
+      ]
     },
     {
       "constant": "CHECK",
@@ -1039,10 +1027,10 @@
       "custom": "check",
       "disposition": "Custom replacement",
       "references": [
-        "crates/ui/src/shell.rs:5981",
-        "crates/ui/src/shell.rs:6090",
+        "crates/ui/src/shell.rs:5987",
+        "crates/ui/src/shell.rs:6096",
         "crates/ui/src/transcript.rs:6561",
-        "crates/ui/src/pickers.rs:4246",
+        "crates/ui/src/pickers.rs:4247",
         "crates/ui/src/history.rs:3217",
         "crates/ui/src/history.rs:3258",
         "crates/ui/src/settings/appearance.rs:1788",
@@ -1054,7 +1042,7 @@
         "crates/ui/src/shell/actions_ui.rs:941",
         "crates/ui/src/markdown/link_interaction.rs:381",
         "crates/ui/src/markdown/render.rs:620",
-        "crates/ui/src/markdown/render.rs:1956"
+        "crates/ui/src/markdown/render.rs:1957"
       ]
     },
     {
@@ -1064,18 +1052,18 @@
       "disposition": "Custom replacement",
       "references": [
         "crates/ui/src/notice.rs:123",
-        "crates/ui/src/shell.rs:7934",
-        "crates/ui/src/shell.rs:8004",
-        "crates/ui/src/shell.rs:8022",
-        "crates/ui/src/shell.rs:8041",
+        "crates/ui/src/shell.rs:7940",
+        "crates/ui/src/shell.rs:8010",
+        "crates/ui/src/shell.rs:8028",
+        "crates/ui/src/shell.rs:8047",
         "crates/ui/src/transcript.rs:6563",
         "crates/ui/src/markdown/link_interaction.rs:338",
-        "crates/ui/src/markdown/render.rs:1958"
+        "crates/ui/src/markdown/render.rs:1959"
       ]
     },
     {
       "constant": "ACTION_PLAY",
-      "asset": "action-play",
+      "asset": "play",
       "custom": "play",
       "disposition": "Custom replacement",
       "references": [
@@ -1084,7 +1072,7 @@
     },
     {
       "constant": "ACTION_TEST",
-      "asset": "action-test",
+      "asset": "test",
       "custom": "test",
       "disposition": "Custom replacement",
       "references": [
@@ -1093,7 +1081,7 @@
     },
     {
       "constant": "ACTION_LINT",
-      "asset": "action-lint",
+      "asset": "lint",
       "custom": "lint",
       "disposition": "Custom replacement",
       "references": [
@@ -1102,7 +1090,7 @@
     },
     {
       "constant": "ACTION_CONFIGURE",
-      "asset": "action-configure",
+      "asset": "configure",
       "custom": "configure",
       "disposition": "Custom replacement",
       "references": [
@@ -1111,7 +1099,7 @@
     },
     {
       "constant": "ACTION_BUILD",
-      "asset": "action-build",
+      "asset": "build",
       "custom": "build",
       "disposition": "Custom replacement",
       "references": [
@@ -1120,7 +1108,7 @@
     },
     {
       "constant": "ACTION_DEBUG",
-      "asset": "action-debug",
+      "asset": "debug",
       "custom": "debug",
       "disposition": "Custom replacement",
       "references": [
@@ -1138,7 +1126,7 @@
     },
     {
       "constant": "STAR_BOLD",
-      "asset": "star-bold",
+      "asset": "star-active",
       "custom": "star-active",
       "disposition": "Custom replacement",
       "references": [
@@ -1152,10 +1140,10 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/shell.rs:8408",
-        "crates/ui/src/shell.rs:9164",
-        "crates/ui/src/shell.rs:9814",
-        "crates/ui/src/shell.rs:10000"
+        "crates/ui/src/shell.rs:8414",
+        "crates/ui/src/shell.rs:9176",
+        "crates/ui/src/shell.rs:9827",
+        "crates/ui/src/shell.rs:10013"
       ]
     },
     {
@@ -1164,8 +1152,8 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4558",
-        "crates/ui/src/pickers.rs:4812",
+        "crates/ui/src/pickers.rs:4559",
+        "crates/ui/src/pickers.rs:4813",
         "crates/ui/src/settings/accounts.rs:1241"
       ]
     },
@@ -1175,7 +1163,7 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4561",
+        "crates/ui/src/pickers.rs:4562",
         "crates/ui/src/settings/accounts.rs:1232"
       ]
     },
@@ -1185,7 +1173,7 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4562",
+        "crates/ui/src/pickers.rs:4563",
         "crates/ui/src/settings/accounts.rs:1233"
       ]
     },
@@ -1195,7 +1183,7 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4564",
+        "crates/ui/src/pickers.rs:4565",
         "crates/ui/src/settings/accounts.rs:1234"
       ]
     },
@@ -1205,7 +1193,7 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4566",
+        "crates/ui/src/pickers.rs:4567",
         "crates/ui/src/settings/accounts.rs:1235"
       ]
     },
@@ -1215,7 +1203,7 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4568",
+        "crates/ui/src/pickers.rs:4569",
         "crates/ui/src/settings/accounts.rs:1236"
       ]
     },
@@ -1225,7 +1213,7 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4569",
+        "crates/ui/src/pickers.rs:4570",
         "crates/ui/src/settings/accounts.rs:1237"
       ]
     },
@@ -1235,7 +1223,7 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4571",
+        "crates/ui/src/pickers.rs:4572",
         "crates/ui/src/settings/accounts.rs:1238"
       ]
     },
@@ -1245,9 +1233,641 @@
       "custom": null,
       "disposition": "Preserve brand identity",
       "references": [
-        "crates/ui/src/pickers.rs:4572",
+        "crates/ui/src/pickers.rs:4573",
         "crates/ui/src/settings/accounts.rs:1239"
       ]
+    },
+    {
+      "constant": "PANEL_LEFT_OPEN",
+      "asset": "panel-left-open",
+      "custom": "panel-left-open",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/shell.rs:5349"
+      ]
+    },
+    {
+      "constant": "PANEL_LEFT_CLOSED",
+      "asset": "panel-left-closed",
+      "custom": "panel-left-closed",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/shell.rs:5347"
+      ]
+    },
+    {
+      "constant": "PANEL_RIGHT_OPEN",
+      "asset": "panel-right-open",
+      "custom": "panel-right-open",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/shell/tabs.rs:379"
+      ]
+    },
+    {
+      "constant": "PANEL_RIGHT_CLOSED",
+      "asset": "panel-right-closed",
+      "custom": "panel-right-closed",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/shell/tabs.rs:381"
+      ]
+    },
+    {
+      "constant": "PANEL_BOTTOM_OPEN",
+      "asset": "panel-bottom-open",
+      "custom": "panel-bottom-open",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "PANEL_BOTTOM_CLOSED",
+      "asset": "panel-bottom-closed",
+      "custom": "panel-bottom-closed",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CHEVRON_DOWN",
+      "asset": "chevron-down",
+      "custom": "chevron-down",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CHEVRON_UP",
+      "asset": "chevron-up",
+      "custom": "chevron-up",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CHEVRON_LEFT",
+      "asset": "chevron-left",
+      "custom": "chevron-left",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CHEVRON_RIGHT",
+      "asset": "chevron-right",
+      "custom": "chevron-right",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "EXPAND",
+      "asset": "expand",
+      "custom": "expand",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "COLLAPSE",
+      "asset": "collapse",
+      "custom": "collapse",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "FOLD",
+      "asset": "fold",
+      "custom": "fold",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/changes.rs:3770",
+        "crates/ui/src/changes.rs:3911"
+      ]
+    },
+    {
+      "constant": "UNFOLD",
+      "asset": "unfold",
+      "custom": "unfold",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/changes.rs:3768",
+        "crates/ui/src/changes.rs:3909"
+      ]
+    },
+    {
+      "constant": "MENU",
+      "asset": "menu",
+      "custom": "menu",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "MORE",
+      "asset": "more",
+      "custom": "more",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "FOLDER_OPEN",
+      "asset": "folder-open",
+      "custom": "folder-open",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "REPOSITORY",
+      "asset": "repository",
+      "custom": "repository",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "FOLDER_ADD",
+      "asset": "folder-add",
+      "custom": "folder-add",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "PROJECT",
+      "asset": "project",
+      "custom": "project",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "PHONE",
+      "asset": "phone",
+      "custom": "phone",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "SERVER",
+      "asset": "server",
+      "custom": "server",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "DRIVE",
+      "asset": "drive",
+      "custom": "drive",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "BROWSER",
+      "asset": "browser",
+      "custom": "browser",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CHAT",
+      "asset": "chat",
+      "custom": "chat",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CHATS",
+      "asset": "chats",
+      "custom": "chats",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "ARCHIVE",
+      "asset": "archive",
+      "custom": "archive",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "UNARCHIVE",
+      "asset": "unarchive",
+      "custom": "unarchive",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "PIN_ACTIVE",
+      "asset": "pin-active",
+      "custom": "pin-active",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "UNPIN",
+      "asset": "unpin",
+      "custom": "unpin",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CLOCK",
+      "asset": "clock",
+      "custom": "clock",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "SEND",
+      "asset": "send",
+      "custom": "send",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/composer.rs:8731"
+      ]
+    },
+    {
+      "constant": "SEND_NOW",
+      "asset": "send-now",
+      "custom": "send-now",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "PLAY",
+      "asset": "play",
+      "custom": "play",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "PAUSE",
+      "asset": "pause",
+      "custom": "pause",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "EDIT",
+      "asset": "edit",
+      "custom": "edit",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "COMPOSE",
+      "asset": "compose",
+      "custom": "compose",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "DRAG",
+      "asset": "drag",
+      "custom": "drag",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "MICROPHONE",
+      "asset": "microphone",
+      "custom": "microphone",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "MICROPHONE_OFF",
+      "asset": "microphone-off",
+      "custom": "microphone-off",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "WAVEFORM",
+      "asset": "waveform",
+      "custom": "waveform",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "LINK",
+      "asset": "link",
+      "custom": "link",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "IMAGE",
+      "asset": "image",
+      "custom": "image",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "IMAGE_ERROR",
+      "asset": "image-error",
+      "custom": "image-error",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "SAVE",
+      "asset": "save",
+      "custom": "save",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "TRASH",
+      "asset": "trash",
+      "custom": "trash",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "SEARCH",
+      "asset": "search",
+      "custom": "search",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "WRAP",
+      "asset": "wrap",
+      "custom": "wrap",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/changes.rs:3704",
+        "crates/ui/src/markdown/render.rs:2153"
+      ]
+    },
+    {
+      "constant": "UNWRAP",
+      "asset": "unwrap",
+      "custom": "unwrap",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/changes.rs:3706",
+        "crates/ui/src/markdown/render.rs:2155"
+      ]
+    },
+    {
+      "constant": "SPLIT",
+      "asset": "split",
+      "custom": "split",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/changes.rs:3686"
+      ]
+    },
+    {
+      "constant": "UNIFIED",
+      "asset": "unified",
+      "custom": "unified",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/changes.rs:3688"
+      ]
+    },
+    {
+      "constant": "GRID",
+      "asset": "grid",
+      "custom": "grid",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "BRANCH",
+      "asset": "branch",
+      "custom": "branch",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "MERGE",
+      "asset": "merge",
+      "custom": "merge",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/change_requests.rs:154"
+      ]
+    },
+    {
+      "constant": "COMMIT",
+      "asset": "commit",
+      "custom": "commit",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "SORT_ASCENDING",
+      "asset": "sort-ascending",
+      "custom": "sort-ascending",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "SORT_DESCENDING",
+      "asset": "sort-descending",
+      "custom": "sort-descending",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "APPEARANCE_SYSTEM",
+      "asset": "appearance-system",
+      "custom": "appearance-system",
+      "disposition": "Custom replacement",
+      "references": [
+        "crates/ui/src/appearance.rs:54"
+      ]
+    },
+    {
+      "constant": "SETTINGS",
+      "asset": "settings",
+      "custom": "settings",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "KEY",
+      "asset": "key",
+      "custom": "key",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "LOCK",
+      "asset": "lock",
+      "custom": "lock",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "UNLOCK",
+      "asset": "unlock",
+      "custom": "unlock",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "LOGOUT",
+      "asset": "logout",
+      "custom": "logout",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "USER",
+      "asset": "user",
+      "custom": "user",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "STAR_ACTIVE",
+      "asset": "star-active",
+      "custom": "star-active",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "BELL_OFF",
+      "asset": "bell-off",
+      "custom": "bell-off",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "VOLUME",
+      "asset": "volume",
+      "custom": "volume",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "VOLUME_OFF",
+      "asset": "volume-off",
+      "custom": "volume-off",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "AGENT",
+      "asset": "agent",
+      "custom": "agent",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "SKILLS",
+      "asset": "skills",
+      "custom": "skills",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "BOLT",
+      "asset": "bolt",
+      "custom": "bolt",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "TEST",
+      "asset": "test",
+      "custom": "test",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "LINT",
+      "asset": "lint",
+      "custom": "lint",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CONFIGURE",
+      "asset": "configure",
+      "custom": "configure",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "BUILD",
+      "asset": "build",
+      "custom": "build",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "DEBUG",
+      "asset": "debug",
+      "custom": "debug",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CHECKBOX",
+      "asset": "checkbox",
+      "custom": "checkbox",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "CHECKBOX_CHECKED",
+      "asset": "checkbox-checked",
+      "custom": "checkbox-checked",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "WIFI",
+      "asset": "wifi",
+      "custom": "wifi",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "INFO",
+      "asset": "info",
+      "custom": "info",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "SUCCESS",
+      "asset": "success",
+      "custom": "success",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "ERROR",
+      "asset": "error",
+      "custom": "error",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "ADD",
+      "asset": "add",
+      "custom": "add",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "WARNING",
+      "asset": "warning",
+      "custom": "warning",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "LOADING",
+      "asset": "loading",
+      "custom": "loading",
+      "disposition": "Custom replacement",
+      "references": []
+    },
+    {
+      "constant": "PULL_REQUEST_DRAFT",
+      "asset": "pull-request-draft",
+      "custom": "pull-request-draft",
+      "disposition": "Custom replacement",
+      "references": []
     }
   ],
   "ios": [
@@ -1552,32 +2172,7 @@
       ]
     }
   ],
-  "branchAdditions": [
-    {
-      "branch": "codex/native-interactions",
-      "constant": "PAUSE",
-      "asset": "pause",
-      "custom": "pause"
-    },
-    {
-      "branch": "codex/native-interactions",
-      "constant": "PLAY",
-      "asset": "play",
-      "custom": "play"
-    },
-    {
-      "branch": "wip/pr-board",
-      "constant": "PULL_REQUEST_DRAFT",
-      "asset": "pull-request-draft",
-      "custom": "pull-request-draft"
-    },
-    {
-      "branch": "feat/macos-composer-dictation",
-      "constant": "MICROPHONE",
-      "asset": "microphone",
-      "custom": "microphone"
-    }
-  ],
+  "branchAdditions": [],
   "fileIdentities": [
     "crates/ui/assets/file-icons/files/angular-component.svg",
     "crates/ui/assets/file-icons/files/angular-directive.svg",

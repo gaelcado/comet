@@ -1,6 +1,6 @@
 # Zeron icon atelier · Study 03
 
-135 original control glyphs, two optical sizes, and 36 reversible state transitions. The standalone gallery lives in `apps/icon-lab` on `design/custom-icon-library`. Native integration is a separate step.
+135 original control glyphs, two optical sizes, and 36 reversible state transitions. The standalone gallery lives in `apps/icon-lab` on `design/custom-icon-library`. The desktop integration lives in `crates/ui/src/icons` and `crates/ui/assets/custom-icons`. iOS retains its current symbol rendering.
 
 Open `index.html`, or run `python3 -m http.server 8767 --bind 127.0.0.1` from this directory. Open http://localhost:8767. No dependencies are needed to view the gallery. **Refinements** compares Study 02 with 03; **The family** includes search, sizing and SVG exports; **In motion** supports playback, reversal and scrubbing; **Coverage** maps existing source names.
 
@@ -37,3 +37,15 @@ Verification covers both optical exports, stroke bounds, all 36 transitions at 1
 ## Coverage
 
 `inventory.json` records the source SHA and mappings. To rescan the containing Zeron repository and available contribution branches, use `python3 build.py --refresh-inventory`. This is a source scan of registered desktop assets, qualified Rust references, SwiftUI symbol literals and tool dispatch, not a runtime accessibility crawl. Dynamic image names need an integration audit. Provider logos, file/language identities, uploaded art and website marketing artwork are outside this control family.
+
+## Native desktop integration
+
+Run `node export-native.cjs` after rebuilding the gallery to synchronize native assets and constants. Existing control constant names remain aliases for the new family. Provider marks, the app logo and language/file identities retain their assets.
+
+`icons::icon(path)` selects the small optical SVG for static glyphs at 16px or below. `.morph("state-glyph")` opts a glyph into element-local motion; put it inside a control with a stable unique ID. Stateful glyphs retain the standard master at rest and in motion to avoid an optical-size jump. Initial mounts, unrelated icon changes and OS reduced motion render immediately. Unmounted elements stop requesting frames and their state expires with GPUI's frame state.
+
+The native bank contains the 36 reviewed transitions plus system-to-light for the three-way appearance selector. Each uses 97 vector poses from the gallery engine, selected by an interruptible critically damped progress value. This bounds SVG raster-cache identities; temporal progress is continuous while geometry is quantized to 1/96. At rest, exact endpoint SVGs are used.
+
+Connected controls include appearance navigation, left/right panes, pane expansion, unified/split diffs, wrapping, fold/disclosure controls, hidden files, favorites, copy confirmation, PR merged state, queue actions and composer send/stop. The protocol currently exposes open/closed/merged PR states, not draft; draft geometry remains available for future data support. Additional gallery concepts do not create new app behaviors automatically.
+
+Validate with `cargo check -p zeron-ui --lib` and `cargo test -p zeron-ui --lib icons:: -- --test-threads=1`. Runtime review should use an isolated development app, never the production instance hosting the coding session.

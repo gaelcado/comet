@@ -150,6 +150,11 @@ fn render_pull_request_badge(
     let model = ChangeRequestBadgeModel::from_summary(&summary);
     let color = model.tone.color(theme);
     let url = summary.url.clone();
+    let icon_path = if summary.state == zeron_proto::ChangeRequestState::Merged {
+        crate::icons::MERGE
+    } else {
+        crate::icons::PULL_REQUEST
+    };
     let tooltip_summary = summary;
     let composer = surface == ChangeRequestBadgeSurface::Composer;
 
@@ -182,7 +187,8 @@ fn render_pull_request_badge(
         })
         .when(composer, |element| {
             element.child(
-                crate::icons::icon(crate::icons::PULL_REQUEST)
+                crate::icons::icon(icon_path)
+                    .morph("pr-state-glyph")
                     .size(px(11.0))
                     .flex_none()
                     .text_color(color.opacity(0.85)),

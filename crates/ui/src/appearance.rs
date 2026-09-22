@@ -51,7 +51,7 @@ impl AppearanceMode {
     /// Shared glyph for appearance controls throughout the app.
     pub fn icon(self) -> &'static str {
         match self {
-            Self::System => crate::icons::MONITOR,
+            Self::System => crate::icons::APPEARANCE_SYSTEM,
             Self::Light => crate::icons::SUN,
             Self::Dark => crate::icons::MOON,
         }

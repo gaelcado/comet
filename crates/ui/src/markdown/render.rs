@@ -1912,6 +1912,7 @@ fn code_icon_action(
         .tooltip(move |_, cx| cx.new(move |_| CodeBlockTooltip(label)).into())
         .child(
             crate::icons::icon(icon_path)
+                .morph("state-glyph")
                 .size(px(13.0))
                 .text_color(theme.text_muted),
         )
@@ -1957,6 +1958,7 @@ fn code_copy_button(
                 } else {
                     crate::icons::COPY
                 })
+                .morph("state-glyph")
                 .size(px(12.0))
                 .text_color(theme.text_muted),
             )
@@ -2147,9 +2149,14 @@ fn render_code_block_source_with_actions(
                 .into()
             })
             .child(
-                crate::icons::icon(crate::icons::WRAP_TEXT)
-                    .size(px(13.0))
-                    .text_color(theme.text_muted),
+                crate::icons::icon(if fit_content {
+                    crate::icons::WRAP
+                } else {
+                    crate::icons::UNWRAP
+                })
+                .morph("wrap-glyph")
+                .size(px(13.0))
+                .text_color(theme.text_muted),
             )
     });
     let mut actions = Vec::new();

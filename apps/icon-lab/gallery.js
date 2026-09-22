@@ -121,7 +121,7 @@ $('#coverage-table').innerHTML=inventory.desktop.map(e=>`<tr><td>${safe(e.asset)
 $('#ios-table').innerHTML=inventory.ios.map(e=>`<tr><td>${safe(e.symbol)}</td><td><button class="map-glyph" data-icon="${e.custom}">${svg(e.custom,18)}${safe(e.custom)}</button></td><td>${e.references.length}</td></tr>`).join('');
 $$('#coverage [data-icon]').forEach(b=>b.addEventListener('click',()=>inspect(b.dataset.icon)));
 $('#branch-map').innerHTML=inventory.branchAdditions.map(e=>`<p><code>${safe(e.branch)}</code> · ${safe(e.asset)} → <strong>${safe(e.custom)}</strong></p>`).join('');
-$('#audit-sha').textContent=`Desktop source snapshot: ${inventory.sha}. Source scan includes qualified Rust references, SwiftUI literals and tool-symbol dispatch. Runtime-supplied image names need an integration audit. See inventory.json for complete paths.`;
+$('#audit-sha').textContent=`Desktop source snapshot: ${inventory.sha}${inventory.dirty?' + working changes':''}. Source scan includes qualified Rust references, SwiftUI literals and tool-symbol dispatch. Runtime-supplied image names need an integration audit. See inventory.json for complete paths.`;
 let selected='sun';
 function inspect(name){
  selected=name;const i=byName.get(name);

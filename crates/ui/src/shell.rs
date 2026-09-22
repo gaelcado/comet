@@ -5343,7 +5343,11 @@ impl Shell {
             }))
             .child(window_control_button(
                 "toggle-sidebar",
-                icons::SIDEBAR_MINIMALISTIC_LEFT,
+                if self.settings.sidebar_collapsed {
+                    icons::PANEL_LEFT_CLOSED
+                } else {
+                    icons::PANEL_LEFT_OPEN
+                },
                 &theme,
                 cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)),
             ))
@@ -5754,11 +5758,12 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let appearance_icon = crate::appearance::mode(cx).icon();
         let section_icon = |item: SettingsSection| match item {
             SettingsSection::Devices => icons::MONITOR,
             SettingsSection::Harnesses => icons::WIDGET,
             SettingsSection::Agents => icons::KEY_MINIMALISTIC,
-            SettingsSection::Appearance => icons::TUNING,
+            SettingsSection::Appearance => appearance_icon,
             SettingsSection::Files => icons::FOLDER,
             SettingsSection::Notifications => icons::BELL,
             SettingsSection::Shortcuts => icons::KEYBOARD,
@@ -5831,6 +5836,7 @@ impl Shell {
                                         }))
                                         .child(
                                             icon(section_icon(item))
+                                                .morph("settings-section-glyph")
                                                 .size(px(16.0))
                                                 .text_color(theme.text_muted),
                                         )
@@ -9086,7 +9092,13 @@ impl Shell {
                 .gap(px(10.0))
                 .cursor_pointer()
                 .hover(move |s| s.bg(crate::theme::ink(0.05)).border_color(border_strong))
-                .child(icon(icon_path).size(px(15.0)).flex_none().text_color(muted))
+                .child(
+                    icon(icon_path)
+                        .morph("state-glyph")
+                        .size(px(15.0))
+                        .flex_none()
+                        .text_color(muted),
+                )
                 .child(
                     div()
                         .text_size(crate::typography::ui_rems(13.0))
@@ -9486,6 +9498,7 @@ impl Shell {
                                     .into_any_element()
                                 } else {
                                     icon(icon_path)
+                                        .morph("state-glyph")
                                         .size(px(12.0))
                                         .text_color(if is_active {
                                             theme.text_muted
@@ -10242,7 +10255,12 @@ fn window_control_button(
             cx.stop_propagation();
             on_click(event, window, cx)
         })
-        .child(icon(icon_path).size(px(16.0)).text_color(muted))
+        .child(
+            icon(icon_path)
+                .morph("state-glyph")
+                .size(px(16.0))
+                .text_color(muted),
+        )
 }
 
 const WINDOWS_CAPTION_BUTTON_WIDTH: f32 = 36.0;
@@ -10343,6 +10361,7 @@ fn linux_caption_button(
         })
         .child(
             icon(icon_path)
+                .morph("state-glyph")
                 .size(px(16.0))
                 .text_color(muted)
                 .group_hover("linux-caption-button", move |style| {
@@ -10373,6 +10392,7 @@ fn nav_history_button(
             .occlude()
             .child(
                 icon(icon_path)
+                    .morph("state-glyph")
                     .size(px(16.0))
                     .text_color(theme.text_muted.opacity(0.35)),
             )
@@ -10416,7 +10436,12 @@ fn header_icon_button(
             cx.stop_propagation();
             on_click(event, window, cx)
         })
-        .child(icon(icon_path).size(px(16.0)).text_color(muted))
+        .child(
+            icon(icon_path)
+                .morph("state-glyph")
+                .size(px(16.0))
+                .text_color(muted),
+        )
 }
 
 impl Render for Shell {

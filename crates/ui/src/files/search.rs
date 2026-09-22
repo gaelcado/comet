@@ -654,6 +654,7 @@ impl FilesSurface {
                             } else {
                                 icons::ALT_ARROW_RIGHT
                             })
+                            .morph("state-glyph")
                             .size(px(11.0))
                             .text_color(theme.text_faint),
                         )
