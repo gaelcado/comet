@@ -547,7 +547,7 @@ impl Render for ShortcutsPage {
             }
             return self.render_appshots(cx);
         }
-        let theme = Theme::of(cx).for_popup();
+        let theme = Theme::of(cx).for_settings_surface();
         if matches!(self.completion_harnesses, popover::Loadable::Idle) {
             self.load_completion_harnesses(cx);
         }

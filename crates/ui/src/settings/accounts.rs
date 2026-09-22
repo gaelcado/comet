@@ -1257,7 +1257,7 @@ impl popover::ScrollRailHost for AccountsPage {
 
 impl Render for AccountsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).for_popup();
+        let theme = Theme::of(cx).for_settings_surface();
         let now = Utc::now();
         let dialog = self.render_login_dialog(window.viewport_size(), cx);
         let refreshing = matches!(self.snapshot, Loadable::Loading);

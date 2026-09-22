@@ -93,7 +93,7 @@ impl popover::ScrollRailHost for ArchivedPage {
 
 impl Render for ArchivedPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).for_popup();
+        let theme = Theme::of(cx).for_settings_surface();
         let now = chrono::Utc::now();
         let (rows, device_names, count): (
             Vec<Chat>,

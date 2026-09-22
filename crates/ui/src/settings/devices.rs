@@ -247,7 +247,7 @@ pub fn short_id(id: &str) -> String {
 
 impl Render for DevicesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).for_popup();
+        let theme = Theme::of(cx).for_settings_surface();
         let now = Utc::now();
         let (devices, local_id, workspace_scope) = {
             let state = self.state.read(cx);

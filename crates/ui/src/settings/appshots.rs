@@ -34,7 +34,7 @@ fn row(
 
 impl ShortcutsPage {
     pub(super) fn render_appshots(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let theme = Theme::of(cx).for_popup();
+        let theme = Theme::of(cx).for_settings_surface();
         let accent = theme.accent;
         let capabilities = self.appshot_capabilities;
         let toggle = |id: &'static str, label: &'static str, enabled: bool| {

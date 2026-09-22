@@ -2996,7 +2996,7 @@ impl EventEmitter<AppearanceSettingsEvent> for AppearancePage {}
 
 impl Render for AppearancePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).for_popup();
+        let theme = Theme::of(cx).for_settings_surface();
         let availability = typography::availability(cx);
         let fixed = theme.font_sans_fixed.clone();
         let current_mode = appearance::mode(cx);

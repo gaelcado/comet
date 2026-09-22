@@ -9280,7 +9280,13 @@ impl Render for Composer {
             .rounded(px(surface_radius))
             .border_1()
             .border_color(pill_border)
-            .bg(theme.input_glass_bg())
+            .bg(
+                if theme.is_frost() && matches!(theme.appearance, crate::theme::Appearance::Dark) {
+                    theme.composer_sidebar_tint()
+                } else {
+                    theme.input_glass_bg()
+                },
+            )
             .when(!theme.is_frost(), |el| el.shadow_lg());
         // The pill's bottom edge is stationary on screen (the composer sits at
         // the bottom of the shell column; growth moves the TOP edge), so the
