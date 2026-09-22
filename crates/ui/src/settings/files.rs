@@ -78,7 +78,7 @@ impl popover::ScrollRailHost for FilesSettingsPage {
 
 impl Render for FilesSettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_popup();
         let autosave_enabled = self.autosave_enabled;
         let selected = self.autosave_delay_ms;
         let word_wrap = self.word_wrap;

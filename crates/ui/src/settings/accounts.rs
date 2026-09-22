@@ -417,7 +417,7 @@ impl AccountsPage {
                                 div()
                                     .flex_none()
                                     .text_size(crate::typography::ui_rems(10.5))
-                                    .text_color(theme.text_muted.opacity(0.35))
+                                    .text_color(theme.text_muted)
                                     .child(SharedString::from("You")),
                             )
                         })
@@ -724,7 +724,7 @@ impl AccountsPage {
             .items_center()
             .gap(px(8.0))
             .text_size(crate::typography::ui_rems(11.5))
-            .text_color(theme.text_muted.opacity(0.7))
+            .text_color(theme.text_muted)
             .child(
                 div()
                     .w(px(48.0))
@@ -768,7 +768,7 @@ impl AccountsPage {
                     div()
                         .flex_none()
                         .truncate()
-                        .text_color(theme.text_muted.opacity(0.45))
+                        .text_color(theme.text_muted)
                         .child(SharedString::from(reset)),
                 )
             })
@@ -914,7 +914,7 @@ impl AccountsPage {
                                     .mt(px(6.0))
                                     .truncate()
                                     .text_size(crate::typography::ui_rems(11.5))
-                                    .text_color(theme.text_muted.opacity(0.6))
+                                    .text_color(theme.text_muted)
                                     .child(SharedString::from(if account.switchable {
                                         "Usage unavailable"
                                     } else {
@@ -1257,7 +1257,7 @@ impl popover::ScrollRailHost for AccountsPage {
 
 impl Render for AccountsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_popup();
         let now = Utc::now();
         let dialog = self.render_login_dialog(window.viewport_size(), cx);
         let refreshing = matches!(self.snapshot, Loadable::Loading);
@@ -1554,7 +1554,7 @@ impl Render for AccountsPage {
                                     .mt(px(24.0))
                                     .text_size(crate::typography::ui_rems(12.0))
                                     .line_height(px(19.0))
-                                    .text_color(theme.text_muted.opacity(0.6))
+                                    .text_color(theme.text_muted)
                                     .child(SharedString::from(
                                         "Switching rewrites the CLI\u{2019}s stored login, so new \
                                          agent sessions use the selected account immediately. On \

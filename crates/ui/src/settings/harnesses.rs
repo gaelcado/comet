@@ -932,7 +932,7 @@ impl HarnessesPage {
     }
 
     fn rows(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_popup();
         let Loadable::Ready(list) = &self.harnesses else {
             return Vec::new();
         };
@@ -1175,7 +1175,7 @@ impl popover::ScrollRailHost for HarnessesPage {
 
 impl Render for HarnessesPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_popup();
         let body: gpui::AnyElement = match &self.harnesses {
             Loadable::Idle | Loadable::Loading => widgets::section_card(&theme)
                 .p(px(16.0))

@@ -247,7 +247,7 @@ pub fn short_id(id: &str) -> String {
 
 impl Render for DevicesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_popup();
         let now = Utc::now();
         let (devices, local_id, workspace_scope) = {
             let state = self.state.read(cx);
@@ -349,7 +349,7 @@ impl Render for DevicesPage {
                         .text_color(if id_copied {
                             theme.success_muted.opacity(0.9)
                         } else {
-                            theme.text_muted.opacity(0.5)
+                            theme.text_muted
                         })
                         .cursor_pointer()
                         .hover(|s| s.text_color(theme.text_muted))
@@ -444,7 +444,7 @@ impl Render for DevicesPage {
                     .py(px(40.0))
                     .text_center()
                     .text_size(crate::typography::ui_rems(14.0))
-                    .text_color(theme.text_muted.opacity(0.6))
+                    .text_color(theme.text_muted)
                     .child(SharedString::from("No devices registered")),
             )
         } else {

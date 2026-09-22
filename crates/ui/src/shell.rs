@@ -5803,7 +5803,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_popup();
         if self.settings_focus_pending {
             self.settings_focus_pending = false;
             self.settings_return_focus = window.focused(cx);

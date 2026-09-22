@@ -244,7 +244,7 @@ pub fn page_header(theme: &Theme, title: &str, count: Option<usize>) -> gpui::Di
             el.child(
                 div()
                     .text_size(crate::typography::ui_rems(13.0))
-                    .text_color(theme.text_muted.opacity(0.7))
+                    .text_color(theme.text_muted)
                     .child(SharedString::from(format!("{count}"))),
             )
         })
@@ -424,7 +424,7 @@ pub fn meta_line(theme: &Theme, fragments: Vec<AnyElement>) -> gpui::Div {
         .gap_x(px(8.0))
         .gap_y(px(2.0))
         .text_size(crate::typography::ui_rems(ROW_DESCRIPTION_SIZE))
-        .text_color(theme.text_muted.opacity(0.9));
+        .text_color(theme.text_muted);
     let mut first = true;
     for fragment in fragments {
         if !first {

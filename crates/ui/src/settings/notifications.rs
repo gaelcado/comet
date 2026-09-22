@@ -137,7 +137,7 @@ impl popover::ScrollRailHost for NotificationsPage {
 
 impl Render for NotificationsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_popup();
         let accent = theme.accent;
         let sound = self.sound;
         let completion_sound = self.completion_sound;
