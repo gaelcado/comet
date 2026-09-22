@@ -711,13 +711,14 @@ impl RenderOnce for SwitchVisual {
         let thumb_element = div()
             .absolute()
             .top(px(7.0))
-            .left(px(1.0 + 28.0 * position))
-            .size(px(22.0))
+            .left(px(1.0 + 19.0 * position))
+            .w(px(31.0))
+            .h(px(22.0))
             .rounded_full()
             .bg(switch_thumb_color(&self.theme))
             .border_1()
             .border_color(crate::theme::flatten(
-                gpui::black().opacity(if dark { 0.16 } else { 0.10 }),
+                gpui::black().opacity(if dark { 0.07 } else { 0.05 }),
                 switch_thumb_color(&self.theme),
             ));
         div()

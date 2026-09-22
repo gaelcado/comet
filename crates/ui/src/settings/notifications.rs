@@ -345,8 +345,8 @@ impl Render for NotificationsPage {
                         .child(
                             widgets::page_column()
                                 .child(widgets::page_header(&theme, "Notifications", None))
-                                .child(card)
-                                .child(desktop_card),
+                                .child(desktop_card)
+                                .child(card),
                         ),
                 )
                 .fade_overflow_y(&self.scroll.scroll),

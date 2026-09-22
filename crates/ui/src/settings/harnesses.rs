@@ -404,25 +404,20 @@ impl HarnessesPage {
     }
 
     fn render_titles(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let mut card = widgets::section_card(theme)
-            .mt(px(20.0))
-            .p(px(16.0))
-            .child(widgets::row_title(theme, "Session titles"));
+        let mut card = widgets::section_card(theme).mt(px(20.0)).child(
+            widgets::card_row(theme, true)
+                .child(widgets::row_tile(theme, crate::icons::PEN_NEW_SQUARE))
+                .child(widgets::row_title(theme, "Thread naming")),
+        );
         let Loadable::Ready(settings) = &self.title_settings else {
             let message = match &self.title_settings {
                 Loadable::Error(error) => error.clone(),
                 _ => "Loading title settings…".into(),
             };
             return card
-                .child(div().mt(px(8.0)).child(message))
+                .child(widgets::card_row(theme, false).child(message))
                 .into_any_element();
         };
-        let mut fields = div()
-            .mt(px(12.0))
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .gap(px(12.0));
         for is_model in [false, true] {
             let label = if is_model {
                 settings
@@ -454,14 +449,10 @@ impl HarnessesPage {
             let mut row = div()
                 .relative()
                 .flex_1()
-                .min_w(px(220.0))
-                .child(widgets::field_label(
-                    theme,
-                    if is_model { "Model" } else { "Agent" },
-                ))
+                .min_w(px(200.0))
+                .max_w(px(320.0))
                 .child(
                     widgets::action_button(theme, widgets::ActionTone::Outlined)
-                        .mt(px(6.0))
                         .w_full()
                         .min_h(px(36.0))
                         .id(if is_model {
@@ -578,11 +569,19 @@ impl HarnessesPage {
                     36.0,
                 ));
             }
-            fields = fields.child(row);
+            card = card.child(
+                widgets::card_row(theme, false)
+                    .child(div().flex_1().min_w(px(120.0)).child(widgets::row_title(
+                        theme,
+                        if is_model { "Model" } else { "Agent" },
+                    )))
+                    .child(row),
+            );
         }
-        card = card.child(fields);
         if let Loadable::Error(error) = &self.title_models {
-            card = card.child(widgets::error_strip(theme, error.clone()));
+            card = card.child(
+                widgets::card_row(theme, false).child(widgets::error_strip(theme, error.clone())),
+            );
         }
         card.into_any_element()
     }
