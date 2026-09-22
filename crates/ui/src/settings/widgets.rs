@@ -580,9 +580,9 @@ impl RenderOnce for SwitchVisual {
                                     .child(
                                         div()
                                             .w(px(1.5))
-                                            .h(px(8.0))
+                                            .h(px(10.0))
                                             .rounded_full()
-                                            .bg(gpui::white().opacity(0.9)),
+                                            .bg(gpui::white().opacity(0.96)),
                                     ),
                             )
                             .child(
@@ -594,10 +594,10 @@ impl RenderOnce for SwitchVisual {
                                     .opacity(1.0 - position)
                                     .child(
                                         div()
-                                            .size(px(8.0))
+                                            .size(px(9.0))
                                             .rounded_full()
-                                            .border(px(1.5))
-                                            .border_color(self.theme.text_muted.opacity(0.88)),
+                                            .border(px(1.25))
+                                            .border_color(gpui::white().opacity(0.92)),
                                     ),
                             ),
                     ),
@@ -611,14 +611,23 @@ impl RenderOnce for SwitchVisual {
                     .rounded_full()
                     .bg(gpui::white())
                     .border_1()
-                    .border_color(gpui::black().opacity(0.10))
-                    .shadow(vec![gpui::BoxShadow {
-                        color: gpui::black().opacity(if dark { 0.22 } else { 0.14 }),
-                        offset: gpui::point(px(0.0), px(1.0)),
-                        blur_radius: px(2.0),
-                        spread_radius: px(0.0),
-                        inset: false,
-                    }]),
+                    .border_color(gpui::black().opacity(0.08))
+                    .shadow(vec![
+                        gpui::BoxShadow {
+                            color: gpui::black().opacity(if dark { 0.23 } else { 0.16 }),
+                            offset: gpui::point(px(0.0), px(1.0)),
+                            blur_radius: px(2.0),
+                            spread_radius: px(0.0),
+                            inset: false,
+                        },
+                        gpui::BoxShadow {
+                            color: gpui::black().opacity(if dark { 0.14 } else { 0.10 }),
+                            offset: gpui::point(px(0.0), px(3.0)),
+                            blur_radius: px(5.0),
+                            spread_radius: px(0.0),
+                            inset: false,
+                        },
+                    ]),
             )
     }
 }
