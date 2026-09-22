@@ -38,7 +38,7 @@ impl ShortcutsPage {
         let accent = theme.accent;
         let capabilities = self.appshot_capabilities;
         let toggle = |id: &'static str, label: &'static str, enabled: bool| {
-            widgets::toggle_switch(&theme, enabled)
+            widgets::toggle_switch(&theme, enabled, id)
                 .id(id)
                 .role(gpui::Role::Switch)
                 .aria_label(label)

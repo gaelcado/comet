@@ -167,7 +167,7 @@ impl Render for NotificationsPage {
                 .when(!interactive, |el| {
                     el.aria_description("Unavailable while its parent setting is off")
                 })
-                .child(widgets::toggle_switch(&theme, enabled))
+                .child(widgets::toggle_switch(&theme, enabled, id))
         };
         let card = widgets::section_card(&theme)
             .child(

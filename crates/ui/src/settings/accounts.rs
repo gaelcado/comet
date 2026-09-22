@@ -180,6 +180,7 @@ impl LoginFlow {
 pub struct AccountsPage {
     state: Entity<AppState>,
     embedded: bool,
+    embedded_harness: Option<HarnessId>,
     scroll: widgets::PageScroll,
     /// Which device's logins are shown; `None` = this device (no passthrough).
     /// Retargeted by the page-header device switcher (zeron parity: the
@@ -201,21 +202,23 @@ pub struct AccountsPage {
 
 impl AccountsPage {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
-        Self::new_with_layout(state, false, None, cx)
+        Self::new_with_layout(state, false, None, None, cx)
     }
 
     pub fn new_embedded(
         state: Entity<AppState>,
         target_device: Option<String>,
+        harness: HarnessId,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_with_layout(state, true, target_device, cx)
+        Self::new_with_layout(state, true, target_device, Some(harness), cx)
     }
 
     fn new_with_layout(
         state: Entity<AppState>,
         embedded: bool,
         target_device: Option<String>,
+        embedded_harness: Option<HarnessId>,
         cx: &mut Context<Self>,
     ) -> Self {
         let observe = cx.observe(&state, |_, _, cx| cx.notify());
@@ -228,6 +231,7 @@ impl AccountsPage {
         let mut page = Self {
             state,
             embedded,
+            embedded_harness,
             scroll: widgets::PageScroll::default(),
             target_device,
             device_menu: popover::Popup::default(),
@@ -275,6 +279,20 @@ impl AccountsPage {
         self.busy_account = None;
         self.error = None;
         self.load(force_usage_for(LoadTrigger::Mount), cx);
+    }
+
+    pub(crate) fn set_embedded_harness(&mut self, harness: HarnessId, cx: &mut Context<Self>) {
+        if self.embedded_harness != Some(harness) {
+            self.embedded_harness = Some(harness);
+            self.login = None;
+            self.error = None;
+            cx.notify();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn embedded_harness(&self) -> Option<HarnessId> {
+        self.embedded_harness
     }
 
     /// Params with the `targetDeviceId` passthrough merged in.
@@ -892,8 +910,8 @@ impl AccountsPage {
         });
 
         div()
-            .px(px(20.0))
-            .py(px(14.0))
+            .px(px(if self.embedded { 12.0 } else { 20.0 }))
+            .py(px(if self.embedded { 10.0 } else { 14.0 }))
             .when(!first, |el| el.border_t_1().border_color(theme.border))
             .flex()
             .flex_row()
@@ -1274,11 +1292,136 @@ impl popover::ScrollRailHost for AccountsPage {
     }
 }
 
+impl AccountsPage {
+    fn render_embedded_provider(
+        &self,
+        harness: HarnessId,
+        theme: &Theme,
+        now: DateTime<Utc>,
+        dialog: Option<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let refreshing = matches!(self.snapshot, Loadable::Loading);
+        let content: AnyElement =
+            match &self.snapshot {
+                Loadable::Idle | Loadable::Loading => {
+                    popover::skeleton_rows("accounts-inline", theme, 2, cx.entity_id(), cx)
+                        .into_any_element()
+                }
+                Loadable::Error(message) => widgets::error_strip(theme, message.clone())
+                    .id("accounts-inline-retry")
+                    .role(gpui::Role::Button)
+                    .aria_label("Retry loading accounts")
+                    .tab_index(0)
+                    .cursor_pointer()
+                    .focus_visible(|s| s.border_2().border_color(theme.accent))
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.load(force_usage_for(LoadTrigger::Retry), cx)
+                    }))
+                    .into_any_element(),
+                Loadable::Ready(snapshot) => {
+                    let rows: Vec<_> = provider_accounts(snapshot, harness)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(ix, account)| {
+                            self.render_account_row(account, ix, ix == 0, theme, now, cx)
+                        })
+                        .collect();
+                    if rows.is_empty() {
+                        widgets::page_subtitle(theme, "No account connected on this device.")
+                            .into_any_element()
+                    } else {
+                        div()
+                            .rounded(px(10.0))
+                            .border_1()
+                            .border_color(theme.border.opacity(0.7))
+                            .overflow_hidden()
+                            .children(rows)
+                            .into_any_element()
+                    }
+                }
+            };
+        div()
+            .id("accounts-embedded")
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(widgets::field_label(theme, "Accounts"))
+                    .child(div().flex_1())
+                    .child(
+                        widgets::ghost_action(theme)
+                            .id("accounts-refresh")
+                            .when(refreshing, |el| el.opacity(0.5))
+                            .role(gpui::Role::Button)
+                            .aria_label("Refresh accounts")
+                            .tab_index(0)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent))
+                            .on_click(cx.listener(|page, _, _, cx| {
+                                page.load(force_usage_for(LoadTrigger::Refresh), cx)
+                            }))
+                            .child(crate::icons::icon(crate::icons::REFRESH).size(px(14.0)))
+                            .child("Refresh"),
+                    )
+                    .child(
+                        widgets::ghost_action(theme)
+                            .id("accounts-add")
+                            .role(gpui::Role::Button)
+                            .aria_label("Add agent account")
+                            .tab_index(0)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent))
+                            .on_click(
+                                cx.listener(move |page, _, _, cx| page.start_login(harness, cx)),
+                            )
+                            .child(crate::icons::icon(crate::icons::ADD_CIRCLE).size(px(14.0)))
+                            .child("Add account"),
+                    ),
+            )
+            .when_some(self.error.clone(), |el, message| {
+                el.child(
+                    widgets::error_strip(theme, message)
+                        .id("accounts-action-error")
+                        .role(gpui::Role::Button)
+                        .aria_label("Dismiss account error")
+                        .tab_index(0)
+                        .cursor_pointer()
+                        .on_click(cx.listener(|page, _, _, cx| {
+                            page.error = None;
+                            cx.notify();
+                        })),
+                )
+            })
+            .children(match &self.snapshot {
+                Loadable::Ready(snapshot) => snapshot
+                    .warnings
+                    .iter()
+                    .filter(|warning| warning.harness == harness)
+                    .map(|warning| widgets::warning_strip(theme, warning.message.clone()))
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .child(content)
+            .when_some(dialog, |el, dialog| el.child(dialog))
+            .into_any_element()
+    }
+}
+
 impl Render for AccountsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).for_settings_surface();
         let now = Utc::now();
         let dialog = self.render_login_dialog(window.viewport_size(), cx);
+        if let Some(harness) = self.embedded_harness {
+            return self.render_embedded_provider(harness, &theme, now, dialog, cx);
+        }
         let refreshing = matches!(self.snapshot, Loadable::Loading);
         let account_count = self
             .snapshot
@@ -1496,55 +1639,6 @@ impl Render for AccountsPage {
             }
         };
 
-        if self.embedded {
-            return div()
-                .id("accounts-embedded")
-                .w_full()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .flex_wrap()
-                        .items_center()
-                        .justify_end()
-                        .gap(px(8.0))
-                        .child(
-                            widgets::ghost_action(&theme)
-                                .id("accounts-refresh")
-                                .when(refreshing, |el| el.opacity(0.5))
-                                .tab_index(0)
-                                .role(gpui::Role::Button)
-                                .aria_label("Refresh accounts")
-                                .focus_visible(|s| s.border_2().border_color(theme.accent))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.load(force_usage_for(LoadTrigger::Refresh), cx)
-                                }))
-                                .child(crate::icons::icon(crate::icons::REFRESH).size(px(16.0)))
-                                .child("Refresh"),
-                        ),
-                )
-                .when_some(self.error.clone(), |el, message| {
-                    el.child(
-                        widgets::error_strip(&theme, message)
-                            .id("accounts-action-error")
-                            .role(gpui::Role::Button)
-                            .aria_label("Dismiss account error")
-                            .tab_index(0)
-                            .cursor_pointer()
-                            .focus_visible(|s| s.border_2().border_color(theme.accent))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.error = None;
-                                cx.notify();
-                            })),
-                    )
-                })
-                .children(sections)
-                .when_some(dialog, |el, dialog| el.child(dialog))
-                .into_any_element();
-        }
         let scrollbar = popover::rail(self, "accounts-page-scrollbar", &theme, cx);
         div()
             .id("accounts-page-host")

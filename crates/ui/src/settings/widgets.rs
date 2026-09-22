@@ -472,7 +472,8 @@ pub fn badge_active(theme: &Theme, label: impl Into<SharedString>) -> gpui::Div 
 
 /// A tinted glass track with one translucent thumb and a restrained light edge.
 /// The caller owns activation and accessibility; only the thumb interpolates.
-pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
+pub fn toggle_switch(theme: &Theme, on: bool, key: impl Into<SharedString>) -> gpui::Div {
+    let key: SharedString = key.into();
     div()
         .flex_none()
         .w(px(48.0))
@@ -480,6 +481,7 @@ pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
         .child(SwitchVisual {
             theme: theme.clone(),
             on,
+            key: format!("settings-switch-{key}").into(),
         })
 }
 
@@ -487,6 +489,7 @@ pub fn toggle_switch(theme: &Theme, on: bool) -> gpui::Div {
 struct SwitchVisual {
     theme: Theme,
     on: bool,
+    key: SharedString,
 }
 
 struct SwitchTravel {
@@ -507,7 +510,7 @@ impl RenderOnce for SwitchVisual {
         let now = std::time::Instant::now();
         let target = if self.on { 1.0 } else { 0.0 };
         let reduced = crate::motion::reduced_motion(cx);
-        let position = window.with_global_id("io-switch-travel".into(), |id, window| {
+        let position = window.with_global_id(self.key.into(), |id, window| {
             window.with_element_state(id, |previous: Option<SwitchTravel>, _| {
                 let mut travel = previous.unwrap_or(SwitchTravel {
                     from: target,
@@ -534,14 +537,14 @@ impl RenderOnce for SwitchVisual {
         }
         let dark = self.theme.appearance.is_dark();
         let track = if self.on {
-            self.theme.accent.opacity(if dark { 0.72 } else { 0.80 })
+            crate::theme::mix(
+                self.theme.accent,
+                gpui::white(),
+                if dark { 0.52 } else { 0.32 },
+            )
+            .opacity(0.94)
         } else {
-            self.theme.ink(if dark { 0.14 } else { 0.10 })
-        };
-        let indicator = if self.on {
-            self.theme.on_accent
-        } else {
-            self.theme.text_muted
+            self.theme.ink(if dark { 0.18 } else { 0.10 })
         };
         div()
             .relative()
@@ -556,29 +559,12 @@ impl RenderOnce for SwitchVisual {
                     .h(px(24.0))
                     .rounded_full()
                     .bg(track)
-                    .shadow(crate::theme::card_selected_shadows())
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(8.0))
-                            .left(px(11.0))
-                            .w(px(1.5))
-                            .h(px(8.0))
-                            .rounded_full()
-                            .bg(indicator)
-                            .opacity(position),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(8.0))
-                            .left(px(32.0))
-                            .size(px(8.0))
-                            .rounded_full()
-                            .border(px(1.5))
-                            .border_color(indicator)
-                            .opacity(1.0 - position),
-                    ),
+                    .border_1()
+                    .border_color(if self.on {
+                        gpui::white().opacity(0.28)
+                    } else {
+                        self.theme.border.opacity(0.7)
+                    }),
             )
             .child(
                 div()
@@ -587,13 +573,16 @@ impl RenderOnce for SwitchVisual {
                     .left(px(2.0 + 24.0 * position))
                     .size(px(20.0))
                     .rounded_full()
-                    .bg(gpui::linear_gradient(
-                        180.0,
-                        gpui::linear_color_stop(gpui::white().opacity(0.82), 0.0),
-                        gpui::linear_color_stop(gpui::white().opacity(0.38), 1.0),
-                    ))
+                    .bg(gpui::white())
                     .border_1()
-                    .border_color(gpui::white().opacity(0.55)),
+                    .border_color(gpui::black().opacity(0.10))
+                    .shadow(vec![gpui::BoxShadow {
+                        color: gpui::black().opacity(if dark { 0.22 } else { 0.14 }),
+                        offset: gpui::point(px(0.0), px(1.0)),
+                        blur_radius: px(2.0),
+                        spread_radius: px(0.0),
+                        inset: false,
+                    }]),
             )
     }
 }

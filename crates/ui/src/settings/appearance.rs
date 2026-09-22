@@ -3332,7 +3332,7 @@ impl Render for AppearancePage {
                         )),
                 )
                 .child(
-                    widgets::toggle_switch(&theme, compact_mode)
+                    widgets::toggle_switch(&theme, compact_mode, "transcript-compact-mode")
                         .id("transcript-compact-mode-toggle")
                         .cursor_pointer()
                         .on_click(cx.listener(move |_, _, _, cx| {

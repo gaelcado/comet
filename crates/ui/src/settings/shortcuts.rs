@@ -573,7 +573,7 @@ impl Render for ShortcutsPage {
                         ),
                 )
                 .child(
-                    widgets::toggle_switch(&theme, escape_stops_active_agent)
+                    widgets::toggle_switch(&theme, escape_stops_active_agent, "escape-stops-active-agent")
                         .id("escape-stops-active-agent-toggle")
                         .debug_selector(|| "escape-stops-active-agent-toggle".into())
                         .tab_index(0)
