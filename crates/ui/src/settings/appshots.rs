@@ -33,7 +33,11 @@ fn row(
 }
 
 impl ShortcutsPage {
-    pub(super) fn render_appshots(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_appshots(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let theme = Theme::of(cx).for_settings_surface();
         let accent = theme.accent;
         let capabilities = self.appshot_capabilities;
@@ -75,44 +79,26 @@ impl ShortcutsPage {
             .enumerate()
             .map(|(ix, destination)| {
                 let selected = self.appshot_destination == destination;
-                div()
-                    .id(("appshot-destination", ix))
-                    .role(gpui::Role::Button)
-                    .aria_label(destination.label())
-                    .aria_toggled(if selected {
-                        gpui::Toggled::True
-                    } else {
-                        gpui::Toggled::False
-                    })
-                    .tab_index(0)
-                    .focus_visible(move |style| style.border_2().border_color(accent))
-                    .px(px(10.0))
-                    .py(px(7.0))
-                    .rounded(px(7.0))
-                    .border_1()
-                    .border_color(if selected {
-                        theme.text.opacity(0.24)
-                    } else {
-                        theme.border
-                    })
-                    .bg(if selected {
-                        crate::theme::ink(0.09)
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .text_size(px(11.0))
-                    .text_color(if selected {
-                        theme.text
-                    } else {
-                        theme.text_muted
-                    })
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.appshot_destination = destination;
-                        this.commit_appshots(cx);
-                        cx.notify();
-                    }))
-                    .child(destination.label())
+                let selection_t = widgets::tab_selection_t(
+                    window,
+                    format!("appshot-destination-{ix}-selection"),
+                    selected,
+                    crate::motion::reduced_motion(cx),
+                );
+                widgets::segmented_option(
+                    &theme,
+                    selected,
+                    selection_t,
+                    format!("appshot-destination-{ix}"),
+                    format!("appshot-destination-{ix}-hover"),
+                    destination.label(),
+                )
+                .aria_label(destination.label())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.appshot_destination = destination;
+                    this.commit_appshots(cx);
+                    cx.notify();
+                }))
             })
             .collect::<Vec<_>>();
         let destination_description = match self.appshot_destination {
@@ -239,10 +225,7 @@ impl ShortcutsPage {
                 false,
                 "Destination",
                 destination_description,
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(6.0))
+                widgets::segmented_track(&theme)
                     .children(destinations)
                     .into_any_element(),
             ))

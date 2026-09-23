@@ -380,8 +380,10 @@ pub fn option_card(
     icon_path: &'static str,
     label: impl Into<SharedString>,
     selected: bool,
+    selection_t: f32,
     preview: AnyElement,
 ) -> gpui::Div {
+    let selected_color = crate::motion::mix(theme.text_muted, theme.accent, selection_t);
     div()
         .flex_1()
         .min_w_0()
@@ -398,7 +400,7 @@ pub fn option_card(
                 .rounded(px(OPTION_CARD_RADIUS))
                 .overflow_hidden()
                 .border_1()
-                .border_color(if selected { theme.accent } else { theme.border })
+                .border_color(crate::motion::mix(theme.border, theme.accent, selection_t))
                 .child(preview),
         )
         .child(
@@ -412,19 +414,11 @@ pub fn option_card(
                 } else {
                     gpui::FontWeight::NORMAL
                 })
-                .text_color(if selected {
-                    theme.accent
-                } else {
-                    theme.text_muted
-                })
+                .text_color(selected_color)
                 .child(
                     crate::icons::icon(icon_path)
                         .size(px(16.0))
-                        .text_color(if selected {
-                            theme.accent
-                        } else {
-                            theme.text_muted
-                        }),
+                        .text_color(selected_color),
                 )
                 .child(label.into()),
         )
@@ -995,6 +989,77 @@ pub fn section_tab(
         .bg(crate::motion::hover_blend(&hover_key, base_bg, hover_bg))
         .id(id.into())
         .on_hover(crate::motion::hover_listener(hover_key))
+}
+
+/// Compact single-choice controls use the same selected wash and motion as
+/// settings navigation. The caller keeps ownership of the value and click.
+pub fn segmented_track(theme: &Theme) -> gpui::Div {
+    div()
+        .max_w_full()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap(px(2.0))
+        .p(px(3.0))
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(theme.border.opacity(0.7))
+        .bg(theme.input_glass_bg())
+}
+
+pub fn segmented_option(
+    theme: &Theme,
+    selected: bool,
+    selection_t: f32,
+    id: impl Into<SharedString>,
+    hover_key: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    let hover_key = hover_key.into();
+    let bg = crate::motion::mix(
+        gpui::transparent_black(),
+        crate::theme::card_selected_bg(),
+        selection_t,
+    );
+    div()
+        .id(id.into())
+        .role(gpui::Role::Button)
+        .aria_toggled(if selected {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .tab_index(0)
+        .focus_visible(|s| s.border_2().border_color(theme.accent))
+        .min_h(px(28.0))
+        .px(px(10.0))
+        .py(px(5.0))
+        .rounded(px(7.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .text_size(crate::typography::ui_rems(12.0))
+        .when(selected, |el| el.font_weight(gpui::FontWeight::MEDIUM))
+        .text_color(crate::motion::mix(
+            theme.text_muted,
+            theme.text,
+            selection_t,
+        ))
+        .border_1()
+        .border_color(crate::motion::mix(
+            gpui::transparent_black(),
+            theme.border_strong,
+            selection_t,
+        ))
+        .bg(crate::motion::hover_blend(
+            &hover_key,
+            bg,
+            if selected { bg } else { theme.glass_hover() },
+        ))
+        .on_hover(crate::motion::hover_listener(hover_key))
+        .child(label.into())
 }
 
 /// Settings actions share one size, corner radius, and hover language. Use

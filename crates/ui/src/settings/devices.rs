@@ -49,9 +49,9 @@ pub fn format_last_seen(last_seen: Option<DateTime<Utc>>, now: DateTime<Utc>) ->
 /// workspace and must not imply that account device metadata is already live.
 pub fn devices_subtitle(scope: Option<WorkspaceScope>) -> &'static str {
     match scope {
-        Some(WorkspaceScope::Local) => "Manage device details stored in this local workspace.",
-        Some(WorkspaceScope::Synced) => "Manage device names and inspect synced device metadata.",
-        Some(WorkspaceScope::Development) | None => "Manage device names for this workspace.",
+        Some(WorkspaceScope::Local) => "Devices in this local workspace.",
+        Some(WorkspaceScope::Synced) => "Devices synced to this workspace.",
+        Some(WorkspaceScope::Development) | None => "Devices in this workspace.",
     }
 }
 
@@ -329,16 +329,18 @@ impl Render for DevicesPage {
                             .into_any_element(),
                     );
                 }
-                let id_button = widgets::action_button(&theme, widgets::ActionTone::Quiet)
+                let id_button = div()
                     .id(("device-id", ix))
                     .aria_label(format!("Copy device ID {}", device.id))
                     .font_family(theme.font_mono.clone())
-                    .text_size(crate::typography::ui_rems(10.5))
+                    .text_size(crate::typography::ui_rems(11.0))
                     .text_color(if id_copied {
                         theme.success_muted.opacity(0.9)
                     } else {
                         theme.text_muted
                     })
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme.text))
                     .tab_index(0)
                     .role(gpui::Role::Button)
                     .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
@@ -348,8 +350,9 @@ impl Render for DevicesPage {
                     .child(SharedString::from(if id_copied {
                         "Copied".to_string()
                     } else {
-                        format!("ID · {}", short_id(&device.id))
+                        format!("ID {}", short_id(&device.id))
                     }));
+                meta.push(id_button.into_any_element());
 
                 div()
                     .p(px(14.0))
@@ -358,11 +361,10 @@ impl Render for DevicesPage {
                     .border_1()
                     .border_color(theme.border)
                     .flex()
-                    .flex_col()
-                    .gap(px(10.0))
                     .h_full()
                     .child(
                         div()
+                            .w_full()
                             .flex()
                             .items_start()
                             .gap(px(12.0))
@@ -373,55 +375,51 @@ impl Render for DevicesPage {
                                     .min_w_0()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(2.0))
                                     .child(
                                         widgets::row_title(&theme, device.name.clone())
                                             .text_size(crate::typography::ui_rems(14.0)),
                                     )
                                     .child(widgets::meta_line(&theme, meta)),
                             )
-                            .child(widgets::badge(
-                                &theme,
-                                if is_local {
-                                    "This device"
-                                } else if online {
-                                    "Online"
-                                } else {
-                                    "Offline"
-                                },
-                            )),
-                    )
-                    .child(
-                        div()
-                            .border_t_1()
-                            .border_color(theme.border.opacity(0.55))
-                            .pt(px(8.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.0))
-                            .child(id_button)
                             .child(
-                                widgets::ghost_action(&theme)
-                                    .id(("device-rename", ix))
-                                    .tab_index(0)
-                                    .role(gpui::Role::Button)
-                                    .focus_visible(|s| {
-                                        s.border_2().border_color(theme.accent).opacity(1.0)
-                                    })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.open_rename(
-                                            rename_id.clone(),
-                                            rename_name.clone(),
-                                            cx,
-                                        );
-                                    }))
+                                div()
+                                    .flex_none()
+                                    .flex()
+                                    .flex_col()
+                                    .items_end()
+                                    .gap(px(4.0))
+                                    .child(widgets::badge(
+                                        &theme,
+                                        if is_local {
+                                            "This device"
+                                        } else if online {
+                                            "Online"
+                                        } else {
+                                            "Offline"
+                                        },
+                                    ))
                                     .child(
-                                        crate::icons::icon(crate::icons::PEN)
-                                            .size(px(14.0))
-                                            .text_color(theme.text_muted),
-                                    )
-                                    .child(SharedString::from("Rename")),
+                                        widgets::ghost_action(&theme)
+                                            .id(("device-rename", ix))
+                                            .tab_index(0)
+                                            .role(gpui::Role::Button)
+                                            .focus_visible(|s| {
+                                                s.border_2().border_color(theme.accent).opacity(1.0)
+                                            })
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.open_rename(
+                                                    rename_id.clone(),
+                                                    rename_name.clone(),
+                                                    cx,
+                                                );
+                                            }))
+                                            .child(
+                                                crate::icons::icon(crate::icons::PEN)
+                                                    .size(px(14.0))
+                                                    .text_color(theme.text_muted),
+                                            )
+                                            .child(SharedString::from("Rename")),
+                                    ),
                             ),
                     )
                     .into_any_element()

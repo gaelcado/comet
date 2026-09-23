@@ -1257,32 +1257,40 @@ fn surface_choice(
     theme: &Theme,
     surface: SurfacePreference,
     selected: bool,
+    selection_t: f32,
 ) -> gpui::Stateful<gpui::Div> {
-    let id: SharedString = format!(
+    let id = format!(
         "appearance-surface-{}",
         surface_label(surface).to_lowercase().replace(' ', "-")
+    );
+    widgets::segmented_option(
+        theme,
+        selected,
+        selection_t,
+        id.clone(),
+        format!("{id}-hover"),
+        surface_label(surface),
     )
-    .into();
-    widgets::choice(theme, selected, id.clone())
-        .id(id)
-        .aria_selected(selected)
-        .child(surface_label(surface))
 }
 
 fn background_effect_choice(
     theme: &Theme,
     effect: crate::settings::NewThreadBackgroundEffect,
     selected: bool,
+    selection_t: f32,
 ) -> gpui::Stateful<gpui::Div> {
-    let id: SharedString = format!(
+    let id = format!(
         "new-thread-background-effect-{}",
         effect.label().to_lowercase()
+    );
+    widgets::segmented_option(
+        theme,
+        selected,
+        selection_t,
+        id.clone(),
+        format!("{id}-hover"),
+        effect.label(),
     )
-    .into();
-    widgets::choice(theme, selected, id.clone())
-        .id(id)
-        .aria_selected(selected)
-        .child(effect.label())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2998,14 +3006,23 @@ impl Render for AppearancePage {
         let ui_settings = crate::settings::current(cx);
         let current_background = ui_settings.new_thread_composer_background;
         let current_background_effect = ui_settings.new_thread_background_effect;
+        let reduced_motion = crate::motion::reduced_motion(cx);
         let cards = AppearanceMode::ALL
             .into_iter()
             .map(|mode| {
+                let selected = mode == current_mode;
+                let selection_t = widgets::tab_selection_t(
+                    window,
+                    format!("appearance-mode-{}-selection", mode.label()),
+                    selected,
+                    reduced_motion,
+                );
                 widgets::option_card(
                     &theme,
                     mode.icon(),
                     mode.label(),
-                    mode == current_mode,
+                    selected,
+                    selection_t,
                     preview(mode, &current_themes, current_accent, current_surface),
                 )
                 .id(SharedString::from(format!("appearance-{}", mode.label())))
@@ -3063,14 +3080,19 @@ impl Render for AppearancePage {
         let surface_controls = SurfacePreference::ALL
             .into_iter()
             .map(|surface| {
-                surface_choice(&theme, surface, surface == current_surface)
-                    .tab_index(0)
-                    .role(gpui::Role::Button)
-                    .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                    .on_click(cx.listener(move |_, _, _, cx| {
+                let selected = surface == current_surface;
+                let selection_t = widgets::tab_selection_t(
+                    window,
+                    format!("appearance-surface-{}-selection", surface_label(surface)),
+                    selected,
+                    reduced_motion,
+                );
+                surface_choice(&theme, surface, selected, selection_t).on_click(cx.listener(
+                    move |_, _, _, cx| {
                         appearance::set_surface(surface, cx);
                         cx.notify();
-                    }))
+                    },
+                ))
             })
             .collect::<Vec<_>>();
         let mut settings_rows = theme_rows;
@@ -3124,18 +3146,7 @@ impl Render for AppearancePage {
                             ],
                         )),
                 )
-                .child(
-                    div()
-                        .max_w_full()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(px(2.0))
-                        .p(px(3.0))
-                        .rounded(px(10.0))
-                        .bg(crate::theme::ink(0.035))
-                        .children(surface_controls),
-                )
+                .child(widgets::segmented_track(&theme).children(surface_controls))
                 .into_any_element(),
         );
         let background_available = current_background
@@ -3250,14 +3261,19 @@ impl Render for AppearancePage {
             let effect_controls = crate::settings::NewThreadBackgroundEffect::ALL
                 .into_iter()
                 .map(|effect| {
-                    background_effect_choice(&theme, effect, effect == current_background_effect)
-                        .tab_index(0)
-                        .role(gpui::Role::Button)
-                        .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                        .on_click(cx.listener(move |_, _, _, cx| {
+                    let selected = effect == current_background_effect;
+                    let selection_t = widgets::tab_selection_t(
+                        window,
+                        format!("new-thread-background-effect-{}-selection", effect.label()),
+                        selected,
+                        reduced_motion,
+                    );
+                    background_effect_choice(&theme, effect, selected, selection_t).on_click(
+                        cx.listener(move |_, _, _, cx| {
                             crate::settings::set_new_thread_background_effect(effect, cx);
                             cx.notify();
-                        }))
+                        }),
+                    )
                 })
                 .collect::<Vec<_>>();
             settings_rows.push(
@@ -3278,15 +3294,8 @@ impl Render for AppearancePage {
                             )),
                     )
                     .child(
-                        div()
-                            .w(px(430.0))
+                        widgets::segmented_track(&theme)
                             .max_w_full()
-                            .flex()
-                            .flex_wrap()
-                            .gap(px(2.0))
-                            .p(px(3.0))
-                            .rounded(px(10.0))
-                            .bg(crate::theme::ink(0.035))
                             .children(effect_controls),
                     )
                     .into_any_element(),
