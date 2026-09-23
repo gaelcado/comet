@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d0d0d">
+  <title>Zeron · UI companion</title>
+  <link rel="icon" href="../icon-lab/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-appearance="dark">
+  <div class="app-shell">
+    <aside class="rail" aria-label="Companion navigation">
+      <div class="brand"><div class="brand-mark">z<span>✳</span></div><div><strong>zeron</strong><small>UI companion <em>01</em></small></div></div>
+      <div class="rail-kicker">EXPLORE</div>
+      <nav id="navigation" aria-label="Sections">
+        <a href="#overview" data-page="overview" class="nav-link active"><span class="nav-icon" data-icon="grid"></span>Overview</a>
+        <a href="#foundations" data-page="foundations" class="nav-link"><span class="nav-icon" data-icon="tuning"></span>Foundations</a>
+        <a href="#components" data-page="components" class="nav-link"><span class="nav-icon" data-icon="checkbox"></span>Components</a>
+        <a href="#patterns" data-page="patterns" class="nav-link"><span class="nav-icon" data-icon="split"></span>Patterns</a>
+        <a href="#icons" data-page="icons" class="nav-link"><span class="nav-icon" data-icon="star"></span>Icons & motion</a>
+      </nav>
+      <div class="rail-bottom"><div class="rail-bottom-label">DESIGN SOURCE</div><p>Desktop theme, shared component metrics and the custom icon family.</p><a href="../icon-lab/index.html" class="rail-external">Open icon atelier <span>↗</span></a><div id="revision" class="revision"></div></div>
+    </aside>
+    <div class="shell-main">
+      <header class="topbar"><div class="mobile-brand">zeron <span>/ UI companion</span></div><div class="crumb">DESIGN SYSTEM <span>/</span> <strong id="current-page">Overview</strong></div><div class="top-actions"><label class="select-wrap"><span class="sr-only">Accent color</span><select id="accent-select" aria-label="Accent color"></select></label><div class="theme-picker" role="group" aria-label="Appearance"><button type="button" data-theme="dark" aria-pressed="true">Dark</button><button type="button" data-theme="light" aria-pressed="false">Light</button></div></div></header>
+      <main id="main">
+        <section id="page-overview" class="page active" aria-labelledby="overview-title">
+          <div class="page-hero"><div><p class="eyebrow">A LIVING REFERENCE</p><h1 id="overview-title">The shape of Zeron.</h1><p class="intro-copy">One place to inspect the visual system, test states, and compare how Zeron’s pieces work together. Values are extracted from the app; specimens stay open for iteration.</p><div class="hero-actions"><a class="button solid" href="#components">Explore components <span>↗</span></a><a class="button quiet" href="#foundations">View foundations</a></div></div><div class="hero-art" aria-hidden="true"><div class="hero-ring ring-one"></div><div class="hero-ring ring-two"></div><div class="hero-petal p1"></div><div class="hero-petal p2"></div><div class="hero-petal p3"></div><div class="hero-petal p4"></div><span>✳</span></div></div>
+          <div class="overview-stats" id="overview-stats"></div>
+          <div class="section-heading"><div><p class="eyebrow">AT A GLANCE</p><h2>Made to be used.</h2><p>Change appearance and accent above. The same choices flow through every specimen.</p></div></div>
+          <div class="overview-grid"><a href="#foundations" class="overview-card"><span class="overview-card-number">01 / FOUNDATION</span><div class="foundation-mini"><i></i><i></i><i></i><i></i><i></i></div><h3>Color, type & rhythm</h3><p>Roles, tokens, typography, radii, spacing and motion values from the source.</p><span class="card-arrow">Explore →</span></a><a href="#components" class="overview-card"><span class="overview-card-number">02 / BUILDING BLOCKS</span><div class="mini-ui"><b>New session</b><span>⌘ K</span><div><i></i><i></i></div></div><h3>Component library</h3><p>Interactive controls, navigation, feedback and composed elements.</p><span class="card-arrow">Explore →</span></a><a href="#icons" class="overview-card"><span class="overview-card-number">03 / EXPRESSION</span><div class="mini-icons" id="overview-icons"></div><h3>Icons in motion</h3><p>135 custom glyphs, two optical drawings and reversible state changes.</p><span class="card-arrow">Explore →</span></a></div>
+          <div class="overview-note"><span class="note-pip"></span><div><strong>Source linked by design.</strong><p>Every token and specimen points back to its implementation. This browser companion shows intent and relative behavior; native GPUI remains the rendering authority.</p></div></div>
+        </section>
+        <section id="page-foundations" class="page" aria-labelledby="foundations-title"><div class="page-heading"><p class="eyebrow">01 / FOUNDATION</p><h1 id="foundations-title">Everything has a role.</h1><p>Light and dark are composed separately. Colors are organized by use, while layout values stay independent of paint.</p></div><div class="subnav" role="group" aria-label="Foundation sections"><a href="#foundations/color">Color</a><a href="#foundations/type">Typography</a><a href="#foundations/layout">Space & shape</a><a href="#foundations/timing">Motion</a></div><div id="foundation-content"></div></section>
+        <section id="page-components" class="page" aria-labelledby="components-title"><div class="page-heading"><p class="eyebrow">02 / BUILDING BLOCKS</p><h1 id="components-title">Components, in context.</h1><p>Live browser specimens for the app’s controls. Click controls to inspect their behavior, and follow each source link for the native implementation.</p></div><div class="library-controls"><label class="search-field"><span data-icon="search"></span><input type="search" id="component-search" placeholder="Search components…" aria-label="Search components"></label><span id="component-result-count"></span></div><div class="filter-row" id="component-filters" role="group" aria-label="Component categories"></div><div id="component-grid" class="component-grid"></div><p id="component-empty" class="empty-result" hidden>No components match this search.</p></section>
+        <section id="page-patterns" class="page" aria-labelledby="patterns-title"><div class="page-heading"><p class="eyebrow">03 / COMPOSITION</p><h1 id="patterns-title">Pieces in place.</h1><p>Representative Zeron surfaces assembled from the same roles and metrics. These are interactive design specimens for reviewing balance, states and hierarchy.</p></div><div id="pattern-content"></div></section>
+        <section id="page-icons" class="page" aria-labelledby="icons-title"><div class="page-heading"><p class="eyebrow">04 / ICONOGRAPHY</p><h1 id="icons-title">A language of our own.</h1><p>The complete custom family, with small optical variants and reversible motion. Select a glyph for both sizes and source details.</p></div><div class="icon-controls"><label class="search-field"><span data-icon="search"></span><input type="search" id="icon-search" placeholder="Find an icon…" aria-label="Search icons"></label><div class="icon-size" role="group" aria-label="Icon size"><button data-size="16">16</button><button data-size="20">20</button><button data-size="24" class="selected">24</button><button data-size="32">32</button></div><a href="../icon-lab/index.html" class="text-link">Advanced atelier ↗</a></div><div id="icon-categories" class="filter-row" role="group" aria-label="Icon categories"></div><div class="icon-grid" id="icon-grid"></div><p id="icon-empty" class="empty-result" hidden>No icons match this search.</p><div class="section-heading"><div><p class="eyebrow">IN MOTION</p><h2>Shape follows state.</h2><p>Click to reverse, or scrub through exact vector geometry.</p></div></div><div class="motion-toolbar"><label>Progress <input id="motion-scrub" type="range" min="0" max="100" value="0"><output id="motion-value">0%</output></label><label class="check-label"><input id="reduce-motion" type="checkbox"> Reduce motion</label></div><div id="motion-grid" class="motion-grid"></div></section>
+      </main>
+      <footer class="site-footer"><span>ZERON / UI COMPANION</span><span>Source linked · Browser specimens · Native implementation</span><a href="../icon-lab/README.md">Design notes ↗</a></footer>
+    </div>
+  </div>
+  <dialog id="icon-dialog" class="icon-dialog"><div class="dialog-head"><span class="eyebrow">GLYPH STUDY</span><button class="icon-close" aria-label="Close icon details" data-close-dialog>×</button></div><div id="icon-dialog-body"></div></dialog>
+  <dialog id="demo-dialog" class="demo-dialog"><div class="dialog-head"><span class="eyebrow">DESIGN SPECIMEN</span><button class="icon-close" aria-label="Close dialog" data-close-dialog>×</button></div><div class="demo-dialog-content"><div class="dialog-symbol" data-icon="folder-add"></div><h2>Create a space</h2><p>Keep related sessions and projects together. This specimen demonstrates the modal surface and action hierarchy.</p><label class="field-label">Space name<input id="demo-space-name" placeholder="e.g. Design system"></label><div class="dialog-actions"><button class="button quiet" data-close-dialog>Cancel</button><button class="button solid" id="create-space">Create space</button></div></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="../icon-lab/motion-geometry.js"></script><script src="../icon-lab/motion-state.js"></script><script type="module" src="app.js"></script>
+</body>
+</html>
