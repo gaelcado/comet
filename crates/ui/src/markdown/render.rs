@@ -31,6 +31,45 @@ pub const MD_BLOCK_GAP: f32 = 12.0;
 /// Body text size / line height (zeron: 14px / 22px).
 pub const MD_TEXT_SIZE: f32 = 14.0;
 pub const MD_LINE_HEIGHT: f32 = 22.0;
+
+/// The native task marker used by transcript Markdown and the UI workbench.
+pub(crate) fn task_checkbox(
+    id: SharedString,
+    checked: bool,
+    enabled: bool,
+    label: String,
+    theme: &Theme,
+) -> gpui_base::Checkbox {
+    gpui_base::Checkbox::new(id)
+        .checked(checked)
+        .disabled(!enabled)
+        .when(enabled, |checkbox| checkbox.cursor_pointer())
+        .focus_visible(|style| style.border_color(theme.text))
+        .styles(|styles| styles.disabled(|style| style.opacity(0.5)))
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .accessibility_label(label)
+        .size(px(20.0))
+        .border_1()
+        .rounded(px(3.0))
+        .border_color(gpui::transparent_black())
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            crate::icons::icon(if checked {
+                crate::icons::CHECKBOX_CHECKED
+            } else {
+                crate::icons::CHECKBOX
+            })
+            .morph("task-state-glyph")
+            .size(px(18.0))
+            .text_color(if checked {
+                theme.accent
+            } else {
+                theme.text_muted
+            }),
+        )
+}
 /// Default code block metrics; the rendered size comes from the theme.
 pub const CODE_TEXT_SIZE: f32 = 12.5;
 pub const CODE_LINE_HEIGHT: f32 = 18.0;
@@ -586,39 +625,15 @@ pub fn render_block(
                         .flex()
                         .items_center()
                         .child(
-                            gpui_base::Checkbox::new(SharedString::from(format!(
-                                "{}-task-{}",
-                                opts.row_key, task.range.start
-                            )))
-                            .checked(task.checked)
-                            .disabled(toggle.is_none())
-                            .when(toggle.is_some(), |checkbox| checkbox.cursor_pointer())
-                            .focus_visible(|style| style.border_color(theme.text))
-                            .styles(|styles| styles.disabled(|style| style.opacity(0.5)))
-                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                                cx.stop_propagation()
-                            })
-                            .accessibility_label(label)
-                            .size(px(20.0))
-                            .border_1()
-                            .rounded(px(3.0))
-                            .border_color(gpui::transparent_black())
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                crate::icons::icon(if task.checked {
-                                    crate::icons::CHECKBOX_CHECKED
-                                } else {
-                                    crate::icons::CHECKBOX
-                                })
-                                .morph("task-state-glyph")
-                                .size(px(18.0))
-                                .text_color(if task.checked {
-                                    theme.accent
-                                } else {
-                                    theme.text_muted
-                                }),
+                            task_checkbox(
+                                SharedString::from(format!(
+                                    "{}-task-{}",
+                                    opts.row_key, task.range.start
+                                )),
+                                task.checked,
+                                toggle.is_some(),
+                                label,
+                                theme,
                             )
                             .on_change(move |_, _, window, cx| {
                                 cx.stop_propagation();

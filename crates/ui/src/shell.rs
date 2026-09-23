@@ -70,6 +70,16 @@ mod tabs;
 
 use spaces::{AddSpaceFlow, RenameSpaceDialog};
 
+/// The sidebar's empty Sessions treatment, shared with the native UI workbench.
+pub(crate) fn empty_sessions_message(theme: &Theme) -> gpui::Div {
+    div()
+        .px(px(Theme::SPACE_SM))
+        .pb(px(Theme::SPACE_SM))
+        .text_size(crate::typography::ui_rems(12.0))
+        .text_color(theme.text_faint)
+        .child(SharedString::from("No sessions yet"))
+}
+
 actions!(
     shell,
     [
@@ -6940,13 +6950,7 @@ impl Shell {
                 )
                 .into_any_element()
         } else {
-            div()
-                .px(px(Theme::SPACE_SM))
-                .pb(px(Theme::SPACE_SM))
-                .text_size(crate::typography::ui_rems(12.0))
-                .text_color(theme.text_faint)
-                .child(SharedString::from("No sessions yet"))
-                .into_any_element()
+            empty_sessions_message(theme).into_any_element()
         };
 
         // The (filtered) Sessions list scrolls inside an EdgeFade scope —

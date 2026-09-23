@@ -5,16 +5,17 @@
 use std::path::PathBuf;
 
 use gpui::{
-    AssetSource as _, Context, Hsla, IntoElement, Render, ScrollHandle, SharedString,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size, svg,
+    AssetSource as _, Context, Entity, Focusable as _, Hsla, IntoElement, Render, ScrollHandle,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
+    svg,
 };
 use serde::Deserialize;
 use zeron_proto::{ChangeRequestState, ChangeRequestSummary};
 use zeron_theme::{AccentPreset, AccentSelection, ThemeRegistry, ThemeSelection};
 
 use crate::{
-    appearance, change_requests, changes, icons, popover, settings, surface_chrome, theme,
-    theme_library, typography,
+    appearance, change_requests, changes, composer::ComposerInput, files, icons, markdown, popover,
+    settings, shell, surface_chrome, theme, theme_library, typography,
 };
 use theme::{Appearance, Theme};
 
@@ -83,6 +84,9 @@ struct Workbench {
     theme_selection: ThemeSelection,
     accent: AccentSelection,
     switch_on: bool,
+    checkbox_on: bool,
+    search: Entity<ComposerInput>,
+    field: Entity<ComposerInput>,
     icons: Vec<String>,
     morphs: Vec<Morph>,
     morphed: Vec<bool>,
@@ -129,14 +133,27 @@ impl Workbench {
         assert_eq!(morphs.len(), 36, "workbench must show every native morph");
         let morphed = vec![false; morphs.len()];
 
-        let current = Theme::of(cx);
+        let (appearance, accent) = {
+            let current = Theme::of(cx);
+            (current.appearance, current.accent_selection)
+        };
+        let search = cx.new(|cx| {
+            ComposerInput::new("Search files", cx)
+                .with_single_line()
+                .with_accessibility_role(gpui::Role::SearchInput)
+                .with_text_metrics(11.0, 16.0)
+        });
+        let field = cx.new(|cx| ComposerInput::new("Device name", cx));
         Self {
             page: Page::Overview,
             scroll: ScrollHandle::new(),
-            appearance: current.appearance,
+            appearance,
             theme_selection: appearance::themes(cx),
-            accent: current.accent_selection,
+            accent,
             switch_on: false,
+            checkbox_on: false,
+            search,
+            field,
             icons: paths,
             morphs,
             morphed,
@@ -437,6 +454,9 @@ impl Workbench {
 
     fn components(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
         let toggle = self.switch_on;
+        let checkbox_on = self.checkbox_on;
+        let checkbox_entity = cx.entity().downgrade();
+        let search_focus = self.search.focus_handle(cx);
         let mut grid = div().flex().flex_wrap().gap(px(12.0));
         grid = grid.child(Self::specimen(
             t,
@@ -476,6 +496,69 @@ impl Workbench {
                 .gap(px(12.0))
                 .child(settings::widgets::toggle_switch(t, toggle))
                 .child(if toggle { "On" } else { "Off" }),
+        ));
+        grid = grid.child(Self::specimen(
+            t,
+            "Task checkbox",
+            "markdown::render::task_checkbox",
+            div().flex().items_center().gap(px(12.0)).child(
+                markdown::render::task_checkbox(
+                    "workbench-task-checkbox".into(),
+                    checkbox_on,
+                    true,
+                    "Toggle task".into(),
+                    t,
+                )
+                .on_change(move |_, _, _, cx| {
+                    checkbox_entity
+                        .update(cx, |this, cx| {
+                            this.checkbox_on = !this.checkbox_on;
+                            cx.notify();
+                        })
+                        .ok();
+                }),
+            ),
+        ));
+        grid = grid.child(Self::specimen(
+            t,
+            "File search",
+            "surface_chrome::input / composer::ComposerInput",
+            surface_chrome::toolbar(t).child(
+                surface_chrome::input()
+                    .id("workbench-file-search")
+                    .overflow_hidden()
+                    .cursor_text()
+                    .hover(|style| style.bg(crate::theme::ink(0.055)))
+                    .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                        window.focus(&search_focus, cx);
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        icons::icon(icons::MAGNIFER)
+                            .size(px(12.0))
+                            .flex_none()
+                            .text_color(t.text_faint),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(self.search.clone()),
+                    ),
+            ),
+        ));
+        grid = grid.child(Self::specimen(
+            t,
+            "Dialog text field",
+            "popover::dialog_field / composer::ComposerInput",
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(settings::widgets::field_label(t, "Device name"))
+                .child(popover::dialog_field(self.field.clone().into_any_element())),
         ));
         grid = grid.child(Self::specimen(
             t,
@@ -553,6 +636,28 @@ impl Workbench {
                 .child(icons::icon(icons::PULL_REQUEST).size(px(24.0)))
                 .child(icons::icon(icons::PANEL_LEFT_OPEN).size(px(32.0))),
         ));
+        grid = grid.child(Self::specimen(
+            t,
+            "Toolbar icon buttons",
+            "files::toolbar_button / surface_chrome::ICON_SIZE",
+            div()
+                .flex()
+                .gap(px(surface_chrome::CONTROL_GAP))
+                .child(
+                    files::toolbar_button("workbench-icon-search", "Search").child(
+                        icons::icon(icons::MAGNIFER)
+                            .size(px(surface_chrome::ICON_SIZE))
+                            .text_color(t.text_muted),
+                    ),
+                )
+                .child(
+                    files::toolbar_button("workbench-icon-refresh", "Refresh").child(
+                        icons::icon(icons::REFRESH)
+                            .size(px(surface_chrome::ICON_SIZE))
+                            .text_color(t.text_muted),
+                    ),
+                ),
+        ));
         let summary = |state| ChangeRequestSummary {
             provider: "github".into(),
             number: 418,
@@ -599,6 +704,12 @@ impl Workbench {
             "Diff hunk",
             "changes::parse_patch / render_file_body_with_syntax",
             changes::render_file_body_with_syntax(&file, None, t),
+        ));
+        grid = grid.child(Self::specimen(
+            t,
+            "Empty sessions",
+            "shell::empty_sessions_message",
+            shell::empty_sessions_message(t),
         ));
         grid
     }

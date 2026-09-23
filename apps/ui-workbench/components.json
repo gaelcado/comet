@@ -15,7 +15,7 @@
     "description": "Compact chrome actions use 24px slots and 16px custom icons.",
     "source": "crates/ui/src/surface_chrome.rs",
     "icon": "settings",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
   },
   {
     "id": "segmented",
@@ -42,7 +42,7 @@
     "description": "Checked and unchecked states use the custom optical icon family.",
     "source": "crates/ui/src/markdown/render.rs",
     "icon": "checkbox",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
   },
   {
     "id": "field",
@@ -51,7 +51,7 @@
     "description": "Input plate, label, help text and validation states.",
     "source": "crates/ui/src/settings/widgets.rs",
     "icon": "edit",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
   },
   {
     "id": "search",
@@ -60,7 +60,7 @@
     "description": "Search controls have a compact chrome variant and keyboard hint.",
     "source": "crates/ui/src/surface_chrome.rs",
     "icon": "search",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
   },
   {
     "id": "select",
@@ -222,6 +222,6 @@
     "description": "A concise path forward when a collection has no content.",
     "source": "crates/ui/src/shell.rs",
     "icon": "folder",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
   }
 ]
