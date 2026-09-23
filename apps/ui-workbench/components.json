@@ -177,7 +177,7 @@
     "description": "Open, closed and merged status share one Git geometry family.",
     "source": "crates/ui/src/change_requests.rs",
     "icon": "pull-request",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
   },
   {
     "id": "composer",
@@ -204,7 +204,7 @@
     "description": "Added, removed and context lines with line numbers and code type.",
     "source": "crates/ui/src/changes.rs",
     "icon": "split",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
   },
   {
     "id": "dialog",

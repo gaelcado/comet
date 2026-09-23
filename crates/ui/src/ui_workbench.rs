@@ -9,10 +9,12 @@ use gpui::{
     TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size, svg,
 };
 use serde::Deserialize;
+use zeron_proto::{ChangeRequestState, ChangeRequestSummary};
 use zeron_theme::{AccentPreset, AccentSelection, ThemeRegistry, ThemeSelection};
 
 use crate::{
-    appearance, icons, popover, settings, surface_chrome, theme, theme_library, typography,
+    appearance, change_requests, changes, icons, popover, settings, surface_chrome, theme,
+    theme_library, typography,
 };
 use theme::{Appearance, Theme};
 
@@ -550,6 +552,53 @@ impl Workbench {
                 .child(icons::icon(icons::SETTINGS).size(px(16.0)))
                 .child(icons::icon(icons::PULL_REQUEST).size(px(24.0)))
                 .child(icons::icon(icons::PANEL_LEFT_OPEN).size(px(32.0))),
+        ));
+        let summary = |state| ChangeRequestSummary {
+            provider: "github".into(),
+            number: 418,
+            title: "Refine the native workbench".into(),
+            url: "https://github.com/zeronsh/zeron/pull/418".into(),
+            state,
+            base_ref: "main".into(),
+            head_ref: "design/ui-workbench".into(),
+        };
+        grid = grid.child(Self::specimen(
+            t,
+            "Pull request states",
+            "change_requests::pull_request_badge_preview",
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(8.0))
+                .child(change_requests::pull_request_badge_preview(
+                    "workbench-pr-open".into(),
+                    summary(ChangeRequestState::Open),
+                    change_requests::ChangeRequestBadgeSurface::Composer,
+                    t,
+                ))
+                .child(change_requests::pull_request_badge_preview(
+                    "workbench-pr-merged".into(),
+                    summary(ChangeRequestState::Merged),
+                    change_requests::ChangeRequestBadgeSurface::Composer,
+                    t,
+                ))
+                .child(change_requests::pull_request_badge_preview(
+                    "workbench-pr-closed".into(),
+                    summary(ChangeRequestState::Closed),
+                    change_requests::ChangeRequestBadgeSurface::Composer,
+                    t,
+                )),
+        ));
+        let patch = "diff --git a/src/main.rs b/src/main.rs\nindex 1100000..2200000 100644\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let gap = 12;\n+    let gap = 8;\n }\n";
+        let file = changes::parse_patch(patch)
+            .into_iter()
+            .next()
+            .expect("workbench diff fixture");
+        grid = grid.child(Self::specimen(
+            t,
+            "Diff hunk",
+            "changes::parse_patch / render_file_body_with_syntax",
+            changes::render_file_body_with_syntax(&file, None, t),
         ));
         grid
     }
