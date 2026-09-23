@@ -1,6 +1,6 @@
 # Zeron icon atelier · Study 03
 
-For the wider Zeron visual system, open the [UI companion](../ui-companion/README.md).
+For the wider Zeron visual system, use the [native UI workbench](../ui-workbench/README.md).
 
 135 original control glyphs, two optical sizes, and 36 reversible state transitions. The standalone gallery lives in `apps/icon-lab` on `design/custom-icon-library`. The desktop integration lives in `crates/ui/src/icons` and `crates/ui/assets/custom-icons`. iOS uses the same vector source through SwiftUI Canvas and custom UIKit menu images.
 

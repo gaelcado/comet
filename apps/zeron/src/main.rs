@@ -32,6 +32,8 @@ struct Cli {
 enum Command {
     /// Run the engine without a UI (local-only unless a saved session enables sync).
     Headless,
+    /// Open the native GPUI design workbench without starting the engine.
+    UiWorkbench,
     /// Sign in and enable sync on the next engine start.
     Login,
     /// Remove the saved session and return to local-only on the next start.
@@ -198,6 +200,10 @@ fn main() -> anyhow::Result<()> {
     }
 
     match cli.command {
+        Some(Command::UiWorkbench) => {
+            zeron_ui::ui_workbench::run(paths::data_dir());
+            Ok(())
+        }
         Some(Command::Headless) => {
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(async {
