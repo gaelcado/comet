@@ -495,9 +495,9 @@ impl SettingsSection {
 
     fn category_heading(self) -> Option<&'static str> {
         match self {
-            Self::Appearance => Some("PREFERENCES"),
-            Self::Conversations => Some("WORKSPACE"),
-            Self::Harnesses => Some("AGENTS & ACCESS"),
+            Self::Appearance => Some("Preferences"),
+            Self::Conversations => Some("Workspace"),
+            Self::Harnesses => Some("Agents & Access"),
             _ => None,
         }
     }
