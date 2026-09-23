@@ -366,7 +366,7 @@ impl Render for DevicesPage {
                         div()
                             .w_full()
                             .flex()
-                            .items_start()
+                            .items_center()
                             .gap(px(12.0))
                             .child(tile)
                             .child(
@@ -376,50 +376,51 @@ impl Render for DevicesPage {
                                     .flex()
                                     .flex_col()
                                     .child(
-                                        widgets::row_title(&theme, device.name.clone())
-                                            .text_size(crate::typography::ui_rems(14.0)),
+                                        div()
+                                            .flex()
+                                            .flex_wrap()
+                                            .items_center()
+                                            .gap_x(px(8.0))
+                                            .gap_y(px(4.0))
+                                            .child(
+                                                widgets::row_title(&theme, device.name.clone())
+                                                    .text_size(crate::typography::ui_rems(14.0)),
+                                            )
+                                            .child(widgets::badge(
+                                                &theme,
+                                                if is_local {
+                                                    "This device"
+                                                } else if online {
+                                                    "Online"
+                                                } else {
+                                                    "Offline"
+                                                },
+                                            )),
                                     )
                                     .child(widgets::meta_line(&theme, meta)),
                             )
                             .child(
-                                div()
+                                widgets::ghost_action(&theme)
+                                    .id(("device-rename", ix))
                                     .flex_none()
-                                    .flex()
-                                    .flex_col()
-                                    .items_end()
-                                    .gap(px(4.0))
-                                    .child(widgets::badge(
-                                        &theme,
-                                        if is_local {
-                                            "This device"
-                                        } else if online {
-                                            "Online"
-                                        } else {
-                                            "Offline"
-                                        },
-                                    ))
+                                    .tab_index(0)
+                                    .role(gpui::Role::Button)
+                                    .focus_visible(|s| {
+                                        s.border_2().border_color(theme.accent).opacity(1.0)
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.open_rename(
+                                            rename_id.clone(),
+                                            rename_name.clone(),
+                                            cx,
+                                        );
+                                    }))
                                     .child(
-                                        widgets::ghost_action(&theme)
-                                            .id(("device-rename", ix))
-                                            .tab_index(0)
-                                            .role(gpui::Role::Button)
-                                            .focus_visible(|s| {
-                                                s.border_2().border_color(theme.accent).opacity(1.0)
-                                            })
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.open_rename(
-                                                    rename_id.clone(),
-                                                    rename_name.clone(),
-                                                    cx,
-                                                );
-                                            }))
-                                            .child(
-                                                crate::icons::icon(crate::icons::PEN)
-                                                    .size(px(14.0))
-                                                    .text_color(theme.text_muted),
-                                            )
-                                            .child(SharedString::from("Rename")),
-                                    ),
+                                        crate::icons::icon(crate::icons::PEN)
+                                            .size(px(14.0))
+                                            .text_color(theme.text_muted),
+                                    )
+                                    .child(SharedString::from("Rename")),
                             ),
                     )
                     .into_any_element()
