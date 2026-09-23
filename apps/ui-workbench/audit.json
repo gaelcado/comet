@@ -1,0 +1,2062 @@
+{
+  "sourceFingerprint": "020e581be88dfa0a",
+  "sourceFiles": 112,
+  "catalogedSourceFiles": 17,
+  "uncatalogedUiCandidates": 62,
+  "catalogEntries": 34,
+  "mountedEntries": 25,
+  "families": [
+    {
+      "name": "Action builders",
+      "builders": [
+        {
+          "symbol": "btn_primary",
+          "references": 19,
+          "locations": [
+            "crates/ui/src/composer.rs:8680",
+            "crates/ui/src/settings/accounts.rs:840",
+            "crates/ui/src/settings/accounts.rs:1025",
+            "crates/ui/src/settings/appearance.rs:2615",
+            "crates/ui/src/settings/appearance.rs:2726",
+            "crates/ui/src/settings/appearance.rs:2913",
+            "crates/ui/src/settings/devices.rs:184",
+            "crates/ui/src/shell/actions_ui.rs:988"
+          ]
+        },
+        {
+          "symbol": "btn_ghost",
+          "references": 21,
+          "locations": [
+            "crates/ui/src/composer.rs:8672",
+            "crates/ui/src/settings/accounts.rs:1020",
+            "crates/ui/src/settings/accounts.rs:1105",
+            "crates/ui/src/settings/appearance.rs:1466",
+            "crates/ui/src/settings/devices.rs:176",
+            "crates/ui/src/shell/actions_ui.rs:825",
+            "crates/ui/src/shell/actions_ui.rs:964",
+            "crates/ui/src/shell/actions_ui.rs:980"
+          ]
+        },
+        {
+          "symbol": "btn_danger",
+          "references": 4,
+          "locations": [
+            "crates/ui/src/shell/actions_ui.rs:835",
+            "crates/ui/src/shell/spaces.rs:6302",
+            "crates/ui/src/shell.rs:7722",
+            "crates/ui/src/shell.rs:8160"
+          ]
+        },
+        {
+          "symbol": "ghost_action",
+          "references": 14,
+          "locations": [
+            "crates/ui/src/settings/accounts.rs:1403",
+            "crates/ui/src/settings/accounts.rs:1455",
+            "crates/ui/src/settings/appshots.rs:142",
+            "crates/ui/src/settings/completion.rs:82",
+            "crates/ui/src/settings/completion.rs:123",
+            "crates/ui/src/settings/devices.rs:378",
+            "crates/ui/src/settings/harnesses.rs:396",
+            "crates/ui/src/settings/harnesses.rs:1039"
+          ]
+        },
+        {
+          "symbol": "toolbar_button",
+          "references": 6,
+          "locations": [
+            "crates/ui/src/browser/view.rs:18",
+            "crates/ui/src/files/markdown_preview.rs:1124",
+            "crates/ui/src/files/mod.rs:1052",
+            "crates/ui/src/files/preview.rs:2222",
+            "crates/ui/src/files/preview.rs:2304",
+            "crates/ui/src/files/preview.rs:2315"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Input frames",
+      "builders": [
+        {
+          "symbol": "input",
+          "references": 2,
+          "locations": [
+            "crates/ui/src/browser/view.rs:441",
+            "crates/ui/src/files/mod.rs:1026"
+          ]
+        },
+        {
+          "symbol": "search_input_frame",
+          "references": 4,
+          "locations": [
+            "crates/ui/src/changes.rs:4173",
+            "crates/ui/src/pickers.rs:3131",
+            "crates/ui/src/settings/appearance.rs:1849",
+            "crates/ui/src/shell/spaces.rs:3967"
+          ]
+        },
+        {
+          "symbol": "dialog_field",
+          "references": 8,
+          "locations": [
+            "crates/ui/src/settings/accounts.rs:998",
+            "crates/ui/src/settings/appearance.rs:2294",
+            "crates/ui/src/settings/devices.rs:166",
+            "crates/ui/src/shell/actions_ui.rs:864",
+            "crates/ui/src/shell/actions_ui.rs:867",
+            "crates/ui/src/shell/sidebar_sections.rs:542",
+            "crates/ui/src/shell/spaces.rs:6230",
+            "crates/ui/src/shell.rs:8086"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Popover surfaces",
+      "builders": [
+        {
+          "symbol": "popover_card",
+          "references": 29,
+          "locations": [
+            "crates/ui/src/badges.rs:170",
+            "crates/ui/src/browser/linux/mod.rs:642",
+            "crates/ui/src/changes.rs:3953",
+            "crates/ui/src/changes.rs:4164",
+            "crates/ui/src/composer.rs:4083",
+            "crates/ui/src/context_usage.rs:140",
+            "crates/ui/src/files/mod.rs:609",
+            "crates/ui/src/history.rs:3194"
+          ]
+        },
+        {
+          "symbol": "popover_card_flush",
+          "references": 3,
+          "locations": [
+            "crates/ui/src/files/preview.rs:2726",
+            "crates/ui/src/files/preview.rs:2816",
+            "crates/ui/src/pickers.rs:3094"
+          ]
+        },
+        {
+          "symbol": "palette_card",
+          "references": 0,
+          "locations": []
+        },
+        {
+          "symbol": "dialog_card",
+          "references": 21,
+          "locations": [
+            "crates/ui/src/settings/accounts.rs:1117",
+            "crates/ui/src/settings/appearance.rs:2647",
+            "crates/ui/src/settings/appearance.rs:2700",
+            "crates/ui/src/settings/devices.rs:161",
+            "crates/ui/src/shell/actions_ui.rs:812",
+            "crates/ui/src/shell/actions_ui.rs:854",
+            "crates/ui/src/shell/sidebar_sections.rs:497",
+            "crates/ui/src/shell/spaces.rs:6218"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Collection rows",
+      "builders": [
+        {
+          "symbol": "card_row",
+          "references": 24,
+          "locations": [
+            "crates/ui/src/settings/appearance.rs:2770",
+            "crates/ui/src/settings/appearance.rs:2896",
+            "crates/ui/src/settings/appearance.rs:3008",
+            "crates/ui/src/settings/appearance.rs:3058",
+            "crates/ui/src/settings/appearance.rs:3086",
+            "crates/ui/src/settings/appearance.rs:3161",
+            "crates/ui/src/settings/appearance.rs:3228",
+            "crates/ui/src/settings/appearance.rs:3270"
+          ]
+        },
+        {
+          "symbol": "menu_row",
+          "references": 46,
+          "locations": [
+            "crates/ui/src/browser/linux/mod.rs:653",
+            "crates/ui/src/changes.rs:3962",
+            "crates/ui/src/composer.rs:6727",
+            "crates/ui/src/composer.rs:7139",
+            "crates/ui/src/files/mod.rs:585",
+            "crates/ui/src/history.rs:3200",
+            "crates/ui/src/history.rs:3238",
+            "crates/ui/src/history.rs:3298"
+          ]
+        },
+        {
+          "symbol": "menu_row_nav",
+          "references": 16,
+          "locations": [
+            "crates/ui/src/changes.rs:4140",
+            "crates/ui/src/pickers.rs:2153",
+            "crates/ui/src/pickers.rs:2241",
+            "crates/ui/src/pickers.rs:2257",
+            "crates/ui/src/pickers.rs:2279",
+            "crates/ui/src/pickers.rs:3273",
+            "crates/ui/src/pickers.rs:3384",
+            "crates/ui/src/settings/appearance.rs:1775"
+          ]
+        },
+        {
+          "symbol": "render_tree_row",
+          "references": 0,
+          "locations": []
+        },
+        {
+          "symbol": "queue_row",
+          "references": 1,
+          "locations": [
+            "crates/ui/src/queue.rs:323"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Status treatments",
+      "builders": [
+        {
+          "symbol": "badge",
+          "references": 7,
+          "locations": [
+            "crates/ui/src/settings/accounts.rs:807",
+            "crates/ui/src/settings/appshots.rs:133",
+            "crates/ui/src/settings/appshots.rs:133",
+            "crates/ui/src/settings/appshots.rs:155",
+            "crates/ui/src/settings/appshots.rs:155",
+            "crates/ui/src/settings/appshots.rs:183",
+            "crates/ui/src/settings/appshots.rs:185"
+          ]
+        },
+        {
+          "symbol": "badge_active",
+          "references": 1,
+          "locations": [
+            "crates/ui/src/settings/accounts.rs:804"
+          ]
+        },
+        {
+          "symbol": "error_strip",
+          "references": 9,
+          "locations": [
+            "crates/ui/src/settings/accounts.rs:1318",
+            "crates/ui/src/settings/accounts.rs:1484",
+            "crates/ui/src/settings/appearance.rs:3265",
+            "crates/ui/src/settings/appearance.rs:3370",
+            "crates/ui/src/settings/archived.rs:327",
+            "crates/ui/src/settings/devices.rs:440",
+            "crates/ui/src/settings/harnesses.rs:486",
+            "crates/ui/src/settings/harnesses.rs:1148"
+          ]
+        },
+        {
+          "symbol": "warning_strip",
+          "references": 1,
+          "locations": [
+            "crates/ui/src/settings/accounts.rs:1420"
+          ]
+        },
+        {
+          "symbol": "pull_request_badge_preview",
+          "references": 2,
+          "locations": [
+            "crates/ui/src/shell.rs:6386",
+            "crates/ui/src/shell.rs:6450"
+          ]
+        }
+      ]
+    }
+  ],
+  "signals": [
+    {
+      "id": "literal-radii",
+      "name": "Literal corner radii",
+      "count": 188,
+      "values": [
+        {
+          "value": "6.0",
+          "count": 48
+        },
+        {
+          "value": "8.0",
+          "count": 30
+        },
+        {
+          "value": "5.0",
+          "count": 21
+        },
+        {
+          "value": "4.0",
+          "count": 19
+        },
+        {
+          "value": "7.0",
+          "count": 17
+        },
+        {
+          "value": "12.0",
+          "count": 12
+        },
+        {
+          "value": "9.0",
+          "count": 10
+        },
+        {
+          "value": "3.0",
+          "count": 8
+        },
+        {
+          "value": "10.0",
+          "count": 8
+        },
+        {
+          "value": "2.0",
+          "count": 5
+        },
+        {
+          "value": "1.0",
+          "count": 3
+        },
+        {
+          "value": "14.0",
+          "count": 3
+        },
+        {
+          "value": "16.0",
+          "count": 2
+        },
+        {
+          "value": "3.5",
+          "count": 1
+        },
+        {
+          "value": "5.5",
+          "count": 1
+        }
+      ],
+      "locations": [
+        "crates/ui/src/badges.rs:114",
+        "crates/ui/src/badges.rs:120",
+        "crates/ui/src/badges.rs:150",
+        "crates/ui/src/browser/view.rs:145",
+        "crates/ui/src/browser/view.rs:209",
+        "crates/ui/src/browser/view.rs:241",
+        "crates/ui/src/browser/view.rs:320",
+        "crates/ui/src/browser/view.rs:355",
+        "crates/ui/src/browser/view.rs:477",
+        "crates/ui/src/change_requests.rs:79",
+        "crates/ui/src/changes.rs:1715",
+        "crates/ui/src/changes.rs:4015"
+      ],
+      "note": "The source uses several literal corner radii. Review them by surface and promote repeated semantic roles to shared metrics."
+    },
+    {
+      "id": "literal-type",
+      "name": "Literal type sizes",
+      "count": 132,
+      "values": [
+        {
+          "value": "11.0",
+          "count": 48
+        },
+        {
+          "value": "12.0",
+          "count": 35
+        },
+        {
+          "value": "11.5",
+          "count": 17
+        },
+        {
+          "value": "10.5",
+          "count": 15
+        },
+        {
+          "value": "10.0",
+          "count": 11
+        },
+        {
+          "value": "9.0",
+          "count": 4
+        },
+        {
+          "value": "12.5",
+          "count": 1
+        },
+        {
+          "value": "9.5",
+          "count": 1
+        }
+      ],
+      "locations": [
+        "crates/ui/src/badges.rs:137",
+        "crates/ui/src/change_requests.rs:86",
+        "crates/ui/src/change_requests.rs:99",
+        "crates/ui/src/changes.rs:1720",
+        "crates/ui/src/changes.rs:3528",
+        "crates/ui/src/changes.rs:3536",
+        "crates/ui/src/changes.rs:3546",
+        "crates/ui/src/changes.rs:3556",
+        "crates/ui/src/changes.rs:3749",
+        "crates/ui/src/changes.rs:3758",
+        "crates/ui/src/changes.rs:3832",
+        "crates/ui/src/changes.rs:3856"
+      ],
+      "note": "Literal text sizes coexist with the typography scale. Check whether each is an intentional optical adjustment or a missing type role."
+    },
+    {
+      "id": "pointer-actions",
+      "name": "Pointer affordances",
+      "count": 163,
+      "values": [],
+      "locations": [
+        "crates/ui/src/browser/view.rs:153",
+        "crates/ui/src/browser/view.rs:218",
+        "crates/ui/src/browser/view.rs:265",
+        "crates/ui/src/browser/view.rs:359",
+        "crates/ui/src/browser/view.rs:481",
+        "crates/ui/src/change_requests.rs:176",
+        "crates/ui/src/changes.rs:3507",
+        "crates/ui/src/changes.rs:3649",
+        "crates/ui/src/changes.rs:3806",
+        "crates/ui/src/changes.rs:4016",
+        "crates/ui/src/comment_ui.rs:32",
+        "crates/ui/src/comment_ui.rs:120"
+      ],
+      "note": "These elements advertise interaction. Review keyboard, role and focus behavior; the count alone does not imply a defect."
+    },
+    {
+      "id": "explicit-button-roles",
+      "name": "Explicit button roles",
+      "count": 33,
+      "values": [],
+      "locations": [
+        "crates/ui/src/browser/view.rs:215",
+        "crates/ui/src/browser/view.rs:266",
+        "crates/ui/src/browser/view.rs:360",
+        "crates/ui/src/browser/view.rs:482",
+        "crates/ui/src/comment_ui.rs:33",
+        "crates/ui/src/comment_ui.rs:164",
+        "crates/ui/src/composer.rs:6063",
+        "crates/ui/src/composer.rs:6181",
+        "crates/ui/src/composer.rs:8700",
+        "crates/ui/src/files/markdown_preview.rs:929",
+        "crates/ui/src/files/mod.rs:54",
+        "crates/ui/src/files/mod.rs:355"
+      ],
+      "note": "Compare with pointer affordances while auditing accessible interaction paths; GPUI controls can also supply roles themselves."
+    }
+  ],
+  "modules": [
+    {
+      "path": "crates/ui/src/app_menus.rs",
+      "publicFunctions": 5,
+      "renderImpls": 0,
+      "exports": [
+        "init",
+        "request_quit",
+        "quit_after_save",
+        "bind_keys",
+        "app_menus"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/appearance.rs",
+      "publicFunctions": 14,
+      "renderImpls": 0,
+      "exports": [
+        "resolve",
+        "init",
+        "mode",
+        "themes",
+        "accent",
+        "surface",
+        "set_mode",
+        "set_theme",
+        "set_accent",
+        "set_surface",
+        "observe_window",
+        "apply",
+        "apply_registry_change",
+        "reapply_window_background"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/appshots/linux/atspi.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/appshots/linux/mod.rs",
+      "publicFunctions": 2,
+      "renderImpls": 0,
+      "exports": [
+        "activation_socket_path",
+        "request_running_appshot"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/appshots/linux/portal.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/appshots/linux/x11.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/appshots/macos.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/appshots/shortcut.rs",
+      "publicFunctions": 6,
+      "renderImpls": 0,
+      "exports": [
+        "current",
+        "subscribe",
+        "set_shortcut",
+        "set_recording",
+        "validate_shortcut",
+        "capture_allowed"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/appshots.rs",
+      "publicFunctions": 23,
+      "renderImpls": 0,
+      "exports": [
+        "set_capture_sound_enabled",
+        "png_dimensions",
+        "validate_capture_dimensions",
+        "safe_app_name",
+        "stage_appshot_png",
+        "encode_rgba_png",
+        "set_enabled",
+        "enabled",
+        "capabilities",
+        "request_capture_access",
+        "request_semantic_access",
+        "capture_settings_url",
+        "semantic_settings_url",
+        "start_global_shortcut",
+        "request_running_appshot",
+        "request_running_appshot",
+        "foreground_after_capture",
+        "xml_escape",
+        "with_appshots",
+        "restore_queued_appshots",
+        "presentation_icon",
+        "presentations",
+        "strip_context_for_display"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/attachments.rs",
+      "publicFunctions": 23,
+      "renderImpls": 0,
+      "exports": [
+        "with_attachments",
+        "parse_user_message_images",
+        "user_message_rail_text",
+        "format_by_extension",
+        "ensure_extension",
+        "stage_file",
+        "stage_clipboard_image",
+        "stage_png_bytes",
+        "queue_thumbnail_image",
+        "protect_attachments",
+        "attachment_snapshot",
+        "attachment_snapshot_for",
+        "seed_attachment_alias",
+        "flush_evicted",
+        "begin_load",
+        "begin_load_for",
+        "store_loaded",
+        "store_loaded_for",
+        "store_error",
+        "store_error_for",
+        "seed_attachment",
+        "lightbox",
+        "lightbox_with_size"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/badges.rs",
+      "publicFunctions": 2,
+      "renderImpls": 1,
+      "exports": [
+        "split",
+        "render"
+      ],
+      "views": [
+        "BadgeCard"
+      ],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/browser/linux/mod.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/browser/macos.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/browser/mod.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "bind_keys"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/browser/model.rs",
+      "publicFunctions": 5,
+      "renderImpls": 0,
+      "exports": [
+        "loopback",
+        "normalize_address",
+        "transcript_address",
+        "allowed_navigation",
+        "presentation"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/browser/view.rs",
+      "publicFunctions": 0,
+      "renderImpls": 1,
+      "exports": [],
+      "views": [
+        "BrowserSurface"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/change_requests.rs",
+      "publicFunctions": 7,
+      "renderImpls": 1,
+      "exports": [
+        "pull_request_badge",
+        "pull_request_badge_with_query",
+        "pull_request_badge_preview",
+        "desired_watch_targets",
+        "watch_params",
+        "change_request_for_chat",
+        "conversation_branch"
+      ],
+      "views": [
+        "ChangeRequestTooltip"
+      ],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/changes.rs",
+      "publicFunctions": 22,
+      "renderImpls": 2,
+      "exports": [
+        "gutter_width",
+        "parse_patch",
+        "file_notices",
+        "truncate_file_lines",
+        "body_height",
+        "body_height_with",
+        "split_pairs",
+        "split_pairs_upto",
+        "line_anchor",
+        "resolve_diff",
+        "diff_phase",
+        "uncommitted_label",
+        "scope_label",
+        "default_base_ref",
+        "clean_message",
+        "apply_diff_frame",
+        "body_row_count",
+        "body_rows",
+        "flatten_rows",
+        "split_adder_left",
+        "comment_adder_left",
+        "render_file_body_with_syntax"
+      ],
+      "views": [
+        "DiffHeaderTooltip",
+        "Changes"
+      ],
+      "catalogEntries": 2
+    },
+    {
+      "path": "crates/ui/src/comment_ui.rs",
+      "publicFunctions": 4,
+      "renderImpls": 0,
+      "exports": [
+        "render_comment_adder",
+        "render_comment_card",
+        "render_comment_edit",
+        "render_comment_draft"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/comments.rs",
+      "publicFunctions": 5,
+      "renderImpls": 0,
+      "exports": [
+        "with_comments",
+        "extract_badge",
+        "chip_label",
+        "card_body_lines",
+        "card_height"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/composer.rs",
+      "publicFunctions": 19,
+      "renderImpls": 5,
+      "exports": [
+        "composer_flip",
+        "caret_visible",
+        "input_content_height",
+        "composer_total_height",
+        "attachment_strip_height",
+        "comment_strip_height",
+        "morph_cluster_inset",
+        "morph_text_pad",
+        "collapse_text_glide",
+        "morph_cluster_dy",
+        "flip_morph_step",
+        "composer_has_content",
+        "appshot_contained_size",
+        "appshot_strip_height",
+        "send_button_mode",
+        "pending_input_request",
+        "input_request_resolved",
+        "sent_mention_display",
+        "init"
+      ],
+      "views": [
+        "AppshotActionTooltip",
+        "MentionPathTooltip",
+        "ComposerInput",
+        "Composer",
+        "Inputs"
+      ],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/composer_dock/panel_handoff.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/composer_dock.rs",
+      "publicFunctions": 2,
+      "renderImpls": 2,
+      "exports": [
+        "stage",
+        "docked_composer"
+      ],
+      "views": [
+        "Fixture",
+        "Fixture"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/composer_markdown.rs",
+      "publicFunctions": 6,
+      "renderImpls": 0,
+      "exports": [
+        "faces",
+        "syntax_spans",
+        "in_code",
+        "list_prefix",
+        "newline_edit",
+        "decorations"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/context_usage.rs",
+      "publicFunctions": 2,
+      "renderImpls": 1,
+      "exports": [
+        "render",
+        "has_window"
+      ],
+      "views": [
+        "UsageCard"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/edge_fade.rs",
+      "publicFunctions": 1,
+      "renderImpls": 1,
+      "exports": [
+        "edge_faded"
+      ],
+      "views": [
+        "Fixture"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/file_icons.rs",
+      "publicFunctions": 4,
+      "renderImpls": 0,
+      "exports": [
+        "well_bg",
+        "asset_path",
+        "icon",
+        "has_specific_file_icon"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/client.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "request_params"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/document.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/editor.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/editor_adapter.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/git_status.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/image_preview.rs",
+      "publicFunctions": 0,
+      "renderImpls": 1,
+      "exports": [],
+      "views": [
+        "ImagePreview"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/markdown_media.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/markdown_preview.rs",
+      "publicFunctions": 0,
+      "renderImpls": 3,
+      "exports": [],
+      "views": [
+        "MarkdownPreview",
+        "TaskDocument",
+        "Pair"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/mod.rs",
+      "publicFunctions": 1,
+      "renderImpls": 2,
+      "exports": [
+        "workspace_path_drag_ghost"
+      ],
+      "views": [
+        "WorkspacePathDragGhost",
+        "FilesSurface"
+      ],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/files/model.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "parent_path"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/preview.rs",
+      "publicFunctions": 0,
+      "renderImpls": 1,
+      "exports": [],
+      "views": [
+        "FileEditorTooltip"
+      ],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/files/search.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/files/tree.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/files/watch.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/frost.rs",
+      "publicFunctions": 2,
+      "renderImpls": 0,
+      "exports": [
+        "frosted",
+        "layered"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/history.rs",
+      "publicFunctions": 5,
+      "renderImpls": 10,
+      "exports": [
+        "init",
+        "configured_columns",
+        "configured_column_widths",
+        "configured_column_order",
+        "configured_author_display"
+      ],
+      "views": [
+        "HistoryResizeGhost",
+        "HistoryColumnGhost",
+        "HistoryRefTooltip",
+        "HistoryAuthorTooltip",
+        "GitHistoryFetchButton",
+        "GitHistoryViewButton",
+        "GitHistorySearchControl",
+        "GitHistoryCount",
+        "GitHistory",
+        "HistorySearchFocusHarness"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/icons/element.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/icons/generated.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/icons/transition.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/icons.rs",
+      "publicFunctions": 2,
+      "renderImpls": 0,
+      "exports": [
+        "claude_brand",
+        "icon"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/image_media.rs",
+      "publicFunctions": 6,
+      "renderImpls": 0,
+      "exports": [
+        "release_media",
+        "svg_options",
+        "decode_image",
+        "decode_project_icon",
+        "decode_generated_image",
+        "decode_raster_image"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/image_viewer.rs",
+      "publicFunctions": 0,
+      "renderImpls": 2,
+      "exports": [],
+      "views": [
+        "CachedSibling",
+        "Harness"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/lib.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "run_app"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/links.rs",
+      "publicFunctions": 4,
+      "renderImpls": 0,
+      "exports": [
+        "workspace_locator",
+        "zeron_conversation_link",
+        "parse_zeron_conversation_link",
+        "harness_conversation_link"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/loaders.rs",
+      "publicFunctions": 7,
+      "renderImpls": 1,
+      "exports": [
+        "zeron_mark_loader",
+        "zeron_loader",
+        "gradient_spinner",
+        "mini_glyph_spinner",
+        "mini_mono_spinner",
+        "upload_progress_ring",
+        "splash_overlay"
+      ],
+      "views": [
+        "MiniSpinnerView"
+      ],
+      "catalogEntries": 3
+    },
+    {
+      "path": "crates/ui/src/markdown/link_destination.rs",
+      "publicFunctions": 1,
+      "renderImpls": 1,
+      "exports": [
+        "destination_card"
+      ],
+      "views": [
+        "Destination"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/link_interaction.rs",
+      "publicFunctions": 1,
+      "renderImpls": 2,
+      "exports": [
+        "fixture_link"
+      ],
+      "views": [
+        "Fixture",
+        "OutsideClickFixture"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/link_presentation.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "truncate"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/links.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/mend.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "close_hanging"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/mermaid.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "render"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/mod.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/parser.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "parse_full"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/render.rs",
+      "publicFunctions": 22,
+      "renderImpls": 3,
+      "exports": [
+        "task_checkbox",
+        "table_hairline",
+        "activate_link",
+        "code_ui_for",
+        "render_tree",
+        "code_block_indices",
+        "render_block",
+        "table_columns",
+        "inline_code_text",
+        "inline_code_wash",
+        "flatten_runs",
+        "paint_text_selection",
+        "selection_test_bounds",
+        "selection_frame_reset",
+        "clear_selection_surface",
+        "selection_surface_reset",
+        "update_drag_at",
+        "range_rects",
+        "token_color",
+        "runs_for_syntax_line",
+        "runs_for_syntax_line_with_plain",
+        "fixture_link"
+      ],
+      "views": [
+        "CodeScrollbarDragGhost",
+        "CodeBlockTooltip",
+        "CodeSelectionHarness"
+      ],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/markdown/selection.rs",
+      "publicFunctions": 15,
+      "renderImpls": 0,
+      "exports": [
+        "test_state_lock",
+        "resolve_spans",
+        "begin",
+        "begin_with_span",
+        "drag_anchor",
+        "anchor_key",
+        "is_dragging",
+        "update_drag",
+        "update_spans",
+        "end_drag",
+        "end_active_drag",
+        "clear_if_owner",
+        "wash_range",
+        "selected_text",
+        "word_range"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/markdown/veil.rs",
+      "publicFunctions": 6,
+      "renderImpls": 0,
+      "exports": [
+        "veil_opacity",
+        "veil_duration_ms",
+        "veil_boost",
+        "veil_ema_next",
+        "slice_spans",
+        "apply_veil"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/motion/windows_pulse.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/motion.rs",
+      "publicFunctions": 24,
+      "renderImpls": 0,
+      "exports": [
+        "pulse_delta",
+        "pulse_delta_slow",
+        "pulse_lease",
+        "resize_drag_sample",
+        "resize_bounce_offset",
+        "fade_in",
+        "settle_down",
+        "fade_quick",
+        "menu_in",
+        "menu_out",
+        "dialog_in",
+        "splash_out",
+        "matrix_wave",
+        "lerp",
+        "hover_t",
+        "set_hover",
+        "hover_listener",
+        "hover_fades_active",
+        "mix",
+        "hover_blend",
+        "speed_scale",
+        "set_reduced_motion",
+        "reduced_motion",
+        "fast_tier"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/new_thread_background_effects.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/new_thread_background_image.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "decode"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/new_thread_background_mask.rs",
+      "publicFunctions": 1,
+      "renderImpls": 1,
+      "exports": [
+        "paint"
+      ],
+      "views": [
+        "Fixture"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/notice.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "notice_chip"
+      ],
+      "views": [],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/notify.rs",
+      "publicFunctions": 2,
+      "renderImpls": 0,
+      "exports": [
+        "post",
+        "on_click"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/pickers.rs",
+      "publicFunctions": 19,
+      "renderImpls": 5,
+      "exports": [
+        "bump_harness_catalog",
+        "default_model",
+        "default_reasoning",
+        "clamp_reasoning",
+        "reasoning_label",
+        "traits_summary",
+        "offered_options",
+        "traits_customized",
+        "parent_path",
+        "child_path",
+        "completion_prefix_len",
+        "segment_target",
+        "typed_path_target",
+        "breadcrumbs",
+        "browser_rows",
+        "normalize_model_rows",
+        "harness_brand_icon",
+        "visible_harnesses",
+        "offered_harnesses"
+      ],
+      "views": [
+        "Pickers",
+        "ModelShortcutHost",
+        "Fixture",
+        "Fixture",
+        "MouseFixture"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/popover/hover_intent.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/popover.rs",
+      "publicFunctions": 59,
+      "renderImpls": 0,
+      "exports": [
+        "reap_popup",
+        "menu_step",
+        "match_rank",
+        "filter_indices",
+        "classify_key",
+        "surface_bg",
+        "popover_card",
+        "popover_card_flush",
+        "menu_scroll_host",
+        "menu_scroll_list",
+        "completion_card",
+        "completion_list",
+        "faded_menu_list",
+        "completion_row_content",
+        "anchored_menu",
+        "anchored_menu_below",
+        "anchored_menu_below_end",
+        "anchored_menu_right",
+        "nested_menu",
+        "anchored_menu_below_gap",
+        "anchored_menu_above",
+        "anchored_menu_above_at",
+        "full_width_menu_above",
+        "anchored_menu_above_end",
+        "menu_at",
+        "scrim_alpha",
+        "modal",
+        "modal_glass",
+        "menu_row",
+        "menu_row_nav",
+        "menu_heading",
+        "tracked_upper",
+        "menu_separator",
+        "band",
+        "palette_card",
+        "palette_search_icon",
+        "key_cap",
+        "key_hint",
+        "key_hint_text",
+        "key_hint_pair",
+        "kbd_hint",
+        "search_input_frame",
+        "menu_section",
+        "dialog_card",
+        "dialog_title",
+        "dialog_body",
+        "dialog_field",
+        "btn_ghost",
+        "btn_primary",
+        "btn_danger",
+        "skeleton_rows",
+        "skeleton_bar",
+        "skeleton_menu_rows",
+        "error_row",
+        "schedule_scrollbar_hide",
+        "rail",
+        "reset_menu_scroll",
+        "search_highlight",
+        "menu_geometry"
+      ],
+      "views": [],
+      "catalogEntries": 6
+    },
+    {
+      "path": "crates/ui/src/project_actions.rs",
+      "publicFunctions": 4,
+      "renderImpls": 0,
+      "exports": [
+        "preferred_action",
+        "action_icon",
+        "show_action_label",
+        "draft_from_action"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/queue.rs",
+      "publicFunctions": 0,
+      "renderImpls": 3,
+      "exports": [],
+      "views": [
+        "QueueActionTooltip",
+        "QueueGhost",
+        "QueueScrollTestView"
+      ],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/rail.rs",
+      "publicFunctions": 8,
+      "renderImpls": 0,
+      "exports": [
+        "rail_visible",
+        "rail_ticks",
+        "active_tick",
+        "rail_capacity",
+        "rail_slots",
+        "tick_buckets",
+        "bucket_of",
+        "truncate_preview"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/accounts.rs",
+      "publicFunctions": 5,
+      "renderImpls": 1,
+      "exports": [
+        "usage_level",
+        "usage_color",
+        "force_usage_for",
+        "format_reset",
+        "provider_accounts"
+      ],
+      "views": [
+        "AccountsPage"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/appearance.rs",
+      "publicFunctions": 0,
+      "renderImpls": 2,
+      "exports": [],
+      "views": [
+        "TranscriptWidthDrag",
+        "AppearancePage"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/appshots.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/archived.rs",
+      "publicFunctions": 1,
+      "renderImpls": 1,
+      "exports": [
+        "archived_chats"
+      ],
+      "views": [
+        "ArchivedPage"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/completion.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/composer.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/devices.rs",
+      "publicFunctions": 5,
+      "renderImpls": 1,
+      "exports": [
+        "device_online",
+        "format_last_seen",
+        "devices_subtitle",
+        "platform_label",
+        "short_id"
+      ],
+      "views": [
+        "DevicesPage"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/files.rs",
+      "publicFunctions": 0,
+      "renderImpls": 1,
+      "exports": [],
+      "views": [
+        "FilesSettingsPage"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/harnesses.rs",
+      "publicFunctions": 2,
+      "renderImpls": 1,
+      "exports": [
+        "blurb",
+        "cli_name"
+      ],
+      "views": [
+        "HarnessesPage"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/notifications.rs",
+      "publicFunctions": 0,
+      "renderImpls": 1,
+      "exports": [],
+      "views": [
+        "NotificationsPage"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/shortcuts.rs",
+      "publicFunctions": 4,
+      "renderImpls": 1,
+      "exports": [
+        "record_key",
+        "conflict_owner",
+        "send_combo_is_reserved",
+        "modifier_send_label"
+      ],
+      "views": [
+        "ShortcutsPage"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/settings/widgets.rs",
+      "publicFunctions": 19,
+      "renderImpls": 0,
+      "exports": [
+        "rail",
+        "page_column",
+        "page_header",
+        "page_subtitle",
+        "field_label",
+        "option_card_row",
+        "option_card",
+        "section_card",
+        "card_row",
+        "row_tile",
+        "row_title",
+        "meta_line",
+        "badge",
+        "badge_active",
+        "toggle_switch",
+        "ghost_action",
+        "ghost_hover",
+        "error_strip",
+        "warning_strip"
+      ],
+      "views": [],
+      "catalogEntries": 7
+    },
+    {
+      "path": "crates/ui/src/settings.rs",
+      "publicFunctions": 27,
+      "renderImpls": 0,
+      "exports": [
+        "normalize_transcript_width",
+        "transcript_width",
+        "set_transcript_width",
+        "init",
+        "current",
+        "install_new_thread_composer_background",
+        "remove_new_thread_composer_background",
+        "set_new_thread_background_effect",
+        "code_fences_generation",
+        "transcript_compact_mode",
+        "set_transcript_compact_mode",
+        "update",
+        "replace",
+        "flush",
+        "sidebar_pin_profile_key",
+        "combo_from_keystroke",
+        "combo_from_keystroke_on",
+        "conflicted_shortcuts",
+        "combo_modifiers",
+        "jump_hints_visible",
+        "modifier_send_hint_visible",
+        "platform_combo",
+        "platform_combo_on",
+        "display_combo",
+        "display_combo_on",
+        "badge_combo",
+        "badge_combo_on"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/actions_ui.rs",
+      "publicFunctions": 0,
+      "renderImpls": 1,
+      "exports": [],
+      "views": [
+        "MenuTestView"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/command_palette.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/files_panel.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/files_panel_workspace_tests.rs",
+      "publicFunctions": 0,
+      "renderImpls": 1,
+      "exports": [],
+      "views": [
+        "ClosedFixture"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/project_icon.rs",
+      "publicFunctions": 0,
+      "renderImpls": 2,
+      "exports": [],
+      "views": [
+        "ProjectIcon",
+        "ProjectIconTooltip"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/sidebar_pins.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/sidebar_sections.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/spaces.rs",
+      "publicFunctions": 0,
+      "renderImpls": 3,
+      "exports": [],
+      "views": [
+        "PinnedHost",
+        "SidebarHost",
+        "SidebarViewOptionsTooltip"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell/tabs.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/shell.rs",
+      "publicFunctions": 10,
+      "renderImpls": 7,
+      "exports": [
+        "empty_sessions_message",
+        "restore_focus_if_empty_on_next_frame",
+        "restore_mounted_focus",
+        "titlebar_cluster_start",
+        "titlebar_spacer_width",
+        "caption_buttons_width",
+        "cluster_buttons_start",
+        "cluster_clearance",
+        "apply_keymap",
+        "resort_offsets"
+      ],
+      "views": [
+        "SurfaceTabGhost",
+        "SurfaceTabTooltip",
+        "DragGhost",
+        "SidebarPane",
+        "Shell",
+        "TabHost",
+        "ShortcutHost"
+      ],
+      "catalogEntries": 3
+    },
+    {
+      "path": "crates/ui/src/sound.rs",
+      "publicFunctions": 4,
+      "renderImpls": 0,
+      "exports": [
+        "play",
+        "play_appshot",
+        "prepare_appshot",
+        "connectivity_sound_since"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/state.rs",
+      "publicFunctions": 3,
+      "renderImpls": 0,
+      "exports": [
+        "parse_orgs",
+        "org_name_valid",
+        "sort_memberships"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/surface_chrome.rs",
+      "publicFunctions": 2,
+      "renderImpls": 0,
+      "exports": [
+        "input",
+        "toolbar"
+      ],
+      "views": [],
+      "catalogEntries": 2
+    },
+    {
+      "path": "crates/ui/src/syntax_cache.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/terminal/emulator.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/terminal/mod.rs",
+      "publicFunctions": 0,
+      "renderImpls": 0,
+      "exports": [],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/terminal/panel.rs",
+      "publicFunctions": 10,
+      "renderImpls": 2,
+      "exports": [
+        "init",
+        "clamp_terminal_height",
+        "backoff_ms",
+        "reorder_tabs",
+        "drop_index",
+        "slide_offset",
+        "active_after_reorder",
+        "active_after_close",
+        "exit_message",
+        "shell_title"
+      ],
+      "views": [
+        "TabGhost",
+        "TerminalPanel"
+      ],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/terminal/view.rs",
+      "publicFunctions": 5,
+      "renderImpls": 0,
+      "exports": [
+        "terminal_panel_bg",
+        "resolve_color",
+        "cell_at",
+        "keystroke_bytes",
+        "paste_bytes"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/theme.rs",
+      "publicFunctions": 25,
+      "renderImpls": 0,
+      "exports": [
+        "current_appearance",
+        "style_generation",
+        "bump_style_generation",
+        "lock_appearance",
+        "set_current_appearance",
+        "neutral",
+        "ink",
+        "hairline",
+        "wash",
+        "scrim",
+        "band",
+        "glass_selected_bg",
+        "user_bubble_bg",
+        "card_selected_bg",
+        "glass_selected_shadows",
+        "card_selected_shadows",
+        "grey",
+        "oklch",
+        "oklch_to_srgb",
+        "rgb_to_hsl",
+        "hsl_to_rgb",
+        "relative_luminance",
+        "contrast_ratio",
+        "flatten",
+        "mix"
+      ],
+      "views": [],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/theme_library.rs",
+      "publicFunctions": 11,
+      "renderImpls": 0,
+      "exports": [
+        "init",
+        "entries",
+        "load_warning",
+        "compile",
+        "install",
+        "reload",
+        "unlink",
+        "duplicate_as_snapshot",
+        "duplicate_as_editable",
+        "remove",
+        "reveal"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/transcript.rs",
+      "publicFunctions": 20,
+      "renderImpls": 4,
+      "exports": [
+        "selection_scroll_step",
+        "tool_detail",
+        "call_block",
+        "diff_to_file",
+        "format_timestamp",
+        "user_message_needs_collapse",
+        "user_resize_duration_ms",
+        "user_resize_spec",
+        "rows_for_entry",
+        "record_view_frame",
+        "parse_for_row",
+        "top_gap_for",
+        "diff_rows",
+        "tool_group_summary",
+        "chips_height",
+        "detail_height",
+        "flavour_word",
+        "flavour_seed",
+        "sending_bridge",
+        "format_elapsed"
+      ],
+      "views": [
+        "Transcript",
+        "PreviewFixture",
+        "CachedTranscript",
+        "SizedTranscript"
+      ],
+      "catalogEntries": 1
+    },
+    {
+      "path": "crates/ui/src/typography.rs",
+      "publicFunctions": 24,
+      "renderImpls": 0,
+      "exports": [
+        "clamp_font_size",
+        "bundled_font_faces",
+        "register_fonts",
+        "init",
+        "requested",
+        "effective",
+        "effective_family_name",
+        "terminal_requested",
+        "terminal_effective",
+        "terminal_effective_family_name",
+        "terminal_font_size",
+        "code_requested",
+        "code_effective",
+        "code_effective_family_name",
+        "code_font_size",
+        "font_size",
+        "availability",
+        "generation",
+        "set_family",
+        "set_terminal_family",
+        "set_code_family",
+        "set_terminal_font_size",
+        "set_code_font_size",
+        "set_font_size"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    },
+    {
+      "path": "crates/ui/src/workspace_links.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "resolve_workspace_file_link"
+      ],
+      "views": [],
+      "catalogEntries": 0
+    }
+  ]
+}

@@ -3632,7 +3632,7 @@ impl Changes {
     /// [`Self::header_button`] with a latched look: an `active` toggle holds
     /// the hover wash and the full text tone, so the pane says which layout
     /// it is in without a label.
-    fn header_toggle(
+    pub(crate) fn header_toggle(
         id: &'static str,
         icon_path: &'static str,
         active: bool,

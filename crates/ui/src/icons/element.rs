@@ -88,6 +88,13 @@ impl Element for Icon {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // GPUI's Svg painter requires an element-local text color. Text can
+        // inherit from a parent, but Svg does not fall back to that inherited
+        // color when its own style is unset. Preserve explicit icon colors and
+        // use the current text style for controls that intentionally inherit.
+        if self.svg.style().text.color.is_none() {
+            self.svg.style().text.color = Some(window.text_style().color);
+        }
         let mut path: SharedString = self.path.into();
         if self.animate && super::generated::MORPH_PATHS.contains(&self.path) {
             if let Some(id) = id {

@@ -18,13 +18,13 @@
     "workbench": "mounted"
   },
   {
-    "id": "segmented",
-    "name": "Segmented control",
+    "id": "diff-layout-toggle",
+    "name": "Diff layout toggle",
     "group": "Actions",
-    "description": "One selected view in a compact, shared container.",
+    "description": "Unified and split layouts share a reversible toolbar control.",
     "source": "crates/ui/src/changes.rs",
     "icon": "split",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
   },
   {
     "id": "toggle",
@@ -63,6 +63,15 @@
     "workbench": "mounted"
   },
   {
+    "id": "option-card",
+    "name": "Visual option card",
+    "group": "Inputs",
+    "description": "A selectable preview frame with its own preview content, icon and caption.",
+    "source": "crates/ui/src/settings/widgets.rs",
+    "icon": "grid",
+    "workbench": "mounted"
+  },
+  {
     "id": "select",
     "name": "Picker",
     "group": "Inputs",
@@ -82,12 +91,12 @@
   },
   {
     "id": "status",
-    "name": "Status",
+    "name": "Status treatments",
     "group": "Feedback",
-    "description": "Working, completed, warning and error states with text labels.",
+    "description": "Working, completed, warning and error states are styled across surfaces; a shared status builder has not yet been consolidated.",
     "source": "crates/ui/src/theme.rs",
     "icon": "success",
-    "workbench": "needs-fixture"
+    "workbench": "needs-consolidation"
   },
   {
     "id": "alert",
@@ -99,13 +108,67 @@
     "workbench": "mounted"
   },
   {
-    "id": "toast",
-    "name": "Toast",
+    "id": "failure-notice",
+    "name": "Failure notice",
     "group": "Feedback",
-    "description": "Brief confirmation in a floating surface.",
-    "source": "crates/ui/src/shell.rs",
+    "description": "Composer and transcript failures share a tinted, copyable notice with plain and tiled icon variants.",
+    "source": "crates/ui/src/notice.rs",
+    "icon": "warning",
+    "workbench": "mounted"
+  },
+  {
+    "id": "loader",
+    "name": "Loading states",
+    "group": "Feedback",
+    "description": "The gradient glyph spinner uses the same clock, custom icon and reduced-motion behavior as active views.",
+    "source": "crates/ui/src/loaders.rs",
+    "icon": "loading",
+    "workbench": "mounted"
+  },
+  {
+    "id": "zeron-loader",
+    "name": "Brand loader",
+    "group": "Feedback",
+    "description": "The pulsing pixel mark uses the production Zeron loading clock and cell geometry.",
+    "source": "crates/ui/src/loaders.rs",
+    "icon": "loading",
+    "workbench": "mounted"
+  },
+  {
+    "id": "skeleton-loading",
+    "name": "Skeleton loading",
+    "group": "Feedback",
+    "description": "Staggered list and menu placeholders from the shared popover motion system.",
+    "source": "crates/ui/src/popover.rs",
+    "icon": "loading",
+    "workbench": "mounted"
+  },
+  {
+    "id": "progress-ring",
+    "name": "Upload progress",
+    "group": "Feedback",
+    "description": "A circular progress indicator rendered for transcript uploads.",
+    "source": "crates/ui/src/loaders.rs",
+    "icon": "loading",
+    "workbench": "mounted"
+  },
+  {
+    "id": "tooltip",
+    "name": "Toolbar tooltip",
+    "group": "Feedback",
+    "description": "Delayed context on compact icon actions, anchored to the real toolbar button.",
+    "source": "crates/ui/src/files/mod.rs",
     "icon": "info",
-    "workbench": "needs-fixture"
+    "workbench": "mounted"
+  },
+  {
+    "id": "popover-error-row",
+    "name": "Popover error row",
+    "group": "Feedback",
+    "description": "Shared error text frame for failed asynchronous lists; the caller owns any retry action.",
+    "source": "crates/ui/src/popover.rs",
+    "icon": "error",
+    "workbench": "mounted"
   },
   {
     "id": "menu",
@@ -114,6 +177,15 @@
     "description": "12px outer radius with a 4px inset and 7px item radius.",
     "source": "crates/ui/src/popover.rs",
     "icon": "menu",
+    "workbench": "mounted"
+  },
+  {
+    "id": "palette-surface",
+    "name": "Command palette surface",
+    "group": "Navigation",
+    "description": "A raised palette shell with shared search glyph and keyboard hint treatments.",
+    "source": "crates/ui/src/popover.rs",
+    "icon": "search",
     "workbench": "mounted"
   },
   {
@@ -150,6 +222,15 @@
     "description": "A 36px identity tile, 13px title and 12px secondary line.",
     "source": "crates/ui/src/settings/widgets.rs",
     "icon": "settings",
+    "workbench": "mounted"
+  },
+  {
+    "id": "message-badge",
+    "name": "Message context badge",
+    "group": "Collections",
+    "description": "Structured context in a message becomes a compact pill with a native hover detail card.",
+    "source": "crates/ui/src/badges.rs",
+    "icon": "info",
     "workbench": "mounted"
   },
   {

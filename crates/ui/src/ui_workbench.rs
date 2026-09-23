@@ -1,27 +1,31 @@
 //! Native design workbench. Every specimen here is a production GPUI builder
-//! or an embedded production asset; unmounted application composites are
-//! reported as coverage gaps instead of being redrawn as lookalikes.
+//! or an embedded production asset; unmounted patterns and missing shared
+//! builders are reported instead of being redrawn as lookalikes.
 
 use std::path::PathBuf;
 
 use gpui::{
     AssetSource as _, Context, Entity, Focusable as _, Hsla, IntoElement, Render, ScrollHandle,
-    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
-    svg,
+    SharedString, Subscription, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, size, svg,
 };
 use serde::Deserialize;
 use zeron_proto::{ChangeRequestState, ChangeRequestSummary};
 use zeron_theme::{AccentPreset, AccentSelection, ThemeRegistry, ThemeSelection};
 
 use crate::{
-    appearance, change_requests, changes, composer::ComposerInput, files, icons, markdown, popover,
-    settings, shell, surface_chrome, theme, theme_library, typography,
+    appearance, badges, change_requests, changes,
+    composer::{ComposerInput, ComposerInputEvent},
+    files, icons, loaders, markdown, notice, popover, settings, shell, surface_chrome, theme,
+    theme_library, typography,
 };
 use theme::{Appearance, Theme};
 
 const GUIDE: &str = include_str!("../../../apps/ui-workbench/metrics.json");
 const COMPONENTS: &str = include_str!("../../../apps/ui-workbench/components.json");
 const MOTIONS: &str = include_str!("../../../apps/icon-lab/motions.json");
+const ICON_CATALOG: &str = include_str!("../../../apps/icon-lab/catalog.json");
+const AUDIT: &str = include_str!("../../../apps/ui-workbench/audit.json");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -47,7 +51,7 @@ impl Page {
             Self::Foundations => "Foundations",
             Self::Components => "Components",
             Self::Icons => "Icons & motion",
-            Self::Coverage => "Coverage",
+            Self::Coverage => "Patterns & audit",
         }
     }
 
@@ -69,12 +73,26 @@ struct MotionRecord {
     from_icon: String,
     #[serde(rename = "toIcon")]
     to_icon: String,
+    context: String,
+    duration: u32,
+    mode: String,
 }
 
 struct Morph {
     title: String,
     from: &'static str,
     to: &'static str,
+    context: String,
+    duration: u32,
+    mode: String,
+}
+
+#[derive(Deserialize)]
+struct IconRecord {
+    name: String,
+    category: String,
+    note: String,
+    status: String,
 }
 
 struct Workbench {
@@ -85,29 +103,52 @@ struct Workbench {
     accent: AccentSelection,
     switch_on: bool,
     checkbox_on: bool,
+    option_compact: bool,
+    split_on: bool,
     search: Entity<ComposerInput>,
     field: Entity<ComposerInput>,
-    icons: Vec<String>,
+    icon_search: Entity<ComposerInput>,
+    _icon_search_sub: Subscription,
+    icons: Vec<IconRecord>,
+    icon_category: Option<String>,
+    selected_icon: Option<String>,
     morphs: Vec<Morph>,
     morphed: Vec<bool>,
+    show_all_morphs: bool,
+    show_modules: bool,
+    show_all_catalog: bool,
 }
 
 impl Workbench {
     fn new(cx: &mut Context<Self>) -> Self {
         let assets = icons::Assets;
-        let mut paths: Vec<String> = assets
+        let paths: Vec<String> = assets
             .list("custom-icons/")
             .expect("embedded icon list")
             .into_iter()
             .map(|path| path.to_string())
             .filter(|path| !path.starts_with("custom-icons/small/"))
             .collect();
-        paths.sort();
         assert_eq!(
             paths.len(),
             135,
             "workbench must show the complete icon family"
         );
+
+        let icons: Vec<IconRecord> =
+            serde_json::from_str(ICON_CATALOG).expect("reviewed icon catalog");
+        assert_eq!(
+            icons.len(),
+            paths.len(),
+            "icon catalog and native assets differ"
+        );
+        for icon in &icons {
+            let path = format!("custom-icons/{}.svg", icon.name);
+            assert!(
+                paths.contains(&path),
+                "catalog icon missing from native assets: {path}"
+            );
+        }
 
         let records: Vec<MotionRecord> =
             serde_json::from_str(MOTIONS).expect("reviewed icon motions");
@@ -128,6 +169,9 @@ impl Workbench {
                 title: record.title,
                 from: resolve(&record.from_icon),
                 to: resolve(&record.to_icon),
+                context: record.context,
+                duration: record.duration,
+                mode: record.mode,
             })
             .collect();
         assert_eq!(morphs.len(), 36, "workbench must show every native morph");
@@ -144,6 +188,18 @@ impl Workbench {
                 .with_text_metrics(11.0, 16.0)
         });
         let field = cx.new(|cx| ComposerInput::new("Device name", cx));
+        let icon_search = cx.new(|cx| {
+            ComposerInput::new("Search icons", cx)
+                .with_single_line()
+                .with_accessibility_role(gpui::Role::SearchInput)
+                .with_text_metrics(12.0, 18.0)
+        });
+        let icon_search_sub = cx.subscribe(&icon_search, |_, _, event, cx| {
+            if matches!(event, ComposerInputEvent::Edited) {
+                cx.notify();
+            }
+        });
+        let selected_icon = icons.first().map(|icon| icon.name.clone());
         Self {
             page: Page::Overview,
             scroll: ScrollHandle::new(),
@@ -152,11 +208,20 @@ impl Workbench {
             accent,
             switch_on: false,
             checkbox_on: false,
+            option_compact: true,
+            split_on: false,
             search,
             field,
-            icons: paths,
+            icon_search,
+            _icon_search_sub: icon_search_sub,
+            icons,
+            icon_category: None,
+            selected_icon,
             morphs,
             morphed,
+            show_all_morphs: false,
+            show_modules: false,
+            show_all_catalog: false,
         }
     }
 
@@ -220,6 +285,8 @@ impl Workbench {
                     } else {
                         t.text_muted
                     })
+                    .role(gpui::Role::Button)
+                    .aria_label(page.label())
                     .cursor_pointer()
                     .hover(|s| s.bg(t.element_hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -227,7 +294,13 @@ impl Workbench {
                         this.scroll = ScrollHandle::new();
                         cx.notify();
                     }))
-                    .child(icons::icon(page.icon()).size(px(16.0)))
+                    .child(icons::icon(page.icon()).size(px(16.0)).text_color(
+                        if self.page == page {
+                            t.text
+                        } else {
+                            t.text_muted
+                        },
+                    ))
                     .child(page.label()),
             );
         }
@@ -386,11 +459,70 @@ impl Workbench {
             )
             .child(
                 div()
-                    .mt(px(30.0))
-                    .text_size(px(17.0))
-                    .child("Mounted production primitives"),
+                    .mt(px(34.0))
+                    .mb(px(16.0))
+                    .text_size(px(18.0))
+                    .child("Explore the system"),
             );
-        root = root.child(self.components(t, cx));
+        let mut destinations = div().flex().flex_wrap().gap(px(12.0));
+        for (page, summary, detail) in [
+            (
+                Page::Foundations,
+                "Live tokens",
+                "Color roles, type, spacing and motion timing",
+            ),
+            (
+                Page::Components,
+                "Native specimens",
+                "Interact with exact production builders",
+            ),
+            (
+                Page::Icons,
+                "Glyphs & motion",
+                "135 assets, optical sizes and 36 transitions",
+            ),
+            (
+                Page::Coverage,
+                "Patterns & audit",
+                "Fixture gaps and source-wide consolidation signals",
+            ),
+        ] {
+            destinations = destinations.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "workbench-destination-{}",
+                        page.label()
+                    )))
+                    .w(px(330.0))
+                    .min_h(px(132.0))
+                    .p(px(18.0))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(t.border)
+                    .bg(t.surface_card)
+                    .role(gpui::Role::Button)
+                    .aria_label(summary)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(t.element_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.page = page;
+                        this.scroll = ScrollHandle::new();
+                        cx.notify();
+                    }))
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.0))
+                    .child(icons::icon(page.icon()).size(px(20.0)).text_color(t.accent))
+                    .child(div().text_size(px(14.0)).child(summary))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(t.text_muted)
+                            .child(detail),
+                    ),
+            );
+        }
+        root = root.child(destinations);
         root
     }
 
@@ -457,8 +589,13 @@ impl Workbench {
         let checkbox_on = self.checkbox_on;
         let checkbox_entity = cx.entity().downgrade();
         let search_focus = self.search.focus_handle(cx);
-        let mut grid = div().flex().flex_wrap().gap(px(12.0));
-        grid = grid.child(Self::specimen(
+        let mut actions = div().flex().flex_wrap().gap(px(12.0));
+        let mut inputs = div().flex().flex_wrap().gap(px(12.0));
+        let mut feedback = div().flex().flex_wrap().gap(px(12.0));
+        let mut navigation = div().flex().flex_wrap().gap(px(12.0));
+        let mut collections = div().flex().flex_wrap().gap(px(12.0));
+        let mut composed = div().flex().flex_wrap().gap(px(12.0));
+        actions = actions.child(Self::specimen(
             t,
             "Dialog actions",
             "popover::btn_primary / btn_ghost / btn_danger",
@@ -470,7 +607,35 @@ impl Workbench {
                 .child(popover::btn_ghost(t, "Cancel", "workbench-ghost"))
                 .child(popover::btn_danger(t, "Delete")),
         ));
-        grid = grid.child(Self::specimen(
+        actions = actions.child(Self::specimen(
+            t,
+            "Diff layout toggle",
+            "changes::Changes::header_toggle · unified / split",
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .child(
+                    changes::Changes::header_toggle(
+                        "workbench-diff-layout",
+                        if self.split_on {
+                            icons::SPLIT
+                        } else {
+                            icons::UNIFIED
+                        },
+                        self.split_on,
+                        t,
+                    )
+                    .role(gpui::Role::Button)
+                    .aria_label("Toggle diff layout")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.split_on = !this.split_on;
+                        cx.notify();
+                    })),
+                )
+                .child(if self.split_on { "Split" } else { "Unified" }),
+        ));
+        feedback = feedback.child(Self::specimen(
             t,
             "Settings badges",
             "settings::widgets::badge / badge_active",
@@ -480,12 +645,14 @@ impl Workbench {
                 .child(settings::widgets::badge(t, "Default"))
                 .child(settings::widgets::badge_active(t, "Active")),
         ));
-        grid = grid.child(Self::specimen(
+        inputs = inputs.child(Self::specimen(
             t,
             "Toggle switch",
             "settings::widgets::toggle_switch",
             div()
                 .id("workbench-toggle")
+                .role(gpui::Role::Button)
+                .aria_label("Toggle switch")
                 .cursor_pointer()
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.switch_on = !this.switch_on;
@@ -497,7 +664,7 @@ impl Workbench {
                 .child(settings::widgets::toggle_switch(t, toggle))
                 .child(if toggle { "On" } else { "Off" }),
         ));
-        grid = grid.child(Self::specimen(
+        inputs = inputs.child(Self::specimen(
             t,
             "Task checkbox",
             "markdown::render::task_checkbox",
@@ -519,7 +686,7 @@ impl Workbench {
                 }),
             ),
         ));
-        grid = grid.child(Self::specimen(
+        inputs = inputs.child(Self::specimen(
             t,
             "File search",
             "surface_chrome::input / composer::ComposerInput",
@@ -548,7 +715,7 @@ impl Workbench {
                     ),
             ),
         ));
-        grid = grid.child(Self::specimen(
+        inputs = inputs.child(Self::specimen(
             t,
             "Dialog text field",
             "popover::dialog_field / composer::ComposerInput",
@@ -560,7 +727,7 @@ impl Workbench {
                 .child(settings::widgets::field_label(t, "Device name"))
                 .child(popover::dialog_field(self.field.clone().into_any_element())),
         ));
-        grid = grid.child(Self::specimen(
+        collections = collections.child(Self::specimen(
             t,
             "Settings row",
             "settings::widgets::section_card / card_row / row_tile / row_title",
@@ -570,19 +737,19 @@ impl Workbench {
                     .child(settings::widgets::row_title(t, "Notifications")),
             ),
         ));
-        grid = grid.child(Self::specimen(
+        feedback = feedback.child(Self::specimen(
             t,
             "Inline error",
             "settings::widgets::error_strip",
             settings::widgets::error_strip(t, "Could not connect to this device."),
         ));
-        grid = grid.child(Self::specimen(
+        feedback = feedback.child(Self::specimen(
             t,
             "Inline warning",
             "settings::widgets::warning_strip",
             settings::widgets::warning_strip(t, "A new version is available."),
         ));
-        grid = grid.child(Self::specimen(
+        navigation = navigation.child(Self::specimen(
             t,
             "Popover menu",
             "popover::popover_card / menu_heading / menu_row",
@@ -594,7 +761,7 @@ impl Workbench {
                         .child("New session"),
                 ),
         ));
-        grid = grid.child(Self::specimen(
+        composed = composed.child(Self::specimen(
             t,
             "Dialog surface",
             "popover::dialog_card / dialog_title / dialog_body",
@@ -602,17 +769,21 @@ impl Workbench {
                 .child(popover::dialog_title(t, "Create a space"))
                 .child(popover::dialog_body(t, "Choose a name for your workspace.")),
         ));
-        grid = grid.child(Self::specimen(
+        actions = actions.child(Self::specimen(
             t,
             "Surface toolbar",
             "surface_chrome::toolbar / input",
             surface_chrome::toolbar(t).child(
                 surface_chrome::input()
-                    .child(icons::icon(icons::SEARCH).size(px(16.0)))
+                    .child(
+                        icons::icon(icons::SEARCH)
+                            .size(px(16.0))
+                            .text_color(t.text_muted),
+                    )
                     .child("Search files"),
             ),
         ));
-        grid = grid.child(Self::specimen(
+        navigation = navigation.child(Self::specimen(
             t,
             "Page heading",
             "settings::widgets::page_header / page_subtitle",
@@ -625,18 +796,30 @@ impl Workbench {
                     "Choose a theme and accent.",
                 )),
         ));
-        grid = grid.child(Self::specimen(
+        actions = actions.child(Self::specimen(
             t,
             "Icon control",
             "icons::icon (native SVG renderer)",
             div()
                 .flex()
                 .gap(px(15.0))
-                .child(icons::icon(icons::SETTINGS).size(px(16.0)))
-                .child(icons::icon(icons::PULL_REQUEST).size(px(24.0)))
-                .child(icons::icon(icons::PANEL_LEFT_OPEN).size(px(32.0))),
+                .child(
+                    icons::icon(icons::SETTINGS)
+                        .size(px(16.0))
+                        .text_color(t.text),
+                )
+                .child(
+                    icons::icon(icons::PULL_REQUEST)
+                        .size(px(24.0))
+                        .text_color(t.text),
+                )
+                .child(
+                    icons::icon(icons::PANEL_LEFT_OPEN)
+                        .size(px(32.0))
+                        .text_color(t.text),
+                ),
         ));
-        grid = grid.child(Self::specimen(
+        actions = actions.child(Self::specimen(
             t,
             "Toolbar icon buttons",
             "files::toolbar_button / surface_chrome::ICON_SIZE",
@@ -667,7 +850,7 @@ impl Workbench {
             base_ref: "main".into(),
             head_ref: "design/ui-workbench".into(),
         };
-        grid = grid.child(Self::specimen(
+        feedback = feedback.child(Self::specimen(
             t,
             "Pull request states",
             "change_requests::pull_request_badge_preview",
@@ -699,19 +882,241 @@ impl Workbench {
             .into_iter()
             .next()
             .expect("workbench diff fixture");
-        grid = grid.child(Self::specimen(
+        collections = collections.child(Self::specimen(
             t,
             "Diff hunk",
             "changes::parse_patch / render_file_body_with_syntax",
             changes::render_file_body_with_syntax(&file, None, t),
         ));
-        grid = grid.child(Self::specimen(
+        navigation = navigation.child(Self::specimen(
             t,
             "Empty sessions",
             "shell::empty_sessions_message",
             shell::empty_sessions_message(t),
         ));
-        grid
+        feedback = feedback.child(Self::specimen(
+            t,
+            "Failure notices",
+            "notice::notice_chip · composer / transcript variants",
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(7.0))
+                .child(notice::notice_chip(
+                    t,
+                    false,
+                    "Run failed",
+                    "The process exited with code 1.",
+                    notice::NoticeChipIcon::Plain,
+                ))
+                .child(notice::notice_chip(
+                    t,
+                    true,
+                    "Retry available",
+                    "The connection was interrupted.",
+                    notice::NoticeChipIcon::Tile,
+                )),
+        ));
+        feedback = feedback.child(Self::specimen(
+            t,
+            "Loading glyph",
+            "loaders::gradient_spinner",
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .child(loaders::gradient_spinner(
+                    "workbench-loading",
+                    t,
+                    5.0,
+                    cx.entity_id(),
+                    cx,
+                ))
+                .child("Working"),
+        ));
+        feedback = feedback.child(Self::specimen(
+            t,
+            "Upload progress",
+            "loaders::upload_progress_ring",
+            div()
+                .size(px(46.0))
+                .rounded(px(9.0))
+                .bg(t.text_muted.opacity(0.6))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(loaders::upload_progress_ring(64, 32.0)),
+        ));
+        let context_badge = badges::MessageBadge {
+            icon: icons::INFO,
+            label: "Review context".into(),
+            details: vec![badges::BadgeDetail {
+                location: "src/main.rs:42".into(),
+                tag: Some("R".into()),
+                body: "Check this branch before merging.".into(),
+            }],
+        };
+        collections = collections.child(Self::specimen(
+            t,
+            "Message context badge",
+            "badges::render · hover for source detail",
+            badges::render("workbench-context-badge", &context_badge, t),
+        ));
+        inputs = inputs.child(Self::specimen(
+            t,
+            "Visual option cards",
+            "settings::widgets::option_card_row / option_card",
+            settings::widgets::option_card_row()
+                .child(
+                    settings::widgets::option_card(
+                        t,
+                        icons::GRID,
+                        "Compact",
+                        self.option_compact,
+                        div()
+                            .w_full()
+                            .h_full()
+                            .rounded(px(settings::widgets::OPTION_CARD_RADIUS))
+                            .bg(t.surface)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icons::icon(icons::GRID).size(px(22.0)).text_color(t.accent))
+                            .into_any_element(),
+                    )
+                    .id("workbench-option-compact")
+                    .role(gpui::Role::Button)
+                    .aria_label("Compact layout")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.option_compact = true;
+                        cx.notify();
+                    })),
+                )
+                .child(
+                    settings::widgets::option_card(
+                        t,
+                        icons::LIST,
+                        "List",
+                        !self.option_compact,
+                        div()
+                            .w_full()
+                            .h_full()
+                            .rounded(px(settings::widgets::OPTION_CARD_RADIUS))
+                            .bg(t.surface)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                icons::icon(icons::LIST)
+                                    .size(px(22.0))
+                                    .text_color(t.text_muted),
+                            )
+                            .into_any_element(),
+                    )
+                    .id("workbench-option-list")
+                    .role(gpui::Role::Button)
+                    .aria_label("List layout")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.option_compact = false;
+                        cx.notify();
+                    })),
+                ),
+        ));
+        feedback = feedback.child(Self::specimen(
+            t,
+            "Zeron mark loader",
+            "loaders::zeron_mark_loader",
+            loaders::zeron_mark_loader("workbench-mark", t, 68.0, cx.entity_id(), cx),
+        ));
+        feedback = feedback.child(Self::specimen(
+            t,
+            "Skeleton states",
+            "popover::skeleton_rows / skeleton_menu_rows",
+            div()
+                .w_full()
+                .flex()
+                .gap(px(13.0))
+                .child(div().flex_1().child(popover::skeleton_rows(
+                    "workbench-skeleton-list",
+                    t,
+                    3,
+                    cx.entity_id(),
+                    cx,
+                )))
+                .child(div().flex_1().child(popover::skeleton_menu_rows(
+                    "workbench-skeleton-menu",
+                    t,
+                    3,
+                    cx.entity_id(),
+                    cx,
+                ))),
+        ));
+        feedback = feedback.child(Self::specimen(
+            t,
+            "Popover error",
+            "popover::error_row",
+            popover::error_row(t, "Unable to load options."),
+        ));
+        navigation = navigation.child(Self::specimen(
+            t,
+            "Command palette shell",
+            "popover::palette_card / palette_search_icon / key_hint_pair",
+            popover::palette_card(t, px(270.0), 12.0)
+                .child(
+                    div()
+                        .p(px(11.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(9.0))
+                        .child(popover::palette_search_icon(t))
+                        .child("Search commands"),
+                )
+                .child(div().border_t_1().border_color(t.border).p(px(8.0)).child(
+                    popover::key_hint_pair(t, icons::ARROW_UP, icons::ARROW_DOWN, "Navigate"),
+                )),
+        ));
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .gap(px(30.0))
+            .child(Self::heading(
+                t,
+                "PRODUCTION BUILDERS",
+                "Native components",
+                "Interact with the exact GPUI functions Zeron uses. Each specimen names its source builder; app-bound views and missing shared patterns appear in Patterns & audit.",
+            ));
+        for (label, count, specimens) in [
+            ("Actions", 5, actions),
+            ("Inputs", 5, inputs),
+            ("Feedback", 10, feedback),
+            ("Navigation", 4, navigation),
+            ("Collections", 3, collections),
+            ("Composed", 1, composed),
+        ] {
+            content = content.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(13.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(9.0))
+                            .text_size(px(16.0))
+                            .child(label)
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(t.text_faint)
+                                    .child(format!("{count} specimens")),
+                            ),
+                    )
+                    .child(specimens),
+            );
+        }
+        content
     }
 
     fn foundations(&self, t: &Theme) -> gpui::Div {
@@ -871,53 +1276,25 @@ impl Workbench {
     }
 
     fn icons(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
-        let mut content = div().flex().flex_col().gap(px(17.0))
-            .child(Self::heading(t, "EMBEDDED PRODUCTION ASSETS", "Icons & motion", "The grid uses Zeron's GPUI SVG renderer and embedded icon assets. Click any transition to run the same element-local morph used in production."))
-            .child(div().text_size(px(17.0)).child("135 glyphs · 24px / optical 16px"));
-        let mut grid = div().flex().flex_wrap().gap(px(7.0));
-        for path in &self.icons {
-            let name = path
-                .strip_prefix("custom-icons/")
-                .unwrap_or(path)
-                .trim_end_matches(".svg");
-            let small = format!("custom-icons/small/{name}.svg");
-            grid = grid.child(
-                div()
-                    .w(px(126.0))
-                    .h(px(107.0))
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(t.border)
-                    .bg(t.surface_card)
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(12.0))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(13.0))
-                            .child(svg().path(path.clone()).size(px(24.0)).text_color(t.text))
-                            .child(svg().path(small).size(px(16.0)).text_color(t.text)),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(10.0))
-                            .text_color(t.text_muted)
-                            .child(name.to_string()),
-                    ),
-            );
-        }
-        content = content.child(grid).child(
-            div()
-                .mt(px(23.0))
-                .text_size(px(17.0))
-                .child("36 reversible morphs"),
-        );
-        let mut motion_grid = div().flex().flex_wrap().gap(px(8.0));
-        for (index, morph) in self.morphs.iter().enumerate() {
+        let query = self.icon_search.read(cx).text().trim().to_lowercase();
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .gap(px(32.0))
+            .child(Self::heading(
+                t,
+                "NATIVE ICON SYSTEM",
+                "Icons & motion",
+                "The same embedded SVGs, optical masters and element-local morphs used by Zeron. Select a glyph for its design rationale; activate a motion pair to reverse it.",
+            ));
+
+        let shown_morphs = if self.show_all_morphs {
+            self.morphs.len()
+        } else {
+            8
+        };
+        let mut motion_grid = div().flex().flex_wrap().gap(px(10.0));
+        for (index, morph) in self.morphs.iter().enumerate().take(shown_morphs) {
             let path = if self.morphed[index] {
                 morph.to
             } else {
@@ -926,93 +1303,806 @@ impl Workbench {
             motion_grid = motion_grid.child(
                 div()
                     .id(SharedString::from(format!("workbench-motion-tile-{index}")))
-                    .w(px(190.0))
-                    .h(px(117.0))
+                    .w(px(220.0))
+                    .min_h(px(132.0))
                     .rounded(px(9.0))
                     .border_1()
                     .border_color(t.border)
                     .bg(t.surface_card)
+                    .p(px(15.0))
+                    .role(gpui::Role::Button)
+                    .aria_label(morph.title.clone())
                     .cursor_pointer()
                     .hover(|s| s.bg(t.element_hover))
                     .flex()
                     .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(9.0))
+                    .gap(px(8.0))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.morphed[index] = !this.morphed[index];
                         cx.notify();
                     }))
                     .child(
-                        icons::icon(path)
-                            .morph(SharedString::from(format!("workbench-morph-{index}")))
-                            .size(px(34.0)),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .child(
+                                icons::icon(morph.from)
+                                    .size(px(20.0))
+                                    .text_color(t.text_muted),
+                            )
+                            .child(
+                                icons::icon(path)
+                                    .morph(SharedString::from(format!("workbench-morph-{index}")))
+                                    .size(px(36.0))
+                                    .text_color(t.text),
+                            )
+                            .child(
+                                icons::icon(morph.to)
+                                    .size(px(20.0))
+                                    .text_color(t.text_muted),
+                            ),
                     )
-                    .child(div().text_size(px(11.0)).child(morph.title.clone())),
+                    .child(div().text_size(px(12.0)).child(morph.title.clone()))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(t.text_muted)
+                            .child(morph.context.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.0))
+                            .text_color(t.text_faint)
+                            .child(format!("{} ms · {}", morph.duration, morph.mode)),
+                    ),
             );
         }
-        content.child(motion_grid)
-    }
+        content = content.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(13.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_size(px(18.0)).child("State transitions"))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(t.text_muted)
+                                .child("36 reversible pairs · click to play"),
+                        ),
+                )
+                .child(motion_grid)
+                .child(
+                    div()
+                        .id("workbench-more-motion")
+                        .h(px(30.0))
+                        .px(px(11.0))
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(t.border)
+                        .role(gpui::Role::Button)
+                        .aria_label("Show more or fewer icon transitions")
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.element_hover))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.show_all_morphs = !this.show_all_morphs;
+                            cx.notify();
+                        }))
+                        .flex()
+                        .items_center()
+                        .child(if self.show_all_morphs {
+                            "Show featured transitions"
+                        } else {
+                            "Show all 36 transitions"
+                        }),
+                ),
+        );
 
-    fn coverage(&self, t: &Theme) -> gpui::Div {
-        let catalog: serde_json::Value =
-            serde_json::from_str(COMPONENTS).expect("component inventory");
-        let entries = catalog.as_array().expect("component inventory array");
-        let mounted_count = entries
+        let categories = [
+            "Navigation",
+            "Workspace",
+            "Files",
+            "Composer",
+            "Git & changes",
+            "Agents & tools",
+            "Settings",
+            "Status",
+        ];
+        let visible_count = self
+            .icons
             .iter()
-            .filter(|entry| entry["workbench"] == "mounted")
+            .filter(|icon| {
+                self.icon_category
+                    .as_deref()
+                    .is_none_or(|category| icon.category == category)
+                    && (query.is_empty()
+                        || icon.name.contains(&query)
+                        || icon.note.to_lowercase().contains(&query))
+            })
             .count();
-        let mut content = div().flex().flex_col().gap(px(8.0))
-            .child(Self::heading(t, "HONEST COVERAGE", "What is actually mounted?", "A native card appears only when it calls the production builder. Data-bound application composites need shared fixture adapters before the workbench can claim 1:1 coverage."))
-            .child(div().pb(px(13.0)).text_size(px(13.0)).text_color(t.text_muted)
-                .child(format!("{} mounted / {} catalog entries · {} need adapters", mounted_count, entries.len(), entries.len() - mounted_count)));
-        for entry in entries {
-            let name = entry["name"].as_str().unwrap_or("");
-            let source = entry["source"].as_str().unwrap_or("");
-            let mounted = entry["workbench"] == "mounted";
-            content = content.child(
+        let mut filters = div().flex().flex_wrap().gap(px(7.0));
+        for category in std::iter::once(None).chain(categories.iter().map(|name| Some(*name))) {
+            let selected = self.icon_category.as_deref() == category;
+            let label = category.unwrap_or("All");
+            let target = category.map(str::to_string);
+            filters = filters.child(
                 div()
-                    .rounded(px(8.0))
+                    .id(SharedString::from(format!("workbench-category-{label}")))
+                    .h(px(29.0))
+                    .px(px(10.0))
+                    .rounded(px(6.0))
                     .border_1()
-                    .border_color(t.border)
-                    .bg(t.surface_card)
-                    .px(px(14.0))
-                    .py(px(10.0))
+                    .border_color(if selected { t.accent } else { t.border })
+                    .bg(if selected {
+                        t.element_active
+                    } else {
+                        t.surface_card
+                    })
+                    .role(gpui::Role::Button)
+                    .aria_label(format!("Filter icons: {label}"))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.element_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.icon_category = target.clone();
+                        cx.notify();
+                    }))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .text_size(px(11.0))
+                    .child(label.to_string()),
+            );
+        }
+        let mut library =
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(17.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(16.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(5.0))
+                                .child(div().text_size(px(18.0)).child("Glyph library"))
+                                .child(div().text_size(px(11.0)).text_color(t.text_muted).child(
+                                    format!("{visible_count} of 135 · 24px and optical 16px"),
+                                )),
+                        )
+                        .child(
+                            div()
+                                .w(px(260.0))
+                                .flex_none()
+                                .child(popover::search_input_frame(
+                                    t,
+                                    self.icon_search.clone().into_any_element(),
+                                )),
+                        ),
+                )
+                .child(filters);
+        if let Some(selected) = self
+            .selected_icon
+            .as_deref()
+            .and_then(|name| self.icons.iter().find(|icon| icon.name == name))
+        {
+            let regular = format!("custom-icons/{}.svg", selected.name);
+            let optical = format!("custom-icons/small/{}.svg", selected.name);
+            library = library.child(
+                div()
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(t.border)
+                    .bg(t.surface_raised)
+                    .p(px(20.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(22.0))
                     .child(
-                        icons::icon(if mounted { icons::CHECK } else { icons::INFO })
-                            .size(px(16.0))
-                            .text_color(if mounted { t.success } else { t.text_faint }),
+                        div()
+                            .size(px(74.0))
+                            .rounded(px(9.0))
+                            .bg(t.surface_card)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(svg().path(regular).size(px(42.0)).text_color(t.text)),
                     )
                     .child(
                         div()
                             .flex_1()
                             .flex()
                             .flex_col()
-                            .gap(px(4.0))
-                            .child(div().text_size(px(12.0)).child(name.to_string()))
+                            .gap(px(5.0))
+                            .child(div().text_size(px(16.0)).child(selected.name.clone()))
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(t.text_muted)
+                                    .child(format!("{} · {}", selected.category, selected.status)),
+                            )
+                            .child(
+                                div()
+                                    .max_w(px(590.0))
+                                    .text_size(px(11.0))
+                                    .text_color(t.text_muted)
+                                    .child(selected.note.clone()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(svg().path(optical).size(px(16.0)).text_color(t.text))
                             .child(
                                 div()
                                     .text_size(px(10.0))
                                     .text_color(t.text_faint)
-                                    .child(source.to_string()),
+                                    .child("optical 16"),
+                            ),
+                    ),
+            );
+        }
+        for category in categories {
+            if self
+                .icon_category
+                .as_deref()
+                .is_some_and(|selected| selected != category)
+            {
+                continue;
+            }
+            let visible: Vec<&IconRecord> = self
+                .icons
+                .iter()
+                .filter(|icon| {
+                    icon.category == category
+                        && (query.is_empty()
+                            || icon.name.contains(&query)
+                            || icon.note.to_lowercase().contains(&query))
+                })
+                .collect();
+            if visible.is_empty() {
+                continue;
+            }
+            let mut grid = div().flex().flex_wrap().gap(px(8.0));
+            for icon in &visible {
+                let regular = format!("custom-icons/{}.svg", icon.name);
+                let optical = format!("custom-icons/small/{}.svg", icon.name);
+                let selected = self.selected_icon.as_deref() == Some(icon.name.as_str());
+                let name = icon.name.clone();
+                grid = grid.child(
+                    div()
+                        .id(SharedString::from(format!("workbench-icon-{name}")))
+                        .w(px(142.0))
+                        .min_h(px(99.0))
+                        .p(px(11.0))
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(if selected { t.accent } else { t.border })
+                        .bg(if selected {
+                            t.element_active
+                        } else {
+                            t.surface_card
+                        })
+                        .role(gpui::Role::Button)
+                        .aria_label(format!("Inspect icon: {name}"))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.element_hover))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.selected_icon = Some(name.clone());
+                            cx.notify();
+                        }))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(10.0))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(11.0))
+                                .child(svg().path(regular).size(px(24.0)).text_color(t.text))
+                                .child(svg().path(optical).size(px(16.0)).text_color(t.text_muted)),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(t.text_muted)
+                                .child(icon.name.clone()),
+                        ),
+                );
+            }
+            library = library.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(div().text_size(px(13.0)).child(category.to_string()))
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(t.text_faint)
+                                    .child(format!("{}", visible.len())),
+                            ),
+                    )
+                    .child(grid),
+            );
+        }
+        if visible_count == 0 {
+            library = library.child(
+                div()
+                    .py(px(25.0))
+                    .text_size(px(12.0))
+                    .text_color(t.text_muted)
+                    .child("No glyphs match this search. Try a name, action or another category."),
+            );
+        }
+        content.child(library)
+    }
+
+    fn coverage(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let catalog: serde_json::Value =
+            serde_json::from_str(COMPONENTS).expect("component inventory");
+        let entries = catalog.as_array().expect("component inventory array");
+        let audit: serde_json::Value = serde_json::from_str(AUDIT).expect("source audit");
+        let mounted_count = entries
+            .iter()
+            .filter(|entry| entry["workbench"] == "mounted")
+            .count();
+        let files = audit["sourceFiles"].as_u64().unwrap_or(0);
+        let cataloged_files = audit["catalogedSourceFiles"].as_u64().unwrap_or(0);
+        let review_candidates = audit["uncatalogedUiCandidates"].as_u64().unwrap_or(0);
+        let fingerprint = audit["sourceFingerprint"].as_str().unwrap_or("");
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .gap(px(32.0))
+            .child(Self::heading(
+                t,
+                "SOURCE-BACKED INVENTORY",
+                "Patterns & audit",
+                "This page scans desktop UI Rust modules. The gallery mounts exact production builders; unmounted views and unconsolidated patterns stay visible here. Counts are source occurrences for review, not automatic defect claims.",
+            ))
+            .child(
+                div()
+                    .p(px(20.0))
+                    .rounded(px(10.0))
+                    .bg(t.surface_card)
+                    .border_1()
+                    .border_color(t.border)
+                    .flex()
+                    .gap(px(18.0))
+                    .child(Self::stat(t, &files.to_string(), "Rust source files scanned"))
+                    .child(Self::stat(t, &entries.len().to_string(), "pattern entries"))
+                    .child(Self::stat(t, &mounted_count.to_string(), "native specimens"))
+                    .child(Self::stat(
+                        t,
+                        &(entries.len() - mounted_count).to_string(),
+                        "unmounted patterns",
+                    )),
+            )
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(t.text_faint)
+                    .child(format!("Source fingerprint {fingerprint} · excludes this workbench from production counts")),
+            )
+            .child(
+                div()
+                    .p(px(17.0))
+                    .rounded(px(9.0))
+                    .border_1()
+                    .border_color(t.warning.opacity(0.35))
+                    .bg(t.warning.opacity(0.055))
+                    .flex()
+                    .flex_col()
+                    .gap(px(7.0))
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(t.warning)
+                            .child(format!("{cataloged_files}/{files} source modules mapped to catalog entries")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(t.text_muted)
+                            .child(format!("{review_candidates} unmapped modules expose a public UI function or Render implementation. Review these as possible pattern families; a source file is not necessarily one component.")),
+                    ),
+            );
+
+        let mut signal_grid = div().flex().flex_wrap().gap(px(10.0));
+        for signal in audit["signals"].as_array().expect("audit signals") {
+            let name = signal["name"].as_str().unwrap_or("");
+            let count = signal["count"].as_u64().unwrap_or(0);
+            let note = signal["note"].as_str().unwrap_or("");
+            let values = signal["values"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(4)
+                .map(|value| {
+                    format!(
+                        "{} × {}",
+                        value["value"].as_str().unwrap_or(""),
+                        value["count"].as_u64().unwrap_or(0)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("  ·  ");
+            let examples = signal["locations"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(2)
+                .filter_map(|location| location.as_str())
+                .collect::<Vec<_>>()
+                .join("  ·  ");
+            signal_grid = signal_grid.child(
+                div()
+                    .w(px(360.0))
+                    .min_h(px(170.0))
+                    .p(px(17.0))
+                    .rounded(px(9.0))
+                    .border_1()
+                    .border_color(t.border)
+                    .bg(t.surface_card)
+                    .flex()
+                    .flex_col()
+                    .gap(px(7.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(div().text_size(px(13.0)).child(name.to_string()))
+                            .child(
+                                div()
+                                    .text_size(px(19.0))
+                                    .text_color(t.accent)
+                                    .child(count.to_string()),
                             ),
                     )
                     .child(
                         div()
                             .text_size(px(10.0))
-                            .text_color(if mounted { t.success } else { t.text_muted })
-                            .child(if mounted {
-                                "PRODUCTION BUILDER"
-                            } else {
-                                "NEEDS NATIVE FIXTURE"
-                            }),
+                            .text_color(t.text_muted)
+                            .child(note.to_string()),
+                    )
+                    .when(!values.is_empty(), |card| {
+                        card.child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(t.text)
+                                .child(values.clone()),
+                        )
+                    })
+                    .child(
+                        div()
+                            .mt_auto()
+                            .text_size(px(9.0))
+                            .text_color(t.text_faint)
+                            .child(examples),
                     ),
             );
         }
-        content
+        content = content.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.0))
+                .child(div().text_size(px(18.0)).child("Consolidation review"))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(t.text_muted)
+                        .child("These source-wide signals identify where shared tokens, accessible control treatment, or explicit exceptions deserve review."),
+                )
+                .child(signal_grid),
+        );
+
+        let mut family_grid = div().flex().flex_wrap().gap(px(10.0));
+        for family in audit["families"].as_array().expect("audit families") {
+            let mut body = div()
+                .w(px(360.0))
+                .p(px(17.0))
+                .rounded(px(9.0))
+                .border_1()
+                .border_color(t.border)
+                .bg(t.surface_card)
+                .flex()
+                .flex_col()
+                .gap(px(9.0))
+                .child(
+                    div()
+                        .pb(px(5.0))
+                        .text_size(px(13.0))
+                        .child(family["name"].as_str().unwrap_or("").to_string()),
+                );
+            for builder in family["builders"].as_array().expect("family builders") {
+                let symbol = builder["symbol"].as_str().unwrap_or("");
+                let references = builder["references"].as_u64().unwrap_or(0);
+                body = body.child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .gap(px(10.0))
+                        .text_size(px(11.0))
+                        .child(symbol.to_string())
+                        .child(
+                            div()
+                                .text_color(if references == 0 {
+                                    t.warning
+                                } else {
+                                    t.text_muted
+                                })
+                                .child(format!("{references} refs")),
+                        ),
+                );
+            }
+            family_grid = family_grid.child(body);
+        }
+        content = content.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.0))
+                .child(div().text_size(px(18.0)).child("Builder families"))
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(t.text_muted)
+                        .child("Different native recipes appear in these semantic families. A zero-reference builder or an overlapping family is a consolidation question, not a verdict."),
+                )
+                .child(family_grid),
+        );
+
+        let mut catalog_section = div()
+            .flex()
+            .flex_col()
+            .gap(px(15.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_size(px(18.0)).child("Component inventory"))
+                    .child(
+                        div()
+                            .id("workbench-catalog-filter")
+                            .h(px(30.0))
+                            .px(px(11.0))
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(t.border)
+                            .role(gpui::Role::Button)
+                            .aria_label("Toggle catalog filter")
+                            .cursor_pointer()
+                            .hover(|style| style.bg(t.element_hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_all_catalog = !this.show_all_catalog;
+                                cx.notify();
+                            }))
+                            .flex()
+                            .items_center()
+                            .text_size(px(11.0))
+                            .child(if self.show_all_catalog {
+                                "Show unmounted patterns"
+                            } else {
+                                "Show every pattern"
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(t.text_muted)
+                    .child(format!(
+                        "{} catalog entries mounted · {} remain unmounted",
+                        mounted_count,
+                        entries.len() - mounted_count
+                    )),
+            );
+        for group in [
+            "Actions",
+            "Inputs",
+            "Feedback",
+            "Navigation",
+            "Collections",
+            "Composed",
+        ] {
+            let mut rows = div().flex().flex_wrap().gap(px(8.0));
+            let mut count = 0;
+            for entry in entries {
+                let mounted = entry["workbench"] == "mounted";
+                let needs_consolidation = entry["workbench"] == "needs-consolidation";
+                if entry["group"] != group || (!self.show_all_catalog && mounted) {
+                    continue;
+                }
+                count += 1;
+                let name = entry["name"].as_str().unwrap_or("");
+                let source = entry["source"].as_str().unwrap_or("");
+                let description = entry["description"].as_str().unwrap_or("");
+                rows = rows.child(
+                    div()
+                        .w(px(360.0))
+                        .min_h(px(115.0))
+                        .p(px(14.0))
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(t.border)
+                        .bg(t.surface_card)
+                        .flex()
+                        .flex_col()
+                        .gap(px(5.0))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(div().text_size(px(12.0)).child(name.to_string()))
+                                .child(
+                                    div()
+                                        .text_size(px(9.0))
+                                        .text_color(if mounted { t.success } else { t.warning })
+                                        .child(if mounted {
+                                            "MOUNTED"
+                                        } else if needs_consolidation {
+                                            "CONSOLIDATE"
+                                        } else {
+                                            "FIXTURE NEEDED"
+                                        }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(t.text_muted)
+                                .child(description.to_string()),
+                        )
+                        .child(
+                            div()
+                                .mt_auto()
+                                .text_size(px(9.0))
+                                .text_color(t.text_faint)
+                                .child(source.to_string()),
+                        ),
+                );
+            }
+            if count > 0 {
+                catalog_section = catalog_section.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(9.0))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .child(format!("{group} · {count}")),
+                        )
+                        .child(rows),
+                );
+            }
+        }
+        content = content.child(catalog_section);
+
+        let mut modules = div().flex().flex_col().gap(px(9.0)).child(
+            div()
+                .id("workbench-audit-modules")
+                .h(px(34.0))
+                .px(px(12.0))
+                .rounded(px(7.0))
+                .border_1()
+                .border_color(t.border)
+                .role(gpui::Role::Button)
+                .aria_label("Toggle source module map")
+                .cursor_pointer()
+                .hover(|style| style.bg(t.element_hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_modules = !this.show_modules;
+                    cx.notify();
+                }))
+                .flex()
+                .items_center()
+                .child(if self.show_modules {
+                    format!("Hide {files} scanned modules")
+                } else {
+                    format!("Show all {files} scanned modules")
+                }),
+        );
+        if self.show_modules {
+            for module in audit["modules"].as_array().expect("audited modules") {
+                let cataloged = module["catalogEntries"].as_u64().unwrap_or(0) > 0;
+                let candidate = module["publicFunctions"].as_u64().unwrap_or(0) > 0
+                    || module["renderImpls"].as_u64().unwrap_or(0) > 0;
+                let names = |field: &str| {
+                    let values = module[field].as_array().expect("audited symbols");
+                    let mut labels = values
+                        .iter()
+                        .take(6)
+                        .filter_map(|value| value.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if values.len() > 6 {
+                        labels.push_str(&format!(" +{} more", values.len() - 6));
+                    }
+                    labels
+                };
+                let detail = [
+                    (!module["exports"].as_array().expect("exports").is_empty())
+                        .then(|| format!("Functions: {}", names("exports"))),
+                    (!module["views"].as_array().expect("views").is_empty())
+                        .then(|| format!("Views: {}", names("views"))),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ");
+                modules = modules.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .py(px(8.0))
+                        .border_b_1()
+                        .border_color(t.border)
+                        .text_size(px(10.0))
+                        .child(
+                            div()
+                                .flex()
+                                .justify_between()
+                                .gap(px(15.0))
+                                .child(module["path"].as_str().unwrap_or("").to_string())
+                                .child(
+                                    div()
+                                        .text_color(if cataloged {
+                                            t.success
+                                        } else if candidate {
+                                            t.warning
+                                        } else {
+                                            t.text_faint
+                                        })
+                                        .child(format!(
+                                            "{} · {} public functions · {} render impls",
+                                            if cataloged {
+                                                "MAPPED"
+                                            } else if candidate {
+                                                "REVIEW"
+                                            } else {
+                                                "UTILITY"
+                                            },
+                                            module["publicFunctions"].as_u64().unwrap_or(0),
+                                            module["renderImpls"].as_u64().unwrap_or(0)
+                                        )),
+                                ),
+                        )
+                        .when(!detail.is_empty(), |row| {
+                            row.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(t.text_faint)
+                                    .child(detail),
+                            )
+                        }),
+                );
+            }
+        }
+        content.child(modules)
     }
 }
 
@@ -1028,7 +2118,7 @@ impl Render for Workbench {
                 .child(Self::heading(&t, "PRODUCTION BUILDERS", "Components", "Every mounted card calls a component function from crates/ui. Composed views that still require a live engine are not imitated here."))
                 .child(self.components(&t, cx)),
             Page::Icons => self.icons(&t, cx),
-            Page::Coverage => self.coverage(&t),
+            Page::Coverage => self.coverage(&t, cx),
         };
         div()
             .size_full()
