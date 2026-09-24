@@ -7,10 +7,12 @@ use zeron_proto::{HarnessId, HarnessUpdatePhase as Phase, HarnessUpdateStatus};
 
 const CHIP_HEIGHT: f32 = 38.0;
 const ROW_HEIGHT: f32 = 64.0;
+const MAX_VISIBLE_ROWS: f32 = 3.5;
+const LIST_FADE_BAND: f32 = 12.0;
 const LIST_WIDTH: f32 = 360.0;
 const MARK_SIZE: f32 = 22.0;
 const MARK_STEP: f32 = 14.0;
-const MAX_MARKS: usize = 4;
+const MAX_MARKS: usize = 3;
 
 #[derive(Default)]
 pub(super) struct DeviceUpdates {
@@ -315,6 +317,10 @@ impl Shell {
         if self.harness_update_expanded == expanded {
             return;
         }
+        if expanded {
+            self.harness_update_scroll
+                .set_offset(gpui::Point::default());
+        }
         let from = self.eval_tween(
             self.harness_update_transition,
             if self.harness_update_expanded {
@@ -537,7 +543,11 @@ impl Shell {
         } else {
             self.render_harness_update_action(row, true, cx)
         };
-        let trailing = right_inset(action_label.is_some() || multiple);
+        let trailing = if multiple {
+            8.0
+        } else {
+            right_inset(action_label.is_some())
+        };
         let marks_width =
             MARK_SIZE + MARK_STEP * marks.len().min(MAX_MARKS).saturating_sub(1) as f32;
         let controls_width = if multiple {
@@ -558,8 +568,9 @@ impl Shell {
             + 2.0)
             .min(max_width);
         let list_width = LIST_WIDTH.min(max_width);
-        let list_height = (CHIP_HEIGHT + ROW_HEIGHT * statuses.len() as f32 + 8.0)
-            .min((self.viewport_height - Theme::TITLEBAR_HEIGHT - 64.0).max(CHIP_HEIGHT));
+        let list_height =
+            (CHIP_HEIGHT + ROW_HEIGHT * (statuses.len() as f32).min(MAX_VISIBLE_ROWS) + 8.0)
+                .min((self.viewport_height - Theme::TITLEBAR_HEIGHT - 64.0).max(CHIP_HEIGHT));
         let targets = if expanded {
             [list_width, list_height]
         } else {
@@ -587,7 +598,7 @@ impl Shell {
             .pr(px(trailing))
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(0.0))
             .when(multiple, |el| {
                 el.cursor_pointer()
                     .role(gpui::Role::Button)
@@ -613,8 +624,8 @@ impl Shell {
             .child(
                 div()
                     .flex_none()
-                    .w(px((marks_width + 8.0) * (1.0 - reveal)))
-                    .mr(px(-8.0))
+                    .w(px(marks_width * (1.0 - reveal)))
+                    .mr(px(8.0 * (1.0 - reveal)))
                     .overflow_hidden()
                     .opacity(1.0 - crate::composer_dock::stage(reveal, 0.0, 0.55))
                     .child(mark_stack(&marks, &theme)),
@@ -628,14 +639,19 @@ impl Shell {
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .child(title),
             )
-            .children(activity)
-            .children(compact_action)
+            .when_some(activity, |el, activity| {
+                el.child(div().flex_none().ml(px(8.0)).child(activity))
+            })
+            .when_some(compact_action, |el, action| {
+                el.child(div().flex_none().ml(px(8.0)).child(action))
+            })
             .when(multiple, |el| {
                 el.child(
                     div()
                         .relative()
                         .size(px(24.0))
                         .flex_none()
+                        .ml(px(8.0))
                         .child(
                             icon(icons::ALT_ARROW_UP)
                                 .absolute()
@@ -720,14 +736,16 @@ impl Shell {
                                         .truncate()
                                         .child(agent_name(status.harness)),
                                 )
-                                .child(
-                                    div()
-                                        .text_size(crate::typography::ui_rems(11.0))
-                                        .line_height(crate::typography::ui_rems(14.0))
-                                        .text_color(theme.text_muted)
-                                        .truncate()
-                                        .child(row.device_name.clone()),
-                                )
+                                .when(device_count > 1, |el| {
+                                    el.child(
+                                        div()
+                                            .text_size(crate::typography::ui_rems(11.0))
+                                            .line_height(crate::typography::ui_rems(14.0))
+                                            .text_color(theme.text_muted)
+                                            .truncate()
+                                            .child(row.device_name.clone()),
+                                    )
+                                })
                                 .child(
                                     div()
                                         .text_size(crate::typography::ui_rems(11.0))
@@ -766,7 +784,7 @@ impl Shell {
                         .into_any_element()
                 })
                 .collect();
-            div()
+            let list = div()
                 .id("home-harness-update-list")
                 .absolute()
                 .top(px(CHIP_HEIGHT))
@@ -776,6 +794,7 @@ impl Shell {
                 .w(px((list_width - 2.0).max(0.0)))
                 .h(px((list_height - CHIP_HEIGHT - 8.0).max(0.0)))
                 .overflow_y_scroll()
+                .track_scroll(&self.harness_update_scroll)
                 .flex()
                 .flex_col()
                 .border_t_1()
@@ -786,7 +805,9 @@ impl Shell {
                 .children(rows)
                 .when(!expanded || reveal < 0.85, |el| {
                     el.child(div().absolute().inset_0().occlude())
-                })
+                });
+            crate::edge_fade::edge_faded(LIST_FADE_BAND, true, true, list)
+                .fade_overflow_y(&self.harness_update_scroll)
         });
         let single_tooltip = (!multiple)
             .then(|| {
