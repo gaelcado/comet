@@ -1,0 +1,33 @@
+diff --git a/crates/ui/src/shell/harness_updates.rs b/crates/ui/src/shell/harness_updates.rs
+index 8586512b..99ec13fd 100644
+--- a/crates/ui/src/shell/harness_updates.rs
++++ b/crates/ui/src/shell/harness_updates.rs
+@@ -779,6 +779,8 @@ impl Shell {
+         Some(crate::frost::frosted(radius, 16.0, card).into_any_element())
+     }
+     pub(super) fn refresh_harness_update_watch(&mut self, cx: &mut Context<Self>) {
++        #[cfg(feature = "appshots-fixture")]
++        if self.harness_update_devices.contains_key("fixture") { return; }
+         let state = self.state.read(cx);
+         if !matches!(state.connection, ConnectionStatus::Ready) {
+             self.harness_update_devices.clear();
+@@ -1028,3 +1030,19 @@ mod tests {
+         assert_eq!(rows[0].device_id, "new");
+     }
+ }
++
++#[cfg(feature = "appshots-fixture")]
++impl Shell {
++    pub fn fixture_agent_updates(&mut self, count: usize, expanded: bool, active: bool, cx: &mut Context<Self>) {
++        let names = ["codex", "claude-code", "opencode", "hermes", "pi"];
++        let statuses = names.iter().take(count).enumerate().map(|(i, name)| serde_json::from_value(serde_json::json!({
++            "harness": name, "installedVersion": "1.2.0", "latestVersion": "1.3.0", "canApply": true,
++            "phase": if active && i == 0 { "downloading" } else { "available" }
++        })).unwrap()).collect();
++        self.harness_update_devices.clear();
++        self.harness_update_devices.insert("fixture".into(), DeviceUpdates {online: true, connected: true, statuses, watch: None});
++        self.set_harness_updates_expanded(expanded, cx);
++        if expanded && active { self.harness_update_scroll.scroll.set_offset(gpui::point(px(0.),px(-96.))); self.harness_update_scroll.set_list_hovered(true); }
++        cx.notify();
++    }
++}
