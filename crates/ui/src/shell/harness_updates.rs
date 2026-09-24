@@ -117,99 +117,6 @@ fn right_inset(has_button: bool) -> f32 {
     if has_button { 5.0 } else { 12.0 }
 }
 
-fn progress(status: &HarnessUpdateStatus) -> Option<f32> {
-    if !active(status) {
-        return None;
-    }
-    let progress = status.progress.as_ref()?;
-    let completed = progress.completed_bytes? as f32;
-    let total = progress.total_bytes? as f32;
-    (total > 0.0).then_some((completed / total).clamp(0.0, 1.0))
-}
-
-fn update_progress(
-    device: &str,
-    status: &HarnessUpdateStatus,
-    left: f32,
-    right: f32,
-    bottom: f32,
-    theme: &Theme,
-) -> AnyElement {
-    let track = div()
-        .absolute()
-        .left(px(left))
-        .right(px(right))
-        .bottom(px(bottom))
-        .h(px(2.0))
-        .rounded_full()
-        .overflow_hidden()
-        .bg(theme.accent.opacity(0.12));
-    let track = if let Some(fraction) = progress(status) {
-        track.child(
-            div()
-                .h_full()
-                .w(gpui::relative(fraction))
-                .rounded_full()
-                .bg(theme.accent),
-        )
-    } else {
-        track.child(UpdateActivity {
-            key: format!("update-progress-{device}-{:?}", status.harness).into(),
-            tint: theme.accent,
-        })
-    };
-    // Keep the track and the cached activity fill in one paint layer.
-    crate::frost::layered(track).into_any_element()
-}
-
-// Installer commands do not expose byte counts. Show activity without inventing
-// a percentage; isolate the shared pulse clock from the shell's layout updates.
-#[derive(IntoElement)]
-struct UpdateActivity {
-    key: SharedString,
-    tint: gpui::Hsla,
-}
-
-impl RenderOnce for UpdateActivity {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let view = window.with_global_id(self.key.into(), |id, window| {
-            window.with_element_state(id, |previous: Option<Entity<UpdateActivityView>>, _| {
-                let view = previous.unwrap_or_else(|| cx.new(|_| UpdateActivityView(self.tint)));
-                view.update(cx, |view, cx| {
-                    if view.0 != self.tint {
-                        view.0 = self.tint;
-                        cx.notify();
-                    }
-                });
-                (view.clone(), view)
-            })
-        });
-        view.cached(gpui::StyleRefinement::default().w_full().h_full())
-    }
-}
-
-struct UpdateActivityView(gpui::Hsla);
-
-impl Render for UpdateActivityView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let phase = motion::pulse_delta(&motion::ZERON_PULSE, cx.entity_id(), cx);
-        let position = if motion::reduced_motion(cx) {
-            0.325
-        } else {
-            (1.0 - (phase * std::f32::consts::TAU).cos()) * 0.325
-        };
-        div().relative().size_full().child(
-            div()
-                .absolute()
-                .left(gpui::relative(position))
-                .w(gpui::relative(0.35))
-                .h_full()
-                .rounded_full()
-                .bg(self.0),
-        )
-    }
-}
-
 fn detail(status: &HarnessUpdateStatus) -> String {
     match status.phase {
         Phase::Available => match (&status.installed_version, &status.latest_version) {
@@ -774,16 +681,6 @@ impl Shell {
                                 .into()
                             })
                         })
-                        .when(row.connected && active(status), |el| {
-                            el.child(update_progress(
-                                &row.device_id,
-                                status,
-                                42.0,
-                                12.0,
-                                3.0,
-                                &theme,
-                            ))
-                        })
                         .into_any_element()
                 })
                 .collect();
@@ -878,18 +775,7 @@ impl Shell {
                         .opacity(crate::composer_dock::stage(reveal, 0.2, 0.65)),
                 )
             })
-            .children(rows)
-            .when(!multiple && row.connected && active(status), |el| {
-                // Inset within the pill so the track clears its rounded border.
-                el.child(update_progress(
-                    &row.device_id,
-                    status,
-                    16.0,
-                    16.0,
-                    4.0,
-                    &theme,
-                ))
-            });
+            .children(rows);
         Some(crate::frost::frosted(radius, 16.0, card).into_any_element())
     }
     pub(super) fn refresh_harness_update_watch(&mut self, cx: &mut Context<Self>) {
