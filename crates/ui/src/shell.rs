@@ -1729,6 +1729,7 @@ pub struct Shell {
     settings_return_focus: Option<FocusHandle>,
     settings_focus_pending: bool,
     settings_restore_pending: bool,
+    settings_return_route: Route,
     /// Route history behind the titlebar back/forward buttons (§ nav history).
     nav: NavHistory,
     pull_requests_page: Option<Entity<PullRequestsPage>>,
@@ -2168,6 +2169,7 @@ impl Shell {
             settings_return_focus: None,
             settings_focus_pending: matches!(route, Route::Settings(_)),
             settings_restore_pending: false,
+            settings_return_route: Route::Chat,
             nav,
             pull_requests_page: None,
             pull_request_detail: None,
@@ -4129,10 +4131,10 @@ impl Shell {
         }
         if !matches!(self.route, Route::Settings(_)) {
             self.settings_focus_pending = true;
+            self.settings_return_route = self.route;
         }
         self.set_route(Route::Settings(section), cx);
         self.remember_settings_section(section, cx);
-        self.nav.push(NavEntry::Settings(section));
         self.close_user_menu(cx);
         self.close_chat_menu(cx);
         cx.notify();
@@ -4214,9 +4216,8 @@ impl Shell {
     fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_focus_pending = false;
         self.settings_restore_pending = true;
-        self.set_route(Route::Chat, cx);
-        self.focus_composer(cx);
-        self.nav.push(NavEntry::Chat(self.active_chat.clone()));
+        let route = self.settings_return_route;
+        self.set_route(route, cx);
         cx.notify();
     }
 
@@ -4260,6 +4261,9 @@ impl Shell {
                 self.set_route(Route::PullRequests, cx);
             }
             NavEntry::Settings(section) => {
+                if !matches!(self.route, Route::Settings(_)) {
+                    self.settings_return_route = self.route;
+                }
                 self.set_route(Route::Settings(section.canonical()), cx);
                 self.remember_settings_section(section, cx);
             }
@@ -15213,6 +15217,11 @@ mod settings_modal_regressions {
                 assert_eq!(shell.route, Route::Chat);
                 assert_eq!(shell.nav.current().clone(), history);
                 assert!(shell.settings_restore_pending);
+                shell.open_pull_requests(cx);
+                shell.open_settings(SettingsSection::General, cx);
+                shell.close_settings(cx);
+                assert_eq!(shell.route, Route::PullRequests);
+                assert_eq!(shell.nav.current(), &NavEntry::PullRequests);
             })
             .unwrap();
     }

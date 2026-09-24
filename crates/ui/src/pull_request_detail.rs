@@ -2,7 +2,7 @@
 #[path = "pull_request_interactions.rs"]
 mod interactions;
 use crate::{
-    settings::{self, PullRequestDestination, SavePolicy, widgets},
+    settings::{self, PullRequestDestination, widgets},
     state::AppState,
     theme::Theme,
 };
@@ -38,50 +38,6 @@ pub fn open_on_device(url: &str, device: Option<String>, window: &mut Window, cx
     } else {
         window.dispatch_action(Box::new(OpenPullRequest(url.to_owned(), device)), cx);
     }
-}
-
-/// The same persistent preference is exposed in Settings and beside the board.
-pub fn destination_setting(theme: &Theme, cx: &App) -> AnyElement {
-    let current = settings::current(cx).pull_request_destination;
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(8.0))
-        .child(widgets::row_title(theme, "Open pull requests in"))
-        .child(div().flex().flex_wrap().gap(px(4.0)).children(
-            PullRequestDestination::ALL.into_iter().map(|destination| {
-                let selected = destination == current;
-                widgets::ghost_action(theme)
-                    .id(SharedString::from(format!(
-                        "pr-destination-{destination:?}"
-                    )))
-                    .role(gpui::Role::Button)
-                    .aria_label(destination.label())
-                    .aria_selected(selected)
-                    .tab_index(0)
-                    .border_1()
-                    .border_color(gpui::transparent_black())
-                    .focus_visible(|style| style.border_color(theme.accent))
-                    .when(selected, |el| {
-                        el.bg(theme.glass_hover()).text_color(theme.text)
-                    })
-                    .cursor_pointer()
-                    .on_click(move |_, _, cx| {
-                        settings::update(SavePolicy::Immediate, cx, |settings| {
-                            settings.pull_request_destination = destination
-                        });
-                        cx.refresh_windows();
-                    })
-                    .child(destination.label())
-            }),
-        ))
-        .child(
-            div()
-                .text_size(px(11.0))
-                .text_color(theme.text_muted)
-                .child("Applies to PR badges throughout Zeron."),
-        )
-        .into_any_element()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -846,7 +802,6 @@ fn action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Statefu
         .border_color(gpui::transparent_black())
         .focus_visible(|style| style.border_color(theme.accent))
         .cursor_pointer()
-        .hover(|style| style.bg(theme.glass_hover()))
         .when(icon_only, |el| {
             el.size(px(24.0))
                 .flex_none()
@@ -1022,6 +977,8 @@ impl Render for PullRequestDetailPage {
         let content = {
             let mut column = widgets::page_column()
                 .id("pr-content-column").debug_selector(|| "pr-content-column".into())
+                .max_w(px(768.0))
+                .px(px(24.0))
                 .when(self.tab == Tab::Code, |el| el.h_full().min_h_0())
                 .pt(px(24.0))
                 .pb(px(if self.tab == Tab::Activity {
@@ -1321,7 +1278,6 @@ impl Render for PullRequestDetailPage {
                                             .aria_label(format!("Open diff for {path}"))
                                             .when(index == self.selected_code_file, |el| el.bg(theme.glass_hover()))
                                             .focus_visible(|style| style.bg(theme.glass_hover()))
-                                            .hover(|style| style.bg(theme.glass_hover()))
                                             .tab_index(0)
                                             .on_click(cx.listener(move |page, _, _, cx| {
                                                 page.select_code_file(index, cx);

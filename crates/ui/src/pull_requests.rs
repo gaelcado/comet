@@ -1266,7 +1266,6 @@ impl Render for PullRequestsPage {
                                     .focus_visible(|style| style.border_color(theme.accent))
                                     .h(px(32.0))
                                     .flex_none()
-                                    .hover(|style| widgets::ghost_hover(&theme, style))
                                     .when(loading, |el| el.opacity(0.5))
                                     .on_click(cx.listener(|page, _, _, cx| page.refresh(cx)))
                                     .child(if refreshing {
