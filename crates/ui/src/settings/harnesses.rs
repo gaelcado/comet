@@ -1,4 +1,4 @@
-//! Settings → Agents: install and enable harnesses, one card row per agent.
+//! Settings → Providers: install and enable harnesses, one card row per agent.
 //!
 //! The state is PER-DEVICE and lives on the engine (`harness-prefs.json` in
 //! its data dir): CLI installs are per-device, so enablement is too. The
@@ -23,18 +23,15 @@ use gpui::{
     px,
 };
 
-use std::time::Duration;
-use zeron_engine::registry::TitleSettings;
 use zeron_engine::registry::{HarnessDescriptor, descriptor_enabled};
 
-use zeron_proto::Model;
-use zeron_proto::{AgentLoginPoll, AgentLoginStart, AgentLoginStatus, HarnessId};
+use zeron_proto::HarnessId;
 use zeron_rpc::methods;
 
 use crate::motion;
 use crate::pickers::visible_harnesses;
 use crate::popover::{self, Loadable};
-use crate::settings::accounts::AccountsPage;
+use crate::settings::accounts::{self, AccountsPage};
 use crate::settings::widgets;
 use crate::state::AppState;
 use crate::theme::Theme;
@@ -42,9 +39,9 @@ use crate::theme::Theme;
 #[path = "completion.rs"]
 mod completion;
 
-fn offers_sign_in(harness: HarnessId, installed: bool) -> bool {
-    harness == HarnessId::Antigravity && installed
-}
+/// Left inset of an expanded provider's details: the header trigger's
+/// padding, brand tile and gap, so the details start on the title's edge.
+const DETAILS_INSET: f32 = 4.0 + 36.0 + 12.0;
 
 fn offers_install(harness: HarnessId, installed: bool, can_install: bool) -> bool {
     harness != HarnessId::Mock && !installed && can_install
@@ -99,97 +96,38 @@ pub fn cli_name(harness: HarnessId) -> &'static str {
 }
 
 pub struct HarnessesPage {
-    title_settings: Loadable<TitleSettings>,
-    title_models: Loadable<Vec<Model>>,
-    title_menu: Option<bool>, // false = harness, true = model
-    title_task: Option<Task<()>>,
-    title_saving: bool,
     state: Entity<AppState>,
     scroll: widgets::PageScroll,
     harnesses: Loadable<Vec<HarnessDescriptor>>,
     /// Which device's harnesses are shown/edited; `None` = this device (no
     /// passthrough). Retargeted by the page-header device switcher.
     target_device: Option<String>,
-    device_menu_open: bool,
-    /// Whether the menu was open when the trigger press began — the menu's
-    /// `on_mouse_down_out` closes it on that same press, so by click time a
-    /// plain toggle would reopen (the [`popover::Popup`] press note, for
-    /// this page's bool-state menu).
-    device_menu_pressed_open: bool,
+    device_select: widgets::SelectState,
     /// Last refused/failed toggle (engine guards), shown in the error strip.
     error: Option<String>,
     load_task: Option<Task<()>>,
     toggle_task: Option<Task<()>>,
     installing: Option<HarnessId>,
     install_task: Option<Task<()>>,
-    /// a sign-in that switches its harness on once it succeeds.
-    sign_in: Option<SignIn>,
-    sign_in_failure: Option<SignInFailure>,
-    sign_in_task: Option<Task<()>>,
     expanded_harness: Option<HarnessId>,
+    /// The expanded provider's Accounts section — one page, retargeted as
+    /// providers expand, so every provider shares the same sign-in flow.
     accounts_page: Option<Entity<AccountsPage>>,
 }
-
-struct SignIn {
-    harness: HarnessId,
-    /// known once the engine accepted the start.
-    login_id: Option<String>,
-    message: Option<String>,
-    phase: SignInPhase,
-}
-
-#[derive(Clone, Copy)]
-enum SignInPhase {
-    Starting,
-    Authenticating,
-}
-
-struct SignInFailure {
-    harness: HarnessId,
-    message: String,
-    phase: SignInPhase,
-}
-
-impl SignInPhase {
-    fn pending_label(self) -> &'static str {
-        match self {
-            Self::Starting => "Preparing Antigravity…",
-            Self::Authenticating => "Finish signing in in your browser.",
-        }
-    }
-
-    fn failure_label(self) -> &'static str {
-        match self {
-            Self::Starting => "Setup failed",
-            Self::Authenticating => "Sign-in failed",
-        }
-    }
-}
-
-/// harnesses whose toggle runs the agent's own sign-in before switching on.
 
 impl HarnessesPage {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
         let mut page = Self {
-            title_settings: Loadable::Idle,
-            title_models: Loadable::Idle,
-            title_menu: None,
-            title_task: None,
-            title_saving: false,
             state,
             scroll: widgets::PageScroll::default(),
             harnesses: Loadable::Idle,
             target_device: None,
-            device_menu_open: false,
-            device_menu_pressed_open: false,
+            device_select: widgets::SelectState::default(),
             error: None,
             load_task: None,
             toggle_task: None,
             installing: None,
             install_task: None,
-            sign_in: None,
-            sign_in_failure: None,
-            sign_in_task: None,
             expanded_harness: None,
             accounts_page: None,
         };
@@ -209,10 +147,7 @@ impl HarnessesPage {
             self.expanded_harness = None;
         } else {
             self.expanded_harness = Some(harness);
-            if crate::settings::accounts::PROVIDERS
-                .iter()
-                .any(|(provider, _, _)| *provider == harness)
-            {
+            if accounts::signs_in(harness) {
                 if let Some(accounts) = &self.accounts_page {
                     accounts.update(cx, |page, cx| page.set_embedded_harness(harness, cx));
                 } else {
@@ -232,26 +167,20 @@ impl HarnessesPage {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let accounts = if crate::settings::accounts::PROVIDERS
-            .iter()
-            .any(|(provider, _, _)| *provider == harness)
-        {
-            self.accounts_page
-                .clone()
-                .map(|page| page.into_any_element())
-        } else {
-            None
-        };
+        let accounts = accounts::signs_in(harness)
+            .then(|| self.accounts_page.clone())
+            .flatten()
+            .map(|page| page.into_any_element());
+        // No box of its own: the details continue the provider row on the
+        // block's fill, indented to the row's title so they read as its
+        // children, with switches and actions on the row's control edge.
         let content = div()
-            .w_full()
-            .border_t_1()
-            .border_color(theme.border.opacity(0.7))
-            .px(px(16.0))
-            .pt(px(8.0))
-            .pb(px(12.0))
+            .mx(px(16.0))
+            .pl(px(DETAILS_INSET))
+            .pb(px(16.0))
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap(px(20.0))
             .child(self.render_completion_for(harness, theme, cx))
             .when_some(accounts, |details, accounts| details.child(accounts));
         if motion::reduced_motion(cx) {
@@ -272,17 +201,11 @@ impl HarnessesPage {
     /// Retarget the page at another device: a different device is a different
     /// install/enablement world, so drop the rows and reload through it.
     fn set_target_device(&mut self, target: Option<String>, cx: &mut Context<Self>) {
-        self.device_menu_open = false;
+        widgets::close_select(self, |page: &mut Self| &mut page.device_select, cx);
         if self.target_device == target {
             cx.notify();
             return;
         }
-        self.cancel_sign_in(cx);
-        self.title_task = None;
-        self.title_settings = Loadable::Idle;
-        self.title_models = Loadable::Idle;
-        self.title_menu = None;
-        self.title_saving = false;
         self.installing = None;
         self.install_task = None;
         self.target_device = target;
@@ -292,7 +215,6 @@ impl HarnessesPage {
             });
         }
         self.error = None;
-        self.sign_in_failure = None;
         self.harnesses = Loadable::Idle;
         self.load(cx);
         cx.notify();
@@ -305,7 +227,6 @@ impl HarnessesPage {
             return;
         };
         let params = self.with_target(serde_json::json!({}));
-        self.load_titles(None, cx);
         self.harnesses = Loadable::Loading;
         self.load_task = Some(cx.spawn(async move |this, cx| {
             let result = engine.client().call(methods::LIST_HARNESSES, params).await;
@@ -323,423 +244,11 @@ impl HarnessesPage {
         }));
     }
 
-    fn load_titles(&mut self, save: Option<TitleSettings>, cx: &mut Context<Self>) {
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            return;
-        };
-        let saving = save.is_some();
-        let method = if saving {
-            methods::SET_TITLE_SETTINGS
-        } else {
-            methods::GET_TITLE_SETTINGS
-        };
-        let params = self.with_target(
-            save.map(|s| serde_json::to_value(s).unwrap())
-                .unwrap_or_else(|| serde_json::json!({})),
-        );
-        let target = self.target_device.clone();
-        self.title_menu = None;
-        self.title_saving = saving;
-        self.title_task = Some(cx.spawn(async move |this, cx| {
-            let result = engine
-                .client()
-                .call(method, params)
-                .await
-                .map_err(|e| e.to_string())
-                .and_then(|v| {
-                    serde_json::from_value::<TitleSettings>(v).map_err(|e| e.to_string())
-                });
-            let settings = match result {
-                Ok(settings) => settings,
-                Err(error) => {
-                    this.update(cx, |page, cx| {
-                        if saving {
-                            page.error = Some(error);
-                        } else {
-                            page.title_settings = Loadable::Error(error);
-                        }
-                        page.title_saving = false;
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            let harness = settings.harness;
-            this.update(cx, |page, cx| {
-                page.title_settings = Loadable::Ready(settings);
-                page.title_models = if harness.is_some() {
-                    Loadable::Loading
-                } else {
-                    Loadable::Idle
-                };
-                page.title_saving = false;
-                page.error = None;
-                cx.notify();
-            })
-            .ok();
-            if let Some(harness) = harness {
-                let result = engine
-                    .client()
-                    .call(
-                        methods::LIST_MODELS,
-                        serde_json::json!({"harness": harness, "targetDeviceId": target}),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|v| {
-                        serde_json::from_value::<Vec<Model>>(v).map_err(|e| e.to_string())
-                    });
-                this.update(cx, |page, cx| {
-                    page.title_models = match result {
-                        Ok(models) => Loadable::Ready(models),
-                        Err(error) => Loadable::Error(error),
-                    };
-                    cx.notify();
-                })
-                .ok();
-            }
-        }));
-        cx.notify();
-    }
-
-    fn render_titles(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let mut card = widgets::section_card(theme).mt(px(20.0)).child(
-            widgets::card_row(theme, true)
-                .child(widgets::row_tile(theme, crate::icons::PEN_NEW_SQUARE))
-                .child(widgets::row_title(theme, "Thread naming")),
-        );
-        let Loadable::Ready(settings) = &self.title_settings else {
-            let message = match &self.title_settings {
-                Loadable::Error(error) => error.clone(),
-                _ => "Loading title settings…".into(),
-            };
-            return card
-                .child(widgets::card_row(theme, false).child(message))
-                .into_any_element();
-        };
-        for is_model in [false, true] {
-            let label = if is_model {
-                settings
-                    .model
-                    .as_ref()
-                    .map(|id| {
-                        if let Loadable::Ready(models) = &self.title_models {
-                            models
-                                .iter()
-                                .find(|m| &m.id == id)
-                                .map(|m| m.label.clone())
-                                .unwrap_or_else(|| id.clone())
-                        } else {
-                            id.clone()
-                        }
-                    })
-                    .unwrap_or_else(|| "Automatic".into())
-            } else {
-                settings
-                    .harness
-                    .map(|id| match id {
-                        HarnessId::ClaudeCode => "Claude Code".to_string(),
-                        HarnessId::Codex => "Codex".to_string(),
-                        _ => format!("{id:?}"),
-                    })
-                    .unwrap_or_else(|| "Session agent".into())
-            };
-            let interactive = !self.title_saving && (!is_model || settings.harness.is_some());
-            let mut row = div()
-                .relative()
-                .flex_1()
-                .min_w(px(200.0))
-                .max_w(px(320.0))
-                .child(
-                    widgets::action_button(theme, widgets::ActionTone::Outlined)
-                        .w_full()
-                        .min_h(px(36.0))
-                        .id(if is_model {
-                            "title-model"
-                        } else {
-                            "title-harness"
-                        })
-                        .when(interactive, |el| {
-                            el.cursor_pointer()
-                                .tab_index(0)
-                                .role(gpui::Role::Button)
-                                .focus_visible(|s| {
-                                    s.border_2().border_color(theme.accent).opacity(1.0)
-                                })
-                                .on_click(cx.listener(move |page, _, _, cx| {
-                                    page.title_menu = if page.title_menu == Some(is_model) {
-                                        None
-                                    } else {
-                                        Some(is_model)
-                                    };
-                                    cx.notify();
-                                }))
-                        })
-                        .when(!interactive, |el| el.opacity(0.5))
-                        .child(div().flex_1().min_w_0().truncate().child(label))
-                        .child(
-                            crate::icons::icon(crate::icons::ALT_ARROW_DOWN)
-                                .size(px(14.0))
-                                .text_color(theme.text_muted),
-                        ),
-                );
-            if self.title_menu == Some(is_model) {
-                let mut choices = vec![(
-                    if is_model {
-                        "Automatic"
-                    } else {
-                        "Session agent"
-                    }
-                    .to_string(),
-                    TitleSettings {
-                        harness: if is_model { settings.harness } else { None },
-                        model: None,
-                    },
-                )];
-                if is_model {
-                    if let Loadable::Ready(models) = &self.title_models {
-                        choices.extend(models.iter().map(|m| {
-                            (
-                                m.label.clone(),
-                                TitleSettings {
-                                    harness: settings.harness,
-                                    model: Some(m.id.clone()),
-                                },
-                            )
-                        }));
-                    }
-                } else if let Loadable::Ready(harnesses) = &self.harnesses {
-                    choices.extend(
-                        harnesses
-                            .iter()
-                            .filter(|h| {
-                                descriptor_enabled(h)
-                                    && h.installed
-                                    && zeron_harness::supports_titles(h.id)
-                                    && h.id != HarnessId::Mock
-                            })
-                            .map(|h| {
-                                (
-                                    h.name.clone(),
-                                    TitleSettings {
-                                        harness: Some(h.id),
-                                        model: None,
-                                    },
-                                )
-                            }),
-                    );
-                }
-                let menu = popover::popover_card(theme)
-                    .w(px(260.0))
-                    .on_mouse_down_out(cx.listener(|page, _, _, cx| {
-                        page.title_menu = None;
-                        cx.notify();
-                    }))
-                    .flex()
-                    .flex_col()
-                    .child(widgets::dropdown_rows(
-                        format!("title-choice-list-{is_model}"),
-                        choices
-                            .into_iter()
-                            .enumerate()
-                            .map(|(ix, (label, choice))| {
-                                popover::menu_row(
-                                    theme,
-                                    &choice == settings,
-                                    format!("title-choice-{is_model}-{ix}"),
-                                )
-                                .id(("title-choice", ix))
-                                .tab_index(0)
-                                .role(gpui::Role::Button)
-                                .focus_visible(|s| s.border_2().border_color(theme.accent))
-                                .on_click(cx.listener(move |page, _, _, cx| {
-                                    page.load_titles(Some(choice.clone()), cx)
-                                }))
-                                .child(div().min_w_0().child(label))
-                                .into_any_element()
-                            }),
-                        36.0,
-                        8.0,
-                    ));
-                row = row.child(widgets::dropdown(
-                    format!("title-choice-menu-{is_model}"),
-                    menu,
-                    None,
-                    36.0,
-                ));
-            }
-            card = card.child(
-                widgets::card_row(theme, false)
-                    .child(div().flex_1().min_w(px(120.0)).child(widgets::row_title(
-                        theme,
-                        if is_model { "Model" } else { "Agent" },
-                    )))
-                    .child(row),
-            );
-        }
-        if let Loadable::Error(error) = &self.title_models {
-            card = card.child(
-                widgets::card_row(theme, false).child(widgets::error_strip(theme, error.clone())),
-            );
-        }
-        card.into_any_element()
-    }
-
     /// Flip one harness on the target device. The reply carries the device's
     /// fresh catalog, so the rows repaint from the authoritative state in one
     /// round trip; refusals (engine guards) land in the error strip.
     fn toggle(&mut self, harness: HarnessId, enabled: bool, cx: &mut Context<Self>) {
         self.set_enabled(harness, enabled, cx);
-    }
-
-    /// Explicit sign-in: StartAgentLogin, then PollAgentLogin
-    /// until the engine reports the outcome, opening the sign-in page the
-    /// first time a poll names it.
-    fn start_sign_in(&mut self, harness: HarnessId, cx: &mut Context<Self>) {
-        if self.target_device.is_some() {
-            // the sign-in redirect lands on a loopback port of the device
-            // running the agent, which a browser here can't reach
-            self.error = Some("Sign in to this agent from its own device.".into());
-            cx.notify();
-            return;
-        }
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            return;
-        };
-        self.error = None;
-        self.sign_in_failure = None;
-        self.sign_in = Some(SignIn {
-            harness,
-            login_id: None,
-            message: None,
-            phase: SignInPhase::Starting,
-        });
-        let start_params = serde_json::json!({ "harness": harness });
-        self.sign_in_task = Some(cx.spawn(async move |this, cx| {
-            let started = engine
-                .client()
-                .call(methods::START_AGENT_LOGIN, start_params)
-                .await
-                .map_err(|e| e.to_string())
-                .and_then(|value| {
-                    serde_json::from_value::<AgentLoginStart>(value).map_err(|e| e.to_string())
-                });
-            let login_id = match started {
-                Ok(start) => start.login_id,
-                Err(error) => {
-                    this.update(cx, |page, cx| {
-                        page.fail_sign_in(harness, format!("Sign-in failed to start: {error}"));
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            this.update(cx, |page, _| {
-                if let Some(sign_in) = &mut page.sign_in {
-                    sign_in.login_id = Some(login_id.clone());
-                    sign_in.phase = SignInPhase::Starting;
-                }
-            })
-            .ok();
-            let poll_params = serde_json::json!({ "loginId": login_id });
-            let mut opened = false;
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(1000))
-                    .await;
-                let poll = engine
-                    .client()
-                    .call(methods::POLL_AGENT_LOGIN, poll_params.clone())
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|value| {
-                        serde_json::from_value::<AgentLoginPoll>(value).map_err(|e| e.to_string())
-                    });
-                let finished = this.update(cx, |page, cx| {
-                    let finished = match poll {
-                        Ok(poll) => match poll.status {
-                            AgentLoginStatus::Pending => {
-                                if !opened && let Some(url) = &poll.url {
-                                    opened = true;
-                                    cx.open_url(url);
-                                }
-                                if let Some(sign_in) = &mut page.sign_in {
-                                    if poll.url.is_some() {
-                                        sign_in.phase = SignInPhase::Authenticating;
-                                    }
-                                    sign_in.message = poll.message;
-                                }
-                                false
-                            }
-                            AgentLoginStatus::Done => {
-                                page.sign_in_failure = None;
-                                page.sign_in = None;
-                                crate::pickers::bump_harness_catalog(cx);
-                                true
-                            }
-                            AgentLoginStatus::Error => {
-                                page.fail_sign_in(
-                                    harness,
-                                    poll.message.unwrap_or_else(|| "Unknown error".into()),
-                                );
-                                true
-                            }
-                        },
-                        Err(error) => {
-                            page.fail_sign_in(harness, error);
-                            true
-                        }
-                    };
-                    cx.notify();
-                    finished
-                });
-                if finished.unwrap_or(true) {
-                    break;
-                }
-            }
-        }));
-        cx.notify();
-    }
-
-    fn fail_sign_in(&mut self, harness: HarnessId, message: String) {
-        let phase = self
-            .sign_in
-            .take()
-            .filter(|sign_in| sign_in.harness == harness)
-            .map(|sign_in| sign_in.phase)
-            .unwrap_or(SignInPhase::Starting);
-        self.sign_in_failure = Some(SignInFailure {
-            harness,
-            message,
-            phase,
-        });
-    }
-
-    fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
-        let Some(sign_in) = self.sign_in.take() else {
-            return;
-        };
-        self.sign_in_task = None;
-        if let (Some(login_id), Some(engine)) =
-            (sign_in.login_id, self.state.read(cx).engine().cloned())
-        {
-            cx.spawn(async move |_, _| {
-                if let Err(err) = engine
-                    .client()
-                    .call(
-                        methods::CANCEL_AGENT_LOGIN,
-                        serde_json::json!({ "loginId": login_id }),
-                    )
-                    .await
-                {
-                    tracing::debug!(error = %err, "CancelAgentLogin failed (best-effort)");
-                }
-            })
-            .detach();
-        }
-        cx.notify();
     }
 
     fn cancel_install(&mut self, cx: &mut Context<Self>) {
@@ -856,158 +365,67 @@ impl HarnessesPage {
                 .then_with(|| a.id.cmp(&b.id))
         });
         let effective = self.target_device.clone().or_else(|| local_id.clone());
-        let selected = devices
-            .iter()
-            .find(|d| Some(d.id.as_str()) == effective.as_deref())
-            .cloned();
         let platform_glyph = |platform: &str| match platform {
             "macos" | "darwin" => icons::LAPTOP,
             "ios" | "android" => icons::SMARTPHONE,
             _ => icons::MONITOR,
         };
-        let trigger_glyph = platform_glyph(
-            selected
-                .as_ref()
-                .map(|d| d.platform.as_str())
-                .unwrap_or("macos"),
-        );
-        let trigger_label: SharedString = selected
-            .as_ref()
-            .map(|d| d.name.clone().into())
-            .unwrap_or_else(|| SharedString::from("This device"));
-        let emerald = theme.success;
-        let open = self.device_menu_open;
-
-        let mut trigger =
-            div()
-                .id("harnesses-device-switcher")
-                .relative()
-                .flex_none()
-                .h(px(28.0))
-                .px(px(8.0))
-                .rounded(px(6.0))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.0))
-                .cursor_pointer()
-                .bg(if open {
-                    crate::theme::ink(0.06)
-                } else {
-                    gpui::transparent_black()
-                })
-                .when(!open, |el| el.hover(|s| s.bg(crate::theme::ink(0.04))))
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(|this, _, _, _| {
-                        this.device_menu_pressed_open = this.device_menu_open;
-                    }),
-                )
-                .tab_index(0)
-                .role(gpui::Role::Button)
-                .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    // A press that found the menu open closes it — never
-                    // reopen on the same gesture.
-                    let pressed_open = std::mem::take(&mut this.device_menu_pressed_open);
-                    this.device_menu_open = !pressed_open && !this.device_menu_open;
-                    cx.notify();
-                }))
-                .child(
-                    icon(trigger_glyph)
+        // Local device = no passthrough (calls stay direct).
+        let mut targets: Vec<Option<String>> = Vec::new();
+        let mut options = Vec::new();
+        for device in &devices {
+            let is_local = local_id.as_deref() == Some(device.id.as_str());
+            let glyph = platform_glyph(&device.platform);
+            let muted = theme.text_muted;
+            let option = widgets::SelectOption::new(device.name.clone()).leading(move || {
+                icon(glyph)
+                    .size(px(16.0))
+                    .flex_none()
+                    .text_color(muted)
+                    .into_any_element()
+            });
+            options.push(if is_local {
+                option.detail("You")
+            } else {
+                option
+            });
+            targets.push((!is_local).then(|| device.id.clone()));
+        }
+        let selected = match devices
+            .iter()
+            .position(|d| Some(d.id.as_str()) == effective.as_deref())
+        {
+            Some(ix) => ix,
+            // Not registered (yet): keep the current target reachable.
+            None => {
+                let muted = theme.text_muted;
+                options.push(widgets::SelectOption::new("This device").leading(move || {
+                    icon(icons::LAPTOP)
                         .size(px(16.0))
                         .flex_none()
-                        .text_color(theme.text_muted),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(crate::typography::ui_rems(12.5))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(theme.text)
-                        .child(trigger_label),
-                )
-                .child(div().size(px(6.0)).rounded_full().flex_none().bg(
-                    if effective == local_id {
-                        emerald
-                    } else {
-                        crate::theme::ink(0.2)
-                    },
-                ))
-                .child(
-                    icon(icons::SORT_VERTICAL)
-                        .size(px(14.0))
-                        .flex_none()
-                        .text_color(theme.text_muted.opacity(if open { 0.9 } else { 0.4 })),
-                );
-
-        if open {
-            let theme = &theme.for_popup();
-            let menu = popover::popover_card(theme)
-                .w(px(220.0))
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.device_menu_open = false;
-                    cx.notify();
-                }))
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(popover::menu_heading(theme, "Devices"))
-                .child(widgets::dropdown_rows(
-                    "harnesses-device-list",
-                    devices.into_iter().enumerate().map(|(ix, d)| {
-                        let is_active = Some(d.id.as_str()) == effective.as_deref();
-                        let is_local = local_id.as_deref() == Some(d.id.as_str());
-                        let glyph = platform_glyph(&d.platform);
-                        let name: SharedString = d.name.clone().into();
-                        let pick_local = is_local;
-                        let pick_id = d.id.clone();
-                        popover::menu_row(theme, is_active, format!("harnesses-device-row-{ix}"))
-                            .id(("harnesses-device-row", ix))
-                            .tab_index(0)
-                            .role(gpui::Role::Button)
-                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                // Local device = no passthrough (calls stay direct).
-                                let target = (!pick_local).then(|| pick_id.clone());
-                                this.set_target_device(target, cx);
-                            }))
-                            .child(
-                                icon(glyph)
-                                    .size(px(16.0))
-                                    .flex_none()
-                                    .text_color(theme.text_muted),
-                            )
-                            .child(div().flex_1().min_w_0().truncate().child(name))
-                            .when(is_local, |el| {
-                                el.child(
-                                    div()
-                                        .flex_none()
-                                        .text_size(crate::typography::ui_rems(10.5))
-                                        .text_color(theme.text_muted)
-                                        .child(SharedString::from("You")),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .size(px(6.0))
-                                    .rounded_full()
-                                    .flex_none()
-                                    .bg(if is_local {
-                                        emerald
-                                    } else {
-                                        crate::theme::ink(0.2)
-                                    }),
-                            )
-                            .into_any_element()
-                    }),
-                    28.0,
-                    32.0,
-                ));
-            trigger = trigger.child(widgets::dropdown("harnesses-device-menu", menu, None, 28.0));
-        }
-        trigger.into_any_element()
+                        .text_color(muted)
+                        .into_any_element()
+                }));
+                targets.push(self.target_device.clone());
+                options.len() - 1
+            }
+        };
+        widgets::select(
+            "harnesses-device-switcher",
+            "Device",
+            theme,
+            |page: &mut Self| &mut page.device_select,
+        )
+        .options(options, selected)
+        .menu_width(260.0)
+        .heading("Devices")
+        .on_select(move |page, ix, _, cx| {
+            if let Some(target) = targets.get(ix) {
+                page.set_target_device(target.clone(), cx);
+            }
+        })
+        .render(&self.device_select, cx)
+        .into_any_element()
     }
 
     fn rows(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
@@ -1030,56 +448,14 @@ impl HarnessesPage {
                 // (its hint says to turn it off) and the composer handles the
                 // resulting empty set (mirrors the engine guard).
                 let last_enabled = enabled && enabled_count == 1 && installed;
-                let signing_in = self
-                    .sign_in
-                    .as_ref()
-                    .filter(|sign_in| sign_in.harness == harness);
-                let sign_in_failure = self
-                    .sign_in_failure
-                    .as_ref()
-                    .filter(|failure| failure.harness == harness);
-                let sign_in_cancellable = signing_in.is_some();
                 // Turning OFF never needs the CLI (a default-on agent the
                 // user doesn't want must not be stuck on because it isn't
                 // installed); turning ON still does.
-                let interactive = signing_in.is_none() && !last_enabled && (enabled || installed);
+                let interactive = !last_enabled && (enabled || installed);
                 let (icon_path, tint) = crate::pickers::harness_brand_icon(harness);
                 let mut meta: Vec<gpui::AnyElement> = Vec::new();
-                if let Some(sign_in) = signing_in {
-                    meta.push(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.0))
-                            .child(crate::loaders::mini_mono_spinner(
-                                format!("harness-setup-spinner-{harness:?}"),
-                                1.5,
-                                theme.text_muted,
-                                cx.entity_id(),
-                                cx,
-                            ))
-                            .child(SharedString::from(
-                                sign_in
-                                    .message
-                                    .clone()
-                                    .unwrap_or_else(|| sign_in.phase.pending_label().into()),
-                            ))
-                            .into_any_element(),
-                    );
-                }
-                if let Some(failure) = sign_in_failure {
-                    meta.push(
-                        div()
-                            .text_color(theme.danger_muted.opacity(0.9))
-                            .child(SharedString::from(format!(
-                                "{} — {}",
-                                failure.phase.failure_label(),
-                                failure.message
-                            )))
-                            .into_any_element(),
-                    );
-                }
+                // Installing REPLACES the not-installed hint in place, so the
+                // row's text never shifts while the install runs.
                 if self.installing == Some(harness) {
                     meta.push(
                         div()
@@ -1096,8 +472,7 @@ impl HarnessesPage {
                             .child(SharedString::from(install_label(&descriptor.name)))
                             .into_any_element(),
                     );
-                }
-                if !installed {
+                } else if !installed {
                     meta.push(
                         div()
                             .text_color(theme.warning_muted.opacity(0.9))
@@ -1115,9 +490,7 @@ impl HarnessesPage {
                     .flex_none()
                     .size(px(36.0))
                     .rounded(px(10.0))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(crate::theme::ink(0.03))
+                    .bg(theme.wash(0.06))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1127,13 +500,15 @@ impl HarnessesPage {
                             .text_color(tint.unwrap_or(theme.text_muted)),
                     );
                 let expanded = enabled && self.expanded_harness == Some(harness);
-                let header = widgets::card_row(&theme, true)
+                let header = widgets::card_row(&theme, ix == 0)
                     .id(("harness-row", ix))
-                    .when(!installed, |el| el.opacity(0.55))
-                    .when(signing_in.is_some(), |el| el.opacity(0.65))
+                    .when(!installed && self.installing != Some(harness), |el| {
+                        el.opacity(0.55)
+                    })
                     .child(
                         div()
                             .id(("harness-details-trigger", ix))
+                            .group(format!("harness-details-{ix}"))
                             .flex_1()
                             .min_w(px(180.0))
                             .min_h(px(44.0))
@@ -1149,7 +524,9 @@ impl HarnessesPage {
                                     .aria_expanded(expanded)
                                     .tab_index(0)
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(theme.glass_hover()))
+                                    // No hover slab (it stopped short of the
+                                    // toggle and boxed the row); the chevron
+                                    // lifts instead, like a list disclosure.
                                     .focus_visible(|s| s.border_2().border_color(theme.accent))
                                     .on_click(cx.listener(move |page, _, _, cx| {
                                         page.toggle_agent_details(harness, cx)
@@ -1188,7 +565,10 @@ impl HarnessesPage {
                                         crate::icons::ALT_ARROW_RIGHT
                                     })
                                     .size(px(14.0))
-                                    .text_color(theme.text_muted),
+                                    .text_color(theme.text_muted)
+                                    .group_hover(format!("harness-details-{ix}"), |s| {
+                                        s.text_color(theme.text)
+                                    }),
                                 )
                             }),
                     )
@@ -1214,41 +594,6 @@ impl HarnessesPage {
                                 .id(("harness-cancel-install", ix))
                                 .on_click(cx.listener(|this, _, _, cx| this.cancel_install(cx)))
                                 .child("Cancel"),
-                        )
-                    })
-                    .when(
-                        offers_sign_in(harness, installed)
-                            && signing_in.is_none()
-                            && sign_in_failure.is_none(),
-                        |el| {
-                            el.child(
-                                widgets::ghost_action(&theme)
-                                    .id(("harness-sign-in", ix))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.start_sign_in(harness, cx)
-                                    }))
-                                    .child(SharedString::from("Sign in")),
-                            )
-                        },
-                    )
-                    .when(sign_in_cancellable, |el| {
-                        el.child(
-                            widgets::ghost_action(&theme)
-                                .id(("harness-cancel-sign-in", ix))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.cancel_sign_in(cx);
-                                }))
-                                .child(SharedString::from("Cancel")),
-                        )
-                    })
-                    .when(sign_in_failure.is_some(), |el| {
-                        el.child(
-                            widgets::ghost_action(&theme)
-                                .id(("harness-retry-sign-in", ix))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.start_sign_in(harness, cx);
-                                }))
-                                .child(SharedString::from("Retry")),
                         )
                     })
                     .child(
@@ -1291,9 +636,6 @@ impl HarnessesPage {
                         }),
                     );
                 div()
-                    .when(ix > 0, |row| {
-                        row.border_t_1().border_color(theme.border.opacity(0.55))
-                    })
                     .flex()
                     .flex_col()
                     .child(header)
@@ -1366,7 +708,6 @@ impl Render for HarnessesPage {
             .clone()
             .map(|message| widgets::error_strip(&theme, message).into_any_element());
         let switcher = self.render_device_switcher(&theme, cx);
-        let titles = self.render_titles(&theme, cx);
         let scrollbar = popover::rail(self, "harnesses-page-scrollbar", &theme, cx);
 
         div()
@@ -1392,12 +733,11 @@ impl Render for HarnessesPage {
                                         .flex_row()
                                         .items_center()
                                         .justify_between()
-                                        .child(widgets::page_header(&theme, "Agents", None))
+                                        .child(widgets::page_header(&theme, "Providers", None))
                                         .child(switcher),
                                 )
                                 .children(error)
-                                .child(body)
-                                .child(titles),
+                                .child(body),
                         ),
                 )
                 .fade_overflow_y(&self.scroll.scroll),
@@ -1408,8 +748,6 @@ impl Render for HarnessesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::SignInPhase;
-
     #[gpui::test]
     fn expanded_agent_preferences_render_inside_the_agent_row(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;
@@ -1472,31 +810,26 @@ mod tests {
             .unwrap();
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
             .unwrap();
-    }
-
-    #[test]
-    fn explicit_sign_in_requires_installed_antigravity() {
-        use zeron_proto::HarnessId;
-        assert!(super::offers_sign_in(HarnessId::Antigravity, true));
-        assert!(!super::offers_sign_in(HarnessId::Antigravity, false));
-        assert!(!super::offers_sign_in(HarnessId::Codex, true));
-    }
-
-    #[test]
-    fn antigravity_setup_copy_matches_each_phase() {
-        assert_eq!(
-            SignInPhase::Starting.pending_label(),
-            "Preparing Antigravity…"
-        );
-        assert_eq!(SignInPhase::Starting.failure_label(), "Setup failed");
-        assert_eq!(
-            SignInPhase::Authenticating.pending_label(),
-            "Finish signing in in your browser."
-        );
-        assert_eq!(
-            SignInPhase::Authenticating.failure_label(),
-            "Sign-in failed"
-        );
+        // Antigravity signs in through the very same Accounts section.
+        window
+            .update(cx, |page, _, cx| {
+                page.harnesses = super::Loadable::Ready(vec![descriptor(
+                    zeron_proto::HarnessId::Antigravity,
+                    "Antigravity",
+                )]);
+                page.toggle_agent_details(zeron_proto::HarnessId::Antigravity, cx);
+                assert_eq!(
+                    page.accounts_page
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .embedded_harness(),
+                    Some(zeron_proto::HarnessId::Antigravity)
+                );
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
     }
 }
 
@@ -1520,10 +853,6 @@ fn install_visibility_and_hint_follow_target_capabilities() {
                 assert_eq!(
                     offers_install(id, installed, available),
                     id != HarnessId::Mock && !installed && available
-                );
-                assert_eq!(
-                    offers_sign_in(id, installed),
-                    id == HarnessId::Antigravity && installed
                 );
             }
         }

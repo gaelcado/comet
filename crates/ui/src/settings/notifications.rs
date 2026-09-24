@@ -7,7 +7,6 @@
 
 use gpui::{Context, EventEmitter, Window, div, prelude::*, px};
 
-use crate::icons;
 use crate::popover;
 use crate::settings::widgets;
 use crate::theme::Theme;
@@ -170,9 +169,9 @@ impl Render for NotificationsPage {
                 .child(widgets::toggle_switch(&theme, enabled, id))
         };
         let card = widgets::section_card(&theme)
+            .mt_0()
             .child(
                 widgets::card_row(&theme, true)
-                    .child(widgets::row_tile(&theme, icons::VOLUME_LOUD))
                     .child(
                         div()
                             .flex_1()
@@ -191,7 +190,6 @@ impl Render for NotificationsPage {
             .child(
                 widgets::card_row(&theme, false)
                     .when(!sound, |el| el.opacity(0.55))
-                    .child(widgets::row_tile(&theme, icons::CHECK))
                     .child(
                         div()
                             .flex_1()
@@ -220,7 +218,6 @@ impl Render for NotificationsPage {
             .child(
                 widgets::card_row(&theme, false)
                     .when(!sound, |el| el.opacity(0.55))
-                    .child(widgets::row_tile(&theme, icons::CHAT_ROUND_LINE))
                     .child(
                         div()
                             .flex_1()
@@ -244,7 +241,6 @@ impl Render for NotificationsPage {
             .child(
                 widgets::card_row(&theme, false)
                     .when(!sound, |el| el.opacity(0.55))
-                    .child(widgets::row_tile(&theme, icons::DANGER_TRIANGLE))
                     .child(
                         div()
                             .flex_1()
@@ -271,9 +267,9 @@ impl Render for NotificationsPage {
                     ),
             );
         let desktop_card = widgets::section_card(&theme)
+            .mt_0()
             .child(
                 widgets::card_row(&theme, true)
-                    .child(widgets::row_tile(&theme, icons::BELL))
                     .child(
                         div()
                             .flex_1()
@@ -299,7 +295,6 @@ impl Render for NotificationsPage {
                 // are off (the harnesses not-installed treatment).
                 widgets::card_row(&theme, false)
                     .when(!desktop, |el| el.opacity(0.55))
-                    .child(widgets::row_tile(&theme, icons::MONITOR))
                     .child(
                         div()
                             .flex_1()
@@ -345,8 +340,10 @@ impl Render for NotificationsPage {
                         .child(
                             widgets::page_column()
                                 .child(widgets::page_header(&theme, "Notifications", None))
-                                .child(desktop_card)
-                                .child(card),
+                                .child(
+                                    widgets::section(&theme, "Desktop", desktop_card).mt(px(24.0)),
+                                )
+                                .child(widgets::section(&theme, "Sounds", card)),
                         ),
                 )
                 .fade_overflow_y(&self.scroll.scroll),

@@ -1017,6 +1017,31 @@ impl Theme {
 
     /// Compensated tint for the composer and dark floating surfaces. Preserve
     /// the original dark glass recipe, including its 15% scene coverage.
+    /// The composer pill's fill: the dark frosted tint on dark glass, the
+    /// input glass otherwise. Shared by controls that should read as the
+    /// same material (the titlebar's project-action button).
+    pub fn composer_surface_bg(&self) -> Hsla {
+        if self.is_frost() && matches!(self.appearance, Appearance::Dark) {
+            self.composer_sidebar_tint()
+        } else {
+            self.input_glass_bg()
+        }
+    }
+
+    /// The composer pill's edge: a translucent cool silver/slate on frost
+    /// (sits more naturally there than the general-purpose separator), the
+    /// theme border otherwise.
+    pub fn composer_surface_border(&self) -> Hsla {
+        if self.is_frost() {
+            match self.appearance {
+                Appearance::Dark => hsla(210.0 / 360.0, 0.18, 0.78, 0.09),
+                Appearance::Light => hsla(210.0 / 360.0, 0.18, 0.32, 0.10),
+            }
+        } else {
+            self.border
+        }
+    }
+
     pub fn composer_sidebar_tint(&self) -> Hsla {
         let target = if self.is_glass() {
             flatten(self.bg.opacity(0.4), flatten(self.glass(), self.bg))

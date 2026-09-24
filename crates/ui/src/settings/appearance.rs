@@ -196,15 +196,9 @@ pub struct AppearancePage {
     selected_font: UiFontFamily,
     selected_terminal_font: UiFontFamily,
     selected_code_font: UiFontFamily,
-    selected_size: UiFontSize,
-    selected_terminal_size: f32,
-    selected_code_size: f32,
     font_focus: FocusHandle,
     terminal_font_focus: FocusHandle,
     code_font_focus: FocusHandle,
-    size_focus: FocusHandle,
-    terminal_size_focus: FocusHandle,
-    code_size_focus: FocusHandle,
     font_menu: Popup<()>,
     terminal_font_menu: Popup<()>,
     code_font_menu: Popup<()>,
@@ -215,9 +209,9 @@ pub struct AppearancePage {
     font_list: widgets::PageScroll,
     terminal_font_list: widgets::PageScroll,
     code_font_list: widgets::PageScroll,
-    size_menu: Popup<()>,
-    terminal_size_menu: Popup<()>,
-    code_size_menu: Popup<()>,
+    size_select: widgets::SelectState,
+    terminal_size_select: widgets::SelectState,
+    code_size_select: widgets::SelectState,
     font_menu_dismissed_at: Option<std::time::Instant>,
     terminal_font_menu_dismissed_at: Option<std::time::Instant>,
     code_font_menu_dismissed_at: Option<std::time::Instant>,
@@ -226,11 +220,10 @@ pub struct AppearancePage {
     /// scroll. One input serves all three kinds: only one menu is ever open.
     font_search: Entity<ComposerInput>,
     _font_search_events: Subscription,
-    size_menu_dismissed_at: Option<std::time::Instant>,
-    terminal_size_menu_dismissed_at: Option<std::time::Instant>,
-    code_size_menu_dismissed_at: Option<std::time::Instant>,
-    light_theme_menu: Popup<()>,
-    dark_theme_menu: Popup<()>,
+    light_theme_select: widgets::SelectState,
+    dark_theme_select: widgets::SelectState,
+    surface_select: widgets::SelectState,
+    background_effect_select: widgets::SelectState,
     import_dialog: Option<ImportDialog>,
     review_entry: Option<String>,
     library_error: Option<SharedString>,
@@ -375,26 +368,21 @@ impl AppearancePage {
                             .bg(theme.accent),
                     ),
             );
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
+        widgets::card_row(theme, false)
             .gap(px(20.0))
             .child(
                 div()
                     .flex_1()
                     .min_w(px(200.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.0))
-                    .child(widgets::field_label(theme, "Conversation width"))
-                    .child(
-                        div()
-                            .text_size(typography::ui_rems(12.0))
-                            .line_height(typography::ui_rems(16.0))
-                            .text_color(theme.text_muted)
-                            .child("Maximum width for messages and the composer."),
-                    ),
+                    .child(widgets::row_title(theme, "Conversation width"))
+                    .child(widgets::meta_line(
+                        theme,
+                        vec![
+                            div()
+                                .child("Maximum width for messages and the composer.")
+                                .into_any_element(),
+                        ],
+                    )),
             )
             .child(
                 div()
@@ -477,34 +465,27 @@ impl AppearancePage {
             selected_font: typography::effective(cx),
             selected_terminal_font: typography::terminal_effective(cx),
             selected_code_font: typography::code_effective(cx),
-            selected_size: typography::font_size(cx),
-            selected_terminal_size: typography::terminal_font_size(cx),
-            selected_code_size: typography::code_font_size(cx),
             font_focus: cx.focus_handle(),
             terminal_font_focus: cx.focus_handle(),
             code_font_focus: cx.focus_handle(),
-            size_focus: cx.focus_handle(),
-            terminal_size_focus: cx.focus_handle(),
-            code_size_focus: cx.focus_handle(),
             font_menu: Popup::default(),
             terminal_font_menu: Popup::default(),
             code_font_menu: Popup::default(),
             font_list: widgets::PageScroll::default(),
             terminal_font_list: widgets::PageScroll::default(),
             code_font_list: widgets::PageScroll::default(),
-            size_menu: Popup::default(),
-            terminal_size_menu: Popup::default(),
-            code_size_menu: Popup::default(),
+            size_select: widgets::SelectState::default(),
+            terminal_size_select: widgets::SelectState::default(),
+            code_size_select: widgets::SelectState::default(),
             font_menu_dismissed_at: None,
             terminal_font_menu_dismissed_at: None,
             code_font_menu_dismissed_at: None,
             font_search,
             _font_search_events: font_search_events,
-            size_menu_dismissed_at: None,
-            terminal_size_menu_dismissed_at: None,
-            code_size_menu_dismissed_at: None,
-            light_theme_menu: Popup::default(),
-            dark_theme_menu: Popup::default(),
+            light_theme_select: widgets::SelectState::default(),
+            dark_theme_select: widgets::SelectState::default(),
+            surface_select: widgets::SelectState::default(),
+            background_effect_select: widgets::SelectState::default(),
             import_dialog: None,
             review_entry: None,
             library_error: None,
@@ -579,80 +560,45 @@ impl AppearancePage {
         }
     }
 
-    fn size_menu(&self, kind: FontKind) -> &Popup<()> {
+    fn size_select(&self, kind: FontKind) -> &widgets::SelectState {
         match kind {
-            FontKind::Ui => &self.size_menu,
-            FontKind::Terminal => &self.terminal_size_menu,
-            FontKind::Code => &self.code_size_menu,
+            FontKind::Ui => &self.size_select,
+            FontKind::Terminal => &self.terminal_size_select,
+            FontKind::Code => &self.code_size_select,
         }
     }
 
-    fn size_menu_mut(&mut self, kind: FontKind) -> &mut Popup<()> {
+    fn size_select_mut(&mut self, kind: FontKind) -> &mut widgets::SelectState {
         match kind {
-            FontKind::Ui => &mut self.size_menu,
-            FontKind::Terminal => &mut self.terminal_size_menu,
-            FontKind::Code => &mut self.code_size_menu,
+            FontKind::Ui => &mut self.size_select,
+            FontKind::Terminal => &mut self.terminal_size_select,
+            FontKind::Code => &mut self.code_size_select,
         }
     }
 
-    fn size_focus(&self, kind: FontKind) -> &FocusHandle {
-        match kind {
-            FontKind::Ui => &self.size_focus,
-            FontKind::Terminal => &self.terminal_size_focus,
-            FontKind::Code => &self.code_size_focus,
-        }
-    }
-
-    fn size_dismissed_at(&mut self, kind: FontKind) -> &mut Option<std::time::Instant> {
-        match kind {
-            FontKind::Ui => &mut self.size_menu_dismissed_at,
-            FontKind::Terminal => &mut self.terminal_size_menu_dismissed_at,
-            FontKind::Code => &mut self.code_size_menu_dismissed_at,
-        }
-    }
-
-    /// Highlighted rung of this kind's size ladder.
-    fn selected_size_ix(&self, kind: FontKind) -> usize {
-        match kind {
-            FontKind::Ui => UiFontSize::ALL
-                .iter()
-                .position(|size| *size == self.selected_size)
-                .unwrap_or_default(),
-            FontKind::Terminal => nearest_mono_ix(self.selected_terminal_size),
-            FontKind::Code => nearest_mono_ix(self.selected_code_size),
-        }
-    }
-
-    fn set_selected_size_ix(&mut self, kind: FontKind, ix: usize) {
+    /// Apply rung `ix` of this kind's size ladder.
+    fn commit_size(
+        &mut self,
+        kind: FontKind,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let ix = ix.min(kind.size_count() - 1);
-        match kind {
-            FontKind::Ui => self.selected_size = UiFontSize::ALL[ix],
-            FontKind::Terminal => self.selected_terminal_size = MONO_FONT_SIZES[ix],
-            FontKind::Code => self.selected_code_size = MONO_FONT_SIZES[ix],
-        }
-    }
-
-    fn commit_size(&mut self, kind: FontKind, window: &mut Window, cx: &mut Context<Self>) {
-        let ix = self.selected_size_ix(kind);
         match kind {
             FontKind::Ui => {
                 typography::set_font_size(UiFontSize::ALL[ix], window, cx);
-                self.selected_size = typography::font_size(cx);
             }
             FontKind::Terminal => {
-                let next = MONO_FONT_SIZES[ix];
-                typography::set_terminal_font_size(next, cx);
-                self.selected_terminal_size = next;
+                typography::set_terminal_font_size(MONO_FONT_SIZES[ix], cx);
             }
             FontKind::Code => {
                 let next = MONO_FONT_SIZES[ix];
                 typography::set_code_font_size(next, cx);
-                self.selected_code_size = next;
                 // Open file editors only learn the new size through this event.
                 cx.emit(AppearanceSettingsEvent::CodeFontSizeChanged(next));
             }
         }
-        self.close_size_menu(kind, cx);
         cx.notify();
     }
 
@@ -722,30 +668,14 @@ impl AppearancePage {
                 self.close_font_menu(kind, cx);
             }
             if Some(kind) != keep_size {
-                self.close_size_menu(kind, cx);
+                widgets::close_select(self, move |page: &mut Self| page.size_select_mut(kind), cx);
             }
-        }
-    }
-
-    fn close_size_menu(&mut self, kind: FontKind, cx: &mut Context<Self>) {
-        if !self.size_menu_mut(kind).begin_close() {
-            return;
-        }
-        match kind {
-            FontKind::Ui => popover::reap_popup(cx, |page| &mut page.size_menu),
-            FontKind::Terminal => popover::reap_popup(cx, |page| &mut page.terminal_size_menu),
-            FontKind::Code => popover::reap_popup(cx, |page| &mut page.code_size_menu),
         }
     }
 
     fn dismiss_font_menu(&mut self, kind: FontKind, cx: &mut Context<Self>) {
         *self.font_dismissed_at(kind) = Some(std::time::Instant::now());
         self.close_font_menu(kind, cx);
-    }
-
-    fn dismiss_size_menu(&mut self, kind: FontKind, cx: &mut Context<Self>) {
-        *self.size_dismissed_at(kind) = Some(std::time::Instant::now());
-        self.close_size_menu(kind, cx);
     }
 
     fn toggle_font_menu(&mut self, kind: FontKind, window: &mut Window, cx: &mut Context<Self>) {
@@ -770,30 +700,6 @@ impl AppearancePage {
             window.focus(&self.font_search.read(cx).focus_handle(cx), cx);
         }
         cx.notify();
-    }
-
-    fn toggle_size_menu(&mut self, kind: FontKind, cx: &mut Context<Self>) {
-        self.close_other_menus(None, Some(kind), cx);
-        let just_dismissed = self
-            .size_dismissed_at(kind)
-            .take()
-            .is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(400));
-        if self.size_menu(kind).is_open() {
-            self.close_size_menu(kind, cx);
-        } else if !just_dismissed {
-            self.set_selected_size_ix(kind, kind.size_ix(cx));
-            self.size_menu_mut(kind).open(());
-        }
-        cx.notify();
-    }
-
-    /// Open on the first navigation key, so ↑↓/Home/End work from the closed
-    /// trigger exactly as they do inside the list.
-    fn open_size_menu(&mut self, kind: FontKind, cx: &mut Context<Self>) {
-        if !self.size_menu(kind).is_open() {
-            *self.size_dismissed_at(kind) = None;
-            self.toggle_size_menu(kind, cx);
-        }
     }
 
     /// Returns whether the key was consumed. The card and its trigger both
@@ -856,59 +762,6 @@ impl AppearancePage {
         self.set_selected_font(kind, next);
         cx.notify();
         true
-    }
-
-    fn on_size_key_down(
-        &mut self,
-        kind: FontKind,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if matches!(
-            event.keystroke.key.as_str(),
-            "up" | "down" | "left" | "right" | "home" | "end" | "enter" | "space" | "escape"
-        ) {
-            cx.stop_propagation();
-        }
-        let last = kind.size_count() - 1;
-        let current = self.selected_size_ix(kind);
-        match event.keystroke.key.as_str() {
-            "up" | "left" => {
-                self.open_size_menu(kind, cx);
-                self.set_selected_size_ix(kind, current.saturating_sub(1));
-                cx.notify();
-            }
-            "down" | "right" => {
-                self.open_size_menu(kind, cx);
-                self.set_selected_size_ix(kind, current + 1);
-                cx.notify();
-            }
-            "home" => {
-                self.open_size_menu(kind, cx);
-                self.set_selected_size_ix(kind, 0);
-                cx.notify();
-            }
-            "end" => {
-                self.open_size_menu(kind, cx);
-                self.set_selected_size_ix(kind, last);
-                cx.notify();
-            }
-            "enter" | "space" => {
-                if self.size_menu(kind).is_open() {
-                    self.commit_size(kind, window, cx);
-                } else {
-                    *self.size_dismissed_at(kind) = None;
-                    self.toggle_size_menu(kind, cx);
-                }
-            }
-            "escape" => {
-                self.set_selected_size_ix(kind, kind.size_ix(cx));
-                self.close_size_menu(kind, cx);
-                cx.notify();
-            }
-            _ => {}
-        }
     }
 
     fn open_import(&mut self, cx: &mut Context<Self>) {
@@ -1251,46 +1104,6 @@ fn surface_helper(surface: SurfacePreference, resolved: SurfaceTreatment) -> Str
         SurfacePreference::Frosted => "Translucent surfaces".into(),
         SurfacePreference::Opaque => "Solid surfaces".into(),
     }
-}
-
-fn surface_choice(
-    theme: &Theme,
-    surface: SurfacePreference,
-    selected: bool,
-    selection_t: f32,
-) -> gpui::Stateful<gpui::Div> {
-    let id = format!(
-        "appearance-surface-{}",
-        surface_label(surface).to_lowercase().replace(' ', "-")
-    );
-    widgets::segmented_option(
-        theme,
-        selected,
-        selection_t,
-        id.clone(),
-        format!("{id}-hover"),
-        surface_label(surface),
-    )
-}
-
-fn background_effect_choice(
-    theme: &Theme,
-    effect: crate::settings::NewThreadBackgroundEffect,
-    selected: bool,
-    selection_t: f32,
-) -> gpui::Stateful<gpui::Div> {
-    let id = format!(
-        "new-thread-background-effect-{}",
-        effect.label().to_lowercase()
-    );
-    widgets::segmented_option(
-        theme,
-        selected,
-        selection_t,
-        id.clone(),
-        format!("{id}-hover"),
-        effect.label(),
-    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1669,30 +1482,6 @@ fn accent_swatch(
 }
 
 impl AppearancePage {
-    fn theme_menu(&self, appearance: Appearance) -> &Popup<()> {
-        match appearance {
-            Appearance::Light => &self.light_theme_menu,
-            Appearance::Dark => &self.dark_theme_menu,
-        }
-    }
-
-    fn theme_menu_mut(&mut self, appearance: Appearance) -> &mut Popup<()> {
-        match appearance {
-            Appearance::Light => &mut self.light_theme_menu,
-            Appearance::Dark => &mut self.dark_theme_menu,
-        }
-    }
-
-    fn close_theme_menu(&mut self, appearance: Appearance, cx: &mut Context<Self>) {
-        if !self.theme_menu_mut(appearance).begin_close() {
-            return;
-        }
-        match appearance {
-            Appearance::Light => popover::reap_popup(cx, |page| &mut page.light_theme_menu),
-            Appearance::Dark => popover::reap_popup(cx, |page| &mut page.dark_theme_menu),
-        }
-    }
-
     fn render_font_picker(
         &mut self,
         kind: FontKind,
@@ -1730,27 +1519,25 @@ impl AppearancePage {
                 let active = family == effective;
                 let focused = family == selected;
                 let label = SharedString::from(family.label().to_owned());
-                popover::menu_row_nav(theme, active, focused, format!("{slug}-font-option-{ix}"))
+                widgets::select_row(theme, active, focused, format!("{slug}-font-option-{ix}"))
                     .id(SharedString::from(format!("{slug}-font-option-{ix}")))
+                    .role(gpui::Role::MenuItemRadio)
+                    .aria_label(label.clone())
+                    .aria_toggled(if active {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
                     .when(available, |row| {
-                        row.tab_index(0)
-                            .role(gpui::Role::Button)
-                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.set_selected_font(kind, family.clone());
-                                this.commit_font(kind, cx);
-                            }))
+                        row.on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.set_selected_font(kind, family.clone());
+                            this.commit_font(kind, cx);
+                        }))
                     })
                     .when(!available, |row| row.opacity(0.45))
                     .child(div().flex_1().min_w_0().truncate().child(label))
-                    .child(div().w(px(18.0)).flex_none().when(active, |slot| {
-                        slot.child(
-                            icons::icon(icons::CHECK)
-                                .size(px(14.0))
-                                .text_color(theme.accent),
-                        )
-                    }))
+                    .child(widgets::select_check(theme, active))
                     .into_any_element()
             })
             .collect();
@@ -1784,7 +1571,11 @@ impl AppearancePage {
                 .child(popover::faded_menu_list(
                     &scroll,
                     popover::menu_scroll_list(list_id, &scroll)
-                        .max_h(px(widgets::dropdown_list_height(viewport, 36.0, 52.0)))
+                        .max_h(px(widgets::dropdown_list_height(
+                            viewport,
+                            widgets::SELECT_HEIGHT,
+                            52.0,
+                        )))
                         .flex()
                         .flex_col()
                         .gap(px(2.0))
@@ -1797,9 +1588,9 @@ impl AppearancePage {
         // The key handler sits on the card, not just the trigger: focus moves
         // into the filter input, and `PaletteSearch` lets arrows/Enter/Escape
         // bubble to exactly this ancestor.
-        let menu = popover::popover_card(theme)
+        let menu = widgets::select_menu(theme)
             .w(px(220.0))
-            .font_family(fixed)
+            .font_family(fixed.clone())
             .on_mouse_down_out(cx.listener(move |this, _, _, cx| this.dismiss_font_menu(kind, cx)))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 if this.on_font_key_down(kind, event, window, cx) {
@@ -1816,29 +1607,12 @@ impl AppearancePage {
 
         let open = self.font_menu(kind).is_open();
         let closing = self.font_menu(kind).closing_since();
-        div()
-            .id(SharedString::from(format!("{slug}-font-dropdown")))
-            .relative()
+        let value = SharedString::from(effective.label().to_owned());
+        widgets::select_trigger(theme, format!("{slug}-font-dropdown"), open)
             .w(px(220.0))
-            .h(px(36.0))
-            .px(px(11.0))
-            .rounded(px(9.0))
-            .border_1()
-            .border_color(if open {
-                theme.border_strong
-            } else {
-                theme.border
-            })
-            .bg(crate::theme::ink(0.025))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.0))
-            .cursor_pointer()
+            .font_family(fixed)
+            .aria_label(format!("{}: {value}", kind.label()))
             .track_focus(&self.font_focus(kind).clone().tab_stop(true))
-            .tab_index(0)
-            .role(gpui::Role::Button)
-            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
             // Only the closed state: once open, the card above owns these keys
             // and stops their propagation before they reach us.
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
@@ -1852,32 +1626,21 @@ impl AppearancePage {
                 window.focus(&this.font_focus(kind).clone(), cx);
                 this.toggle_font_menu(kind, window, cx);
             }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(SharedString::from(effective.label().to_owned())),
-            )
-            .child(
-                icons::icon(icons::ALT_ARROW_DOWN)
-                    .size(px(14.0))
-                    .flex_none()
-                    .text_color(theme.text_muted),
-            )
+            .child(widgets::select_value(value))
+            .child(widgets::select_chevron(theme, open))
             .when_some(self.font_menu(kind).get(), |trigger, _| {
                 trigger.child(widgets::dropdown(
                     SharedString::from(format!("{slug}-font-menu")),
                     menu,
                     closing,
-                    36.0,
+                    widgets::SELECT_HEIGHT,
                 ))
             })
             .into_any_element()
     }
 
-    /// The size dropdown, identical in shape to the family picker beside it.
-    /// Every kind picks from a discrete ladder, so all three rows read alike.
+    /// The size dropdown beside the family picker. Every kind picks from a
+    /// discrete ladder, so all three rows read alike.
     fn render_size_picker(
         &mut self,
         kind: FontKind,
@@ -1886,102 +1649,23 @@ impl AppearancePage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let slug = kind.slug();
-        let labels = kind.size_labels();
-        let current = kind.size_ix(cx);
-        let selected = self.selected_size_ix(kind);
-        let rows: Vec<AnyElement> = labels
-            .iter()
-            .enumerate()
-            .map(|(ix, label)| {
-                popover::menu_row_nav(
-                    theme,
-                    ix == current,
-                    ix == selected,
-                    format!("{slug}-font-size-option-{ix}"),
-                )
-                .id(SharedString::from(format!("{slug}-font-size-option-{ix}")))
-                .tab_index(0)
-                .role(gpui::Role::Button)
-                .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.set_selected_size_ix(kind, ix);
-                    this.commit_size(kind, window, cx);
-                }))
-                .child(div().flex_1().child(label.clone()))
-                .child(div().w(px(18.0)).flex_none().when(ix == current, |slot| {
-                    slot.child(
-                        icons::icon(icons::CHECK)
-                            .size(px(14.0))
-                            .text_color(theme.accent),
-                    )
-                }))
-                .into_any_element()
-            })
-            .collect();
-
-        let menu = popover::popover_card(theme)
-            .w(px(128.0))
-            .font_family(fixed)
-            .on_mouse_down_out(cx.listener(move |this, _, _, cx| this.dismiss_size_menu(kind, cx)))
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            .child(widgets::dropdown_rows(
-                format!("{slug}-font-size-list"),
-                rows,
-                36.0,
-                8.0,
-            ));
-
-        let open = self.size_menu(kind).is_open();
-        let closing = self.size_menu(kind).closing_since();
-        div()
-            .id(SharedString::from(format!("{slug}-font-size-dropdown")))
-            .relative()
-            .w(px(128.0))
-            .h(px(36.0))
-            .px(px(11.0))
-            .rounded(px(9.0))
-            .border_1()
-            .border_color(if open {
-                theme.border_strong
-            } else {
-                theme.border
-            })
-            .bg(crate::theme::ink(0.025))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.0))
-            .cursor_pointer()
-            .track_focus(&self.size_focus(kind).clone().tab_stop(true))
-            .tab_index(0)
-            .role(gpui::Role::Button)
-            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                this.on_size_key_down(kind, event, window, cx)
-            }))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                window.focus(&this.size_focus(kind).clone(), cx);
-                this.toggle_size_menu(kind, cx);
-            }))
-            .child(div().flex_1().child(labels[current].clone()))
-            .child(
-                icons::icon(icons::ALT_ARROW_DOWN)
-                    .size(px(14.0))
-                    .flex_none()
-                    .text_color(theme.text_muted),
-            )
-            .when_some(self.size_menu(kind).get(), |trigger, _| {
-                trigger.child(widgets::dropdown(
-                    SharedString::from(format!("{slug}-font-size-menu")),
-                    menu,
-                    closing,
-                    36.0,
-                ))
-            })
-            .into_any_element()
+        widgets::select(
+            format!("{slug}-font-size-dropdown"),
+            format!("{} size", kind.label()),
+            theme,
+            move |page: &mut Self| page.size_select_mut(kind),
+        )
+        .options(
+            kind.size_labels()
+                .into_iter()
+                .map(widgets::SelectOption::new),
+            kind.size_ix(cx),
+        )
+        .width(128.0)
+        .font_family(fixed)
+        .on_select(move |page, ix, window, cx| page.commit_size(kind, ix, window, cx))
+        .render(self.size_select(kind), cx)
+        .into_any_element()
     }
 
     fn render_theme_selector(
@@ -1995,172 +1679,54 @@ impl AppearancePage {
         let selected_id = selections
             .variant_id(model_appearance(appearance_kind))
             .to_owned();
-        let selected_variant = registry
-            .variant(&selected_id)
-            .or_else(|| {
-                registry
-                    .variants_for(model_appearance(appearance_kind))
-                    .next()
-            })
-            .expect("the built-in registry has both appearances");
-        let selected_theme = Theme::for_selection(
-            appearance_kind,
-            &selected_variant.id,
-            AccentSelection::ThemeDefault,
-            theme.surface_preference,
-        );
-        let open = self.theme_menu(appearance_kind).is_open();
-
-        let mut trigger = div()
-            .id(SharedString::from(format!(
-                "{}-theme-selector",
-                if appearance_kind.is_light() {
-                    "light"
-                } else {
-                    "dark"
-                }
-            )))
-            .relative()
-            .flex_none()
-            .w(px(218.0))
-            .h(px(34.0))
-            .px(px(10.0))
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(if open {
-                theme.border_strong
-            } else {
-                theme.border
-            })
-            .bg(theme.surface_raised.opacity(if open { 0.75 } else { 0.42 }))
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .cursor_pointer()
-            .when(!open, |el| {
-                el.hover(|style| style.bg(theme.surface_raised_hover))
-            })
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(move |this, _, _, _| {
-                    this.theme_menu_mut(appearance_kind).note_trigger_press();
-                }),
-            )
-            .tab_index(0)
-            .role(gpui::Role::Button)
-            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if this.theme_menu_mut(appearance_kind).take_press_was_open() {
-                    this.close_theme_menu(appearance_kind, cx);
-                } else {
-                    let other = if appearance_kind.is_light() {
-                        Appearance::Dark
-                    } else {
-                        Appearance::Light
-                    };
-                    this.close_theme_menu(other, cx);
-                    this.theme_menu_mut(appearance_kind).open(());
-                }
-                cx.notify();
-            }))
-            .child(palette_preview(&selected_theme))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(crate::typography::ui_rems(12.5))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(theme.text)
-                    .child(SharedString::from(selected_variant.name.clone())),
-            )
-            .child(
-                icons::icon(icons::ALT_ARROW_DOWN)
-                    .size(px(14.0))
-                    .flex_none()
-                    .text_color(theme.text_muted),
-            );
-
-        if self.theme_menu(appearance_kind).get().is_some() {
-            let closing = self.theme_menu(appearance_kind).closing_since();
-            let heading = if appearance_kind.is_light() {
-                "Light themes"
-            } else {
-                "Dark themes"
-            };
-            let menu = popover::popover_card(theme)
-                .w(px(260.0))
-                .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                    this.close_theme_menu(appearance_kind, cx);
-                    cx.notify();
-                }))
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(popover::menu_heading(theme, heading))
-                .child(widgets::dropdown_rows(
-                    format!("appearance-theme-list-{appearance_kind:?}"),
-                    registry
-                        .variants_for(model_appearance(appearance_kind))
-                        .enumerate()
-                        .map(|(index, variant)| {
-                            let id = variant.id.clone();
-                            let name = variant.name.clone();
-                            let active = id == selected_id;
-                            let sample = Theme::for_selection(
-                                appearance_kind,
-                                &id,
-                                AccentSelection::ThemeDefault,
-                                theme.surface_preference,
-                            );
-                            popover::menu_row(
-                                theme,
-                                active,
-                                SharedString::from(format!(
-                                    "appearance-theme-menu-{appearance_kind:?}-{index}"
-                                )),
-                            )
-                            .id(SharedString::from(format!(
-                                "appearance-theme-row-{appearance_kind:?}-{index}"
-                            )))
-                            .tab_index(0)
-                            .role(gpui::Role::Button)
-                            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                appearance::set_theme(appearance_kind, id.clone(), cx);
-                                this.close_theme_menu(appearance_kind, cx);
-                                cx.notify();
-                            }))
-                            .child(palette_preview(&sample))
-                            .child(div().flex_1().min_w_0().truncate().child(name))
-                            .when(active, |row| {
-                                row.child(
-                                    icons::icon(icons::CHECK)
-                                        .size(px(14.0))
-                                        .text_color(theme.accent),
-                                )
-                            })
-                            .into_any_element()
-                        }),
-                    34.0,
-                    32.0,
-                ));
-            trigger = trigger.child(widgets::dropdown(
-                SharedString::from(format!(
-                    "appearance-{}-theme-menu",
-                    if appearance_kind.is_light() {
-                        "light"
-                    } else {
-                        "dark"
-                    }
-                )),
-                menu,
-                closing,
-                34.0,
-            ));
-        }
-
-        trigger.into_any_element()
+        let surface = theme.surface_preference;
+        let variants: Vec<_> = registry
+            .variants_for(model_appearance(appearance_kind))
+            .map(|variant| (variant.id.clone(), variant.name.clone()))
+            .collect();
+        let selected = variants
+            .iter()
+            .position(|(id, _)| *id == selected_id)
+            .unwrap_or_default();
+        let options = variants.iter().map(|(id, name)| {
+            let sample =
+                Theme::for_selection(appearance_kind, id, AccentSelection::ThemeDefault, surface);
+            widgets::SelectOption::new(name.clone())
+                .leading(move || palette_preview(&sample).into_any_element())
+        });
+        let ids: Vec<String> = variants.iter().map(|(id, _)| id.clone()).collect();
+        let (slug, label, heading) = if appearance_kind.is_light() {
+            ("light", "Light theme", "Light themes")
+        } else {
+            ("dark", "Dark theme", "Dark themes")
+        };
+        widgets::select(
+            format!("{slug}-theme-selector"),
+            label,
+            theme,
+            move |page: &mut Self| match appearance_kind {
+                Appearance::Light => &mut page.light_theme_select,
+                Appearance::Dark => &mut page.dark_theme_select,
+            },
+        )
+        .options(options, selected)
+        .width(218.0)
+        .menu_width(260.0)
+        .heading(heading)
+        .on_select(move |_, ix, _, cx| {
+            if let Some(id) = ids.get(ix) {
+                appearance::set_theme(appearance_kind, id.clone(), cx);
+            }
+            cx.notify();
+        })
+        .render(
+            match appearance_kind {
+                Appearance::Light => &self.light_theme_select,
+                Appearance::Dark => &self.dark_theme_select,
+            },
+            cx,
+        )
+        .into_any_element()
     }
 
     fn render_import_dialog(
@@ -2787,14 +2353,6 @@ impl AppearancePage {
             }
         };
         widgets::card_row(theme, false)
-            .child(widgets::row_tile(
-                theme,
-                if linked {
-                    icons::GLOBAL
-                } else {
-                    icons::DOCUMENT
-                },
-            ))
             .child(
                 div()
                     .flex_1()
@@ -2931,7 +2489,6 @@ impl AppearancePage {
             .partition(|entry| entry.source.is_linked());
         let mut rows = vec![
             widgets::card_row(theme, true)
-                .child(widgets::row_tile(theme, icons::FOLDER_WITH_FILES))
                 .child(
                     div()
                         .flex_1()
@@ -2951,15 +2508,14 @@ impl AppearancePage {
         if !imported.is_empty() {
             rows.push(
                 div()
-                    .px(px(16.0))
+                    .mx(px(16.0))
                     .pt(px(12.0))
                     .pb(px(4.0))
                     .border_t_1()
-                    .border_color(theme.border)
-                    .text_size(crate::typography::ui_rems(10.5))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme.text_faint)
-                    .child("IMPORTED")
+                    .border_color(widgets::row_divider(theme))
+                    .text_size(crate::typography::ui_rems(12.0))
+                    .text_color(theme.text_muted)
+                    .child("Imported")
                     .into_any_element(),
             );
             rows.extend(
@@ -2971,15 +2527,14 @@ impl AppearancePage {
         if !linked.is_empty() {
             rows.push(
                 div()
-                    .px(px(16.0))
+                    .mx(px(16.0))
                     .pt(px(12.0))
                     .pb(px(4.0))
                     .border_t_1()
-                    .border_color(theme.border)
-                    .text_size(crate::typography::ui_rems(10.5))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme.text_faint)
-                    .child("LINKED")
+                    .border_color(widgets::row_divider(theme))
+                    .text_size(crate::typography::ui_rems(12.0))
+                    .text_color(theme.text_muted)
+                    .child("Linked")
                     .into_any_element(),
             );
             rows.extend(
@@ -3041,15 +2596,14 @@ impl Render for AppearancePage {
             .into_iter()
             .enumerate()
         {
-            let (label, mode) = if appearance_kind.is_light() {
-                ("Light theme", AppearanceMode::Light)
+            let label = if appearance_kind.is_light() {
+                "Light theme"
             } else {
-                ("Dark theme", AppearanceMode::Dark)
+                "Dark theme"
             };
             let selector = self.render_theme_selector(appearance_kind, &current_themes, &theme, cx);
             theme_rows.push(
                 widgets::card_row(&theme, index == 0)
-                    .child(widgets::row_tile(&theme, mode.icon()))
                     .child(
                         div()
                             .flex_1()
@@ -3077,28 +2631,28 @@ impl Render for AppearancePage {
                     }))
             })
             .collect::<Vec<_>>();
-        let surface_controls = SurfacePreference::ALL
-            .into_iter()
-            .map(|surface| {
-                let selected = surface == current_surface;
-                let selection_t = widgets::tab_selection_t(
-                    window,
-                    format!("appearance-surface-{}-selection", surface_label(surface)),
-                    selected,
-                    reduced_motion,
-                );
-                surface_choice(&theme, surface, selected, selection_t).on_click(cx.listener(
-                    move |_, _, _, cx| {
-                        appearance::set_surface(surface, cx);
-                        cx.notify();
-                    },
-                ))
+        let surface_control =
+            widgets::select("appearance-surface", "Glass", &theme, |page: &mut Self| {
+                &mut page.surface_select
             })
-            .collect::<Vec<_>>();
+            .options(
+                SurfacePreference::ALL
+                    .into_iter()
+                    .map(|surface| widgets::SelectOption::new(surface_label(surface))),
+                SurfacePreference::ALL
+                    .into_iter()
+                    .position(|surface| surface == current_surface)
+                    .unwrap_or_default(),
+            )
+            .width(148.0)
+            .on_select(|_, ix, _, cx| {
+                appearance::set_surface(SurfacePreference::ALL[ix], cx);
+                cx.notify();
+            })
+            .render(&self.surface_select, cx);
         let mut settings_rows = theme_rows;
         settings_rows.push(
             widgets::card_row(&theme, false)
-                .child(widgets::row_tile(&theme, icons::TUNING))
                 .child(
                     div()
                         .flex_1()
@@ -3128,7 +2682,6 @@ impl Render for AppearancePage {
         let mut settings_rows = Vec::new();
         settings_rows.push(
             widgets::card_row(&theme, true)
-                .child(widgets::row_tile(&theme, icons::WIDGET))
                 .child(
                     div()
                         .flex_1()
@@ -3146,32 +2699,32 @@ impl Render for AppearancePage {
                             ],
                         )),
                 )
-                .child(widgets::segmented_track(&theme).children(surface_controls))
+                .child(surface_control)
                 .into_any_element(),
         );
         let background_available = current_background
             .as_ref()
             .is_some_and(|background| Path::new(&background.path).is_file());
-        let background_tile: AnyElement = if let Some(background) =
-            current_background.as_ref().filter(|_| background_available)
-        {
-            div()
-                .flex_none()
-                .size(px(36.0))
-                .rounded(px(10.0))
-                .overflow_hidden()
-                .border_1()
-                .border_color(crate::theme::hairline(0.10))
-                .child(
-                    img(PathBuf::from(background.path.clone()))
-                        .size(px(34.0))
-                        .rounded(px(9.0))
-                        .object_fit(ObjectFit::Cover),
-                )
-                .into_any_element()
-        } else {
-            widgets::row_tile(&theme, icons::FILE_IMAGE).into_any_element()
-        };
+        // The chosen image previews in the row; without one the row is text only.
+        let background_tile: Option<AnyElement> = current_background
+            .as_ref()
+            .filter(|_| background_available)
+            .map(|background| {
+                div()
+                    .flex_none()
+                    .size(px(36.0))
+                    .rounded(px(10.0))
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(crate::theme::hairline(0.10))
+                    .child(
+                        img(PathBuf::from(background.path.clone()))
+                            .size(px(34.0))
+                            .rounded(px(9.0))
+                            .object_fit(ObjectFit::Cover),
+                    )
+                    .into_any_element()
+            });
         let background_meta = match current_background.as_ref() {
             Some(background) if background_available => vec![
                 div()
@@ -3188,7 +2741,7 @@ impl Render for AppearancePage {
         };
         settings_rows.push(
             widgets::card_row(&theme, false)
-                .child(background_tile)
+                .children(background_tile)
                 .child(
                     div()
                         .flex_1()
@@ -3258,27 +2811,33 @@ impl Render for AppearancePage {
                 .into_any_element(),
         );
         if background_available {
-            let effect_controls = crate::settings::NewThreadBackgroundEffect::ALL
-                .into_iter()
-                .map(|effect| {
-                    let selected = effect == current_background_effect;
-                    let selection_t = widgets::tab_selection_t(
-                        window,
-                        format!("new-thread-background-effect-{}-selection", effect.label()),
-                        selected,
-                        reduced_motion,
-                    );
-                    background_effect_choice(&theme, effect, selected, selection_t).on_click(
-                        cx.listener(move |_, _, _, cx| {
-                            crate::settings::set_new_thread_background_effect(effect, cx);
-                            cx.notify();
-                        }),
-                    )
-                })
-                .collect::<Vec<_>>();
+            use crate::settings::NewThreadBackgroundEffect;
+            let effect_control = widgets::select(
+                "new-thread-background-effect",
+                "Background effect",
+                &theme,
+                |page: &mut Self| &mut page.background_effect_select,
+            )
+            .options(
+                NewThreadBackgroundEffect::ALL
+                    .into_iter()
+                    .map(|effect| widgets::SelectOption::new(effect.label())),
+                NewThreadBackgroundEffect::ALL
+                    .into_iter()
+                    .position(|effect| effect == current_background_effect)
+                    .unwrap_or_default(),
+            )
+            .width(128.0)
+            .on_select(|_, ix, _, cx| {
+                crate::settings::set_new_thread_background_effect(
+                    NewThreadBackgroundEffect::ALL[ix],
+                    cx,
+                );
+                cx.notify();
+            })
+            .render(&self.background_effect_select, cx);
             settings_rows.push(
                 widgets::card_row(&theme, false)
-                    .child(widgets::row_tile(&theme, icons::TUNING))
                     .child(
                         div()
                             .flex_1()
@@ -3293,22 +2852,18 @@ impl Render for AppearancePage {
                                 ],
                             )),
                     )
-                    .child(
-                        widgets::segmented_track(&theme)
-                            .max_w_full()
-                            .children(effect_controls),
-                    )
+                    .child(effect_control)
                     .into_any_element(),
             );
         }
         if let Some(error) = self.background_error.clone() {
             settings_rows.push(
                 div()
-                    .px(px(20.0))
+                    .mx(px(16.0))
                     .py(px(10.0))
                     .border_t_1()
-                    .border_color(theme.border)
-                    .child(widgets::error_strip(&theme, error))
+                    .border_color(widgets::row_divider(&theme))
+                    .child(widgets::error_strip(&theme, error).mt_0())
                     .into_any_element(),
             );
         }
@@ -3349,41 +2904,29 @@ impl Render for AppearancePage {
         let terminal_size = self.render_size_picker(FontKind::Terminal, &theme, fixed.clone(), cx);
         let code_size = self.render_size_picker(FontKind::Code, &theme, fixed.clone(), cx);
 
-        let mut font_section = div()
-            .mt(px(36.0))
-            .flex()
-            .flex_col()
-            .gap(px(18.0))
+        let mut font_rows = widgets::section_card(&theme)
+            .mt_0()
             .font_family(fixed.clone());
-        for (kind, picker, size_control) in [
+        for (ix, (kind, picker, size_control)) in [
             (FontKind::Ui, ui_picker, ui_size),
             (FontKind::Terminal, terminal_picker, terminal_size),
             (FontKind::Code, code_picker, code_size),
-        ] {
-            font_section = font_section.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .items_center()
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            font_rows = font_rows.child(
+                widgets::card_row(&theme, ix == 0)
                     .justify_between()
-                    .gap(px(16.0))
                     .child(
                         div()
                             .min_w(px(160.0))
                             .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .child(widgets::field_label(&theme, kind.label()))
-                            .child(
-                                div()
-                                    .max_w(px(520.0))
-                                    .text_size(typography::ui_rems(12.0))
-                                    .line_height(typography::ui_rems(16.0))
-                                    .text_color(theme.text_muted)
-                                    .child(kind.description()),
-                            ),
+                            .child(widgets::row_title(&theme, kind.label()))
+                            .child(widgets::meta_line(
+                                &theme,
+                                vec![div().child(kind.description()).into_any_element()],
+                            )),
                     )
                     .child(
                         div()
@@ -3399,7 +2942,8 @@ impl Render for AppearancePage {
                     ),
             );
         }
-        font_section = font_section.child(self.render_transcript_width(&theme, window, cx));
+        font_rows = font_rows.child(self.render_transcript_width(&theme, window, cx));
+        let mut font_section = widgets::section(&theme, "Fonts and layout", font_rows);
         for kind in FontKind::ALL {
             let (requested, effective) = (kind.requested(cx), kind.effective(cx));
             if requested != effective {
@@ -3413,6 +2957,7 @@ impl Render for AppearancePage {
                             effective.label()
                         ),
                     )
+                    .mt_0()
                     .font_family(fixed.clone()),
                 );
             }
@@ -3463,29 +3008,29 @@ impl Render for AppearancePage {
                             widgets::page_column()
                                 .child(widgets::page_header(&theme, "Appearance", None))
                                 .child(
-                                    div()
-                                        .mt(px(24.0))
-                                        .flex()
-                                        .flex_col()
-                                        .gap(px(12.0))
-                                        .child(widgets::field_label(&theme, "Color scheme"))
-                                        .child(widgets::option_card_row().children(cards)),
+                                    widgets::section(
+                                        &theme,
+                                        "Color scheme",
+                                        widgets::option_card_row().children(cards),
+                                    )
+                                    .mt(px(24.0))
+                                    .gap(px(12.0)),
                                 )
-                                .child(widgets::section_card(&theme).children(color_rows))
                                 .child(
-                                    div()
-                                        .mt(px(24.0))
-                                        .child(widgets::field_label(
-                                            &theme,
-                                            "Material and background",
-                                        ))
-                                        .child(
-                                            widgets::section_card(&theme)
-                                                .mt(px(12.0))
-                                                .children(settings_rows),
-                                        ),
+                                    widgets::section_card(&theme)
+                                        .children(color_rows)
+                                        .mt(px(16.0)),
                                 )
-                                .child(widgets::section_card(&theme).children(library_rows))
+                                .child(widgets::section(
+                                    &theme,
+                                    "Material and background",
+                                    widgets::section_card(&theme).mt_0().children(settings_rows),
+                                ))
+                                .child(
+                                    widgets::section_card(&theme)
+                                        .mt(px(32.0))
+                                        .children(library_rows),
+                                )
                                 .child(font_section)
                                 .when_some(library_warning, |page, warning| {
                                     page.child(
@@ -3743,6 +3288,36 @@ mod tests {
     }
 
     #[gpui::test]
+    fn glass_select_switches_opaque_to_frosted(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            crate::settings::init(Default::default(), dir.path(), cx);
+            appearance::init(
+                appearance::AppearanceMode::Dark,
+                ThemeSelection::default(),
+                AccentSelection::default(),
+                SurfacePreference::Opaque,
+                cx,
+            );
+        });
+        let (_page, cx) = cx.add_window_view(|_, cx| AppearancePage::new(cx));
+        cx.update(|window, cx| window.draw(cx).clear());
+        let trigger = cx.debug_bounds("appearance-surface").expect("glass trigger");
+        cx.simulate_click(trigger.center(), gpui::Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let frosted = cx
+            .debug_bounds("appearance-surface-option-1")
+            .expect("frosted option");
+        cx.simulate_click(frosted.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(appearance::surface(cx), SurfacePreference::Frosted);
+            assert_eq!(Theme::of(cx).surface_preference, SurfacePreference::Frosted);
+        });
+    }
+
+    #[gpui::test]
     fn conversation_width_drag_coalesces_and_persists_the_last_value(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -3803,21 +3378,17 @@ mod tests {
         window
             .update(cx, |page, window, cx| {
                 for kind in [FontKind::Terminal, FontKind::Code] {
-                    page.toggle_size_menu(kind, cx);
-                    assert!(page.size_menu(kind).is_open());
-                    assert_eq!(page.selected_size_ix(kind), kind.size_ix(cx));
                     let target = kind.size_ix(cx) + 1;
-                    page.set_selected_size_ix(kind, target);
-                    page.commit_size(kind, window, cx);
+                    page.commit_size(kind, target, window, cx);
                     assert_eq!(kind.pixel_size(cx), MONO_FONT_SIZES[target]);
-                    assert!(!page.size_menu(kind).is_open());
+                    assert_eq!(kind.size_ix(cx), target);
                 }
 
                 // Opening a family menu closes a size menu left open elsewhere.
-                page.toggle_size_menu(FontKind::Ui, cx);
-                assert!(page.size_menu(FontKind::Ui).is_open());
+                page.size_select_mut(FontKind::Ui).open(0);
+                assert!(page.size_select(FontKind::Ui).is_open());
                 page.toggle_font_menu(FontKind::Code, window, cx);
-                assert!(!page.size_menu(FontKind::Ui).is_open());
+                assert!(!page.size_select(FontKind::Ui).is_open());
                 assert!(page.font_menu(FontKind::Code).is_open());
 
                 // Enter commits and reports the key consumed — without that the

@@ -35,7 +35,7 @@ fn row(
 impl ShortcutsPage {
     pub(super) fn render_appshots(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = Theme::of(cx).for_settings_surface();
@@ -74,33 +74,28 @@ impl ShortcutsPage {
             this.commit_appshots(cx);
             cx.notify();
         }));
-        let destinations = AppshotDestination::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(ix, destination)| {
-                let selected = self.appshot_destination == destination;
-                let selection_t = widgets::tab_selection_t(
-                    window,
-                    format!("appshot-destination-{ix}-selection"),
-                    selected,
-                    crate::motion::reduced_motion(cx),
-                );
-                widgets::segmented_option(
-                    &theme,
-                    selected,
-                    selection_t,
-                    format!("appshot-destination-{ix}"),
-                    format!("appshot-destination-{ix}-hover"),
-                    destination.label(),
-                )
-                .aria_label(destination.label())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.appshot_destination = destination;
-                    this.commit_appshots(cx);
-                    cx.notify();
-                }))
-            })
-            .collect::<Vec<_>>();
+        let destination = widgets::select(
+            "appshot-destination",
+            "Destination",
+            &theme,
+            |page: &mut Self| &mut page.destination_select,
+        )
+        .options(
+            AppshotDestination::ALL
+                .into_iter()
+                .map(|destination| widgets::SelectOption::new(destination.label())),
+            AppshotDestination::ALL
+                .into_iter()
+                .position(|destination| destination == self.appshot_destination)
+                .unwrap_or_default(),
+        )
+        .width(148.0)
+        .on_select(|page, ix, _, cx| {
+            page.appshot_destination = AppshotDestination::ALL[ix];
+            page.commit_appshots(cx);
+            cx.notify();
+        })
+        .render(&self.destination_select, cx);
         let destination_description = match self.appshot_destination {
             AppshotDestination::Automatic => {
                 "Use the open session, or the new-session composer when no session is open."
@@ -225,9 +220,7 @@ impl ShortcutsPage {
                 false,
                 "Destination",
                 destination_description,
-                widgets::segmented_track(&theme)
-                    .children(destinations)
-                    .into_any_element(),
+                destination.into_any_element(),
             ))
             .child(row(
                 &theme,
@@ -298,6 +291,7 @@ impl ShortcutsPage {
                                 div()
                                     .min_h(px(20.0))
                                     .mt(px(8.0))
+                                    .px(px(8.0))
                                     .text_size(px(12.0))
                                     .text_color(theme.text_muted)
                                     .child(helper),
@@ -305,6 +299,7 @@ impl ShortcutsPage {
                             .child(
                                 div()
                                     .mt(px(12.0))
+                                    .pl(px(8.0))
                                     .flex()
                                     .flex_wrap()
                                     .items_center()

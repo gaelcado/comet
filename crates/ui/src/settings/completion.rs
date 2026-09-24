@@ -1,4 +1,4 @@
-//! Per-agent composer completion preferences inside Settings → Agents.
+//! Per-agent composer completion preferences inside Settings → Providers.
 
 use super::HarnessesPage;
 use crate::{settings, settings::widgets, theme::Theme};
@@ -30,28 +30,33 @@ impl HarnessesPage {
         let current = settings::current(cx);
         let preferences = current.skill_completion(harness);
         let rows = [
-            (true, "Use $ for skills", preferences.dollar),
+            (
+                true,
+                "Use $ for skills",
+                "Type $ in the composer to pick a skill.",
+                preferences.dollar,
+            ),
             (
                 false,
                 "Separate / commands",
+                "Keep skills out of the / menu.",
                 preferences.separate_from_slash,
             ),
         ]
         .into_iter()
         .enumerate()
-        .map(|(ix, (dollar, label, enabled))| {
+        .map(|(ix, (dollar, label, description, enabled))| {
             div()
                 .id(format!("completion-{harness:?}-{dollar}"))
-                .min_h(px(42.0))
-                .px(px(4.0))
-                .py(px(7.0))
+                .min_h(px(52.0))
+                .py(px(10.0))
                 .when(ix > 0, |row| {
-                    row.border_t_1().border_color(theme.border.opacity(0.5))
+                    row.border_t_1().border_color(widgets::row_divider(theme))
                 })
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(12.0))
+                .gap(px(16.0))
                 .role(gpui::Role::Switch)
                 .aria_label(format!("{harness:?}: {label}"))
                 .aria_toggled(if enabled {
@@ -71,14 +76,28 @@ impl HarnessesPage {
                         cx.stop_propagation();
                     }
                 }))
-                .child(div().flex_1().child(widgets::row_title(theme, label)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(widgets::row_title(theme, label))
+                        .child(widgets::meta_line(
+                            theme,
+                            vec![div().child(description).into_any_element()],
+                        )),
+                )
                 .child(widgets::toggle_switch(
                     theme,
                     enabled,
                     format!("completion-switch-{harness:?}-{dollar}"),
                 ))
         });
-        div().flex().flex_col().children(rows).into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .child(widgets::details_label(theme, "Completion"))
+            .children(rows)
+            .into_any_element()
     }
 }
 
@@ -97,14 +116,20 @@ mod completion_tests {
             page.toggle_completion(HarnessId::ClaudeCode, false, cx);
             page.toggle_completion(HarnessId::Opencode, true, cx);
         });
+        // Both default on, so each flip turns its own preference off.
         let loaded = settings::UiSettings::load(dir.path());
-        assert!(loaded.skill_completion(HarnessId::ClaudeCode).dollar);
+        assert!(!loaded.skill_completion(HarnessId::ClaudeCode).dollar);
         assert!(
-            loaded
+            !loaded
                 .skill_completion(HarnessId::ClaudeCode)
                 .separate_from_slash
         );
-        assert!(loaded.skill_completion(HarnessId::Opencode).dollar);
+        assert!(!loaded.skill_completion(HarnessId::Opencode).dollar);
+        assert!(
+            loaded
+                .skill_completion(HarnessId::Opencode)
+                .separate_from_slash
+        );
         assert!(
             loaded
                 .skill_completion_by_harness

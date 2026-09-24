@@ -452,7 +452,8 @@ pub fn apply_keymap(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
     Devices,
-    /// Which harnesses the composer offers (enable/disable toggles).
+    /// Which harnesses the composer offers (enable/disable toggles) —
+    /// labeled "Providers".
     Harnesses,
     /// Per-provider CLI accounts (login, usage) — labeled "Accounts".
     Agents,
@@ -460,7 +461,8 @@ pub enum SettingsSection {
     Files,
     Notifications,
     Shortcuts,
-    Conversations,
+    /// Composer and conversation behavior plus thread naming.
+    General,
     Appshots,
     Archived,
 }
@@ -468,18 +470,18 @@ pub enum SettingsSection {
 impl SettingsSection {
     /// Sections shown in Settings. `Agents` is a legacy Accounts route alias.
     pub const ALL: [SettingsSection; 9] = [
+        SettingsSection::General,
         SettingsSection::Appearance,
         SettingsSection::Notifications,
         SettingsSection::Shortcuts,
         SettingsSection::Harnesses,
         SettingsSection::Devices,
-        SettingsSection::Conversations,
         SettingsSection::Files,
         SettingsSection::Appshots,
         SettingsSection::Archived,
     ];
 
-    /// The former Accounts page is folded into Agents. Keep its route alias
+    /// The former Accounts page is folded into Providers. Keep its route alias
     /// for old navigation entries and dev links without showing a hidden tab.
     fn canonical(self) -> Self {
         if self == Self::Agents {
@@ -493,13 +495,10 @@ impl SettingsSection {
         self != Self::Agents && (self != Self::Appshots || crate::appshots::is_desktop())
     }
 
-    fn category_heading(self) -> Option<&'static str> {
-        match self {
-            Self::Appearance => Some("Preferences"),
-            Self::Conversations => Some("Workspace"),
-            Self::Harnesses => Some("Agents & Access"),
-            _ => None,
-        }
+    /// Nav groups are separated by spacing alone: preferences, providers and
+    /// devices, then workspace data.
+    fn starts_nav_group(self) -> bool {
+        matches!(self, Self::Harnesses | Self::Files)
     }
 
     /// Sidebar + header label (zeron settings-sidebar.tsx SECTIONS / __root.tsx
@@ -507,13 +506,13 @@ impl SettingsSection {
     pub fn label(self) -> &'static str {
         match self {
             SettingsSection::Devices => "Devices",
-            SettingsSection::Harnesses => "Agents",
+            SettingsSection::Harnesses => "Providers",
             SettingsSection::Agents => "Accounts",
             SettingsSection::Appearance => "Appearance",
             SettingsSection::Files => "Files",
             SettingsSection::Notifications => "Notifications",
             SettingsSection::Shortcuts => "Shortcuts",
-            SettingsSection::Conversations => "Conversations",
+            SettingsSection::General => "General",
             SettingsSection::Appshots => "Appshots",
             SettingsSection::Archived => "Archived sessions",
         }
@@ -790,6 +789,9 @@ const SIDEBAR_LIST_PAD_TOP: f32 = 4.0;
 /// Active and archived sessions share harness/title geometry.
 const SIDEBAR_ACTIVE_HARNESS_ICON_SIZE: f32 = 13.0;
 const SIDEBAR_ACTIVE_HARNESS_TITLE_GAP: f32 = Theme::SPACE_SM;
+/// The sidebar footer's profile and settings buttons share one hit target.
+const SIDEBAR_FOOTER_BUTTON_SIZE: f32 = 28.0;
+const SIDEBAR_FOOTER_AVATAR_SIZE: f32 = 16.0;
 
 /// Keep the fade short so only the last few glyphs recede. Tracking clipped
 /// content lets the shared paint-time overflow gate leave fitting labels intact.
@@ -1420,6 +1422,41 @@ fn account_menu_action(scope: Option<WorkspaceScope>, flow: SyncFlow) -> Option<
     }
 }
 
+/// The sidebar footer's profile label and the account menu's identity line.
+/// Anything without a signed-in account reads "Local"; the menu carries the
+/// storage/sync detail.
+fn sidebar_account_identity(
+    scope: Option<WorkspaceScope>,
+    flow: SyncFlow,
+    user: Option<&zeron_proto::UserProfile>,
+) -> (SharedString, SharedString) {
+    match scope {
+        Some(WorkspaceScope::Local) => {
+            let identity = if matches!(flow, SyncFlow::RestartPending { .. }) {
+                "Sync ready after restart"
+            } else {
+                "Stored on this device"
+            };
+            ("Local".into(), identity.into())
+        }
+        Some(WorkspaceScope::Development) => {
+            ("Development".into(), "Authentication disabled".into())
+        }
+        Some(WorkspaceScope::Synced) | None => match user {
+            Some(user) => {
+                let name = user
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(&user.email);
+                (name.to_owned().into(), user.email.clone().into())
+            }
+            None => ("Local".into(), "Not signed in".into()),
+        },
+    }
+}
+
 fn sync_flow_after_auth(
     flow: SyncFlow,
     scope: Option<WorkspaceScope>,
@@ -1914,8 +1951,13 @@ impl Shell {
             Some("settings") | Some("settings/devices") => {
                 Route::Settings(SettingsSection::Devices)
             }
-            Some("settings/agents") => Route::Settings(SettingsSection::Harnesses),
-            Some("settings/harnesses") => Route::Settings(SettingsSection::Harnesses),
+            // `agents` and `harnesses` are the page's former names.
+            Some("settings/providers") | Some("settings/agents") | Some("settings/harnesses") => {
+                Route::Settings(SettingsSection::Harnesses)
+            }
+            Some("settings/general") | Some("settings/conversations") => {
+                Route::Settings(SettingsSection::General)
+            }
             Some("settings/appearance") => Route::Settings(SettingsSection::Appearance),
             Some("settings/notifications") => Route::Settings(SettingsSection::Notifications),
             Some("settings/shortcuts") => Route::Settings(SettingsSection::Shortcuts),
@@ -3913,7 +3955,7 @@ impl Shell {
         if matches!(self.route, Route::Settings(_)) {
             self.close_settings(cx);
         } else {
-            self.open_settings(SettingsSection::Appearance, cx);
+            self.open_settings(SettingsSection::General, cx);
         }
     }
 
@@ -4107,7 +4149,7 @@ impl Shell {
                 }
             }
             SettingsSection::Shortcuts
-            | SettingsSection::Conversations
+            | SettingsSection::General
             | SettingsSection::Appshots => {
                 if self.shortcuts_page.is_none() {
                     let state = self.state.clone();
@@ -4171,7 +4213,7 @@ impl Shell {
                         page.update(cx, |page, _| {
                             page.show_section(
                                 section == SettingsSection::Appshots,
-                                section == SettingsSection::Conversations,
+                                section == SettingsSection::General,
                             )
                         });
                         page.clone().into_any_element()
@@ -4598,7 +4640,12 @@ impl Shell {
                         shell.sync_flow = SyncFlow::Idle;
                         shell.runtime_change_error = None;
                         shell.org = None;
-                        shell.route = Route::Chat;
+                        // An explicit sign-out returns to the workspace. The
+                        // boot-time fallback from a signed-out synced runtime
+                        // keeps an open Settings page (and `ZERON_OPEN_ROUTE`).
+                        if sign_out {
+                            shell.route = Route::Chat;
+                        }
                         shell.space_boot_applied = false;
                         state.update(cx, |state, cx| state.prepare_runtime_replacement(cx));
                         AppState::bootstrap(state.clone(), boot, cx);
@@ -5800,9 +5847,41 @@ impl Shell {
             .into_any_element()
     }
 
-    /// Settings floats over the current workspace; opening a preference never
+    /// The sidebar column's tone, spanning the FULL window height (under the
+    /// traffic lights, through the titlebar, down to the bottom edge), with a
+    /// hairline on its right edge so the column reads as its own surface.
+    /// The tone carries the window's left corners when the CSD window floats
+    /// — with one caveat: a corner radius is clamped to the element's own
+    /// size, and the COLLAPSED sidebar is a ~1px border sliver (the grab
+    /// affordance). macOS trims that hairline with the window server's native
+    /// corner clip; we reproduce the same trim by insetting the sliver
+    /// vertically to where the curve begins, so its tips never float over the
+    /// transparent corner cutouts.
+    fn sidebar_tone(width: f32, border_color: gpui::Hsla, window: &Window) -> gpui::Div {
+        let window_corner = Self::window_corner_radius(window);
+        div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_0()
+            .w(px(width))
+            .when(window_corner > 0.0, |el| {
+                if width >= 2.0 * window_corner {
+                    el.rounded_tl(px(window_corner))
+                        .rounded_bl(px(window_corner))
+                } else {
+                    el.top(px(window_corner)).bottom(px(window_corner))
+                }
+            })
+            .bg(crate::theme::wash(0.05))
+            .border_r_1()
+            .border_color(border_color)
+    }
+
+    /// Settings takes over the window: the section list stands where the
+    /// chat sidebar was, the page fills the rest. Opening a preference never
     /// adds a route-history entry or changes the selected conversation.
-    fn render_settings_modal(
+    fn render_settings_page(
         &mut self,
         section: SettingsSection,
         window: &mut Window,
@@ -5813,28 +5892,29 @@ impl Shell {
         if self.settings_focus_pending {
             self.settings_focus_pending = false;
             self.settings_return_focus = window.focused(cx);
-            // Keep keyboard dispatch in the dialog without selecting a control.
+            // Keep keyboard dispatch in settings without selecting a control.
             // Tab remains the explicit way to enter its navigation or content.
             window.focus(&self.settings_focus, cx);
         }
-        let viewport_width = f32::from(window.viewport_size().width);
-        let bounds = settings::widgets::modal_bounds(window.viewport_size());
-        let compact = viewport_width < 680.0;
-        let nav = self.render_settings_nav(section, compact, &theme, window, cx);
+        let sidebar_width = self.settings.sidebar_width;
+        // Dropdowns contain themselves to the page pane beside this column.
+        settings::widgets::set_sidebar_width(sidebar_width, cx);
+        let nav = self.render_settings_nav(section, &theme, window, cx);
+        // The footer uses the chat sidebar's theme so the account and
+        // settings buttons render identically in both places.
+        let footer_theme = Theme::of(cx).clone();
+        let footer = self.render_sidebar_footer(&footer_theme, cx);
         let outlet = self.settings_outlet(section, window, cx);
-        let card = popover::popover_card_flush(&theme)
-            .id("settings-modal")
-            .role(gpui::Role::Dialog)
+        div()
+            .id("settings-page")
+            .role(gpui::Role::Group)
             .aria_label("Settings")
             .track_focus(&self.settings_focus)
             .tab_group()
             .tab_stop(false)
-            .w(bounds.size.width)
-            .h(bounds.size.height)
-            .rounded(px(16.0))
+            .size_full()
             .flex()
-            .flex_col()
-            .overflow_hidden()
+            .flex_row()
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 let key = &event.keystroke.key;
                 if key == "escape" {
@@ -5852,88 +5932,53 @@ impl Shell {
                 }
             }))
             .child(
+                // Same width and footer wrapper as the chat sidebar, so the
+                // account controls hold their position across the swap.
+                div()
+                    .w(px(sidebar_width))
+                    .h_full()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .pt(px(Theme::TITLEBAR_HEIGHT))
+                    .child(
+                        div().flex_none().px(px(Theme::SPACE_SM)).child(
+                            settings::widgets::section_tab(
+                                &theme,
+                                false,
+                                0.0,
+                                "settings-back",
+                                "settings-back-hover",
+                            )
+                            .role(gpui::Role::Button)
+                            .aria_label("Back")
+                            .tab_index(0)
+                            .focus_visible(|s| s.border_2().border_color(theme.accent))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| this.close_settings(cx)))
+                            .child(icon(icons::ARROW_LEFT).size(px(16.0)).text_color(
+                                motion::hover_blend(
+                                    "settings-back-hover",
+                                    theme.text_muted,
+                                    theme.text,
+                                ),
+                            ))
+                            .child("Back"),
+                        ),
+                    )
+                    .child(div().flex_1().min_h_0().child(nav))
+                    .child(div().p(px(Theme::SPACE_SM)).flex_none().child(footer)),
+            )
+            .child(
                 div()
                     .flex_1()
-                    .min_h_0()
+                    .min_w_0()
+                    .h_full()
+                    // Pages scroll to the window's top edge; `page_column`
+                    // carries the titlebar clearance inside the scroll.
                     .flex()
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .flex_col()
-                            .bg(crate::theme::ink(0.025))
-                            .pt(px(Theme::SPACE_SM + Theme::SPACE_XS))
-                            .child(div().flex_1().min_h_0().child(nav))
-                            .child(
-                                div().flex_none().p(px(Theme::SPACE_SM)).child(
-                                    settings::widgets::ghost_action(&theme)
-                                        .rounded(px(8.0))
-                                        .px(px(Theme::SPACE_SM))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.0))
-                                        .when(compact, |el| el.justify_center())
-                                        .id("settings-back")
-                                        .role(gpui::Role::Button)
-                                        .aria_label("Back to workspace")
-                                        .tab_index(0)
-                                        .w_full()
-                                        .min_h(px(36.0))
-                                        .focus_visible(|s| s.border_2().border_color(theme.accent))
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.close_settings(cx)),
-                                        )
-                                        .child(
-                                            icon(icons::ALT_ARROW_LEFT)
-                                                .size(px(16.0))
-                                                .text_color(theme.text_muted),
-                                        )
-                                        .when(!compact, |el| el.child("Back to workspace")),
-                                ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .flex()
-                            .flex_col()
-                            .relative()
-                            // Inset the page viewport so its floating scroll
-                            // rail ends inside the modal's rounded corners.
-                            .child(div().flex_1().min_h_0().py(px(12.0)).child(outlet))
-                            .child(
-                                div().absolute().top(px(12.0)).right(px(12.0)).child(
-                                    div()
-                                        .id("settings-close")
-                                        .size(px(24.0))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(px(6.0))
-                                        .cursor_pointer()
-                                        .bg(motion::hover_blend(
-                                            "settings-close",
-                                            theme.glass_hover().opacity(0.0),
-                                            theme.glass_hover(),
-                                        ))
-                                        .on_hover(motion::hover_listener("settings-close"))
-                                        .role(gpui::Role::Button)
-                                        .aria_label("Close settings")
-                                        .tab_index(0)
-                                        .focus_visible(|s| s.border_2().border_color(theme.accent))
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.close_settings(cx)),
-                                        )
-                                        .child(
-                                            icon(icons::QUEUE_CLOSE)
-                                                .size(px(16.0))
-                                                .text_color(theme.text),
-                                        ),
-                                ),
-                            ),
-                    ),
+                    .flex_col()
+                    .child(div().flex_1().min_h_0().child(outlet)),
             )
             .child(
                 div()
@@ -5942,30 +5987,14 @@ impl Shell {
                     .tab_index(0)
                     .tab_stop(false),
             )
-            .into_any_element();
-        // Use the command palette's material, including its opaque fallback.
-        let card = crate::frost::frosted(16.0, crate::frost::MENU_BLUR, card);
-        // Keep settings in the normal overlay plane. Deferred pickers (1) and
-        // child dialogs (2) must paint and hit-test above this surface.
-        div()
-            .absolute()
-            .inset_0()
-            .occlude()
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .bg(popover::scrim_alpha(0.35))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(card)
             .into_any_element()
     }
 
-    /// Roving section tabs. At narrow window widths the rail keeps named
-    /// icons, leaving the available width to the preference page.
+    /// Roving section tabs, grouped by spacing alone: preferences, agents and
+    /// devices, then workspace data.
     fn render_settings_nav(
         &mut self,
         section: SettingsSection,
-        compact: bool,
         theme: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -5978,7 +6007,7 @@ impl Shell {
             SettingsSection::Files => icons::FOLDER,
             SettingsSection::Notifications => icons::BELL,
             SettingsSection::Shortcuts => icons::KEYBOARD,
-            SettingsSection::Conversations => icons::CHAT_ROUND_LINE,
+            SettingsSection::General => icons::SETTINGS,
             SettingsSection::Appshots => icons::MONITOR,
             SettingsSection::Archived => icons::ARCHIVE_MINIMALISTIC,
         };
@@ -5988,9 +6017,8 @@ impl Shell {
                 .id("settings-sections")
                 .role(gpui::Role::TabList)
                 .aria_label("Settings sections")
-                .w(px(if compact { 72.0 } else { 216.0 }))
+                .w_full()
                 .overflow_y_scroll()
-                .flex_none()
                 .h_full()
                 .flex()
                 .flex_col()
@@ -5998,128 +6026,89 @@ impl Shell {
                     div()
                         .flex_none()
                         .px(px(Theme::SPACE_SM))
+                        .pt(px(Theme::SPACE_MD))
                         .pb(px(Theme::SPACE_SM))
                         .flex()
                         .flex_col()
-                        .child(
-                            div().flex().flex_col().gap(px(2.0)).children(
-                                SettingsSection::ALL
-                                    .into_iter()
-                                    .filter(|item| item.visible_in_nav())
-                                    .map(|item| {
-                                        let index = SettingsSection::ALL
-                                            .iter()
-                                            .position(|s| *s == item)
-                                            .unwrap();
-                                        let selected = item == section;
-                                        let key = format!("settings-nav-{}", item.label());
-                                        let hover_key = format!("{key}-hover");
-                                        let selection_t = settings::widgets::tab_selection_t(
-                                            window,
-                                            format!("{key}-selection"),
-                                            selected,
-                                            motion::reduced_motion(cx),
-                                        );
-                                        let tab_text = motion::hover_blend(
-                                            &hover_key,
-                                            motion::mix(theme.text_muted, theme.text, selection_t),
-                                            theme.text,
-                                        );
-                                        let row = settings::widgets::section_tab(
-                                            theme,
-                                            selected,
-                                            selection_t,
-                                            key.clone(),
-                                            hover_key,
-                                        )
-                                        .when(compact, |el| el.justify_center())
-                                        .role(gpui::Role::Tab)
-                                        .aria_label(item.label())
-                                        .aria_selected(selected)
-                                        .track_focus(
-                                            &self.settings_nav_focus[index]
-                                                .clone()
-                                                .tab_stop(selected),
-                                        )
-                                        .tab_index(0)
-                                        .tab_stop(selected)
-                                        .on_key_down(cx.listener(
-                                            move |this, event: &gpui::KeyDownEvent, window, cx| {
-                                                let items: Vec<_> = SettingsSection::ALL
-                                                    .into_iter()
-                                                    .filter(|s| s.visible_in_nav())
-                                                    .collect();
-                                                let current = items
-                                                    .iter()
-                                                    .position(|s| *s == item)
-                                                    .unwrap_or(0);
-                                                let next = match event.keystroke.key.as_str() {
-                                                    "up" | "left" => {
-                                                        (current + items.len() - 1) % items.len()
-                                                    }
-                                                    "down" | "right" => (current + 1) % items.len(),
-                                                    "home" => 0,
-                                                    "end" => items.len() - 1,
-                                                    _ => return,
-                                                };
-                                                let target = items[next];
-                                                this.open_settings(target, cx);
-                                                let index = SettingsSection::ALL
-                                                    .iter()
-                                                    .position(|s| *s == target)
-                                                    .unwrap();
-                                                window.focus(&this.settings_nav_focus[index], cx);
-                                                cx.stop_propagation();
-                                            },
-                                        ))
-                                        .focus_visible(|s| s.border_2().border_color(theme.accent))
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.open_settings(item, cx)
-                                        }))
-                                        .child(
-                                            icon(section_icon(item))
-                                                .size(px(16.0))
-                                                .text_color(tab_text),
-                                        )
-                                        .when(!compact, |el| {
-                                            el.child(SharedString::from(item.label()))
-                                        });
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .flex_none()
-                                            .when_some(item.category_heading(), |group, heading| {
-                                                group
-                                                    .when(
-                                                        item != SettingsSection::Appearance,
-                                                        |el| {
-                                                            el.mt(px(
-                                                                Theme::SPACE_SM + Theme::SPACE_XS
-                                                            ))
-                                                        },
-                                                    )
-                                                    .when(!compact, |el| {
-                                                        el.child(
-                                                            div()
-                                                                .px(px(Theme::SPACE_SM))
-                                                                .pb(px(6.0))
-                                                                .text_size(
-                                                                    crate::typography::ui_rems(
-                                                                        10.0,
-                                                                    ),
-                                                                )
-                                                                .font_weight(
-                                                                    gpui::FontWeight::MEDIUM,
-                                                                )
-                                                                .text_color(theme.text_muted)
-                                                                .child(heading),
-                                                        )
-                                                    })
-                                            })
-                                            .child(row)
-                                    }),
-                            ),
+                        .gap(px(2.0))
+                        .children(
+                            SettingsSection::ALL
+                                .into_iter()
+                                .filter(|item| item.visible_in_nav())
+                                .map(|item| {
+                                    let index = SettingsSection::ALL
+                                        .iter()
+                                        .position(|s| *s == item)
+                                        .unwrap();
+                                    let selected = item == section;
+                                    let key = format!("settings-nav-{}", item.label());
+                                    let hover_key = format!("{key}-hover");
+                                    let selection_t = settings::widgets::tab_selection_t(
+                                        window,
+                                        format!("{key}-selection"),
+                                        selected,
+                                        motion::reduced_motion(cx),
+                                    );
+                                    let tab_text = motion::hover_blend(
+                                        &hover_key,
+                                        motion::mix(theme.text_muted, theme.text, selection_t),
+                                        theme.text,
+                                    );
+                                    settings::widgets::section_tab(
+                                        theme,
+                                        selected,
+                                        selection_t,
+                                        key.clone(),
+                                        hover_key,
+                                    )
+                                    .when(item.starts_nav_group(), |el| el.mt(px(Theme::SPACE_LG)))
+                                    .role(gpui::Role::Tab)
+                                    .aria_label(item.label())
+                                    .aria_selected(selected)
+                                    .track_focus(
+                                        &self.settings_nav_focus[index].clone().tab_stop(selected),
+                                    )
+                                    .tab_index(0)
+                                    .tab_stop(selected)
+                                    .on_key_down(cx.listener(
+                                        move |this, event: &gpui::KeyDownEvent, window, cx| {
+                                            let items: Vec<_> = SettingsSection::ALL
+                                                .into_iter()
+                                                .filter(|s| s.visible_in_nav())
+                                                .collect();
+                                            let current =
+                                                items.iter().position(|s| *s == item).unwrap_or(0);
+                                            let next = match event.keystroke.key.as_str() {
+                                                "up" | "left" => {
+                                                    (current + items.len() - 1) % items.len()
+                                                }
+                                                "down" | "right" => (current + 1) % items.len(),
+                                                "home" => 0,
+                                                "end" => items.len() - 1,
+                                                _ => return,
+                                            };
+                                            let target = items[next];
+                                            this.open_settings(target, cx);
+                                            let index = SettingsSection::ALL
+                                                .iter()
+                                                .position(|s| *s == target)
+                                                .unwrap();
+                                            window.focus(&this.settings_nav_focus[index], cx);
+                                            cx.stop_propagation();
+                                        },
+                                    ))
+                                    .focus_visible(|s| s.border_2().border_color(theme.accent))
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.open_settings(item, cx)
+                                    }))
+                                    .child(
+                                        icon(section_icon(item))
+                                            .size(px(16.0))
+                                            .text_color(tab_text),
+                                    )
+                                    .child(SharedString::from(item.label()))
+                                }),
                         ),
                 ),
         )
@@ -6872,10 +6861,6 @@ impl Shell {
         {
             self.cancel_pinned_session_drag(cx);
         }
-        let (user, workspace_scope) = {
-            let state = self.state.read(cx);
-            (state.auth_user().cloned(), state.workspace_scope)
-        };
 
         // Keyed rows: (stable key, estimated height, element) — the key + height
         // list drives the §1.6 resort FLIP diff below (attention-bucket
@@ -7069,31 +7054,6 @@ impl Shell {
         // t3code's archived accordion, below the active list.
         let archived_section = self.render_archived_section(theme, cx);
 
-        let (user_line, menu_identity): (SharedString, SharedString) = match workspace_scope {
-            Some(WorkspaceScope::Local) => {
-                let line = if matches!(self.sync_flow, SyncFlow::RestartPending { .. }) {
-                    "Sync ready after restart"
-                } else {
-                    "Local only"
-                };
-                (line.into(), "Stored on this device".into())
-            }
-            Some(WorkspaceScope::Development) => {
-                ("Development".into(), "Authentication disabled".into())
-            }
-            Some(WorkspaceScope::Synced) | None => {
-                let line: SharedString = user
-                    .as_ref()
-                    .map(|u| u.name.clone().unwrap_or_else(|| u.email.clone()).into())
-                    .unwrap_or_else(|| "Not signed in".into());
-                let email = user
-                    .as_ref()
-                    .map(|u| SharedString::from(u.email.clone()))
-                    .unwrap_or_else(|| line.clone());
-                (line, email)
-            }
-        };
-        let user_menu = self.render_user_menu(user_line, menu_identity, theme, cx);
 
         // The space filter lives ABOVE the scroll region (fixed) so its
         // dropdown can float without being clipped by the list's overflow.
@@ -7301,7 +7261,12 @@ impl Shell {
                         .child(notice),
                 )
             })
-            .child(div().p(px(Theme::SPACE_SM)).flex_none().child(user_menu))
+            .child(
+                div()
+                    .p(px(Theme::SPACE_SM))
+                    .flex_none()
+                    .child(self.render_sidebar_footer(theme, cx)),
+            )
             .into_any_element()
     }
 
@@ -7440,8 +7405,18 @@ impl Shell {
         }
     }
 
-    /// Scope-aware sidebar identity and account menu. Local runtimes advertise
-    /// their storage boundary and offer sync; synced runtimes offer sign-out.
+    /// The sidebar's bottom row: account menu on the left, settings toggle on
+    /// the right. Shared by the chat sidebar and the settings page so both
+    /// sit in one position. Local runtimes advertise their storage boundary
+    /// and offer sync; synced runtimes offer sign-out.
+    fn render_sidebar_footer(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let (user_line, menu_identity) = {
+            let state = self.state.read(cx);
+            sidebar_account_identity(state.workspace_scope, self.sync_flow, state.auth_user())
+        };
+        self.render_user_menu(user_line, menu_identity, theme, cx)
+    }
+
     fn render_user_menu(
         &mut self,
         user_line: SharedString,
@@ -7452,7 +7427,8 @@ impl Shell {
         let theme = &theme.for_popup();
         let open = self.user_menu.is_open();
         let action = account_menu_action(self.state.read(cx).workspace_scope, self.sync_flow);
-        // Only the compact avatar button is interactive; footer whitespace is not.
+        // The profile pill hugs avatar + name (shrinking so long names fade
+        // out); the gap between it and the settings button is not interactive.
         let initial: SharedString = user_line
             .trim()
             .chars()
@@ -7465,17 +7441,26 @@ impl Shell {
             .debug_selector(|| "user-menu".into())
             .role(gpui::Role::Button)
             .aria_label(format!("Account menu: {user_line}"))
+            .aria_expanded(open)
             .tab_index(0)
             .focus_visible(|s| s.border_2().border_color(theme.accent))
             .relative()
-            .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE + 8.0))
-            .flex_none()
-            .rounded_full()
-            .p(px(4.0))
+            .h(px(SIDEBAR_FOOTER_BUTTON_SIZE))
+            .min_w_0()
+            .flex_shrink_1()
+            .rounded(px(8.0))
+            .px(px(Theme::SPACE_SM))
             .flex()
             .flex_row()
             .items_center()
-            .justify_center()
+            .gap(px(Theme::SPACE_SM))
+            .text_size(crate::typography::ui_rems(13.0))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(if open {
+                theme.text
+            } else {
+                motion::hover_blend("user-menu-trigger", theme.text.opacity(0.8), theme.text)
+            })
             .cursor_pointer()
             // user-menu.tsx trigger: hover `bg-white/[0.04]`, open state
             // (`data-[state=open]`) the slightly stronger `bg-white/[0.06]`;
@@ -7507,7 +7492,7 @@ impl Shell {
             .child(
                 // Avatar: white circle, initial in near-black (zeron user-menu.tsx).
                 div()
-                    .size(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
+                    .size(px(SIDEBAR_FOOTER_AVATAR_SIZE))
                     .flex_none()
                     .rounded_full()
                     .bg(theme.text)
@@ -7515,12 +7500,17 @@ impl Shell {
                     .items_center()
                     .justify_center()
                     .font_family(theme.font_mono.clone())
-                    .text_size(px(9.0))
-                    .line_height(px(SIDEBAR_ACTIVE_HARNESS_ICON_SIZE))
+                    .text_size(px(10.0))
+                    .line_height(px(SIDEBAR_FOOTER_AVATAR_SIZE))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.bg)
                     .child(div().w_full().text_center().child(initial)),
-            );
+            )
+            .child(sidebar_faded_label(
+                "user-menu-label".into(),
+                false,
+                div().line_height(px(17.0)).child(user_line),
+            ));
         if self.user_menu.get().is_some() {
             let closing = self.user_menu.closing_since();
             let menu = popover::popover_card(theme)
@@ -7592,54 +7582,84 @@ impl Shell {
                                 .into_any_element()
                         }
                     };
-                    menu.child(row).child(popover::menu_separator())
+                    menu.child(row)
                 })
                 .into_any_element();
-            trigger = trigger.child(popover::anchored_menu_right(
+            // Opens upward, left-aligned with the pill: the card is as wide as
+            // the footer row, so it covers the row instead of the pane beside it.
+            trigger = trigger.child(popover::anchored_menu_above(
                 "user-menu-popover",
                 menu,
                 closing,
             ));
         }
+        // Settings is a toggle: while its page is up the button keeps the
+        // hover wash + full-strength glyph, and a click returns to chat.
+        let settings_open = matches!(self.route, Route::Settings(_));
+        let settings_tooltip: SharedString = match (settings_open, cfg!(target_os = "macos")) {
+            (false, true) => "Settings · ⌘,".into(),
+            (false, false) => "Settings · Ctrl+,".into(),
+            (true, true) => "Close settings · ⌘,".into(),
+            (true, false) => "Close settings · Ctrl+,".into(),
+        };
         div()
+            .w_full()
             .flex()
             .items_center()
+            .justify_between()
             .gap(px(4.0))
             .child(trigger)
             .child(
                 div()
                     .id("settings-trigger")
+                    .debug_selector(|| "settings-trigger".into())
                     .role(gpui::Role::Button)
-                    .aria_label("Settings")
-                    .tooltip(|_, cx| {
-                        cx.new(|_| SurfaceTabTooltip {
-                            text: if cfg!(target_os = "macos") {
-                                "Settings · ⌘,"
-                            } else {
-                                "Settings · Ctrl+,"
-                            }
-                            .into(),
-                        })
-                        .into()
+                    .aria_label(if settings_open {
+                        "Close settings"
+                    } else {
+                        "Settings"
+                    })
+                    .aria_toggled(if settings_open {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .tooltip(move |_, cx| {
+                        let text = settings_tooltip.clone();
+                        cx.new(|_| SurfaceTabTooltip { text }).into()
                     })
                     .tab_index(0)
-                    .size(px(28.0))
+                    .size(px(SIDEBAR_FOOTER_BUTTON_SIZE))
                     .flex_none()
                     .rounded(px(8.0))
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .text_color(theme.text_muted)
-                    .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text))
+                    .bg(if settings_open {
+                        theme.glass_hover()
+                    } else {
+                        motion::hover_blend(
+                            "settings-trigger",
+                            theme.glass_hover().opacity(0.0),
+                            theme.glass_hover(),
+                        )
+                    })
+                    .on_hover(motion::hover_listener("settings-trigger"))
                     .focus_visible(|s| s.border_2().border_color(theme.accent))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.open_settings(SettingsSection::Appearance, cx)
-                    }))
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx)))
                     .child(
-                        icon(icons::SETTINGS_MINIMALISTIC)
+                        icon(icons::SETTINGS)
                             .size(px(15.0))
-                            .text_color(theme.text_muted),
+                            .text_color(if settings_open {
+                                theme.text
+                            } else {
+                                motion::hover_blend(
+                                    "settings-trigger",
+                                    theme.text_muted,
+                                    theme.text,
+                                )
+                            }),
                     ),
             )
             .into_any_element()
@@ -11076,7 +11096,7 @@ impl Render for Shell {
             gate.clone()
         };
         let root = match &render_gate {
-            GatePhase::Ready => {
+            GatePhase::Ready => 'ready: {
                 // Focus is a sync signal: on the rising edge of window
                 // activation, nudge every open room to verify liveness — a
                 // broadcast-deaf socket (accepted writes, runtime pongs,
@@ -11118,6 +11138,35 @@ impl Render for Shell {
                 // Stamped for `right_target` — the expanded changes panel
                 // sizes itself to the viewport.
                 self.viewport_width = viewport;
+                // Settings replaces the whole workspace, sidebar included. The
+                // chat layout stays unmounted; its entities keep their state
+                // for the return trip.
+                if let Route::Settings(section) = self.route {
+                    let settings_page = self.render_settings_page(section, window, cx);
+                    let overlays = self.render_overlays(window.viewport_size(), window, cx);
+                    let border_color = Theme::of(cx).border;
+                    let sidebar_tone =
+                        Self::sidebar_tone(self.settings.sidebar_width, border_color, window);
+                    let drag = self.titlebar_drag_region(
+                        "settings-titlebar",
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .h(px(Theme::TITLEBAR_HEIGHT)),
+                        cx,
+                    );
+                    let page = div()
+                        .size_full()
+                        .relative()
+                        .child(settings_page)
+                        .child(drag)
+                        .children(overlays);
+                    break 'ready root
+                        .child(sidebar_tone)
+                        .child(motion::fade_in("phase-app", page));
+                }
                 let on_chat = true;
                 let right_target_width = if on_chat {
                     self.right_visible_width(cx)
@@ -11270,40 +11319,11 @@ impl Render for Shell {
                     Empty.into_any_element()
                 };
                 let title_bar = self.render_title_bar(window.viewport_size().height, cx);
-                // Sidebar tone: a slightly lighter column behind the sidebar,
-                // spanning the FULL window height (under the traffic lights,
-                // through the titlebar, down to the bottom edge). Its width
-                // rides the same tween as the sidebar, so the tone melts away
-                // with the collapse instead of vanishing in a frame.
+                // Sidebar tone: a slightly lighter column behind the sidebar.
+                // Its width rides the same tween as the sidebar, so the tone
+                // melts away with the collapse instead of vanishing in a frame.
                 let sidebar_now = self.sidebar_now();
-                // Hairline on its right edge — full height like the tone,
-                // so the sidebar column reads as its own surface.
-                // The tone carries the window's left corners when the CSD
-                // window floats — with one caveat: a corner radius is
-                // clamped to the element's own size, and the COLLAPSED
-                // sidebar is a ~1px border sliver (the grab affordance).
-                // macOS trims that hairline with the window server's native
-                // corner clip; we reproduce the same trim by insetting the
-                // sliver vertically to where the curve begins, so its tips
-                // never float over the transparent corner cutouts.
-                let window_corner = Self::window_corner_radius(window);
-                let sidebar_tone = div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left_0()
-                    .w(px(sidebar_now))
-                    .when(window_corner > 0.0, |el| {
-                        if sidebar_now >= 2.0 * window_corner {
-                            el.rounded_tl(px(window_corner))
-                                .rounded_bl(px(window_corner))
-                        } else {
-                            el.top(px(window_corner)).bottom(px(window_corner))
-                        }
-                    })
-                    .bg(crate::theme::wash(0.05))
-                    .border_r_1()
-                    .border_color(border_color);
+                let sidebar_tone = Self::sidebar_tone(sidebar_now, border_color, window);
                 // The content row spans the FULL window height — the titlebar
                 // overlays it (glass, no fill), so the transcript can scroll
                 // under the header and fade out at its edge. Columns that
@@ -11382,12 +11402,6 @@ impl Render for Shell {
                 root.child(loaders::splash_overlay(&theme, true, cx.entity_id(), cx))
             }
             SplashPhase::Gone => root,
-        };
-
-        let root = if let Route::Settings(section) = self.route {
-            root.child(self.render_settings_modal(section, window, cx))
-        } else {
-            root
         };
 
         // Caption controls are shell-level chrome, not Ready-page content:
@@ -11895,6 +11909,29 @@ mod tests {
             account_menu_action(Some(WorkspaceScope::Development), SyncFlow::Idle),
             None
         );
+    }
+
+    #[test]
+    fn sidebar_footer_names_the_account_or_falls_back_to_local() {
+        let named = zeron_proto::UserProfile {
+            id: "u".into(),
+            email: "wing@example.com".into(),
+            name: Some("Wing".into()),
+        };
+        let unnamed = zeron_proto::UserProfile {
+            name: Some("  ".into()),
+            ..named.clone()
+        };
+        let label = |scope, user| sidebar_account_identity(scope, SyncFlow::Idle, user).0;
+        assert_eq!(label(Some(WorkspaceScope::Synced), Some(&named)), "Wing");
+        assert_eq!(
+            label(Some(WorkspaceScope::Synced), Some(&unnamed)),
+            "wing@example.com"
+        );
+        assert_eq!(label(None, None), "Local");
+        assert_eq!(label(Some(WorkspaceScope::Synced), None), "Local");
+        // Local-only storage stays "Local" even with a cached profile.
+        assert_eq!(label(Some(WorkspaceScope::Local), Some(&named)), "Local");
     }
 
     #[test]
@@ -12857,6 +12894,64 @@ mod exit_regressions {
                     assert!(shell.pending_workspace_command.is_none());
                 })
                 .unwrap();
+        }
+    }
+
+    #[gpui::test]
+    fn sidebar_settings_trigger_toggles_the_settings_route(cx: &mut TestAppContext) {
+        // Just the footer row: the full shell's settings modal would cover it.
+        struct FooterHost(Entity<Shell>);
+        impl Render for FooterHost {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                self.0.update(cx, |shell, cx| {
+                    div()
+                        .w(px(256.0))
+                        .child(shell.render_sidebar_footer(&Theme::default(), cx))
+                })
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            FooterHost(cx.new(|cx| {
+                let state = cx.new(|_| AppState::new());
+                Shell::new(
+                    state,
+                    EngineBootConfig {
+                        data_dir: dir.path().into(),
+                        ipc_port: 0,
+                        edge_url: "http://127.0.0.1:1".into(),
+                        edge_token: None,
+                        org_id: None,
+                        workos_client_id: None,
+                        default_harness: zeron_proto::HarnessId::Mock,
+                    },
+                    cx,
+                )
+            }))
+        });
+        let shell = host.read_with(cx, |host, _| host.0.clone());
+        for expect_open in [true, false] {
+            cx.update(|window, cx| window.draw(cx).clear());
+            assert!(cx.debug_bounds("user-menu-label").is_some());
+            let trigger = cx.debug_bounds("settings-trigger").unwrap().center();
+            cx.simulate_click(trigger, gpui::Modifiers::default());
+            shell.read_with(cx, |shell, _| {
+                if expect_open {
+                    assert!(matches!(
+                        shell.route,
+                        Route::Settings(SettingsSection::General)
+                    ));
+                } else {
+                    assert!(matches!(shell.route, Route::Chat));
+                }
+            });
         }
     }
 
@@ -14082,7 +14177,7 @@ mod settings_modal_regressions {
                     assert_eq!(shell.route, Route::Chat);
                     assert!(!shell.settings_focus_pending);
                     shell.toggle_settings(cx);
-                    assert_eq!(shell.route, Route::Settings(SettingsSection::Appearance));
+                    assert_eq!(shell.route, Route::Settings(SettingsSection::General));
                 }
                 shell.open_settings(SettingsSection::Agents, cx);
                 assert_eq!(shell.route, Route::Settings(SettingsSection::Harnesses));

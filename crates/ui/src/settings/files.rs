@@ -1,10 +1,10 @@
 //! Settings → Files: local preferences for workspace-file editing.
 
-use gpui::{Context, EventEmitter, SharedString, Window, div, prelude::*, px};
+use gpui::{Context, EventEmitter, Window, div, prelude::*, px};
 
 use super::widgets;
 use crate::popover;
-use crate::{icons, theme::Theme};
+use crate::theme::Theme;
 
 const DELAY_OPTIONS: [u64; 5] = [300, 600, 900, 1_500, 3_000];
 
@@ -22,6 +22,7 @@ pub struct FilesSettingsPage {
     autosave_delay_ms: u64,
     word_wrap: bool,
     show_all_files: bool,
+    delay_select: widgets::SelectState,
 }
 
 impl EventEmitter<FilesSettingsEvent> for FilesSettingsPage {}
@@ -40,6 +41,7 @@ impl FilesSettingsPage {
             autosave_delay_ms,
             word_wrap,
             show_all_files,
+            delay_select: widgets::SelectState::default(),
         }
     }
 
@@ -83,30 +85,36 @@ impl Render for FilesSettingsPage {
         let selected = self.autosave_delay_ms;
         let word_wrap = self.word_wrap;
         let show_all_files = self.show_all_files;
-        let options = DELAY_OPTIONS.into_iter().map(|delay| {
-            let active = delay == selected;
-            let id: SharedString = format!("files-autosave-{delay}").into();
-            widgets::choice(&theme, active, id.clone())
-                .id(id)
-                .aria_selected(active)
-                .tab_index(0)
-                .role(gpui::Role::Button)
-                .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.autosave_delay_ms = delay;
-                    cx.emit(FilesSettingsEvent::AutosaveDelayChanged(delay));
-                    cx.notify();
-                }))
-                .child(if delay >= 1_000 {
+        let delay_control = widgets::select(
+            "files-autosave-delay",
+            "Autosave delay",
+            &theme,
+            |page: &mut Self| &mut page.delay_select,
+        )
+        .options(
+            DELAY_OPTIONS.into_iter().map(|delay| {
+                widgets::SelectOption::new(if delay >= 1_000 {
                     format!("{} s", delay as f32 / 1_000.0)
                 } else {
                     format!("{delay} ms")
                 })
-        });
+            }),
+            DELAY_OPTIONS
+                .iter()
+                .position(|delay| *delay == selected)
+                .unwrap_or_default(),
+        )
+        .width(112.0)
+        .on_select(|page, ix, _, cx| {
+            let delay = DELAY_OPTIONS[ix];
+            page.autosave_delay_ms = delay;
+            cx.emit(FilesSettingsEvent::AutosaveDelayChanged(delay));
+            cx.notify();
+        })
+        .render(&self.delay_select, cx);
         let card = widgets::section_card(&theme)
             .child(
                 widgets::card_row(&theme, true)
-                    .child(widgets::row_tile(&theme, icons::FOLDER))
                     .child(
                         div()
                             .flex_1()
@@ -138,29 +146,19 @@ impl Render for FilesSettingsPage {
             .when(autosave_enabled, |card| {
                 card.child(
                     widgets::card_row(&theme, true)
-                        .items_start()
-                        .child(widgets::row_tile(&theme, icons::FOLDER))
                         .child(
                             div()
                                 .flex_1()
                                 .min_w(px(160.0))
                                 .flex()
                                 .flex_col()
-                                .child(widgets::row_title(&theme, "Autosave delay"))
-                                .child(
-                                    div()
-                                        .mt(px(12.0))
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap(px(7.0))
-                                        .children(options),
-                                ),
-                        ),
+                                .child(widgets::row_title(&theme, "Autosave delay")),
+                        )
+                        .child(delay_control),
                 )
             })
             .child(
-                widgets::card_row(&theme, true)
-                    .child(widgets::row_tile(&theme, icons::LIST))
+                widgets::card_row(&theme, false)
                     .child(
                         div()
                             .flex_1()
@@ -191,7 +189,6 @@ impl Render for FilesSettingsPage {
             )
             .child(
                 widgets::card_row(&theme, false)
-                    .child(widgets::row_tile(&theme, icons::EYE))
                     .child(
                         div()
                             .flex_1()
