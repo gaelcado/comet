@@ -318,8 +318,7 @@ impl Shell {
             return;
         }
         if expanded {
-            self.harness_update_scroll
-                .set_offset(gpui::Point::default());
+            self.harness_update_scroll.reset();
         }
         let from = self.eval_tween(
             self.harness_update_transition,
@@ -355,7 +354,7 @@ impl Shell {
         let device = row.device_id.clone();
         let key_device = device.clone();
         let (label, method) = action(status)?;
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_settings_surface();
         let harness = status.harness;
         // The settings/details link is local UI and remains usable offline.
         let available = method.is_none() || row.connected;
@@ -461,7 +460,7 @@ impl Shell {
             self.harness_update_transition,
             if expanded { 1.0 } else { 0.0 },
         );
-        let theme = Theme::of(cx).clone();
+        let theme = Theme::of(cx).for_settings_surface();
         let name = agent_name(status.harness);
         let all_updated = statuses
             .iter()
@@ -568,9 +567,9 @@ impl Shell {
             + 2.0)
             .min(max_width);
         let list_width = LIST_WIDTH.min(max_width);
-        let list_height =
-            (CHIP_HEIGHT + ROW_HEIGHT * (statuses.len() as f32).min(MAX_VISIBLE_ROWS) + 8.0)
-                .min((self.viewport_height - Theme::TITLEBAR_HEIGHT - 64.0).max(CHIP_HEIGHT));
+        let list_height = (CHIP_HEIGHT
+            + ROW_HEIGHT * (statuses.len() as f32).min(MAX_VISIBLE_ROWS))
+        .min((self.viewport_height - Theme::TITLEBAR_HEIGHT - 64.0).max(CHIP_HEIGHT));
         let targets = if expanded {
             [list_width, list_height]
         } else {
@@ -653,22 +652,15 @@ impl Shell {
                         .flex_none()
                         .ml(px(8.0))
                         .child(
-                            icon(icons::ALT_ARROW_UP)
-                                .absolute()
-                                .left(px(5.0))
-                                .top(px(5.0))
-                                .size(px(14.0))
-                                .text_color(theme.text_muted)
-                                .opacity(1.0 - reveal),
-                        )
-                        .child(
                             icon(icons::ALT_ARROW_DOWN)
                                 .absolute()
                                 .left(px(5.0))
                                 .top(px(5.0))
                                 .size(px(14.0))
                                 .text_color(theme.text_muted)
-                                .opacity(reveal),
+                                .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                                    std::f32::consts::PI * (1.0 - reveal),
+                                ))),
                         ),
                 )
             });
@@ -680,8 +672,7 @@ impl Shell {
                     let status = &row.status;
                     // Reveal after the surface has made room. Use the same
                     // reversible progress on exit; never replay a mount animation.
-                    let row_reveal =
-                        crate::composer_dock::stage(reveal, 0.55 + index.min(3) as f32 * 0.05, 1.0);
+                    let row_reveal = crate::composer_dock::stage(reveal, 0.42, 0.9);
                     let (mark, tint) = crate::pickers::harness_brand_icon(status.harness);
                     let label = if row.connected {
                         detail(status)
@@ -707,7 +698,7 @@ impl Shell {
                             row.device_id, status.harness
                         )))
                         .relative()
-                        .top(px(6.0 * (1.0 - row_reveal)))
+                        .top(px(3.0 * (1.0 - row_reveal)))
                         .opacity(row_reveal)
                         .h(px(ROW_HEIGHT))
                         .flex_none()
@@ -715,6 +706,17 @@ impl Shell {
                         .flex()
                         .items_center()
                         .gap(px(10.0))
+                        .when(index > 0, |el| {
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .left(px(42.0))
+                                    .right(px(12.0))
+                                    .h(px(1.0))
+                                    .bg(settings::widgets::row_divider(&theme)),
+                            )
+                        })
                         .child(
                             icon(mark)
                                 .size(px(20.0))
@@ -784,30 +786,46 @@ impl Shell {
                         .into_any_element()
                 })
                 .collect();
+            let rail = settings::widgets::rail(
+                &mut self.harness_update_scroll,
+                "home-harness-update-scrollbar",
+                &theme,
+                cx,
+                |shell| &mut shell.harness_update_scroll,
+            );
             let list = div()
                 .id("home-harness-update-list")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.harness_update_scroll.scroll)
+                .flex()
+                .flex_col()
+                .children(rows)
+                // The fading list is inert while collapsing or before its
+                // reveal. It must not intercept a click through clipped rows.
+                .when(!expanded || reveal < 0.85, |el| {
+                    el.child(div().absolute().inset_0().occlude())
+                });
+            let list = crate::edge_fade::edge_faded(LIST_FADE_BAND, true, true, list)
+                .fade_overflow_y(&self.harness_update_scroll.scroll);
+            div()
+                .id("home-harness-update-list-host")
                 .absolute()
                 .top(px(CHIP_HEIGHT))
                 // Keep the final layout centered as the shell widens, so
                 // neither edge appears attached to a moving clipping boundary.
                 .left(px((size[0] - list_width) * 0.5))
                 .w(px((list_width - 2.0).max(0.0)))
-                .h(px((list_height - CHIP_HEIGHT - 8.0).max(0.0)))
-                .overflow_y_scroll()
-                .track_scroll(&self.harness_update_scroll)
-                .flex()
-                .flex_col()
-                .border_t_1()
-                .border_color(theme.border.opacity(0.5))
-                .opacity(crate::composer_dock::stage(reveal, 0.45, 0.75))
-                // The fading list is inert while collapsing or before its
-                // reveal. It must not intercept a click through clipped rows.
-                .children(rows)
-                .when(!expanded || reveal < 0.85, |el| {
-                    el.child(div().absolute().inset_0().occlude())
-                });
-            crate::edge_fade::edge_faded(LIST_FADE_BAND, true, true, list)
-                .fade_overflow_y(&self.harness_update_scroll)
+                .h(px((list_height - CHIP_HEIGHT).max(0.0)))
+                .bg(settings::widgets::block_fill(&theme))
+                .opacity(crate::composer_dock::stage(reveal, 0.3, 0.72))
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    if this.harness_update_scroll.set_list_hovered(*hovered) {
+                        cx.notify();
+                    }
+                }))
+                .child(list)
+                .children(rail)
         });
         let single_tooltip = (!multiple)
             .then(|| {
@@ -826,12 +844,10 @@ impl Shell {
             .rounded(px(radius))
             .overflow_hidden()
             .border_1()
-            .border_color(crate::theme::composer_surface_border(&theme))
+            .border_color(theme.border.opacity(0.7))
             .text_color(theme.text)
-            .when(theme.is_frost(), |el| el.bg(theme.composer_sidebar_tint()))
-            .when(!theme.is_frost(), |el| {
-                el.bg(theme.input_glass_bg()).shadow_lg()
-            })
+            .bg(popover::surface_bg(&theme))
+            .when(!theme.is_frost(), |el| el.shadow_lg())
             .when(expanded, |el| {
                 el.on_mouse_down_out(
                     cx.listener(|this, _, _, cx| this.set_harness_updates_expanded(false, cx)),
@@ -846,6 +862,18 @@ impl Shell {
                 })
             })
             .child(summary)
+            .when(reveal > 0.0, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top(px(CHIP_HEIGHT))
+                        .left(px(12.0))
+                        .right(px(12.0))
+                        .h(px(1.0))
+                        .bg(settings::widgets::row_divider(&theme))
+                        .opacity(crate::composer_dock::stage(reveal, 0.2, 0.65)),
+                )
+            })
             .children(rows)
             .when(!multiple && row.connected && active(status), |el| {
                 // Inset within the pill so the track clears its rounded border.

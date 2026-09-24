@@ -1844,7 +1844,7 @@ pub struct Shell {
     harness_update_expanded: bool,
     harness_update_transition: Option<WidthTween>,
     harness_update_geometry: [Option<WidthTween>; 2],
-    harness_update_scroll: gpui::ScrollHandle,
+    harness_update_scroll: settings::widgets::PageScroll,
     user_menu: popover::Popup<()>,
     /// Inline sidebar error strip (mutation failures); click dismisses.
     sidebar_notice: Option<SharedString>,
@@ -2258,7 +2258,7 @@ impl Shell {
             harness_update_expanded: false,
             harness_update_transition: None,
             harness_update_geometry: [None; 2],
-            harness_update_scroll: gpui::ScrollHandle::new(),
+            harness_update_scroll: settings::widgets::PageScroll::default(),
             user_menu: popover::Popup::default(),
             sidebar_notice: None,
             update_flow: UpdateFlow::Idle,
