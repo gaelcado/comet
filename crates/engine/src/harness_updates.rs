@@ -41,6 +41,7 @@ struct Preferences {
 enum LatestSource {
     Claude,
     Npm(&'static str),
+    Opencode,
     Github {
         repository: &'static str,
         tag_prefix: &'static str,
@@ -213,7 +214,7 @@ fn provider(id: HarnessId) -> ProviderSpec {
         HarnessId::Hermes => ProviderSpec {
             version_args: &["--version"],
             latest: LatestSource::Hermes,
-            update_args: Some(&["update"]),
+            update_args: Some(&["update", "--yes"]),
             manual_command: "hermes update",
         },
         HarnessId::Pi => ProviderSpec {
@@ -224,7 +225,7 @@ fn provider(id: HarnessId) -> ProviderSpec {
         },
         HarnessId::Opencode => ProviderSpec {
             version_args: &["--version"],
-            latest: LatestSource::Npm("@opencode/cli"),
+            latest: LatestSource::Opencode,
             update_args: Some(&["upgrade"]),
             manual_command: "opencode upgrade",
         },
@@ -607,6 +608,10 @@ impl HarnessUpdateCoordinator {
                 }
             }
             LatestSource::Npm(package) => self.npm_latest(package).await.map(UpdateCheck::Version),
+            LatestSource::Opencode => self
+                .npm_latest(opencode_release_package(&installed))
+                .await
+                .map(UpdateCheck::Version),
             LatestSource::Github {
                 repository,
                 tag_prefix,
@@ -1761,6 +1766,20 @@ fn version_numbers(version: &str) -> Option<Vec<u64>> {
     (values.len() >= 2).then_some(values)
 }
 
+fn opencode_release_package(installed: &str) -> &'static str {
+    // OpenCode v2 ships as a separate CLI package. The v1 self-updater stays
+    // on the opencode-ai release line, so advertising a v2 version to it makes
+    // a successful no-op look like a failed installation at verification.
+    if version_numbers(installed)
+        .and_then(|numbers| numbers.first().copied())
+        .is_some_and(|major| major >= 2)
+    {
+        "@opencode/cli"
+    } else {
+        "opencode-ai"
+    }
+}
+
 fn version_is_newer(latest: &str, installed: &str) -> bool {
     match (version_numbers(latest), version_numbers(installed)) {
         (Some(mut latest), Some(mut installed)) => {
@@ -1776,8 +1795,8 @@ fn version_is_newer(latest: &str, installed: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        LatestSource, activate_codex_release, codex_standalone_install, extract_version, provider,
-        validate_codex_package, version_is_newer,
+        LatestSource, activate_codex_release, codex_standalone_install, extract_version,
+        opencode_release_package, provider, validate_codex_package, version_is_newer,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1965,6 +1984,12 @@ esac
     }
 
     #[test]
+    fn opencode_update_check_follows_the_installed_cli_generation() {
+        assert_eq!(opencode_release_package("1.18.31"), "opencode-ai");
+        assert_eq!(opencode_release_package("2.0.16"), "@opencode/cli");
+    }
+
+    #[test]
     fn hermes_checks_report_commit_availability_without_a_version() {
         use super::{UpdateCheck, parse_hermes_update_check};
         assert!(matches!(
@@ -2012,7 +2037,7 @@ case "$1:$2" in
     else
       printf '☤ Update available: 3 commits behind origin/main.\n'
     fi ;;
-  update:) touch "$root/updated" ;;
+  update:--yes) touch "$root/updated" ;;
   *) exit 2 ;;
 esac
 "#,

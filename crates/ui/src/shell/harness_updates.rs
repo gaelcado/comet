@@ -8,7 +8,7 @@ use zeron_proto::{HarnessId, HarnessUpdatePhase as Phase, HarnessUpdateStatus};
 const CHIP_HEIGHT: f32 = 38.0;
 const ROW_HEIGHT: f32 = 64.0;
 const MAX_VISIBLE_ROWS: f32 = 3.5;
-const LIST_FADE_BAND: f32 = 12.0;
+const LIST_FADE_BAND: f32 = 32.0;
 const LIST_WIDTH: f32 = 360.0;
 const MARK_SIZE: f32 = 22.0;
 const MARK_STEP: f32 = 14.0;
@@ -588,6 +588,7 @@ impl Shell {
             size[axis] = self.eval_tween(self.harness_update_geometry[axis], target);
         }
         let radius = motion::lerp(19.0, 16.0, reveal);
+        let list_bottom_radius = (radius - 1.0).max(0.0);
         let summary = div()
             .id("home-harness-update-summary")
             .h(px(CHIP_HEIGHT))
@@ -814,9 +815,12 @@ impl Shell {
                 .top(px(CHIP_HEIGHT))
                 // Keep the final layout centered as the shell widens, so
                 // neither edge appears attached to a moving clipping boundary.
-                .left(px((size[0] - list_width) * 0.5))
+                .left(px((size[0] - list_width) * 0.5 + 1.0))
                 .w(px((list_width - 2.0).max(0.0)))
-                .h(px((list_height - CHIP_HEIGHT).max(0.0)))
+                .h(px((list_height - CHIP_HEIGHT - 1.0).max(0.0)))
+                .rounded_bl(px(list_bottom_radius))
+                .rounded_br(px(list_bottom_radius))
+                .overflow_hidden()
                 .bg(settings::widgets::block_fill(&theme))
                 .opacity(crate::composer_dock::stage(reveal, 0.3, 0.72))
                 .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
