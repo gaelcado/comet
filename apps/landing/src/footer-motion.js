@@ -16,8 +16,6 @@ if (footer && reveal) {
     const far = footer.querySelector('.footer-plane--far');
     const middle = footer.querySelector('.footer-plane--middle');
     const near = footer.querySelector('.footer-plane--near');
-    const wordmark = footer.querySelector('.footer-wordmark');
-    const foot = footer.querySelector('.foot');
 
     const timeline = gsap.timeline({
       defaults: { ease: 'power2.out' },
@@ -33,9 +31,7 @@ if (footer && reveal) {
       .fromTo(sun, { y: () => landscape.clientHeight * 0.025 }, { y: 0, ease: 'none', duration: 1 }, 0)
       .fromTo(far, { y: () => landscape.clientHeight * 0.04 }, { y: 0, ease: 'none', duration: 1 }, 0)
       .fromTo(middle, { y: () => landscape.clientHeight * 0.07 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(near, { y: () => landscape.clientHeight * 0.10 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(wordmark, { yPercent: 7 }, { yPercent: 0, duration: 0.65 }, 0.2)
-      .fromTo(foot, { y: 8 }, { y: 0, duration: 0.5 }, 0.35);
+      .fromTo(near, { y: () => landscape.clientHeight * 0.10 }, { y: 0, ease: 'none', duration: 1 }, 0);
 
     if (quote) {
       gsap.fromTo(quote.querySelectorAll('.plate-img'), { yPercent: -5 }, {
