@@ -20,7 +20,7 @@ themeButton.addEventListener('click', () => {
     localStorage.setItem('zeron-landing-theme', document.documentElement.dataset.theme);
   } catch {}
   syncThemeButton();
-  syncHeroField();
+  syncGlyphFields();
 });
 
 systemTheme.addEventListener('change', () => {
@@ -31,7 +31,7 @@ systemTheme.addEventListener('change', () => {
   if (saved !== 'light' && saved !== 'dark') {
     document.documentElement.dataset.theme = systemTheme.matches ? 'light' : 'dark';
     syncThemeButton();
-    syncHeroField();
+    syncGlyphFields();
   }
 });
 syncThemeButton();
@@ -91,8 +91,30 @@ const heroField = mountGlyphField(document.querySelector('.hero'), {
   clearElement: document.querySelector('.hero-copy'),
 });
 
-function syncHeroField() {
+const footerPalette = () => document.documentElement.dataset.theme === 'light'
+  ? {
+      base: [75, 62, 94], baseAlpha: [0.035, 0.075],
+      glow: [105, 75, 169],
+      beam: { angle: -38, width: 0.14, sweep: 34, alpha: 0.11 },
+    }
+  : {
+      base: [156, 146, 181], baseAlpha: [0.035, 0.085],
+      glow: [183, 157, 249],
+      beam: { angle: -38, width: 0.14, sweep: 34, alpha: 0.2 },
+    };
+
+const footerField = mountGlyphField(document.querySelector('.footer-frame'), {
+  ...footerPalette(),
+  density: 0.42,
+  parallax: 1,
+  pointerTarget: document.querySelector('.footer-frame'),
+  clearElements: [document.querySelector('.footer-intro h2'), document.querySelector('.footer-intro-copy')],
+  clearFeather: 44,
+});
+
+function syncGlyphFields() {
   heroField.setAppearance(heroPalette());
+  footerField.setAppearance(footerPalette());
 }
 
 // Duplicate each tweet column to make its drift loop seamlessly.
