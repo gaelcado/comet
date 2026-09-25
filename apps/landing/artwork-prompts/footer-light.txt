@@ -1,0 +1,6 @@
+Use case: lighting-weather.
+Asset type: light-theme companion to the supplied high-resolution Zeron footer landscape.
+Primary request: change only the palette and illumination of the supplied image to warm ivory daylight with dark graphite and restrained lavender engraved terrain. Make it the same premium etched lithograph in a paper edition.
+Invariants: preserve the exact camera, framing, mountain silhouettes, summit position, lake shoreline, foreground tree and every visible edge and depth boundary pixel-for-pixel as closely as possible. Keep the same 2.4:1 panoramic composition. The high-resolution source is the geometry master for SVG parallax cutouts; moving a mountain, tree, shoreline, or horizon will break the effect.
+Palette: warm ivory paper sky (#f7f4ee), graphite-violet mountains, soft lavender mist and lake reflection. Keep enough contrast for contours to read but avoid blown-out white.
+Constraints: no sun, moon, orb, disc, added subjects, new terrain, text, logo, border, frame, or watermark. Do not zoom, crop, or recompose.

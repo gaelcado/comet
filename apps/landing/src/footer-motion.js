@@ -2,7 +2,7 @@ import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 // The page scrolls away to uncover one framed, viewport-sized footer.
-// Four source-aligned cutouts move independently as the footer is uncovered.
+// Three soft-masked depth bands move independently over the source-aligned base.
 const footer = document.querySelector('.footer-stage');
 const reveal = document.querySelector('.footer-reveal-space');
 const nav = document.querySelector('.site-nav');
@@ -28,7 +28,6 @@ if (footer && reveal) {
   gsap.matchMedia().add('(prefers-reduced-motion: no-preference)', () => {
     const frame = footer.querySelector('.footer-frame');
     const landscape = footer.querySelector('.footer-landscape');
-    const sun = footer.querySelector('.footer-plane--sun');
     const far = footer.querySelector('.footer-plane--far');
     const middle = footer.querySelector('.footer-plane--middle');
     const near = footer.querySelector('.footer-plane--near');
@@ -56,14 +55,13 @@ if (footer && reveal) {
       },
     });
     timeline
-      .fromTo(sun, { y: () => landscape.clientHeight * 0.025 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(far, { y: () => landscape.clientHeight * 0.04 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(middle, { y: () => landscape.clientHeight * 0.07 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(near, { y: () => landscape.clientHeight * 0.10 }, { y: 0, ease: 'none', duration: 1 }, 0);
+      .fromTo(far, { y: () => landscape.clientHeight * 0.012 }, { y: 0, ease: 'none', duration: 1 }, 0)
+      .fromTo(middle, { y: () => landscape.clientHeight * 0.027 }, { y: 0, ease: 'none', duration: 1 }, 0)
+      .fromTo(near, { y: () => landscape.clientHeight * 0.045 }, { y: 0, ease: 'none', duration: 1 }, 0);
 
     if (quote) {
-      gsap.fromTo(quote.querySelectorAll('.plate-img'), { yPercent: -5 }, {
-        yPercent: 5,
+      gsap.fromTo(quote.querySelectorAll('.plate-img'), { yPercent: -2 }, {
+        yPercent: 2,
         ease: 'none',
         scrollTrigger: {
           trigger: quote,
