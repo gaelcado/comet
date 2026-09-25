@@ -34,6 +34,43 @@ systemTheme.addEventListener('change', () => {
 });
 syncThemeButton();
 
+// Match Zeron's 24 px scroll edge ramps: an edge fades only while content
+// remains more than 1 px beyond it. Keep the fixed navigation above the ramp.
+const pageShell = document.querySelector('.page-shell');
+const nav = document.querySelector('.site-nav');
+const topFade = document.querySelector('.scroll-edge-fade.top');
+const bottomFade = document.querySelector('.scroll-edge-fade.bottom');
+let fadeFrame = 0;
+
+function syncScrollEdges() {
+  fadeFrame = 0;
+  const shellBottom = pageShell.getBoundingClientRect().bottom;
+  const navBottom = nav.getBoundingClientRect().bottom;
+  topFade.dataset.active = String(window.scrollY > 1 && shellBottom > navBottom + 1);
+  bottomFade.dataset.active = String(shellBottom > window.innerHeight + 1);
+}
+
+function scheduleScrollEdges() {
+  if (!fadeFrame) fadeFrame = requestAnimationFrame(syncScrollEdges);
+}
+
+window.addEventListener('scroll', scheduleScrollEdges, { passive: true });
+window.addEventListener('resize', scheduleScrollEdges);
+syncScrollEdges();
+
+const showcaseVideo = document.querySelector('.showcase-video');
+if (showcaseVideo && 'IntersectionObserver' in window) {
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const observer = new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting && !reducedMotion.matches) {
+      showcaseVideo.play().catch(() => {});
+    } else {
+      showcaseVideo.pause();
+    }
+  }, { threshold: 0.1 });
+  observer.observe(showcaseVideo);
+}
+
 // Faint agent traces and a slow beam sit outside a clear ellipse for the hero copy.
 mountGlyphField(document.querySelector('.hero'), {
   base: [156, 146, 181],
