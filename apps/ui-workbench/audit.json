@@ -1,5 +1,5 @@
 {
-  "sourceFingerprint": "98f75f3065b43dbb",
+  "sourceFingerprint": "0fe65077b7fcce49",
   "sourceFiles": 112,
   "catalogedSourceFiles": 76,
   "supportModules": 36,
@@ -13,21 +13,21 @@
       "builders": [
         {
           "symbol": "btn_primary",
-          "references": 13,
+          "references": 14,
           "locations": [
             "crates/ui/src/composer.rs:8685",
             "crates/ui/src/shell/actions_ui.rs:1003",
             "crates/ui/src/shell/sidebar_sections.rs:559",
             "crates/ui/src/shell/spaces.rs:6445",
-            "crates/ui/src/shell.rs:7970",
-            "crates/ui/src/shell.rs:8028",
-            "crates/ui/src/shell.rs:8036",
-            "crates/ui/src/shell.rs:8134"
+            "crates/ui/src/shell.rs:8084",
+            "crates/ui/src/shell.rs:8142",
+            "crates/ui/src/shell.rs:8150",
+            "crates/ui/src/shell.rs:8248"
           ]
         },
         {
           "symbol": "btn_ghost",
-          "references": 16,
+          "references": 17,
           "locations": [
             "crates/ui/src/composer.rs:8677",
             "crates/ui/src/shell/actions_ui.rs:840",
@@ -41,20 +41,21 @@
         },
         {
           "symbol": "btn_danger",
-          "references": 4,
+          "references": 5,
           "locations": [
             "crates/ui/src/shell/actions_ui.rs:850",
             "crates/ui/src/shell/spaces.rs:6499",
-            "crates/ui/src/shell.rs:8258",
-            "crates/ui/src/shell.rs:8704"
+            "crates/ui/src/shell.rs:8372",
+            "crates/ui/src/shell.rs:8840",
+            "crates/ui/src/shell.rs:8883"
           ]
         },
         {
           "symbol": "ghost_action",
           "references": 9,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1936",
-            "crates/ui/src/settings/accounts.rs:1998",
+            "crates/ui/src/settings/accounts.rs:2081",
+            "crates/ui/src/settings/accounts.rs:2158",
             "crates/ui/src/settings/appshots.rs:123",
             "crates/ui/src/settings/archived.rs:320",
             "crates/ui/src/settings/archived.rs:341",
@@ -92,7 +93,7 @@
           "symbol": "search_input_frame",
           "references": 4,
           "locations": [
-            "crates/ui/src/changes.rs:4189",
+            "crates/ui/src/changes.rs:4236",
             "crates/ui/src/pickers.rs:3243",
             "crates/ui/src/settings/appearance.rs:1613",
             "crates/ui/src/shell/spaces.rs:4012"
@@ -102,14 +103,14 @@
           "symbol": "dialog_field",
           "references": 8,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1416",
+            "crates/ui/src/settings/accounts.rs:1538",
             "crates/ui/src/settings/appearance.rs:1863",
             "crates/ui/src/settings/devices.rs:191",
             "crates/ui/src/shell/actions_ui.rs:879",
             "crates/ui/src/shell/actions_ui.rs:882",
             "crates/ui/src/shell/sidebar_sections.rs:542",
             "crates/ui/src/shell/spaces.rs:6427",
-            "crates/ui/src/shell.rs:8630"
+            "crates/ui/src/shell.rs:8766"
           ]
         }
       ]
@@ -121,11 +122,11 @@
           "symbol": "popover_card",
           "references": 29,
           "locations": [
-            "crates/ui/src/account_usage.rs:316",
+            "crates/ui/src/account_usage.rs:314",
             "crates/ui/src/badges.rs:170",
             "crates/ui/src/browser/linux/mod.rs:642",
-            "crates/ui/src/changes.rs:3969",
-            "crates/ui/src/changes.rs:4180",
+            "crates/ui/src/changes.rs:4016",
+            "crates/ui/src/changes.rs:4227",
             "crates/ui/src/composer.rs:4083",
             "crates/ui/src/context_usage.rs:152",
             "crates/ui/src/files/mod.rs:609"
@@ -150,9 +151,9 @@
         },
         {
           "symbol": "dialog_card",
-          "references": 21,
+          "references": 23,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1469",
+            "crates/ui/src/settings/accounts.rs:1591",
             "crates/ui/src/settings/appearance.rs:2239",
             "crates/ui/src/settings/appearance.rs:2293",
             "crates/ui/src/settings/devices.rs:176",
@@ -183,11 +184,11 @@
         },
         {
           "symbol": "menu_row",
-          "references": 45,
+          "references": 46,
           "locations": [
-            "crates/ui/src/account_usage.rs:353",
+            "crates/ui/src/account_usage.rs:351",
             "crates/ui/src/browser/linux/mod.rs:653",
-            "crates/ui/src/changes.rs:3978",
+            "crates/ui/src/changes.rs:4025",
             "crates/ui/src/composer.rs:6732",
             "crates/ui/src/composer.rs:7144",
             "crates/ui/src/files/mod.rs:585",
@@ -199,7 +200,7 @@
           "symbol": "menu_row_nav",
           "references": 15,
           "locations": [
-            "crates/ui/src/changes.rs:4156",
+            "crates/ui/src/changes.rs:4203",
             "crates/ui/src/pickers.rs:2265",
             "crates/ui/src/pickers.rs:2353",
             "crates/ui/src/pickers.rs:2369",
@@ -247,10 +248,10 @@
           "symbol": "error_strip",
           "references": 11,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1596",
-            "crates/ui/src/settings/accounts.rs:1707",
-            "crates/ui/src/settings/accounts.rs:1840",
-            "crates/ui/src/settings/accounts.rs:2023",
+            "crates/ui/src/settings/accounts.rs:1718",
+            "crates/ui/src/settings/accounts.rs:1834",
+            "crates/ui/src/settings/accounts.rs:1981",
+            "crates/ui/src/settings/accounts.rs:2183",
             "crates/ui/src/settings/appearance.rs:2877",
             "crates/ui/src/settings/appearance.rs:2962",
             "crates/ui/src/settings/archived.rs:389",
@@ -261,16 +262,16 @@
           "symbol": "warning_strip",
           "references": 2,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1726",
-            "crates/ui/src/settings/accounts.rs:1962"
+            "crates/ui/src/settings/accounts.rs:1853",
+            "crates/ui/src/settings/accounts.rs:2115"
           ]
         },
         {
           "symbol": "pull_request_badge_preview",
           "references": 2,
           "locations": [
-            "crates/ui/src/shell.rs:6811",
-            "crates/ui/src/shell.rs:6875"
+            "crates/ui/src/shell.rs:6925",
+            "crates/ui/src/shell.rs:6989"
           ]
         }
       ]
@@ -354,8 +355,8 @@
         "crates/ui/src/browser/view.rs:355",
         "crates/ui/src/browser/view.rs:477",
         "crates/ui/src/change_requests.rs:79",
-        "crates/ui/src/changes.rs:1717",
-        "crates/ui/src/changes.rs:4031"
+        "crates/ui/src/changes.rs:1729",
+        "crates/ui/src/changes.rs:4078"
       ],
       "note": "The source uses several literal corner radii. Review them by surface and promote repeated semantic roles to shared metrics."
     },
@@ -398,18 +399,18 @@
         }
       ],
       "locations": [
-        "crates/ui/src/account_usage.rs:368",
-        "crates/ui/src/account_usage.rs:390",
+        "crates/ui/src/account_usage.rs:366",
+        "crates/ui/src/account_usage.rs:388",
         "crates/ui/src/badges.rs:137",
         "crates/ui/src/change_requests.rs:86",
         "crates/ui/src/change_requests.rs:99",
-        "crates/ui/src/changes.rs:1722",
-        "crates/ui/src/changes.rs:3543",
-        "crates/ui/src/changes.rs:3551",
-        "crates/ui/src/changes.rs:3561",
-        "crates/ui/src/changes.rs:3571",
-        "crates/ui/src/changes.rs:3781",
-        "crates/ui/src/changes.rs:3790"
+        "crates/ui/src/changes.rs:1734",
+        "crates/ui/src/changes.rs:3573",
+        "crates/ui/src/changes.rs:3581",
+        "crates/ui/src/changes.rs:3591",
+        "crates/ui/src/changes.rs:3601",
+        "crates/ui/src/changes.rs:3811",
+        "crates/ui/src/changes.rs:3820"
       ],
       "note": "Literal text sizes coexist with the typography scale. Check whether each is an intentional optical adjustment or a missing type role."
     },
@@ -425,10 +426,10 @@
         "crates/ui/src/browser/view.rs:359",
         "crates/ui/src/browser/view.rs:481",
         "crates/ui/src/change_requests.rs:171",
-        "crates/ui/src/changes.rs:3522",
-        "crates/ui/src/changes.rs:3690",
-        "crates/ui/src/changes.rs:3830",
-        "crates/ui/src/changes.rs:4032",
+        "crates/ui/src/changes.rs:3552",
+        "crates/ui/src/changes.rs:3720",
+        "crates/ui/src/changes.rs:3860",
+        "crates/ui/src/changes.rs:4079",
         "crates/ui/src/comment_ui.rs:32",
         "crates/ui/src/comment_ui.rs:120"
       ],
@@ -1687,7 +1688,7 @@
     },
     {
       "path": "crates/ui/src/settings/accounts.rs",
-      "publicFunctions": 12,
+      "publicFunctions": 17,
       "renderImpls": 1,
       "exports": [
         "usage_level",
@@ -1699,8 +1700,13 @@
         "provider_name",
         "reports_usage",
         "keeps_one_login",
+        "switches_accounts",
+        "provider_note",
+        "login_options",
         "add_account_label",
+        "add_option_label",
         "provider_accounts",
+        "mark_switched",
         "render_usage_meter"
       ],
       "views": [
