@@ -554,6 +554,7 @@ impl Shell {
         // with the frost on its own back layer so the dropdown menu (a
         // deferred child) never lands inside the blur.
         let mut control = div()
+            .debug_selector(|| "project-actions-control".into())
             .relative()
             .flex_none()
             .flex()

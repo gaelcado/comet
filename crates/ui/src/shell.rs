@@ -11265,6 +11265,7 @@ fn window_control_button(
     let fade_key = format!("window-control-{id}");
     div()
         .id(id)
+        .debug_selector(|| id.into())
         .size(px(24.0))
         .flex_none()
         .flex()
@@ -11448,6 +11449,7 @@ fn header_icon_button(
     let fade_key = format!("header-icon-{id}");
     div()
         .id(id)
+        .debug_selector(|| id.into())
         .size(px(28.0))
         .flex_none()
         .flex()
