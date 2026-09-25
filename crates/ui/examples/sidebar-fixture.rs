@@ -2,6 +2,7 @@
 //! With `appshots-fixture`, ZERON_SIDEBAR_CAPTURE_DIR exports disclosure,
 //! grouping, and hover states, then exits. ZERON_PALETTE_LIGHT selects light mode.
 //! ZERON_SIDEBAR_PROJECT_ICON seeds a device-local custom project icon.
+//! ZERON_SIDEBAR_SELECTED_PROJECT shows that project in the sidebar header.
 use gpui::{AppContext, Bounds, WindowBounds, WindowOptions, px, size};
 use zeron_ui::*;
 
@@ -19,6 +20,9 @@ fn main() -> anyhow::Result<()> {
         settings.sidebar_show_project_label = std::env::var_os("ZERON_SIDEBAR_HIDE_LABEL").is_none();
         settings.sidebar_organization = settings::SidebarOrganization::InOneList;
         settings.sidebar_width = 310.0;
+        if std::env::var_os("ZERON_SIDEBAR_SELECTED_PROJECT").is_some() {
+            settings.space_filter = Some("project".into());
+        }
         settings.sidebar_pins_mut("local".into()).extend(["chat-0".into(), "chat-1".into()]);
         let project_path = data.join("fieldnotes");
         std::fs::create_dir_all(project_path.join("public")).unwrap();

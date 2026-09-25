@@ -3,6 +3,11 @@ use super::*;
 use crate::files::client::{FilesRequestContext, WorkspaceFilesClient};
 use crate::image_media::{MediaImage, decode_project_icon, release_media};
 
+enum ProjectIconSource<'a> {
+    Chat(&'a str),
+    Space(&'a str),
+}
+
 pub(super) const ICON_PATHS: &[&str] = &[
     "public/apple-touch-icon.png",
     "apple-touch-icon.png",
@@ -353,6 +358,7 @@ impl Shell {
 
     pub(super) fn choose_project_icon(&mut self, space_id: String, cx: &mut Context<Self>) {
         self.close_space_menu(cx);
+        self.close_spaces_menu(cx);
         let Some(key) = self.project_icon_key(&space_id, cx) else {
             return;
         };
@@ -416,15 +422,51 @@ impl Shell {
         selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.render_project_identity_icon(ProjectIconSource::Chat(chat_id), size, selected, cx)
+    }
+
+    pub(super) fn render_space_icon(
+        &self,
+        space_id: &str,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.render_project_identity_icon(ProjectIconSource::Space(space_id), size, false, cx)
+    }
+
+    fn render_project_identity_icon(
+        &self,
+        source: ProjectIconSource<'_>,
+        size: f32,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let state = self.state.read(cx);
-        let chat = state.chats.iter().find(|chat| chat.id == chat_id);
-        let space = chat.and_then(|chat| state.space_for_chat(chat));
+        let (space, device_id, element_id) = match source {
+            ProjectIconSource::Chat(chat_id) => {
+                let chat = state.chats.iter().find(|chat| chat.id == chat_id);
+                (
+                    chat.and_then(|chat| state.space_for_chat(chat)),
+                    chat.map(|chat| chat.device_id.as_str()),
+                    chat_id.to_owned(),
+                )
+            }
+            ProjectIconSource::Space(space_id) => {
+                let space = state.space_row(space_id);
+                (
+                    space,
+                    space.map(|space| space.device_id.as_str()),
+                    format!("space-{space_id}"),
+                )
+            }
+        };
+        let chat_id = element_id.as_str();
         let name = space
             .map(|space| space.display_name().to_string())
             .unwrap_or_else(|| "Home".into());
         // Same fallback as the row's "@ device" fragment.
-        let device = chat
-            .and_then(|chat| state.device_name(&chat.device_id))
+        let device = device_id
+            .and_then(|id| state.device_name(id))
             .unwrap_or("Unknown device")
             .to_string();
         let seed = space
@@ -510,6 +552,111 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ProjectHeaderHost(Entity<Shell>);
+
+    impl Render for ProjectHeaderHost {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.update(cx, |shell, cx| {
+                div()
+                    .w(px(310.0))
+                    .h(px(80.0))
+                    .child(shell.render_spaces_filter(&Theme::of(cx).clone(), cx))
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn selected_project_header_opens_icon_picker_without_changing_filter(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            ProjectHeaderHost(cx.new(|cx| {
+                let state = cx.new(|_| {
+                    let mut state = AppState::new();
+                    state.workspace_scope = Some(zeron_proto::WorkspaceScope::Local);
+                    state.local_device_id = Some("local".into());
+                    state.spaces = vec![
+                        serde_json::from_value(serde_json::json!({
+                            "id": "project", "deviceId": "local", "path": dir.path(),
+                            "createdAt": Utc::now(),
+                        }))
+                        .unwrap(),
+                    ];
+                    state
+                });
+                let mut shell = Shell::new(
+                    state,
+                    EngineBootConfig {
+                        data_dir: dir.path().into(),
+                        ipc_port: 0,
+                        edge_url: String::new(),
+                        edge_token: None,
+                        org_id: None,
+                        workos_client_id: None,
+                        default_harness: zeron_proto::HarnessId::Mock,
+                    },
+                    cx,
+                );
+                shell.settings.space_filter = Some("project".into());
+                shell
+            }))
+        });
+        let shell = host.read_with(cx, |host, _| host.0.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let icon_bounds = cx.debug_bounds("selected-project-icon").unwrap();
+        cx.simulate_click(icon_bounds.center(), gpui::Modifiers::default());
+        assert!(cx.did_prompt_for_paths());
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(shell.settings.space_filter.as_deref(), Some("project"));
+            assert!(!shell.spaces_menu.is_open());
+        });
+        cx.simulate_path_prompt_response(|_| None);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.blur();
+            window.focus_next(cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(cx.did_prompt_for_paths());
+        cx.simulate_path_prompt_response(|_| None);
+        cx.run_until_parked();
+        let header = cx.debug_bounds("spaces-filter").unwrap();
+        cx.simulate_mouse_down(
+            header.center(),
+            MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            header.center(),
+            MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(
+                shell.space_menu.get().map(|(id, _)| id.as_str()),
+                Some("project")
+            );
+        });
+        shell.update(cx, |shell, cx| {
+            shell.close_space_menu(cx);
+            shell.settings.space_filter = None;
+        });
+        host.update(cx, |_, cx| cx.notify());
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("selected-project-icon").is_none());
+        let header = cx.debug_bounds("spaces-filter").unwrap();
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        assert!(shell.read_with(cx, |shell, _| shell.spaces_menu.is_open()));
+    }
+
     fn png(path: &std::path::Path, width: u32) {
         image::RgbaImage::new(width, 2).save(path).unwrap();
     }
