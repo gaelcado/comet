@@ -3880,8 +3880,48 @@ impl Shell {
         };
         let open = self.spaces_menu.is_open();
 
+        let selected_project = filter.filter(|id| self.state.read(cx).space_row(id).is_some());
+        let project_icon = if let Some(space_id) = selected_project.clone() {
+            let keyboard_space_id = space_id.clone();
+            div()
+                .id("selected-project-icon")
+                .debug_selector(|| "selected-project-icon".into())
+                .role(gpui::Role::Button)
+                .aria_label("Change project icon")
+                .tab_index(0)
+                .size(px(24.0))
+                .mx(px(-4.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.0))
+                .focus_visible(|style| style.bg(theme.glass_hover()))
+                .hover(|style| style.bg(theme.glass_hover()))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(self.render_space_icon(&space_id, 16.0, cx))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.choose_project_icon(space_id.clone(), cx);
+                }))
+                .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                    if !event.is_held && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        cx.stop_propagation();
+                        this.choose_project_icon(keyboard_space_id.clone(), cx);
+                    }
+                }))
+                .into_any_element()
+        } else {
+            icon(icons::FOLDER)
+                .size(px(16.0))
+                .flex_none()
+                .text_color(theme.text_muted)
+                .into_any_element()
+        };
+
         let trigger = div()
             .id("spaces-filter")
+            .debug_selector(|| "spaces-filter".into())
             .flex_1()
             .min_w_0()
             .h(px(29.0))
@@ -3922,12 +3962,18 @@ impl Shell {
                     this.open_spaces_menu(window, cx);
                 }
             }))
-            .child(
-                icon(icons::FOLDER)
-                    .size(px(16.0))
-                    .flex_none()
-                    .text_color(theme.text_muted),
-            )
+            .when_some(selected_project, |el, space_id| {
+                el.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.close_spaces_menu(cx);
+                        this.space_menu.open((space_id.clone(), event.position));
+                        cx.notify();
+                    }),
+                )
+            })
+            .child(project_icon)
             // flex_1 pushes the caret to the trigger's right edge and gives
             // long space names a bound to fade against; the "@ device"
             // tag hugs the name inside it rather than sitting by the caret.

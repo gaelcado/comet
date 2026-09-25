@@ -6840,8 +6840,12 @@ impl Shell {
             .is_some_and(|chat| {
                 self.state.read(cx).local_device_id.as_deref() != Some(chat.device_id.as_str())
             });
-        let project_icon = (search_query.is_none() && self.settings.sidebar_show_project_icon)
-            .then(|| self.render_project_icon(&id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, selected, cx));
+        // A filtered project's identity lives in the sidebar header; repeating
+        // it on every session adds no information. Keep harness icons intact.
+        let project_icon = (search_query.is_none()
+            && self.settings.sidebar_show_project_icon
+            && self.settings.space_filter.is_none())
+        .then(|| self.render_project_icon(&id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, selected, cx));
         let corner_hovered = !preview && self.chat_status_hover.as_deref() == Some(row_id.as_str());
         let archived_muted = archived && search_query.is_none() && !selected && !corner_hovered;
         let show_actions = corner_hovered && jump_label.is_none();
