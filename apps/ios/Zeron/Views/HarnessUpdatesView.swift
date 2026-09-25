@@ -1,28 +1,18 @@
 import SwiftUI
 
-/// Shared Liquid Glass, matching the native menu's material family.
+/// Native sheet material shares the presentation's device-aware corner mask.
 private struct UpdatePaneGlass: ViewModifier {
     func body(content: Content) -> some View {
+        // Let the presentation own its material and corner mask. A second
+        // rounded background extending below the safe area breaks the lower
+        // corners of the floating sheet on newer iOS presentations.
         content
-            .background {
-                Color.clear
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 32))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 32)
-                            .strokeBorder(Theme.borderStrong, lineWidth: 0.5)
-                    }
-                    // Preserve the top rim: extending it above the sheet clips
-                    // the glass curvature against the presentation mask.
-                    .ignoresSafeArea(.container, edges: .bottom)
-            }
-            .presentationBackground(.clear)
-            .presentationCornerRadius(32)
+            .presentationBackground(.regularMaterial)
             .presentationDragIndicator(.visible)
     }
 }
 
-/// Glass inside a glass pane can lose its button silhouette. Keep the same
-/// capsule outline and hit target explicit for every control in this pane.
+/// Keep row actions distinct from content; navigation uses native toolbar chrome.
 private struct UpdatePaneButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -105,7 +95,6 @@ struct HarnessUpdatesView: View {
                 contents.toolbar {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { showingSheet = false }
-                            .buttonStyle(UpdatePaneButtonStyle())
                     }
                 }
             }
@@ -208,19 +197,21 @@ struct HarnessUpdatesView: View {
                         rowAction(status)
                     }
                 }
-                HStack(alignment: .top, spacing: 6) {
-                    if status.active {
-                        ProgressView().controlSize(.mini)
-                    } else if status.phase == "failed" {
-                        Image(systemName: "exclamationmark.circle")
-                    } else if ["updated", "current"].contains(status.phase) {
-                        Image(systemName: "checkmark.circle")
+                if status.phase != "available" || status.latestVersion == nil {
+                    HStack(alignment: .top, spacing: 6) {
+                        if status.active {
+                            ProgressView().controlSize(.mini)
+                        } else if status.phase == "failed" {
+                            Image(systemName: "exclamationmark.circle")
+                        } else if ["updated", "current"].contains(status.phase) {
+                            Image(systemName: "checkmark.circle")
+                        }
+                        Text(status.label).fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(status.label).fixedSize(horizontal: false, vertical: true)
+                    .font(Theme.sans(12))
+                    .foregroundStyle(status.phase == "failed" ? Theme.warning :
+                                     ["updated", "current"].contains(status.phase) ? Theme.statusCompleted : Theme.textMuted)
                 }
-                .font(Theme.sans(12))
-                .foregroundStyle(status.phase == "failed" ? Theme.warning :
-                                 ["updated", "current"].contains(status.phase) ? Theme.statusCompleted : Theme.textMuted)
                 if !status.actionable, ["available", "manual-action-required"].contains(status.phase),
                    let command = status.manualCommand {
                     Text(command)
@@ -239,10 +230,23 @@ struct HarnessUpdatesView: View {
     private func agentTitle(_ status: HarnessUpdateStatus) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(status.name).font(Theme.sans(15, weight: .semibold))
-            if let installed = status.installedVersion {
-                Text(installed).font(Theme.mono(11)).foregroundStyle(Theme.textMuted)
-                    .accessibilityLabel("Installed \(installed)")
+            HStack(spacing: 6) {
+                if let installed = status.installedVersion {
+                    Text(installed)
+                        .foregroundStyle(Theme.textMuted)
+                        .accessibilityLabel("Installed \(installed)")
+                }
+                if status.phase == "available", let latest = status.latestVersion {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Theme.textFaint)
+                        .accessibilityHidden(true)
+                    Text(latest)
+                        .foregroundStyle(Theme.text)
+                        .accessibilityLabel("Version \(latest) available")
+                }
             }
+            .font(Theme.mono(11))
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -338,7 +342,9 @@ struct DeviceUpdatesList: View {
                                                description: Text("Connect a desktop to manage its agents."))
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                     listHeight = height + 64
                 }
@@ -357,11 +363,9 @@ struct DeviceUpdatesList: View {
                                     .font(.system(size: 15, weight: .semibold))
                             }
                             .accessibilityLabel("Devices")
-                            .buttonStyle(UpdatePaneButtonStyle())
                         }
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { dismiss() }
-                                .buttonStyle(UpdatePaneButtonStyle())
                         }
                     }
             }
@@ -370,7 +374,6 @@ struct DeviceUpdatesList: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
-                        .buttonStyle(UpdatePaneButtonStyle())
                 }
             }
         }
