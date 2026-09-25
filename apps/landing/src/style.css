@@ -61,8 +61,8 @@
     --button-bg: #241735;
     --button-ink: #f7f4ee;
     --button-hover: #493165;
-    --quote-ink: #f7f4ee;
-    --quote-dim: #e9e1ed;
+    --quote-ink: #211c28;
+    --quote-dim: #645b6b;
     --tweet-ink: #39323e;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -336,11 +336,18 @@
     z-index: -1;
   }
   .plate-quote .plate-img {
-    inset: 0 0 0 auto;
-    width: 62%;
-    object-position: right top;
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 24%);
-    mask-image: linear-gradient(to right, transparent, #000 24%);
+    inset: -3% 0 auto;
+    width: 100%;
+    height: 106%;
+    object-position: center top;
+  }
+  @media (min-width: 1801px) {
+    .plate-quote .plate-img {
+      inset: -3% 0 auto auto;
+      width: min(100%, 1650px);
+      -webkit-mask-image: linear-gradient(to right, transparent, #000 16%);
+      mask-image: linear-gradient(to right, transparent, #000 16%);
+    }
   }
   .plate-img.light, [data-theme="light"] .plate-img.dark { display: none; }
   [data-theme="light"] .plate-img.light { display: block; }
@@ -665,8 +672,11 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(90deg, rgba(6,4,10,.4), rgba(6,4,10,.14) 38%, transparent 65%);
+    background: linear-gradient(90deg, rgba(6,4,10,.22), transparent 64%);
     pointer-events: none;
+  }
+  [data-theme="light"] .plate-quote::before {
+    background: linear-gradient(90deg, rgba(247,244,238,.24), transparent 64%);
   }
   .plate-quote::after {
     content: "";
@@ -882,20 +892,34 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
-  .footer-landscape { position: absolute; inset: 0; overflow: hidden; }
+  .footer-landscape {
+    --footer-art: url('/assets/art/footer-dark-wide.webp');
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: var(--footer-art) center / cover no-repeat;
+  }
+  [data-theme="light"] .footer-landscape { --footer-art: url('/assets/art/footer-light-wide.webp'); }
   .footer-plane {
     position: absolute;
     inset: 0;
-    display: block;
-    width: 100%;
-    height: 100%;
+    background: var(--footer-art) center / cover no-repeat;
+    pointer-events: none;
   }
-  @media (min-width: 901px) {
-    /* Crop the existing terrain from the right so its summit sits nearer the centre. */
-    .footer-plane--far, .footer-plane--middle, .footer-plane--near { width: 132%; }
+  /* Each depth band reuses the same master image, with soft overlap at the
+     cutout boundaries so responsive crops and scroll motion reveal no seams. */
+  .footer-plane--far {
+    -webkit-mask-image: linear-gradient(to bottom, #000 0 46%, transparent 58%);
+    mask-image: linear-gradient(to bottom, #000 0 46%, transparent 58%);
   }
-  .footer-plane image.light, [data-theme="light"] .footer-plane image.dark { display: none; }
-  [data-theme="light"] .footer-plane image.light { display: block; }
+  .footer-plane--middle {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 38%, #000 52% 70%, transparent 82%);
+    mask-image: linear-gradient(to bottom, transparent 38%, #000 52% 70%, transparent 82%);
+  }
+  .footer-plane--near {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 64%, #000 76%);
+    mask-image: linear-gradient(to bottom, transparent 64%, #000 76%);
+  }
   .footer-bar {
     position: relative;
     z-index: 1;
@@ -931,6 +955,7 @@
 
   @media (max-width: 900px) {
     .footer-frame { grid-template-rows: minmax(300px, 38%) minmax(0, 1fr) auto; }
+    .footer-landscape, .footer-plane { background-position: 70% center; }
     .footer-intro { grid-template-columns: 1fr; align-items: start; gap: 22px; }
     .footer-intro h2 { transform: none; }
     .footer-intro-copy { justify-self: start; text-align: left; }
@@ -976,9 +1001,9 @@
     .sec-head p { font-size: 18px; }
     .plate-quote { height: auto; min-height: clamp(550px, 130vw, 620px); }
     .plate-quote .plate-img {
-      inset: auto 0 0;
+      inset: auto 0 -2%;
       width: 100%;
-      height: 55%;
+      height: 59%;
       object-position: right center;
       -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12%);
       mask-image: linear-gradient(to bottom, transparent, #000 12%);

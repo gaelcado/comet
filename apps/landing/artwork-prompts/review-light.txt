@@ -1,0 +1,6 @@
+Use case: lighting-weather.
+Asset type: light-theme companion to the supplied high-resolution Zeron review-section portal artwork.
+Primary request: change only the palette and illumination to a pale warm-ivory engraved stone chamber with a softly luminous portal, muted gray-violet mountain lake beyond, and a restrained paper print texture. Keep the left wall quiet enough for dark testimonial text.
+Invariants: preserve the exact wide 2.4:1 composition, camera, oval portal shape and position, floor and step edges, wall junctions, and reflection alignment as closely as possible. This light artwork must pair with the dark image during theme switching without a visual jump.
+Palette: ivory and pale limestone, graphite engraved details, a hint of lavender in the distant landscape and reflection.
+Constraints: no sun, moon, orb, disc, added subjects, text, logo, border, frame, or watermark. Do not zoom, crop, or recompose.
