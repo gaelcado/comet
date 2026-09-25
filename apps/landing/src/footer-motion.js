@@ -2,10 +2,11 @@ import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 // The page scrolls away to uncover a stationary, viewport-sized footer.
-// GSAP adds a small fade and parallax while the last page-height clears it.
+// A short, masked page edge uncovers the fixed footer; GSAP adds gentle depth.
 const footer = document.querySelector('.footer-stage');
 const reveal = document.querySelector('.footer-reveal-space');
 const nav = document.querySelector('.site-nav');
+const quote = document.querySelector('.plate-quote');
 
 if (footer && reveal) {
   gsap.registerPlugin(ScrollTrigger);
@@ -26,11 +27,24 @@ if (footer && reveal) {
       },
     });
     timeline
-      .fromTo(footer, { opacity: 0.6 }, { opacity: 1, duration: 0.5 }, 0)
-      .fromTo(landscape, { scale: 1.07, yPercent: 5 }, { scale: 1, yPercent: 0, duration: 0.9 }, 0)
-      .fromTo(intro, { y: 30, opacity: 0.4 }, { y: 0, opacity: 1, duration: 0.55 }, 0.12)
-      .fromTo(wordmark, { yPercent: 16, opacity: 0.2 }, { yPercent: 0, opacity: 1, duration: 0.55 }, 0.25)
-      .fromTo(foot, { y: 12, opacity: 0.25 }, { y: 0, opacity: 1, duration: 0.4 }, 0.4);
+      .fromTo(landscape, { scale: 1.045, yPercent: 3 }, { scale: 1, yPercent: 0, duration: 1 }, 0)
+      .fromTo(intro, { y: 16 }, { y: 0, duration: 0.65 }, 0.1)
+      .fromTo(wordmark, { yPercent: 7 }, { yPercent: 0, duration: 0.65 }, 0.2)
+      .fromTo(foot, { y: 8 }, { y: 0, duration: 0.5 }, 0.35);
+
+    if (quote) {
+      gsap.fromTo(quote.querySelectorAll('.plate-img'), { yPercent: -5 }, {
+        yPercent: 5,
+        ease: 'none',
+        scrollTrigger: {
+          trigger: quote,
+          start: 'top bottom',
+          end: 'bottom top',
+          scrub: 0.7,
+          invalidateOnRefresh: true,
+        },
+      });
+    }
 
     gsap.fromTo(nav, { autoAlpha: 1 }, {
       autoAlpha: 0,
