@@ -24,6 +24,7 @@
       const [file, label, detail] = releases[os];
       link.href = `${base}zeron-${version}-${file}`;
       link.textContent = id === "nav-download" ? "Download" : label;
+      link.setAttribute("data-download-os", os);
       link.setAttribute("aria-label", `${label} (${detail})`);
       link.title = detail;
     }
