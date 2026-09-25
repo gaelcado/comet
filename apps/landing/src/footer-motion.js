@@ -25,15 +25,15 @@ if (footer && reveal) {
         trigger: reveal,
         start: 'top bottom',
         end: 'bottom bottom',
-        scrub: 0.35,
+        scrub: 0.18,
         invalidateOnRefresh: true,
       },
     });
     timeline
-      .fromTo(sun, { y: () => landscape.clientHeight * 0.01 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(far, { y: () => landscape.clientHeight * 0.015 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(middle, { y: () => landscape.clientHeight * 0.03 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(near, { y: () => landscape.clientHeight * 0.045 }, { y: 0, ease: 'none', duration: 1 }, 0)
+      .fromTo(sun, { y: () => landscape.clientHeight * 0.025 }, { y: 0, ease: 'none', duration: 1 }, 0)
+      .fromTo(far, { y: () => landscape.clientHeight * 0.04 }, { y: 0, ease: 'none', duration: 1 }, 0)
+      .fromTo(middle, { y: () => landscape.clientHeight * 0.07 }, { y: 0, ease: 'none', duration: 1 }, 0)
+      .fromTo(near, { y: () => landscape.clientHeight * 0.10 }, { y: 0, ease: 'none', duration: 1 }, 0)
       .fromTo(wordmark, { yPercent: 7 }, { yPercent: 0, duration: 0.65 }, 0.2)
       .fromTo(foot, { y: 8 }, { y: 0, duration: 0.5 }, 0.35);
 
