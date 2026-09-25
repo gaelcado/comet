@@ -654,21 +654,51 @@
   @media (max-width: 900px) { .plate-closing { aspect-ratio: 4 / 3; } }
 
   /* ── footer ──────────────────────────────────────────── */
+  .footer-stage { overflow: hidden; background: var(--bg); }
+  .footer-landscape { position: relative; height: clamp(350px, 49vw, 690px); overflow: hidden; }
+  .footer-landscape img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 38%;
+  }
+  .footer-landscape::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, transparent 54%, rgba(6,4,10,.32) 72%, var(--bg) 100%);
+  }
+  .footer-inner { position: relative; margin-top: clamp(-155px, -11vw, -66px); }
+  .footer-wordmark {
+    display: block;
+    width: fit-content;
+    margin-inline: auto;
+    font-family: var(--serif);
+    font-size: clamp(106px, 28.8vw, 440px);
+    font-weight: 400;
+    letter-spacing: -.065em;
+    line-height: .78;
+    white-space: nowrap;
+    color: #f6f0e9;
+  }
+  .footer-wordmark span { color: var(--purple-hi); }
   .foot {
     display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    grid-template-columns: 1fr auto auto;
     align-items: center;
-    gap: 20px;
-    padding-top: 48px;
+    gap: 28px;
+    margin-top: clamp(50px, 7vw, 110px);
+    padding-top: 24px;
     padding-bottom: 48px;
+    border-top: 1px solid var(--line);
     font-size: 13px;
-    color: var(--faint);
+    color: var(--dim);
   }
-  .foot .brand { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink); }
-  .foot-links { display: flex; gap: 22px; }
+  .foot-links { display: flex; flex-wrap: wrap; gap: 12px 22px; }
   .foot-links a { color: var(--dim); transition: color .15s; }
   .foot-links a:hover { color: var(--ink); }
-  .foot small { justify-self: end; font-size: inherit; }
+  .foot small { font-size: inherit; white-space: nowrap; }
 
   /* ── mobile ──────────────────────────────────────────── */
   @media (max-width: 640px) {
@@ -691,9 +721,12 @@
     .wall-col:nth-child(2) { display: none; }
     .dl-list li { grid-template-columns: 70px 1fr auto; }
     .plate-closing { aspect-ratio: auto; padding: 72px 0; }
-    /* restate the vertical padding: .wrap's phone padding resets it */
-    .foot { grid-template-columns: 1fr; justify-items: center; padding-top: 40px; padding-bottom: 40px; text-align: center; }
-    .foot small { justify-self: center; }
+    .footer-landscape { height: clamp(370px, 125vw, 550px); }
+    .footer-landscape img { object-position: 58% center; }
+    .footer-inner { margin-top: -48px; }
+    .footer-wordmark { font-size: 29vw; }
+    .foot { grid-template-columns: 1fr; justify-items: center; gap: 18px; margin-top: 58px; padding-top: 28px; padding-bottom: 40px; text-align: center; }
+    .foot-links { justify-content: center; }
   }
   @media (max-width: 460px) {
     .cta-row .btn { flex: 0 0 auto; }
@@ -1056,14 +1089,22 @@
     </div>
   </section>
 
-  <footer class="wrap foot">
-    <span class="brand">Zeron</span>
-    <nav class="foot-links" aria-label="Footer">
-      <a href="https://discord.gg/rnynTdgZ24">Discord</a>
-      <a href="https://github.com/zeronsh/comet">GitHub</a>
-      <a href="https://github.com/zeronsh/zeron/releases">Changelog</a>
-    </nav>
-    <small>MIT © 2026</small>
+  <footer class="footer-stage" id="footer">
+    <div class="footer-landscape" aria-hidden="true">
+      <img src="/assets/art/footer-mountains.webp" alt="" width="1672" height="941" loading="lazy" decoding="async" />
+    </div>
+    <div class="wrap footer-inner">
+      <a class="footer-wordmark" href="/" aria-label="Zeron home">zeron<span>.</span></a>
+      <div class="foot">
+        <span>One window for every machine you own.</span>
+        <nav class="foot-links" aria-label="Footer">
+          <a href="https://discord.gg/rnynTdgZ24">Discord</a>
+          <a href="https://github.com/zeronsh/comet">GitHub</a>
+          <a href="https://github.com/zeronsh/zeron/releases">Changelog</a>
+        </nav>
+        <small>MIT © 2026</small>
+      </div>
+    </div>
   </footer>
 
 <script defer src="/downloads.js"></script>
