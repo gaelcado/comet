@@ -213,7 +213,7 @@
 
   /* ── hero ────────────────────────────────────────────── */
   .hero { position: relative; overflow: hidden; }
-  /* above the glyph field, which is prepended into .hero */
+  /* above the glyph field, which is prepended into .page-shell */
   .hero-grid {
     position: relative;
     z-index: 1;

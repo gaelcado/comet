@@ -86,9 +86,13 @@ const heroPalette = () => document.documentElement.dataset.theme === 'light'
       beam: { angle: -38, width: 0.12, sweep: 26, alpha: 0.3 },
     };
 
-const heroField = mountGlyphField(document.querySelector('.hero'), {
+const heroField = mountGlyphField(document.querySelector('.page-shell'), {
   ...heroPalette(),
-  clearElement: document.querySelector('.hero-copy'),
+  endElement: document.querySelector('.showcase-frame'),
+  endFraction: 0.75,
+  clearTextElements: [...document.querySelectorAll('.hero h1, .hero .cta-row .text-link, .hero .cta-ver, .used-by p')],
+  clearElements: [...document.querySelectorAll('.used-by-logos a')],
+  clearFeather: 20,
 });
 
 const footerPalette = () => document.documentElement.dataset.theme === 'light'
@@ -108,8 +112,8 @@ const footerField = mountGlyphField(document.querySelector('.footer-frame'), {
   density: 0.42,
   parallax: 1,
   pointerTarget: document.querySelector('.footer-frame'),
-  clearElements: [document.querySelector('.footer-intro h2'), document.querySelector('.footer-intro-copy')],
-  clearFeather: 44,
+  clearTextElements: [...document.querySelectorAll('.footer-intro h2, .footer-intro p, .footer-intro .text-link')],
+  clearFeather: 20,
 });
 
 function syncGlyphFields() {

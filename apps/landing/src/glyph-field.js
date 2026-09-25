@@ -46,16 +46,23 @@ export function mountGlyphField(host, opts = {}) {
     beam: { angle: -38, width: 0.14, sweep: 26, alpha: 0.22, offset: 0.5 },
     // Optional clear hole (ellipse, fractions of viewport).
     clear: null, // e.g. { x: 0.5, y: 0.45, rx: 0.3, ry: 0.18 }
-    // Optional copy element whose footprint stays free of glyphs and pointer glow.
+    // Optional copy elements whose bounds soften glyphs and pointer glow.
     clearElement: null,
     clearElements: null,
-    clearFeather: 96,
+    clearTextElements: null,
+    clearPadding: 4,
+    clearFeather: 24,
+    clearOpacity: 0.2,
+    // Extend the field to a fraction of a later element, such as the showcase.
+    endElement: null,
+    endFraction: 1,
     pointerTarget: window,
     ...opts,
   };
   const BEAM = { angle: -38, width: 0.14, sweep: 26, alpha: 0.22, offset: 0.5 };
   o.beam = opts.beam === null || opts.beam === false ? null : { ...BEAM, ...opts.beam };
   const clearTargets = o.clearElements || (o.clearElement ? [o.clearElement] : []);
+  const clearTextTargets = o.clearTextElements || [];
   const text = o.lines.join('     ') + '     ';
   const coarse = matchMedia('(hover: none), (max-width: 767px)').matches;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -68,6 +75,7 @@ export function mountGlyphField(host, opts = {}) {
     maskImage: 'linear-gradient(to bottom, transparent 0%, #000 8%, #000 80%, transparent 100%)',
     WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, #000 8%, #000 80%, transparent 100%)',
   });
+  if (o.endElement) wrap.style.bottom = 'auto';
   const inner = document.createElement('div');
   Object.assign(inner.style, { position: 'absolute', left: 0, top: 0, width: '100%', willChange: 'transform' });
   const base = document.createElement('canvas');
@@ -114,7 +122,7 @@ export function mountGlyphField(host, opts = {}) {
       const dx = Math.max(area.left - x, 0, x - area.right);
       const dy = Math.max(area.top - y, 0, y - area.bottom);
       const t = Math.min(1, Math.hypot(dx, dy) / o.clearFeather);
-      alpha = Math.min(alpha, t * t * (3 - 2 * t));
+      alpha = Math.min(alpha, o.clearOpacity + (1 - o.clearOpacity) * t * t * (3 - 2 * t));
     }
     return alpha;
   };
@@ -140,19 +148,34 @@ export function mountGlyphField(host, opts = {}) {
 
   const setup = () => {
     const dpr = Math.min(devicePixelRatio || 1, 2);
+    if (o.endElement) {
+      const hostBounds = host.getBoundingClientRect();
+      const endBounds = o.endElement.getBoundingClientRect();
+      wrap.style.height = `${Math.max(0, endBounds.top - hostBounds.top + endBounds.height * o.endFraction)}px`;
+    }
     W = host.clientWidth;
     extra = 60;
-    H = host.clientHeight + extra * 2;
+    H = wrap.clientHeight + extra * 2;
     const hostBounds = host.getBoundingClientRect();
-    quiet = clearTargets.map((element) => {
-      const copyBounds = element.getBoundingClientRect();
-      return {
-        left: copyBounds.left - hostBounds.left - 12,
-        right: copyBounds.right - hostBounds.left + 12,
-        top: copyBounds.top - hostBounds.top - 12,
-        bottom: copyBounds.bottom - hostBounds.top + 12,
-      };
+    const localArea = (bounds) => ({
+      left: bounds.left - hostBounds.left - o.clearPadding,
+      right: bounds.right - hostBounds.left + o.clearPadding,
+      top: bounds.top - hostBounds.top - o.clearPadding,
+      bottom: bounds.bottom - hostBounds.top + o.clearPadding,
     });
+    quiet = clearTargets.map((element) => localArea(element.getBoundingClientRect()));
+    for (const element of clearTextTargets) {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (!node.textContent.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const bounds of range.getClientRects()) {
+          if (bounds.width && bounds.height) quiet.push(localArea(bounds));
+        }
+      }
+    }
     inner.style.top = `${-extra}px`;
     inner.style.height = `${H}px`;
     cols = Math.ceil(W / o.cellW) + 1;
@@ -259,11 +282,16 @@ export function mountGlyphField(host, opts = {}) {
   if (o.beam && o.beam.sweep && !reduced) braf = requestAnimationFrame(beamLoop);
   let geometry = '';
   const ro = new ResizeObserver(() => {
-    const next = [host.clientWidth, host.clientHeight, ...clearTargets.flatMap((element) => [element.clientWidth, element.clientHeight])].join('/');
+    const hostBounds = host.getBoundingClientRect();
+    const endTop = o.endElement ? o.endElement.getBoundingClientRect().top - hostBounds.top : 0;
+    const next = [host.clientWidth, host.clientHeight,
+      ...(o.endElement ? [endTop, o.endElement.clientHeight] : []),
+      ...[...clearTargets, ...clearTextTargets].flatMap((element) => [element.clientWidth, element.clientHeight])].join('/');
     if (next !== geometry) { geometry = next; setup(); }
   });
   ro.observe(host);
-  for (const element of clearTargets) ro.observe(element);
+  if (o.endElement) ro.observe(o.endElement);
+  for (const element of [...clearTargets, ...clearTextTargets]) ro.observe(element);
 
   return {
     setAppearance(next) {
