@@ -27,7 +27,7 @@
       "sidebar-minimalistic-left"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5641"
+      "crates/ui/src/shell.rs:5755"
     ],
     "status": "Used"
   },
@@ -204,8 +204,8 @@
     ],
     "references": [
       "crates/ui/src/browser/view.rs:411",
-      "crates/ui/src/shell.rs:5654",
-      "crates/ui/src/shell.rs:6154",
+      "crates/ui/src/shell.rs:5768",
+      "crates/ui/src/shell.rs:6268",
       "crates/ui/src/shell/spaces.rs:6189"
     ],
     "status": "Used"
@@ -239,8 +239,8 @@
     ],
     "references": [
       "crates/ui/src/browser/view.rs:422",
-      "crates/ui/src/changes.rs:4104",
-      "crates/ui/src/shell.rs:5661"
+      "crates/ui/src/changes.rs:4151",
+      "crates/ui/src/shell.rs:5775"
     ],
     "status": "Used"
   },
@@ -401,9 +401,9 @@
       "apps/ios/Zeron/Views/HomeView.swift:175",
       "apps/ios/Zeron/Views/NewSessionView.swift:569",
       "apps/ios/Zeron/Views/NewSessionView.swift:691",
-      "crates/ui/src/changes.rs:3475",
-      "crates/ui/src/changes.rs:3862",
-      "crates/ui/src/changes.rs:4066",
+      "crates/ui/src/changes.rs:3505",
+      "crates/ui/src/changes.rs:3892",
+      "crates/ui/src/changes.rs:4113",
       "crates/ui/src/files/search.rs:651",
       "crates/ui/src/files/tree.rs:289",
       "crates/ui/src/history.rs:3976",
@@ -466,7 +466,7 @@
     ],
     "references": [
       "apps/ios/Zeron/Views/SpaceView.swift:234",
-      "crates/ui/src/shell.rs:8544"
+      "crates/ui/src/shell.rs:8665"
     ],
     "status": "Used"
   },
@@ -495,12 +495,12 @@
       "apps/ios/Zeron/Views/SheetUI.swift:106",
       "apps/ios/Zeron/Views/SignInView.swift:201",
       "apps/ios/Zeron/Views/SpaceView.swift:322",
-      "crates/ui/src/changes.rs:3473",
+      "crates/ui/src/changes.rs:3503",
       "crates/ui/src/files/search.rs:653",
       "crates/ui/src/files/tree.rs:291",
       "crates/ui/src/pickers.rs:4322",
       "crates/ui/src/settings/harnesses.rs:575",
-      "crates/ui/src/shell.rs:8494",
+      "crates/ui/src/shell.rs:8613",
       "crates/ui/src/shell/spaces.rs:2193",
       "crates/ui/src/shell/spaces.rs:3401",
       "crates/ui/src/shell/spaces.rs:6036",
@@ -553,7 +553,7 @@
     ],
     "references": [
       "crates/ui/src/history.rs:3628",
-      "crates/ui/src/shell.rs:12079",
+      "crates/ui/src/shell.rs:12354",
       "crates/ui/src/shell/tabs.rs:38"
     ],
     "status": "Used"
@@ -602,7 +602,7 @@
       "collapse-arrows"
     ],
     "references": [
-      "crates/ui/src/shell.rs:12080",
+      "crates/ui/src/shell.rs:12355",
       "crates/ui/src/shell/tabs.rs:36"
     ],
     "status": "Used"
@@ -635,8 +635,8 @@
       "fold-vertical"
     ],
     "references": [
-      "crates/ui/src/changes.rs:3797",
-      "crates/ui/src/changes.rs:3930",
+      "crates/ui/src/changes.rs:3827",
+      "crates/ui/src/changes.rs:3977",
       "crates/ui/src/history.rs:1661",
       "crates/ui/src/history.rs:3630"
     ],
@@ -749,7 +749,7 @@
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:150",
-      "crates/ui/src/settings/accounts.rs:1165",
+      "crates/ui/src/settings/accounts.rs:1287",
       "crates/ui/src/shell/sidebar_sections.rs:331",
       "crates/ui/src/shell/spaces.rs:3833"
     ],
@@ -816,7 +816,7 @@
       "window-minimize"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5837"
+      "crates/ui/src/shell.rs:5951"
     ],
     "status": "Used"
   },
@@ -840,7 +840,7 @@
       "window-maximize"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5847"
+      "crates/ui/src/shell.rs:5961"
     ],
     "status": "Used"
   },
@@ -872,7 +872,7 @@
       "window-restore"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5845"
+      "crates/ui/src/shell.rs:5959"
     ],
     "status": "Used"
   },
@@ -912,7 +912,7 @@
       "crates/ui/src/pickers.rs:3036",
       "crates/ui/src/pickers.rs:3117",
       "crates/ui/src/pickers.rs:3474",
-      "crates/ui/src/shell.rs:6202",
+      "crates/ui/src/shell.rs:6316",
       "crates/ui/src/shell/command_palette.rs:52",
       "crates/ui/src/shell/spaces.rs:3335",
       "crates/ui/src/shell/spaces.rs:3343",
@@ -1114,10 +1114,10 @@
       "apps/ios/Zeron/Views/SpaceView.swift:345",
       "crates/ui/src/appearance.rs:54",
       "crates/ui/src/pickers.rs:2887",
-      "crates/ui/src/settings/accounts.rs:521",
+      "crates/ui/src/settings/accounts.rs:632",
       "crates/ui/src/settings/harnesses.rs:381",
-      "crates/ui/src/shell.rs:6198",
-      "crates/ui/src/shell.rs:6206",
+      "crates/ui/src/shell.rs:6312",
+      "crates/ui/src/shell.rs:6320",
       "crates/ui/src/shell/spaces.rs:2081",
       "crates/ui/src/transcript.rs:5938"
     ],
@@ -1151,8 +1151,8 @@
       "laptop"
     ],
     "references": [
-      "crates/ui/src/settings/accounts.rs:519",
-      "crates/ui/src/settings/accounts.rs:553",
+      "crates/ui/src/settings/accounts.rs:630",
+      "crates/ui/src/settings/accounts.rs:664",
       "crates/ui/src/settings/harnesses.rs:379",
       "crates/ui/src/settings/harnesses.rs:413",
       "crates/ui/src/shell/spaces.rs:2078",
@@ -1188,7 +1188,7 @@
       "smartphone"
     ],
     "references": [
-      "crates/ui/src/settings/accounts.rs:520",
+      "crates/ui/src/settings/accounts.rs:631",
       "crates/ui/src/settings/harnesses.rs:380",
       "crates/ui/src/shell/spaces.rs:2080"
     ],
@@ -1254,8 +1254,8 @@
       "remote-server"
     ],
     "references": [
-      "crates/ui/src/shell.rs:6517",
-      "crates/ui/src/shell.rs:6787"
+      "crates/ui/src/shell.rs:6631",
+      "crates/ui/src/shell.rs:6901"
     ],
     "status": "Used"
   },
@@ -1366,11 +1366,11 @@
       "crates/ui/src/browser/view.rs:328",
       "crates/ui/src/browser/view.rs:458",
       "crates/ui/src/markdown/link_interaction.rs:332",
-      "crates/ui/src/shell.rs:10179",
-      "crates/ui/src/shell.rs:7780",
-      "crates/ui/src/shell.rs:7792",
-      "crates/ui/src/shell.rs:9650",
-      "crates/ui/src/shell.rs:9866",
+      "crates/ui/src/shell.rs:10065",
+      "crates/ui/src/shell.rs:10378",
+      "crates/ui/src/shell.rs:7894",
+      "crates/ui/src/shell.rs:7906",
+      "crates/ui/src/shell.rs:9849",
       "crates/ui/src/shell/spaces.rs:2079",
       "crates/ui/src/transcript.rs:7746"
     ],
@@ -1534,9 +1534,9 @@
       "apps/ios/Zeron/Views/SpaceView.swift:36",
       "crates/ui/src/settings/archived.rs:171",
       "crates/ui/src/settings/archived.rs:283",
-      "crates/ui/src/shell.rs:6207",
-      "crates/ui/src/shell.rs:6492",
-      "crates/ui/src/shell.rs:8477"
+      "crates/ui/src/shell.rs:6321",
+      "crates/ui/src/shell.rs:6606",
+      "crates/ui/src/shell.rs:8596"
     ],
     "status": "Used"
   },
@@ -1586,7 +1586,7 @@
     "references": [
       "apps/ios/Zeron/Views/ArchivedShelf.swift:116",
       "crates/ui/src/settings/archived.rs:257",
-      "crates/ui/src/shell.rs:6490"
+      "crates/ui/src/shell.rs:6604"
     ],
     "status": "Used"
   },
@@ -1619,7 +1619,7 @@
     ],
     "references": [
       "apps/ios/Zeron/Views/HomeView.swift:450",
-      "crates/ui/src/shell.rs:8467"
+      "crates/ui/src/shell.rs:8586"
     ],
     "status": "Used"
   },
@@ -1826,10 +1826,10 @@
       "crates/ui/src/comment_ui.rs:41",
       "crates/ui/src/files/preview.rs:2671",
       "crates/ui/src/pickers.rs:2398",
-      "crates/ui/src/settings/accounts.rs:1647",
-      "crates/ui/src/shell.rs:10157",
-      "crates/ui/src/shell.rs:5674",
-      "crates/ui/src/shell.rs:9867",
+      "crates/ui/src/settings/accounts.rs:1773",
+      "crates/ui/src/shell.rs:10066",
+      "crates/ui/src/shell.rs:10356",
+      "crates/ui/src/shell.rs:5788",
       "crates/ui/src/shell/actions_ui.rs:640",
       "crates/ui/src/shell/actions_ui.rs:805",
       "crates/ui/src/shell/spaces.rs:3619",
@@ -1882,8 +1882,8 @@
       "crates/ui/src/pickers.rs:2378",
       "crates/ui/src/queue.rs:479",
       "crates/ui/src/settings/appearance.rs:2173",
-      "crates/ui/src/shell.rs:10066",
-      "crates/ui/src/shell.rs:5856",
+      "crates/ui/src/shell.rs:10265",
+      "crates/ui/src/shell.rs:5970",
       "crates/ui/src/shell/sidebar_sections.rs:527",
       "crates/ui/src/terminal/panel.rs:1539"
     ],
@@ -2085,7 +2085,7 @@
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:322",
       "crates/ui/src/comment_ui.rs:174",
       "crates/ui/src/queue.rs:422",
-      "crates/ui/src/shell.rs:8458",
+      "crates/ui/src/shell.rs:8577",
       "crates/ui/src/shell/spaces.rs:6381",
       "crates/ui/src/transcript.rs:7743",
       "crates/ui/src/transcript.rs:8034",
@@ -2159,10 +2159,11 @@
       "crates/ui/src/markdown/link_interaction.rs:338",
       "crates/ui/src/markdown/render.rs:1979",
       "crates/ui/src/notice.rs:123",
-      "crates/ui/src/shell.rs:8488",
-      "crates/ui/src/shell.rs:8558",
-      "crates/ui/src/shell.rs:8576",
-      "crates/ui/src/shell.rs:8595",
+      "crates/ui/src/shell.rs:8607",
+      "crates/ui/src/shell.rs:8680",
+      "crates/ui/src/shell.rs:8694",
+      "crates/ui/src/shell.rs:8712",
+      "crates/ui/src/shell.rs:8731",
       "crates/ui/src/transcript.rs:6563"
     ],
     "status": "Used"
@@ -2202,8 +2203,8 @@
       "crates/ui/src/queue.rs:468",
       "crates/ui/src/settings/appearance.rs:1988",
       "crates/ui/src/settings/widgets.rs:1168",
-      "crates/ui/src/shell.rs:6422",
-      "crates/ui/src/shell.rs:6531",
+      "crates/ui/src/shell.rs:6536",
+      "crates/ui/src/shell.rs:6645",
       "crates/ui/src/shell/actions_ui.rs:956",
       "crates/ui/src/shell/spaces.rs:3478",
       "crates/ui/src/transcript.rs:6561"
@@ -2516,8 +2517,8 @@
     ],
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:320",
-      "crates/ui/src/changes.rs:3597",
-      "crates/ui/src/shell.rs:9852",
+      "crates/ui/src/changes.rs:3627",
+      "crates/ui/src/shell.rs:10051",
       "crates/ui/src/transcript.rs:7741"
     ],
     "status": "Used"
@@ -2965,8 +2966,9 @@
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:147",
+      "crates/ui/src/changes.rs:3956",
       "crates/ui/src/queue.rs:438",
-      "crates/ui/src/shell.rs:8510",
+      "crates/ui/src/shell.rs:8629",
       "crates/ui/src/shell/spaces.rs:6395"
     ],
     "status": "Used"
@@ -3136,7 +3138,7 @@
       "wrap-text"
     ],
     "references": [
-      "crates/ui/src/changes.rs:3739",
+      "crates/ui/src/changes.rs:3769",
       "crates/ui/src/markdown/render.rs:2171"
     ],
     "status": "Used"
@@ -3213,7 +3215,7 @@
       "split-columns"
     ],
     "references": [
-      "crates/ui/src/changes.rs:3725"
+      "crates/ui/src/changes.rs:3755"
     ],
     "status": "Used"
   },
@@ -3322,9 +3324,9 @@
     ],
     "references": [
       "crates/ui/src/files/preview.rs:2328",
-      "crates/ui/src/shell.rs:10208",
-      "crates/ui/src/shell.rs:9664",
-      "crates/ui/src/shell.rs:9860",
+      "crates/ui/src/shell.rs:10059",
+      "crates/ui/src/shell.rs:10062",
+      "crates/ui/src/shell.rs:10407",
       "crates/ui/src/shell.rs:9863",
       "crates/ui/src/shell/spaces.rs:3336"
     ],
@@ -3375,7 +3377,7 @@
     ],
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:327",
-      "crates/ui/src/shell.rs:6199",
+      "crates/ui/src/shell.rs:6313",
       "crates/ui/src/transcript.rs:7750"
     ],
     "status": "Used"
@@ -3436,10 +3438,10 @@
       "crates/ui/src/pickers.rs:2967",
       "crates/ui/src/pickers.rs:3056",
       "crates/ui/src/pickers.rs:3111",
-      "crates/ui/src/shell.rs:10222",
-      "crates/ui/src/shell.rs:6855",
-      "crates/ui/src/shell.rs:9670",
-      "crates/ui/src/shell.rs:9858",
+      "crates/ui/src/shell.rs:10057",
+      "crates/ui/src/shell.rs:10421",
+      "crates/ui/src/shell.rs:6969",
+      "crates/ui/src/shell.rs:9869",
       "crates/ui/src/shell/spaces.rs:3339",
       "crates/ui/src/shell/spaces.rs:5870"
     ],
@@ -4039,8 +4041,8 @@
       "settings-minimalistic"
     ],
     "references": [
-      "crates/ui/src/shell.rs:6205",
-      "crates/ui/src/shell.rs:7891",
+      "crates/ui/src/shell.rs:6319",
+      "crates/ui/src/shell.rs:8005",
       "crates/ui/src/shell/actions_ui.rs:756",
       "crates/ui/src/shell/command_palette.rs:53"
     ],
@@ -4130,7 +4132,7 @@
       "tuning"
     ],
     "references": [
-      "crates/ui/src/shell.rs:6201"
+      "crates/ui/src/shell.rs:6315"
     ],
     "status": "Used"
   },
@@ -4178,7 +4180,7 @@
       "key-minimalistic"
     ],
     "references": [
-      "crates/ui/src/shell.rs:6200"
+      "crates/ui/src/shell.rs:6314"
     ],
     "status": "Used"
   },
@@ -4318,7 +4320,7 @@
       "keyboard"
     ],
     "references": [
-      "crates/ui/src/shell.rs:6204"
+      "crates/ui/src/shell.rs:6318"
     ],
     "status": "Used"
   },
@@ -4382,7 +4384,7 @@
       "logout-2"
     ],
     "references": [
-      "crates/ui/src/shell.rs:7816"
+      "crates/ui/src/shell.rs:7930"
     ],
     "status": "Used"
   },
@@ -4509,7 +4511,7 @@
       "bell"
     ],
     "references": [
-      "crates/ui/src/shell.rs:6203"
+      "crates/ui/src/shell.rs:6317"
     ],
     "status": "Used"
   },
@@ -4678,9 +4680,9 @@
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:319",
       "crates/ui/src/pickers.rs:3582",
       "crates/ui/src/pickers.rs:4949",
-      "crates/ui/src/shell.rs:10193",
-      "crates/ui/src/shell.rs:9655",
-      "crates/ui/src/shell.rs:9865",
+      "crates/ui/src/shell.rs:10064",
+      "crates/ui/src/shell.rs:10392",
+      "crates/ui/src/shell.rs:9854",
       "crates/ui/src/terminal/panel.rs:1590",
       "crates/ui/src/transcript.rs:7740"
     ],
@@ -4734,7 +4736,7 @@
       "bot"
     ],
     "references": [
-      "crates/ui/src/shell.rs:9864",
+      "crates/ui/src/shell.rs:10063",
       "crates/ui/src/shell/spaces.rs:3341",
       "crates/ui/src/transcript.rs:7748",
       "crates/ui/src/transcript.rs:7749"
@@ -5224,11 +5226,11 @@
     ],
     "references": [
       "crates/ui/src/browser/view.rs:433",
-      "crates/ui/src/changes.rs:3912",
+      "crates/ui/src/changes.rs:3942",
       "crates/ui/src/files/mod.rs:340",
       "crates/ui/src/history.rs:3974",
-      "crates/ui/src/settings/accounts.rs:1699",
-      "crates/ui/src/settings/accounts.rs:2013",
+      "crates/ui/src/settings/accounts.rs:1826",
+      "crates/ui/src/settings/accounts.rs:2173",
       "crates/ui/src/shell/actions_ui.rs:706"
     ],
     "status": "Used"
@@ -5262,7 +5264,7 @@
     ],
     "references": [
       "crates/ui/src/settings/shortcuts.rs:751",
-      "crates/ui/src/shell.rs:7804"
+      "crates/ui/src/shell.rs:7918"
     ],
     "status": "Used"
   },
@@ -5535,7 +5537,7 @@
       "add-circle"
     ],
     "references": [
-      "crates/ui/src/settings/accounts.rs:1949"
+      "crates/ui/src/settings/accounts.rs:2101"
     ],
     "status": "Used"
   },
