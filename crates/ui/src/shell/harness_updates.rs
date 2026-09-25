@@ -768,8 +768,8 @@ impl Shell {
                     div()
                         .absolute()
                         .top(px(CHIP_HEIGHT))
-                        .left(px(12.0))
-                        .right(px(12.0))
+                        .left(px(0.0))
+                        .right(px(0.0))
                         .h(px(1.0))
                         .bg(settings::widgets::row_divider(&theme))
                         .opacity(crate::composer_dock::stage(reveal, 0.2, 0.65)),
