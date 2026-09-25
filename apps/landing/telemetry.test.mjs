@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
-const source = readFileSync(new URL("./public/telemetry.js", import.meta.url), "utf8");
-const html = readFileSync(new URL("./public/index.html", import.meta.url), "utf8");
+const source = readFileSync(new URL("./src/telemetry.js", import.meta.url), "utf8");
+const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const placements = { "nav-download": "nav", "hero-download": "hero", "closing-download": "closing" };
 
 function load({ url = "https://zeron.sh/", referrer = "", navigator = {}, transport, clock = Date } = {}) {
@@ -46,7 +46,9 @@ function load({ url = "https://zeron.sh/", referrer = "", navigator = {}, transp
 }
 
 test("HTML loads the tracker once without blocking parsing", () => {
-  assert.equal(html.match(/<script defer src="\/telemetry\.js"><\/script>/g)?.length, 1);
+  const main = readFileSync(new URL("./src/main.js", import.meta.url), "utf8");
+  assert.equal(main.match(/import '\.\/telemetry\.js';/g)?.length, 1);
+  assert.equal(html.match(/<script type="module" src="\/src\/main\.js"><\/script>/g)?.length, 1);
 });
 
 test("captures one anonymous pageview using the US ingestion endpoint", () => {

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-const source = readFileSync(new URL('./public/downloads.js', import.meta.url), 'utf8');
-const html = readFileSync(new URL('./public/index.html', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./src/downloads.js', import.meta.url), 'utf8');
+const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 async function load(navigator, version = '0.2.67', fail = false) {
   const links = Object.fromEntries(['nav-download', 'hero-download', 'closing-download', 'ver'].map(id => [id, { href: '#downloads', setAttribute() {} }]));
   const choices = ['macos', 'windows', 'linux', 'linux-arm'].map(platformDownload => ({ dataset: { platformDownload } }));

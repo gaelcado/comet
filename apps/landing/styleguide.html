@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#17141D" />
+  <meta name="description" content="The Zeron brand and styleguide: signature, color, type, imagery, patterns, and product expression." />
+  <title>Brand & Styleguide — Zeron</title>
+  <link rel="icon" href="/assets/brand/zeron-favicon.svg" type="image/svg+xml" />
+  <script>
+    (() => {
+      let choice;
+      try { choice = localStorage.getItem('zeron-landing-theme'); } catch {}
+      document.documentElement.dataset.theme = choice === 'light' || choice === 'dark'
+        ? choice : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    })();
+  </script>
+  <script type="module" src="/src/styleguide.js"></script>
+</head>
+<body>
+  <nav class="site-nav" aria-label="Primary navigation">
+    <div class="shell nav-inner">
+      <a class="logo" href="/" aria-label="Zeron home">
+        <img class="dark" src="/assets/brand/zeron-wordmark-dark.svg" width="392" height="136" alt="" />
+        <img class="light" src="/assets/brand/zeron-wordmark-light.svg" width="392" height="136" alt="" />
+      </a>
+      <div class="nav-links" aria-label="Styleguide sections">
+        <a href="#signature">Signature</a><a href="#color">Color</a><a href="#type">Typography</a><a href="#art">Imagery</a><a href="#expression">Expression</a>
+      </div>
+      <div class="nav-actions">
+        <button class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
+          <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 15.3A8.5 8.5 0 0 1 8.7 3.6 8.5 8.5 0 1 0 20.4 15.3Z"/></svg>
+        </button>
+        <a class="site-link" href="/">Back to Zeron ↗</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="shell hero-top"><span class="small-meta">ZERON / BRAND & STYLEGUIDE</span><span class="small-meta">MARK & MATERIAL · V3 STUDY</span></div>
+    <div class="shell hero-main">
+      <p class="kicker" style="color:#b9a7e8">A visual system in motion</p>
+      <h1>Clear in every<br /><span>direction.</span></h1>
+      <p class="hero-copy">A sharp violet signal, quiet space, and one dependable signature. A working guide to how Zeron looks, moves, and speaks.</p>
+    </div>
+    <div class="shell hero-bottom"><span class="small-meta">01 / PRINCIPLES TO APPLICATION</span><a href="#principles">Explore the system ↓</a></div>
+  </header>
+
+  <main>
+    <section class="section shell" id="principles">
+      <div class="intro-grid">
+        <div><p class="kicker">01 / The idea</p><h2 class="intro-title">Many moving parts.<br />One clear view.</h2></div>
+        <div><p>Zeron brings coding agents, sessions, and changes into one workspace. The brand should feel like the product: fast to read, calm under pressure, and decisive when something needs attention.</p><p>The system uses a restrained field of ink and paper. Violet has one job: make the active path unmistakable.</p></div>
+      </div>
+      <div class="principles">
+        <div class="principle"><span class="small-meta">01 / CLARITY</span><strong>Read instantly.</strong><p>Simple hierarchy and generous space make the next action apparent at a glance.</p></div>
+        <div class="principle"><span class="small-meta">02 / VELOCITY</span><strong>Move quietly.</strong><p>Motion can show direction and progress without adding visual noise.</p></div>
+        <div class="principle"><span class="small-meta">03 / CONTROL</span><strong>Choose deliberately.</strong><p>One active accent gives focus to the controls that matter.</p></div>
+      </div>
+    </section>
+
+    <section class="section shell" id="signature">
+      <div class="section-heading"><p class="kicker">02 / Signature</p><h2>One wordmark.<br />One system.</h2><p>The established lowercase <em>zeron.</em> wordmark is the dependable brand signature. Give its letterforms room to breathe, keep the violet terminal period, and use the correct light or dark artwork for the field beneath it.</p></div>
+      <div class="signature-grid">
+        <div class="signature-card paper"><span class="small-meta">01 / INK ON PAPER</span><img src="/assets/brand/zeron-wordmark-light.svg" alt="zeron." width="392" height="136" /><span class="small-meta">PRIMARY LIGHT APPLICATION</span></div>
+        <div class="signature-card ink"><span class="small-meta">02 / PAPER ON INK</span><img src="/assets/brand/zeron-wordmark-dark.svg" alt="zeron." width="392" height="136" /><span class="small-meta">PRIMARY DARK APPLICATION</span></div>
+      </div>
+      <div class="signature-notes"><p>Use the artwork as supplied. Keep its proportions, lowercase spelling, serif construction, and violet period intact. Avoid effects, gradients, outlines, or placing it over busy detail.</p><p class="rule-label">The feline concepts below are visual studies. They do not replace this signature.</p></div>
+    </section>
+
+    <section class="section shell" id="color">
+      <div class="section-heading"><p class="kicker">03 / Color</p><h2>Violet does<br />one job well.</h2><p>The proposed v3 palette is precise and limited. Paper makes room to read; ink carries information; night creates depth. Violet identifies the active path, selected action, or signal point.</p></div>
+      <div class="palette-primary" aria-label="Primary brand palette">
+        <div class="swatch signal"><div><h3>Signal</h3><p>Active / 10%</p></div><code>#6140E8</code></div>
+        <div class="swatch ink"><div><h3>Ink</h3><p>Text / 35%</p></div><code>#17141D</code></div>
+        <div class="swatch paper"><div><h3>Paper</h3><p>Space / 40%</p></div><code>#F7F4EE</code></div>
+        <div class="swatch night"><div><h3>Night</h3><p>Depth / 15%</p></div><code>#22153D</code></div>
+      </div>
+      <div class="palette-secondary" aria-label="Supporting colors">
+        <div class="accent-swatch"><i style="background:#B9A7E8"></i><span><b>Lilac</b><code>#B9A7E8</code></span></div>
+        <div class="accent-swatch"><i style="background:#D8CFFF"></i><span><b>Mist</b><code>#D8CFFF</code></span></div>
+        <div class="accent-swatch"><i style="background:#6E6874"></i><span><b>Graphite</b><code>#6E6874</code></span></div>
+      </div>
+      <div class="palette-notes"><div><span class="small-meta">APPROXIMATE VISUAL BALANCE</span><div class="coverage" aria-hidden="true"><span></span><span></span><span></span><span></span></div><p>These proportions guide composition, not an exact pixel quota. Keep the vivid signal scarce enough to mean something.</p></div><div><span class="small-meta">READABILITY</span><p>Ink on Paper is 16.57:1. Paper on Signal is 5.62:1. Avoid Ink on Signal for small text; use Violet for decisions and markers, not dense copy.</p></div></div>
+    </section>
+
+    <section class="section shell" id="type">
+      <div class="section-heading"><p class="kicker">04 / Typography</p><h2>Type with purpose.</h2><p>Geist does the functional work: headings, navigation, body, and labels. Instrument Serif provides the established typographic signature and selected editorial moments on the site.</p></div>
+      <div class="type-grid">
+        <div class="type-panel"><p class="kicker">01 / Geist</p><h3>All your agents.<br />One workspace.</h3><p>Clean shapes and tight, confident display setting keep messages legible at a glance. Use a generous reading rhythm for longer copy.</p><div class="rule-label">Display / Semibold · Body / Regular</div></div>
+        <div class="type-panel signature-type"><p class="kicker">02 / Instrument Serif</p><h3>zeron<span>.</span></h3><p>The wordmark’s established voice. The live site also uses this face sparingly for an editorial quote and the closing call to action.</p><div class="rule-label">Signature / Regular · Editorial accent</div></div>
+      </div>
+      <div class="type-specimens">
+        <div class="specimen"><span class="small-meta">DISPLAY / GEIST 620</span><p>Run. Steer. Review.</p></div>
+        <div class="specimen"><span class="small-meta">BODY / GEIST 400</span><p>Your work stays on your machines.</p></div>
+        <div class="specimen mono"><span class="small-meta">UTILITY / GEIST MONO</span><p>01 / The workspace</p></div>
+      </div>
+    </section>
+
+    <section class="section shell" id="art">
+      <div class="section-heading"><p class="kicker">05 / Imagery</p><h2>Quiet field.<br />Clear signal.</h2><p>Light has a direction. Texture should feel printed, never muddy. Leave protected space for product truth and copy; let a single beam, edge, or trajectory carry the image.</p></div>
+      <div class="image-pair">
+        <figure><img src="/assets/styleguide/mood-light-aperture.webp" width="1536" height="1024" loading="lazy" alt="Architectural opening with a violet beam on a paper-toned field" /><figcaption><span>01 / Paper & aperture</span><span>Light expression</span></figcaption></figure>
+        <figure><img src="/assets/styleguide/mood-dark-signal.webp" width="1536" height="1024" loading="lazy" alt="Fine trajectories converge on a violet wedge in a dark field" /><figcaption><span>02 / Ink & signal</span><span>Dark expression</span></figcaption></figure>
+      </div>
+      <p class="art-note">These two pieces share a material language: near-black space, warm paper, one violet event, and light that gives the composition a destination. Treat them as art-direction references rather than interchangeable crops.</p>
+    </section>
+
+    <section class="section shell" id="patterns">
+      <div class="section-heading"><p class="kicker">06 / Secondary graphics</p><h2>From many<br />to one.</h2><p>Two print-pattern families turn the product story into a visual grammar. Convergence makes several paths legible as one direction; orbits create a wider field with room to breathe.</p></div>
+      <div class="pattern-grid">
+        <figure><img src="/assets/styleguide/pattern-convergence.webp" width="1916" height="821" loading="lazy" alt="Fine paths gradually converging on a paper field" /><figcaption><span>01 / Convergence</span><span>Editorial line work</span></figcaption></figure>
+        <figure><img src="/assets/styleguide/pattern-orbits.webp" width="1774" height="887" loading="lazy" alt="Printed violet arcs crossing a paper field" /><figcaption><span>02 / Orbits</span><span>Large-format field</span></figcaption></figure>
+      </div>
+      <p class="art-note">Use pattern as atmosphere around content, never underneath small type or primary controls. Leave enough quiet space to preserve hierarchy.</p>
+    </section>
+
+    <section class="section shell" id="mark">
+      <div class="section-heading"><p class="kicker">07 / Mark study</p><h2>A mark that moves.<br />A system that rests.</h2><p>The leaping feline is the strongest exploratory direction in the latest study. The cleaned raster pose is a starting point for design work, not a production logo or app icon.</p></div>
+      <div class="mark-panel"><div class="mark-image"><img src="/assets/styleguide/mark-cleaned-leap-study.png" width="1774" height="887" loading="lazy" alt="Exploratory black silhouette of a leaping feline" /></div><div class="mark-caption"><div><p class="kicker">Exploratory / Not production-ready</p><h3>Long leap.<br />Short muzzle.<br />Four readable limbs.</h3><p>The mark needs hand redrawing, optical correction, small-size trials, monochrome and inverse tests, and legal clearance before use as an official symbol.</p></div><span class="small-meta">IMAGEGEN RASTER STUDY · DO NOT AUTO-TRACE</span></div></div>
+    </section>
+
+    <section class="section shell" id="expression">
+      <div class="section-heading"><p class="kicker">08 / Expression</p><h2>The system<br />at work.</h2><p>A useful brand guide should help ship real screens. Carry the same hierarchy from the editorial page into a button, a label, or a product explanation.</p></div>
+      <div class="application-grid">
+        <div class="app-card dark-card"><p class="kicker">Interface / One active signal</p><h3>Keep the work<br />in view.</h3><p>One decisive violet control sits inside a quiet field. Secondary actions remain legible without competing for focus.</p><div class="button-row"><span class="sample-button">Download Zeron ↗</span><span class="sample-button secondary">Explore the source</span></div></div>
+        <div class="app-card"><p class="kicker">Voice / Direct & specific</p><ul class="voice-list"><li><b>Say</b> Run your coding agents from one native app.</li><li><b>Say</b> Review branch diffs beside the conversation.</li><li><b>Say</b> The work stays on your machines.</li></ul><p>Lead with what people can do. Prefer concrete verbs and product facts over broad claims.</p></div>
+      </div>
+    </section>
+
+    <section class="section shell" id="application-rules">
+      <div class="section-heading"><p class="kicker">09 / Digital guidelines</p><h2>Make room<br />for the work.</h2><p>The current site turns the brand study into readable interfaces. Use these practical rules when carrying its mood into responsive pages and product surfaces.</p></div>
+      <div class="layout-demo" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="guidance-grid">
+        <div class="guidance-card"><p class="kicker">01 / Composition</p><h3>Protect a reading area.</h3><p>Put artwork beside or behind large, high-contrast type only when a quiet field remains. On small screens, simplify the composition and preserve the message first.</p><span class="small-meta">SPACE IS PART OF THE IDENTITY</span></div>
+        <div class="guidance-card"><p class="kicker">02 / Motion</p><h3>Give movement a purpose.</h3><p>Animate to reveal direction, continuity, or a change of state. Keep transitions measured and let the page settle. Respect reduced-motion preferences.</p><span class="small-meta">DIRECTION WITHOUT VISUAL NOISE</span></div>
+        <div class="guidance-card"><p class="kicker">03 / Contrast</p><h3>Keep controls clear.</h3><p>Check text, icons, and focus states against their actual background. Signal violet should highlight an action, while longer reading uses Ink on Paper or Paper on Ink.</p><span class="small-meta">ACCESSIBILITY IS A COMPOSITION RULE</span></div>
+      </div>
+      <div class="guidance-list">
+        <div><b>Use imagery as atmosphere.</b><p>Art is strongest when it frames a product fact, not when it competes with the controls or obscures screenshots.</p></div>
+        <div><b>Keep the product visible.</b><p>Show actual agent sessions and review states when those images are ready; use honest placeholders until then.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="ending">
+    <div class="shell">
+      <p class="kicker">Zeron / Mark & Material</p>
+      <h2>A visual system<br />with <em>direction.</em></h2>
+      <p>This styleguide adapts the latest Mark & Material v3 exploration to the current landing site. The wordmark is the working signature; the feline remains a study.</p>
+      <div class="end-links"><a href="/">Back to Zeron ↗</a><a href="#color">View palette ↑</a><a href="https://github.com/zeronsh/zeron">Explore the source ↗</a></div>
+      <img class="end-wordmark" src="/assets/brand/zeron-wordmark-dark.svg" width="392" height="136" alt="zeron." />
+      <div class="end-foot"><span>Brand & styleguide / 2026</span><span>Clarity · Velocity · Control</span></div>
+    </div>
+  </footer>
+</body>
+</html>
