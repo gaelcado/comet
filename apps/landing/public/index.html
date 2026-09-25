@@ -7,8 +7,17 @@
 <meta name="description" content="Zeron runs Claude Code, Codex, Grok, Hermes and Pi on your machines. Control them from any device, live." />
 <meta property="og:title" content="Zeron" />
 <meta property="og:description" content="Control your coding agents from any of your devices." />
-<meta property="og:image" content="/assets/app-screenshot.jpg" />
-<link rel="icon" href="/assets/zeron-favicon-v3.png" type="image/png" sizes="128x128" />
+<meta property="og:image" content="/assets/art/arc-poster-light.webp" />
+<link rel="icon" href="/assets/brand/zeron-favicon.svg" type="image/svg+xml" />
+<script>
+  (() => {
+    let choice;
+    try { choice = localStorage.getItem("zeron-landing-theme"); } catch {}
+    document.documentElement.dataset.theme = choice === "light" || choice === "dark"
+      ? choice
+      : matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  })();
+</script>
 <script defer src="/telemetry.js"></script>
 <style>
   @font-face {
@@ -30,6 +39,7 @@
     font-display: swap;
   }
   :root {
+    color-scheme: dark;
     --bg: #06040a;
     --bg-raise: #0c0913;
     --ink: #ece7f7;
@@ -40,12 +50,37 @@
     --purple: #8b5cf6;
     --purple-hi: #b79df9;
     --purple-deep: #5b34b8;
+    --button-bg: #f7f4ee;
+    --button-ink: #17141d;
+    --button-hover: #ddd6ea;
+    --quote-ink: #f7f4ee;
+    --quote-dim: #c7badb;
+    --tweet-ink: rgba(236,231,247,0.82);
     --nav-control-height: 30px;
     --sans: "Geist", system-ui, -apple-system, sans-serif;
     --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
     --serif: "Instrument Serif", Georgia, serif;
     --radius: 20px;
     --sec: 120px;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f7f4ee;
+    --bg-raise: #fdfbf7;
+    --ink: #17141d;
+    --dim: #5e5866;
+    --faint: #777080;
+    --line: #d8d0db;
+    --line-soft: #e7dfe8;
+    --purple: #6140e8;
+    --purple-hi: #6140e8;
+    --purple-deep: #4930ac;
+    --button-bg: #241735;
+    --button-ink: #f7f4ee;
+    --button-hover: #493165;
+    --quote-ink: #f7f4ee;
+    --quote-dim: #e9e1ed;
+    --tweet-ink: #39323e;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html {
@@ -97,21 +132,7 @@
     .nav-inner { grid-template-columns: 1fr auto; }
     .nav-sections { display: none; }
   }
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-  .logo-mark {
-    display: block;
-    width: var(--nav-control-height);
-    height: var(--nav-control-height);
-    object-fit: cover;
-    flex: 0 0 auto;
-  }
+  .logo { display: block; width: 87px; }
   nav .links {
     justify-self: end;
     display: flex;
@@ -139,14 +160,14 @@
     font-size: 13.5px;
     font-weight: 500;
     white-space: nowrap;
-    background: #fff;
-    color: var(--bg);
+    background: var(--button-bg);
+    color: var(--button-ink);
     border: 1px solid transparent;
     border-radius: 9px;
     cursor: pointer;
     transition: background .15s, border-color .15s, color .15s;
   }
-  .btn:hover { background: #ddd6ea; }
+  .btn:hover { background: var(--button-hover); }
   .btn.ghost {
     background: transparent;
     color: var(--ink);
@@ -172,9 +193,30 @@
     font-size: 12.5px;
     border-radius: 8px;
   }
+  .theme-toggle {
+    width: var(--nav-control-height);
+    height: var(--nav-control-height);
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    color: var(--dim);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .theme-toggle:hover { color: var(--ink); border-color: var(--purple); }
+  .theme-toggle:focus-visible { outline: 2px solid var(--purple); outline-offset: 3px; }
+  .theme-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .theme-toggle .moon, [data-theme="light"] .theme-toggle .sun { display: none; }
+  [data-theme="light"] .theme-toggle .moon { display: block; }
+  .brand-wordmark { display: block; width: 100%; height: auto; }
+  .brand-wordmark.light, [data-theme="light"] .brand-wordmark.dark { display: none; }
+  [data-theme="light"] .brand-wordmark.light { display: block; }
 
   /* ── hero ────────────────────────────────────────────── */
   .hero { position: relative; overflow: hidden; }
+  .hero-art { display: none; }
   /* above the glyph field, which is prepended into .hero */
   .hero-grid {
     position: relative;
@@ -265,6 +307,8 @@
     object-fit: cover;
     z-index: -1;
   }
+  .plate-img.light, [data-theme="light"] .plate-img.dark { display: none; }
+  [data-theme="light"] .plate-img.light { display: block; }
 
   /* ── shot ────────────────────────────────────────────── */
   .shot { padding: 48px 0 0; position: relative; }
@@ -276,16 +320,40 @@
     pointer-events: none;
   }
   .shot .wrap { max-width: 1240px; position: relative; }
-  .shot img {
-    display: block;
+  .screenshot-placeholder {
+    position: relative;
+    display: grid;
+    place-items: center;
     width: 100%;
-    height: auto;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: var(--bg-raise);
     border: 1px solid var(--line);
     border-radius: 14px;
     box-shadow:
       0 30px 100px -30px rgba(0,0,0,0.8),
       0 0 90px -30px rgba(139,92,246,0.35);
   }
+  .screenshot-placeholder::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, transparent 43%, rgba(139,92,246,.08) 50%, transparent 57%);
+    pointer-events: none;
+  }
+  .screenshot-placeholder span {
+    position: relative;
+    padding: 9px 13px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--dim);
+    background: var(--bg-raise);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .screenshot-placeholder.small { aspect-ratio: 907 / 627; border-radius: 12px; box-shadow: none; }
 
   /* ── agents ──────────────────────────────────────────── */
   .agents {
@@ -331,13 +399,7 @@
      above and below); columns separate with gaps instead of inner padding */
   .p-gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 22px; }
   .p-gallery figure { margin: 0; padding: 22px 0 18px; }
-  .p-gallery img {
-    display: block;
-    width: 100%;
-    height: auto;
-    border: 1px solid var(--line-soft);
-    border-radius: 12px;
-  }
+  .p-gallery .screenshot-placeholder { border-color: var(--line-soft); }
   .p-gallery figcaption {
     margin-top: 14px;
     font-size: 14px;
@@ -523,17 +585,19 @@
   .plate-quote p {
     margin: 0 auto;
     max-width: 24ch;
-    font-family: var(--serif);
+    font-family: var(--sans);
+    font-weight: 500;
     font-size: clamp(26px, 3.2vw, 44px);
     line-height: 1.12;
     letter-spacing: -0.01em;
-    color: var(--ink);
+    color: var(--quote-ink);
     text-wrap: balance;
   }
   .plate-quote cite { display: block; margin-top: 22px; font-size: 13px; font-weight: 500; font-style: normal; }
   .plate-quote cite a { display: inline-flex; align-items: center; gap: 8px; }
   .plate-quote cite img { border-radius: 50%; }
-  .plate-quote cite span { color: var(--dim); font-weight: 450; }
+  .plate-quote cite { color: var(--quote-ink); }
+  .plate-quote cite span { color: var(--quote-dim); font-weight: 450; }
   .wall {
     position: relative;
     margin-top: 40px;
@@ -574,7 +638,7 @@
   }
   .tweet-handle { font-size: 12.5px; line-height: 1; color: var(--faint); }
   .tweet-x { width: 14px; height: 14px; color: var(--faint); }
-  .tweet p { font-size: 15px; line-height: 1.5; color: rgba(236,231,247,0.82); text-wrap: pretty; }
+  .tweet p { font-size: 15px; line-height: 1.5; color: var(--tweet-ink); text-wrap: pretty; }
   .tweet .hl { font-style: normal; color: var(--purple-hi); }
   @media (max-width: 900px) {
     .plate-quote { aspect-ratio: 4 / 3; }
@@ -633,11 +697,11 @@
     padding-bottom: clamp(68px, 8vw, 112px);
   }
   .footer-intro h2 {
-    font-family: var(--serif);
-    font-size: clamp(48px, 6vw, 86px);
-    font-weight: 400;
-    line-height: 1;
-    letter-spacing: -.025em;
+    font-family: var(--sans);
+    font-size: clamp(42px, 5.1vw, 74px);
+    font-weight: 500;
+    line-height: 1.06;
+    letter-spacing: -.04em;
   }
   .footer-intro p { max-width: 42ch; color: var(--dim); font-size: 16px; line-height: 1.6; }
   .footer-intro .cta-row {
@@ -655,6 +719,8 @@
     object-fit: cover;
     object-position: 50% 38%;
   }
+  .footer-landscape img.light, [data-theme="light"] .footer-landscape img.dark { display: none; }
+  [data-theme="light"] .footer-landscape img.light { display: block; }
   .footer-landscape::after {
     content: "";
     position: absolute;
@@ -664,17 +730,9 @@
   .footer-inner { position: relative; margin-top: clamp(-155px, -11vw, -66px); }
   .footer-wordmark {
     display: block;
-    width: fit-content;
+    width: min(100%, 1120px);
     margin-inline: auto;
-    font-family: var(--serif);
-    font-size: clamp(106px, 28.8vw, 440px);
-    font-weight: 400;
-    letter-spacing: -.065em;
-    line-height: .78;
-    white-space: nowrap;
-    color: #f6f0e9;
   }
-  .footer-wordmark span { color: var(--purple-hi); }
   .foot {
     display: grid;
     grid-template-columns: 1fr auto auto;
@@ -696,6 +754,42 @@
     .footer-intro { grid-template-columns: 1fr; align-items: start; gap: 22px; }
   }
 
+  /* Paper edition: same structure, with the supplied light art and the
+     engraved dark companions. */
+  [data-theme="light"] { scrollbar-color: #b6adbf transparent; }
+  [data-theme="light"] ::-webkit-scrollbar-thumb { background-color: #b6adbf; }
+  [data-theme="light"] ::-webkit-scrollbar-thumb:hover { background-color: #91839f; }
+  [data-theme="light"] .btn.ghost:hover { background: rgba(97,64,232,.07); border-color: #ab9bc0; }
+  [data-theme="light"] .plate { background: #e9e2da; }
+  [data-theme="light"] .shot::before { background: radial-gradient(55% 55% at 50% 60%, rgba(97,64,232,.10), transparent 72%); }
+  [data-theme="light"] .screenshot-placeholder { box-shadow: 0 26px 80px -35px rgba(45,30,70,.24); }
+  [data-theme="light"] .screenshot-placeholder.small { box-shadow: none; }
+  [data-theme="light"] .pdot { background: #ab9bc0; }
+  [data-theme="light"] .spoke-line { stroke: #b9aec8; }
+  [data-theme="light"] .spoke-hub,
+  [data-theme="light"] .spoke-node,
+  [data-theme="light"] .dev-chip { background: var(--bg-raise); box-shadow: 0 8px 26px -12px rgba(45,30,70,.22); }
+  [data-theme="light"] .spoke-wrap::before,
+  [data-theme="light"] .flow-wrap::before { opacity: .5; }
+  [data-theme="light"] .plate-quote::before { background: radial-gradient(65% 85% at 50% 45%, rgba(23,20,29,.75), rgba(23,20,29,.08)); }
+  [data-theme="light"] .plate-quote .glyph-field { display: none; }
+  [data-theme="light"] .hero .glyph-field { display: none; }
+  [data-theme="light"] .hero-art {
+    display: block;
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: min(52%, 900px);
+    height: 100%;
+    object-fit: cover;
+    object-position: 70% 54%;
+    opacity: .22;
+    filter: saturate(.7);
+    -webkit-mask-image: radial-gradient(ellipse at 75% 52%, #000 8%, transparent 76%);
+    mask-image: radial-gradient(ellipse at 75% 52%, #000 8%, transparent 76%);
+  }
+  [data-theme="light"] .footer-landscape::after { background: linear-gradient(to bottom, transparent 54%, rgba(247,244,238,.30) 72%, var(--bg) 100%); }
+
   /* ── mobile ──────────────────────────────────────────── */
   @media (max-width: 640px) {
     .wrap { padding: 0 20px; }
@@ -708,7 +802,7 @@
     .agents { gap: 22px; margin-bottom: 26px; }
     .agent-icon { width: 20px; height: 20px; }
     .shot { padding: 28px 0 0; }
-    .shot img { border-radius: 8px; }
+    .screenshot-placeholder { border-radius: 8px; }
     .sec-head { margin-bottom: 32px; text-align: left; }
     .sec-head p { font-size: 18px; }
     .plate-quote { aspect-ratio: auto; padding: 56px 0; }
@@ -721,7 +815,7 @@
     .footer-landscape { height: clamp(370px, 125vw, 550px); }
     .footer-landscape img { object-position: 58% center; }
     .footer-inner { margin-top: -48px; }
-    .footer-wordmark { font-size: 29vw; }
+    .footer-wordmark { width: 100%; }
     .foot { grid-template-columns: 1fr; justify-items: center; gap: 18px; margin-top: 58px; padding-top: 28px; padding-bottom: 40px; text-align: center; }
     .foot-links { justify-content: center; }
   }
@@ -735,8 +829,8 @@
   <nav>
     <div class="wrap nav-inner">
       <a class="logo" href="/" aria-label="Zeron home">
-        <img class="logo-mark" src="/assets/zeron-app-icon.png" width="128" height="128" alt="" />
-        <span>Zeron</span>
+        <img class="brand-wordmark dark" src="/assets/brand/zeron-wordmark-dark.svg" alt="" width="392" height="136" />
+        <img class="brand-wordmark light" src="/assets/brand/zeron-wordmark-light.svg" alt="" width="392" height="136" />
       </a>
       <div class="nav-sections" aria-label="Sections">
         <a href="#features">Features</a>
@@ -745,6 +839,10 @@
         <a href="https://github.com/zeronsh/zeron/releases">Changelog</a>
       </div>
       <div class="links">
+        <button class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
+          <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 15.3A8.5 8.5 0 0 1 8.7 3.6 8.5 8.5 0 1 0 20.4 15.3Z"/></svg>
+        </button>
         <a class="gh-icon" href="https://discord.gg/rnynTdgZ24" aria-label="Discord">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189z"/></svg>
         </a>
@@ -757,6 +855,7 @@
   </nav>
 
   <header class="hero">
+    <img class="hero-art" src="/assets/art/arc-poster-light.webp" alt="" aria-hidden="true" width="1024" height="1536" />
     <div class="wrap hero-grid">
       <div class="hero-copy">
         <div class="agents" aria-label="Supported agents">
@@ -792,7 +891,7 @@
 
   <section class="shot">
     <div class="wrap">
-      <img src="/assets/app-screenshot.jpg" alt="Zeron driving a Claude Code session with a live branch diff sidebar" />
+      <div class="screenshot-placeholder" role="img" aria-label="Zeron app screenshot coming soon"><span>App preview coming soon</span></div>
     </div>
   </section>
 
@@ -829,7 +928,7 @@
                 <line x1="17.09" y1="31" x2="40.47" y2="44.5" class="spoke-accent" style="animation-delay: 1.25s"></line>
               </g>
             </svg>
-            <div class="spoke-hub"><img src="/assets/zeron-app-icon.png" width="128" height="128" alt="" /></div>
+            <div class="spoke-hub"><img src="/assets/brand/zeron-favicon.svg" width="128" height="128" alt="" /></div>
             <div class="spoke-node" style="left: 50%; top: 12%">
               <span class="agent-icon" style="--icon: url('/assets/icons/claude-mark.svg')"></span><span>Claude Code</span>
             </div>
@@ -861,15 +960,15 @@
       </div>
       <div class="panel-row p-gallery">
         <figure>
-          <img src="/assets/shots/sessions.png" alt="Zeron session list showing agent sessions running on another machine" loading="lazy" width="907" height="627" />
+          <div class="screenshot-placeholder small" role="img" aria-label="Session list screenshot coming soon"><span>Session list preview</span></div>
           <figcaption><b>Every machine's sessions,</b> one list.</figcaption>
         </figure>
         <figure>
-          <img src="/assets/shots/diff.png" alt="Zeron branch diff view with added and removed lines across 299 changed files" loading="lazy" width="907" height="627" />
+          <div class="screenshot-placeholder small" role="img" aria-label="Branch diff screenshot coming soon"><span>Branch diff preview</span></div>
           <figcaption><b>Branch diffs,</b> live as agents work.</figcaption>
         </figure>
         <figure>
-          <img src="/assets/shots/history.png" alt="Zeron commit history view with a branching commit graph" loading="lazy" width="907" height="627" />
+          <div class="screenshot-placeholder small" role="img" aria-label="Commit history screenshot coming soon"><span>Commit history preview</span></div>
           <figcaption><b>Commit history</b> for every workspace.</figcaption>
         </figure>
       </div>
@@ -911,7 +1010,7 @@
               <svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M11.3 18.5h1.4"/></svg>
               <span>iPad</span>
             </div>
-            <div class="spoke-hub" style="top: 52%"><img src="/assets/zeron-app-icon.png" width="128" height="128" alt="" /></div>
+            <div class="spoke-hub" style="top: 52%"><img src="/assets/brand/zeron-favicon.svg" width="128" height="128" alt="" /></div>
             <div class="spoke-node" style="left: 50%; top: 86%">
               <span class="agent-icon" style="--icon: url('/assets/icons/claude-mark.svg')"></span><span>Claude Code</span>
             </div>
@@ -928,7 +1027,8 @@
         <p><b>What are people saying.</b> See how people really feel about Zeron.</p>
       </header>
       <figure class="plate plate-quote">
-        <img class="plate-img" src="/assets/art/terraces.webp" alt="" loading="lazy" />
+        <img class="plate-img dark" src="/assets/art/terraces.webp" alt="" loading="lazy" />
+        <img class="plate-img light" src="/assets/art/terraces-light.webp" alt="" loading="lazy" />
         <blockquote>
           <p>“Oh man, this is the best UI I’ve ever tried! For real. It feels really smooth. Typing, reading, everything. Really fast. Right now it’s my main UI for coding.”</p>
           <cite><a href="https://x.com/FrancoE114696/status/2102551301871501508" target="_blank" rel="noopener"><img src="/assets/tweets/francoe114696.jpg" alt="" width="24" height="24" /> Fran Escob <span>@FrancoE114696</span></a></cite>
@@ -1082,10 +1182,14 @@
       </div>
     </div>
     <div class="footer-landscape" aria-hidden="true">
-      <img src="/assets/art/footer-mountains.webp" alt="" width="1672" height="941" loading="lazy" decoding="async" />
+      <img class="dark" src="/assets/art/footer-mountains-dark.webp" alt="" width="1672" height="941" loading="lazy" decoding="async" />
+      <img class="light" src="/assets/art/footer-mountains-light.webp" alt="" width="1672" height="941" loading="lazy" decoding="async" />
     </div>
     <div class="wrap footer-inner">
-      <a class="footer-wordmark" href="/" aria-label="Zeron home">zeron<span>.</span></a>
+      <a class="footer-wordmark" href="/" aria-label="Zeron home">
+        <img class="brand-wordmark dark" src="/assets/brand/zeron-wordmark-dark.svg" alt="" width="392" height="136" />
+        <img class="brand-wordmark light" src="/assets/brand/zeron-wordmark-light.svg" alt="" width="392" height="136" />
+      </a>
       <div class="foot">
         <span>Free and open source.</span>
         <nav class="foot-links" aria-label="Footer">
@@ -1099,6 +1203,32 @@
   </footer>
 
 <script defer src="/downloads.js"></script>
+<script>
+  (() => {
+    const button = document.querySelector(".theme-toggle");
+    const system = matchMedia("(prefers-color-scheme: light)");
+    const sync = () => {
+      const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+      button.setAttribute("aria-label", `Switch to ${next} mode`);
+      button.title = `Switch to ${next} mode`;
+    };
+    button.addEventListener("click", () => {
+      const current = document.documentElement.dataset.theme;
+      document.documentElement.dataset.theme = current === "light" ? "dark" : "light";
+      try { localStorage.setItem("zeron-landing-theme", document.documentElement.dataset.theme); } catch {}
+      sync();
+    });
+    system.addEventListener("change", () => {
+      let saved;
+      try { saved = localStorage.getItem("zeron-landing-theme"); } catch {}
+      if (saved !== "light" && saved !== "dark") {
+        document.documentElement.dataset.theme = system.matches ? "light" : "dark";
+        sync();
+      }
+    });
+    sync();
+  })();
+</script>
 <script type="module">
   // Hero background: agent traces as a faint glyph field, a slow violet
   // beam sweeping through it, and a violet afterglow under the pointer.
