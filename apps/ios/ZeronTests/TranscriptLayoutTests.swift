@@ -537,7 +537,10 @@ final class TranscriptLayoutTests: XCTestCase {
             // establish that the keyboard is still moving.
             guard showing ? target < legStart - 1 : target > legStart + 1 else { return false }
             let progress = (position - legStart) / (target - legStart)
-            guard progress >= 0.45, progress < 1, abs(position - target) > 1 else { return false }
+            // Keyboard springs can overshoot their endpoint between display
+            // callbacks. An overshooting presentation is still in flight;
+            // requiring progress < 1 can miss the entire reversal window.
+            guard progress >= 0.45, abs(position - target) > 1 else { return false }
             events.append("reverse toggle=\(toggle) timestamp=\(link.timestamp) position=\(position) target=\(target)")
             legStart = position
             toggle += 1
