@@ -814,7 +814,6 @@
     display: flex;
     align-items: center;
     min-height: 0;
-    background: var(--bg);
   }
   .footer-stage {
     position: fixed;
@@ -834,14 +833,14 @@
     height: 100%;
     overflow: hidden;
     border: solid var(--footer-band);
-    border-width: var(--footer-rail-height) clamp(6px, .7vw, 10px) 0;
+    border-width: clamp(6px, .7vw, 10px) clamp(6px, .7vw, 10px) 0;
     background: var(--bg);
   }
   .footer-media {
     position: relative;
+    z-index: 1;
     min-height: 0;
     overflow: hidden;
-    background: var(--bg);
   }
   .footer-intro {
     position: relative;
@@ -882,6 +881,8 @@
   .footer-plane image.light, [data-theme="light"] .footer-plane image.dark { display: none; }
   [data-theme="light"] .footer-plane image.light { display: block; }
   .footer-bar {
+    position: relative;
+    z-index: 1;
     display: grid;
     grid-template-columns: auto auto 1fr auto;
     align-items: center;

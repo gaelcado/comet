@@ -48,10 +48,14 @@ export function mountGlyphField(host, opts = {}) {
     clear: null, // e.g. { x: 0.5, y: 0.45, rx: 0.3, ry: 0.18 }
     // Optional copy element whose footprint stays free of glyphs and pointer glow.
     clearElement: null,
+    clearElements: null,
+    clearFeather: 96,
+    pointerTarget: window,
     ...opts,
   };
   const BEAM = { angle: -38, width: 0.14, sweep: 26, alpha: 0.22, offset: 0.5 };
   o.beam = opts.beam === null || opts.beam === false ? null : { ...BEAM, ...opts.beam };
+  const clearTargets = o.clearElements || (o.clearElement ? [o.clearElement] : []);
   const text = o.lines.join('     ') + '     ';
   const coarse = matchMedia('(hover: none), (max-width: 767px)').matches;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -76,7 +80,7 @@ export function mountGlyphField(host, opts = {}) {
   const lx = lit.getContext('2d');
 
   let cols = 0, rows = 0, W = 0, H = 0, extra = 0;
-  let quiet = null;
+  let quiet = [];
   let heat = new Float32Array(0);
   let hot = new Set();
   const trail = [];
@@ -102,13 +106,17 @@ export function mountGlyphField(host, opts = {}) {
 
   const rgba = (rgb, a) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a.toFixed(3)})`;
   const quietAlpha = (r, c) => {
-    if (!quiet) return 1;
+    if (!quiet.length) return 1;
     const x = (c + 0.5) * o.cellW;
     const y = (r + 0.5) * o.cellH - extra;
-    const dx = Math.max(quiet.left - x, 0, x - quiet.right);
-    const dy = Math.max(quiet.top - y, 0, y - quiet.bottom);
-    const t = Math.min(1, Math.hypot(dx, dy) / quiet.feather);
-    return t * t * (3 - 2 * t);
+    let alpha = 1;
+    for (const area of quiet) {
+      const dx = Math.max(area.left - x, 0, x - area.right);
+      const dy = Math.max(area.top - y, 0, y - area.bottom);
+      const t = Math.min(1, Math.hypot(dx, dy) / o.clearFeather);
+      alpha = Math.min(alpha, t * t * (3 - 2 * t));
+    }
+    return alpha;
   };
 
   let cache = new Float32Array(0);
@@ -135,17 +143,16 @@ export function mountGlyphField(host, opts = {}) {
     W = host.clientWidth;
     extra = 60;
     H = host.clientHeight + extra * 2;
-    if (o.clearElement) {
-      const hostBounds = host.getBoundingClientRect();
-      const copyBounds = o.clearElement.getBoundingClientRect();
-      quiet = {
+    const hostBounds = host.getBoundingClientRect();
+    quiet = clearTargets.map((element) => {
+      const copyBounds = element.getBoundingClientRect();
+      return {
         left: copyBounds.left - hostBounds.left - 12,
         right: copyBounds.right - hostBounds.left + 12,
         top: copyBounds.top - hostBounds.top - 12,
         bottom: copyBounds.bottom - hostBounds.top + 12,
-        feather: 96,
       };
-    }
+    });
     inner.style.top = `${-extra}px`;
     inner.style.height = `${H}px`;
     cols = Math.ceil(W / o.cellW) + 1;
@@ -247,16 +254,16 @@ export function mountGlyphField(host, opts = {}) {
 
   document.fonts.ready.then(() => { setup(); applyScroll(); });
   setup();
-  if (!coarse && !reduced) addEventListener('pointermove', onMove, { passive: true });
-  if (!reduced) addEventListener('scroll', onScroll, { passive: true });
+  if (!coarse && !reduced) o.pointerTarget.addEventListener('pointermove', onMove, { passive: true });
+  if (!reduced && o.parallax !== 1) addEventListener('scroll', onScroll, { passive: true });
   if (o.beam && o.beam.sweep && !reduced) braf = requestAnimationFrame(beamLoop);
   let geometry = '';
   const ro = new ResizeObserver(() => {
-    const next = [host.clientWidth, host.clientHeight, o.clearElement?.clientWidth, o.clearElement?.clientHeight].join('/');
+    const next = [host.clientWidth, host.clientHeight, ...clearTargets.flatMap((element) => [element.clientWidth, element.clientHeight])].join('/');
     if (next !== geometry) { geometry = next; setup(); }
   });
   ro.observe(host);
-  if (o.clearElement) ro.observe(o.clearElement);
+  for (const element of clearTargets) ro.observe(element);
 
   return {
     setAppearance(next) {
@@ -265,7 +272,7 @@ export function mountGlyphField(host, opts = {}) {
     },
     destroy() {
       cancelAnimationFrame(traf); cancelAnimationFrame(sraf); cancelAnimationFrame(braf);
-      removeEventListener('pointermove', onMove); removeEventListener('scroll', onScroll);
+      o.pointerTarget.removeEventListener('pointermove', onMove); removeEventListener('scroll', onScroll);
       ro.disconnect(); wrap.remove();
     },
   };
