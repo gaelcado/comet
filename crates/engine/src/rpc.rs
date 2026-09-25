@@ -1778,12 +1778,9 @@ impl RpcService for EngineRpc {
                         path: p.path,
                     })
                     .await?;
-                let harness = self
+                let skills = self
                     .registry
-                    .resolve(p.harness)
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                let skills = harness
-                    .skills(&root)
+                    .discover_skills(p.harness, &root)
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&skills)
@@ -1809,12 +1806,9 @@ impl RpcService for EngineRpc {
                         path: p.path,
                     })
                     .await?;
-                let harness = self
+                let commands = self
                     .registry
-                    .resolve(p.harness)
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                let commands = harness
-                    .commands_for(&root)
+                    .discover_commands(p.harness, &root)
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&commands)

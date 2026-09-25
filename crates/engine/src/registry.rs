@@ -176,17 +176,37 @@ impl HarnessRegistry {
     pub async fn discover_commands(
         &self,
         id: HarnessId,
+        cwd: &Path,
     ) -> Result<Vec<zeron_proto::SlashCommand>, HarnessError> {
+        let cwd = cwd.to_owned();
         let lease = self.execution_lease(id).await;
         let harness = self.resolve(id)?;
         tokio::spawn(async move {
             let _lease = lease;
-            harness.commands().await
+            harness.commands_for(&cwd).await
         })
         .await
         .map_err(|error| {
             HarnessError::Protocol(format!("command discovery task failed: {error}"))
         })?
+    }
+
+    pub async fn discover_skills(
+        &self,
+        id: HarnessId,
+        cwd: &Path,
+    ) -> Result<Option<Vec<zeron_proto::invocation::Skill>>, HarnessError> {
+        let cwd = cwd.to_owned();
+        let lease = self.execution_lease(id).await;
+        let harness = self.resolve(id)?;
+        tokio::spawn(async move {
+            // Retain the read lease through the adapter's deadline and cleanup,
+            // even when the requesting RPC is dropped.
+            let _lease = lease;
+            harness.skills(&cwd).await
+        })
+        .await
+        .map_err(|error| HarnessError::Protocol(format!("skill discovery task failed: {error}")))?
     }
 
     pub fn new() -> Self {
@@ -1350,7 +1370,7 @@ mod gate_tests {
                 async move {
                     if commands {
                         registry
-                            .discover_commands(HarnessId::Codex)
+                            .discover_commands(HarnessId::Codex, Path::new("/tmp"))
                             .await
                             .map(|_| ())
                     } else {

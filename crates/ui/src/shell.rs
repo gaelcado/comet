@@ -2583,18 +2583,26 @@ impl Shell {
         }
         // Agent release discoveries finish independently (bounded provider
         // concurrency), so debounce the transition and deliver one aggregate
-        // banner. The key includes device+harness+version: repeated watch
-        // frames never re-notify, while a genuinely newer release does.
+        // banner. Versioned releases deduplicate by version. Versionless
+        // availability deduplicates until a confirmed Current/Updated status;
+        // transient checks, disconnections and cancellation do not reset it.
         let has_unseen_harness_update = {
             let state = state.read(cx);
             let device = state.local_device_id.as_deref().unwrap_or("local");
+            for status in &state.harness_updates {
+                if matches!(
+                    status.phase,
+                    zeron_proto::HarnessUpdatePhase::Current
+                        | zeron_proto::HarnessUpdatePhase::Updated
+                ) {
+                    self.harness_update_seen.remove(
+                        &harness_updates::versionless_notification_key(device, status.harness),
+                    );
+                }
+            }
             state.harness_updates.iter().any(|status| {
-                status.phase == zeron_proto::HarnessUpdatePhase::Available
-                    && status.latest_version.as_deref().is_some_and(|latest| {
-                        !self
-                            .harness_update_seen
-                            .contains(&format!("{device}:{:?}:{latest}", status.harness))
-                    })
+                harness_updates::notification_key(device, status)
+                    .is_some_and(|key| !self.harness_update_seen.contains(&key))
             })
         };
         if has_unseen_harness_update && self.harness_update_banner_task.is_none() {
@@ -2608,15 +2616,8 @@ impl Shell {
                         state
                             .harness_updates
                             .iter()
-                            .filter(|status| {
-                                status.phase == zeron_proto::HarnessUpdatePhase::Available
-                                    && status.latest_version.is_some()
-                            })
-                            .filter_map(|status| {
-                                let latest = status.latest_version.as_deref()?;
-                                let key = format!("{device}:{:?}:{latest}", status.harness);
-                                (!this.harness_update_seen.contains(&key)).then_some(key)
-                            })
+                            .filter_map(|status| harness_updates::notification_key(device, status))
+                            .filter(|key| !this.harness_update_seen.contains(key))
                             .collect()
                     };
                     if new.is_empty() {
@@ -14584,6 +14585,11 @@ mod right_tab_mouse_regressions {
                         "policy": "notify", "source": "unknown", "canApply": true
                     }))
                     .unwrap(),
+                    serde_json::from_value(serde_json::json!({
+                        "harness": "hermes", "phase": "available",
+                        "policy": "notify", "source": "unknown", "canApply": true
+                    }))
+                    .unwrap(),
                 ];
             });
         });
@@ -14596,8 +14602,40 @@ mod right_tab_mouse_regressions {
         }
         cx.run_until_parked();
         shell.read_with(cx, |shell, _| {
-            assert_eq!(shell.harness_update_seen.len(), 1);
+            assert_eq!(shell.harness_update_seen.len(), 2);
             assert!(shell.harness_update_banner_task.is_none());
+        });
+        // Rechecks and repeated versionless availability remain deduplicated.
+        for phase in [
+            zeron_proto::HarnessUpdatePhase::Checking,
+            zeron_proto::HarnessUpdatePhase::Available,
+        ] {
+            shell.update(cx, |shell, cx| {
+                shell
+                    .state
+                    .update(cx, |state, _| state.harness_updates[1].phase = phase);
+                shell.on_state_changed(&shell.state.clone(), cx);
+                assert!(shell.harness_update_banner_task.is_none());
+            });
+        }
+        // A confirmed current state ends the availability episode, permitting
+        // another commit-only update to notify even if the version is unchanged.
+        shell.update(cx, |shell, cx| {
+            shell.state.update(cx, |state, _| {
+                state.harness_updates[1].phase = zeron_proto::HarnessUpdatePhase::Current
+            });
+            shell.on_state_changed(&shell.state.clone(), cx);
+            assert_eq!(shell.harness_update_seen.len(), 1);
+            shell.state.update(cx, |state, _| {
+                state.harness_updates[1].phase = zeron_proto::HarnessUpdatePhase::Available
+            });
+            shell.on_state_changed(&shell.state.clone(), cx);
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(shell.harness_update_seen.len(), 2)
         });
     }
 
@@ -14660,9 +14698,7 @@ mod right_tab_mouse_regressions {
             Some(MouseButton::Left),
             gpui::Modifiers::default(),
         );
-        cx.update(|_, cx| {
-            assert!(cx.has_active_drag(), "tab drag did not start")
-        });
+        cx.update(|_, cx| assert!(cx.has_active_drag(), "tab drag did not start"));
         cx.simulate_mouse_up(start, MouseButton::Left, gpui::Modifiers::default());
         cx.simulate_mouse_down(start, MouseButton::Middle, gpui::Modifiers::default());
         cx.simulate_mouse_up(start, MouseButton::Middle, gpui::Modifiers::default());
