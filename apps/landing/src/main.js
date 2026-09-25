@@ -37,16 +37,24 @@ systemTheme.addEventListener('change', () => {
 syncThemeButton();
 
 const showcaseVideo = document.querySelector('.showcase-video');
-if (showcaseVideo && 'IntersectionObserver' in window) {
+if (showcaseVideo) {
+  showcaseVideo.muted = true;
+  showcaseVideo.defaultPlaybackRate = 1.25;
+  showcaseVideo.playbackRate = 1.25;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-  const observer = new IntersectionObserver(([entry]) => {
-    if (entry.isIntersecting && !reducedMotion.matches) {
-      showcaseVideo.play().catch(() => {});
-    } else {
-      showcaseVideo.pause();
-    }
-  }, { threshold: 0.1 });
-  observer.observe(showcaseVideo);
+  let inView = true;
+  const syncVideo = () => {
+    if (inView && !reducedMotion.matches) showcaseVideo.play().catch(() => {});
+    else showcaseVideo.pause();
+  };
+  if ('IntersectionObserver' in window) {
+    inView = false;
+    new IntersectionObserver(([entry]) => {
+      inView = entry.isIntersecting;
+      syncVideo();
+    }, { threshold: 0.1 }).observe(showcaseVideo);
+  } else syncVideo();
+  reducedMotion.addEventListener('change', syncVideo);
 }
 
 const heroPalette = () => document.documentElement.dataset.theme === 'light'

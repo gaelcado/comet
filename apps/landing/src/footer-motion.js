@@ -5,6 +5,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 // GSAP adds a small fade and parallax while the last page-height clears it.
 const footer = document.querySelector('.footer-stage');
 const reveal = document.querySelector('.footer-reveal-space');
+const nav = document.querySelector('.site-nav');
 
 if (footer && reveal) {
   gsap.registerPlugin(ScrollTrigger);
@@ -30,5 +31,25 @@ if (footer && reveal) {
       .fromTo(intro, { y: 30, opacity: 0.4 }, { y: 0, opacity: 1, duration: 0.55 }, 0.12)
       .fromTo(wordmark, { yPercent: 16, opacity: 0.2 }, { yPercent: 0, opacity: 1, duration: 0.55 }, 0.25)
       .fromTo(foot, { y: 12, opacity: 0.25 }, { y: 0, opacity: 1, duration: 0.4 }, 0.4);
+
+    gsap.fromTo(nav, { autoAlpha: 1 }, {
+      autoAlpha: 0,
+      ease: 'none',
+      scrollTrigger: {
+        trigger: reveal,
+        start: 'top 32%',
+        end: 'top top',
+        scrub: 0.35,
+        invalidateOnRefresh: true,
+      },
+    });
+  });
+  gsap.matchMedia().add('(prefers-reduced-motion: reduce)', () => {
+    ScrollTrigger.create({
+      trigger: reveal,
+      start: 'top top',
+      onEnter: () => gsap.set(nav, { autoAlpha: 0 }),
+      onLeaveBack: () => gsap.set(nav, { autoAlpha: 1 }),
+    });
   });
 }
