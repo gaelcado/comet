@@ -95,14 +95,6 @@ function syncHeroField() {
   heroField.setAppearance(heroPalette());
 }
 
-mountGlyphField(document.querySelector('.plate-quote'), {
-  baseAlpha: [0.02, 0.05],
-  density: 0.42,
-  parallax: 1,
-  clear: { x: 0.5, y: 0.3, rx: 0.4, ry: 0.3 },
-  beam: { angle: -30, width: 0.14, sweep: 30, alpha: 0.25 },
-});
-
 // Duplicate each tweet column to make its drift loop seamlessly.
 const wall = document.querySelector('.wall');
 if (wall) {
