@@ -20,6 +20,7 @@ themeButton.addEventListener('click', () => {
     localStorage.setItem('zeron-landing-theme', document.documentElement.dataset.theme);
   } catch {}
   syncThemeButton();
+  syncHeroField();
 });
 
 systemTheme.addEventListener('change', () => {
@@ -30,33 +31,10 @@ systemTheme.addEventListener('change', () => {
   if (saved !== 'light' && saved !== 'dark') {
     document.documentElement.dataset.theme = systemTheme.matches ? 'light' : 'dark';
     syncThemeButton();
+    syncHeroField();
   }
 });
 syncThemeButton();
-
-// Match Zeron's 24 px scroll edge ramps: an edge fades only while content
-// remains more than 1 px beyond it. Keep the fixed navigation above the ramp.
-const pageShell = document.querySelector('.page-shell');
-const nav = document.querySelector('.site-nav');
-const topFade = document.querySelector('.scroll-edge-fade.top');
-const bottomFade = document.querySelector('.scroll-edge-fade.bottom');
-let fadeFrame = 0;
-
-function syncScrollEdges() {
-  fadeFrame = 0;
-  const shellBottom = pageShell.getBoundingClientRect().bottom;
-  const navBottom = nav.getBoundingClientRect().bottom;
-  topFade.dataset.active = String(window.scrollY > 1 && shellBottom > navBottom + 1);
-  bottomFade.dataset.active = String(shellBottom > window.innerHeight + 1);
-}
-
-function scheduleScrollEdges() {
-  if (!fadeFrame) fadeFrame = requestAnimationFrame(syncScrollEdges);
-}
-
-window.addEventListener('scroll', scheduleScrollEdges, { passive: true });
-window.addEventListener('resize', scheduleScrollEdges);
-syncScrollEdges();
 
 const showcaseVideo = document.querySelector('.showcase-video');
 if (showcaseVideo && 'IntersectionObserver' in window) {
@@ -71,15 +49,26 @@ if (showcaseVideo && 'IntersectionObserver' in window) {
   observer.observe(showcaseVideo);
 }
 
-// Faint agent traces and a slow beam sit outside a clear ellipse for the hero copy.
-mountGlyphField(document.querySelector('.hero'), {
-  base: [156, 146, 181],
-  baseAlpha: [0.05, 0.13],
-  glow: [183, 157, 249],
-  glowAlpha: 0.8,
-  clear: { x: 0.5, y: 0.5, rx: 0.36, ry: 0.44 },
-  beam: { angle: -38, width: 0.12, sweep: 26, alpha: 0.35 },
+const heroPalette = () => document.documentElement.dataset.theme === 'light'
+  ? {
+      base: [75, 62, 94], baseAlpha: [0.055, 0.12],
+      glow: [105, 75, 169], glowAlpha: 0.28,
+      beam: { angle: -38, width: 0.12, sweep: 26, alpha: 0.16 },
+    }
+  : {
+      base: [156, 146, 181], baseAlpha: [0.05, 0.13],
+      glow: [183, 157, 249], glowAlpha: 0.6,
+      beam: { angle: -38, width: 0.12, sweep: 26, alpha: 0.3 },
+    };
+
+const heroField = mountGlyphField(document.querySelector('.hero'), {
+  ...heroPalette(),
+  clearElement: document.querySelector('.hero-copy'),
 });
+
+function syncHeroField() {
+  heroField.setAppearance(heroPalette());
+}
 
 mountGlyphField(document.querySelector('.plate-quote'), {
   baseAlpha: [0.02, 0.05],

@@ -36,7 +36,7 @@
     --tweet-ink: rgba(236,231,247,0.82);
     --nav-control-height: 30px;
     --nav-height: 64px;
-    --scroll-edge-band: 24px;
+    --nav-fade-height: 80px;
     --sans: "Geist", system-ui, -apple-system, sans-serif;
     --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
     --serif: "Instrument Serif", Georgia, serif;
@@ -67,7 +67,7 @@
   html {
     background: var(--bg);
     scroll-behavior: smooth;
-    scroll-padding-top: calc(var(--nav-height) + var(--scroll-edge-band));
+    scroll-padding-top: calc(var(--nav-height) + 24px);
     /* Always reserve the gutter so content never shifts; the styled
        transparent track makes the bar read as an overlay on black. */
     overflow-y: scroll;
@@ -118,30 +118,18 @@
     position: fixed;
     inset: 0 0 auto;
     z-index: 100;
-    background: var(--bg);
-    border-bottom: 1px solid var(--line-soft);
+    isolation: isolate;
   }
-  .scroll-edge-fade {
-    position: fixed;
-    z-index: 90;
-    left: 0;
-    right: 0;
-    height: var(--scroll-edge-band);
-    opacity: 0;
+  .site-nav::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0 0 auto;
+    height: calc(var(--nav-height) + var(--nav-fade-height));
+    background: var(--bg);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 var(--nav-height), #000000f4 calc(var(--nav-height) + 10px), #000000cb calc(var(--nav-height) + 28px), #00000080 calc(var(--nav-height) + 50px), #00000038 calc(var(--nav-height) + 68px), transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0, #000 var(--nav-height), #000000f4 calc(var(--nav-height) + 10px), #000000cb calc(var(--nav-height) + 28px), #00000080 calc(var(--nav-height) + 50px), #00000038 calc(var(--nav-height) + 68px), transparent 100%);
     pointer-events: none;
-    background: var(--bg);
-  }
-  .scroll-edge-fade[data-active="true"] { opacity: 1; }
-  .scroll-edge-fade.top {
-    top: var(--nav-height);
-    /* GPUI's edge fade uses alpha = distance² across the 24 px band. */
-    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000000fb 12.5%, #000000ef 25%, #000000db 37.5%, #000000bf 50%, #0000009b 62.5%, #00000070 75%, #0000003c 87.5%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 0%, #000000fb 12.5%, #000000ef 25%, #000000db 37.5%, #000000bf 50%, #0000009b 62.5%, #00000070 75%, #0000003c 87.5%, transparent 100%);
-  }
-  .scroll-edge-fade.bottom {
-    bottom: 0;
-    -webkit-mask-image: linear-gradient(to top, #000 0%, #000000fb 12.5%, #000000ef 25%, #000000db 37.5%, #000000bf 50%, #0000009b 62.5%, #00000070 75%, #0000003c 87.5%, transparent 100%);
-    mask-image: linear-gradient(to top, #000 0%, #000000fb 12.5%, #000000ef 25%, #000000db 37.5%, #000000bf 50%, #0000009b 62.5%, #00000070 75%, #0000003c 87.5%, transparent 100%);
   }
   /* logo · section links · actions, with the links truly centered */
   .nav-inner {
@@ -242,7 +230,6 @@
 
   /* ── hero ────────────────────────────────────────────── */
   .hero { position: relative; overflow: hidden; }
-  .hero-art { display: none; }
   /* above the glyph field, which is prepended into .hero */
   .hero-grid {
     position: relative;
@@ -845,30 +832,6 @@
   [data-theme="light"] .flow-wrap::before { opacity: .5; }
   [data-theme="light"] .plate-quote::before { background: radial-gradient(65% 85% at 50% 45%, rgba(23,20,29,.75), rgba(23,20,29,.08)); }
   [data-theme="light"] .plate-quote .glyph-field { display: none; }
-  [data-theme="light"] .hero .glyph-field { display: none; }
-  [data-theme="light"] .hero-art {
-    display: block;
-    position: absolute;
-    top: 0;
-    right: -3%;
-    width: min(47%, 760px);
-    height: 100%;
-    object-fit: cover;
-    object-position: 70% 54%;
-    opacity: .18;
-    filter: saturate(.7);
-    -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 35%, #000 100%);
-    mask-image: linear-gradient(to right, transparent 0%, transparent 35%, #000 100%);
-  }
-  [data-theme="light"] .hero-copy { position: relative; }
-  [data-theme="light"] .hero-copy::before {
-    content: "";
-    position: absolute;
-    z-index: -1;
-    inset: -60px -80px;
-    background: radial-gradient(ellipse at 50% 42%, var(--bg) 28%, rgba(247,244,238,.92) 52%, transparent 76%);
-    pointer-events: none;
-  }
   [data-theme="light"] .footer-landscape::after { background: linear-gradient(to bottom, var(--bg), transparent 22%, transparent 56%, var(--bg)); }
 
   /* ── mobile ──────────────────────────────────────────── */
@@ -879,8 +842,6 @@
     .hero-grid { padding: 36px 20px 32px; }
     .hero-grid { text-align: left; }
     .hero-copy { margin: 0; }
-    [data-theme="light"] .hero-art { display: none; }
-    [data-theme="light"] .hero-copy::before { display: none; }
     .hero .cta-row, .used-by-logos { justify-content: flex-start; }
     .agent-icon { width: 20px; height: 20px; }
     .shot { padding: 28px 0 0; }
