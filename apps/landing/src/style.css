@@ -891,14 +891,16 @@
     justify-content: flex-start;
   }
   .footer-landscape {
-    --footer-far: url('/assets/art/footer-dark-distance-v2.webp');
+    --footer-far: url('/assets/art/footer-dark-peaks-v3.webp');
+    --footer-middle: url('/assets/art/footer-dark-foothills-v3.webp');
     --footer-near: url('/assets/art/footer-dark-foreground-v2.webp');
     position: absolute;
     inset: 0;
     overflow: hidden;
   }
   [data-theme="light"] .footer-landscape {
-    --footer-far: url('/assets/art/footer-light-distance-v2.webp');
+    --footer-far: url('/assets/art/footer-light-peaks-v3.webp');
+    --footer-middle: url('/assets/art/footer-light-foothills-v3.webp');
     --footer-near: url('/assets/art/footer-light-foreground-v2.webp');
   }
   .footer-plane {
@@ -910,6 +912,7 @@
     pointer-events: none;
   }
   .footer-plane--far { background-image: var(--footer-far); }
+  .footer-plane--middle { background-image: var(--footer-middle); }
   .footer-plane--near { background-image: var(--footer-near); }
   .footer-bar {
     position: relative;
