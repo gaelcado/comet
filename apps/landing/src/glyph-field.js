@@ -1,12 +1,11 @@
-// Zeron glyph field — a dark-mode descendant of anara.com's hero ASCII background.
+// Zeron glyph field — a theme-aware descendant of anara.com's hero ASCII background.
 //
 // Anara: pale-gray math equations on white, cut into cloud-like gaps by a noise field,
 // a pointer trail that darkens cells, 0.88 scroll parallax.
-// Zeron: the same grid, but set in engraved stone. Text is agent traces and zero-math,
-// glyphs sit barely above the obsidian, a slow violet light shaft sweeps through them
-// (the canyon beam), and the pointer leaves a violet afterglow instead of ink.
+// Zeron: the same grid carries agent traces and zero-math, with a slow violet
+// light shaft and a pointer afterglow adapted to each theme.
 //
-// mountGlyphField(host, opts) → { destroy }
+// mountGlyphField(host, opts) → { setAppearance, destroy }
 
 const DEFAULT_LINES = [
   'zeron run --harness claude',
@@ -45,8 +44,10 @@ export function mountGlyphField(host, opts = {}) {
     parallax: 0.88,
     // light shaft: angle in degrees, width as fraction of the diagonal, sweep seconds (0 = static)
     beam: { angle: -38, width: 0.14, sweep: 26, alpha: 0.22, offset: 0.5 },
-    // clear hole (ellipse, fractions of viewport) so the headline stays legible
+    // Optional clear hole (ellipse, fractions of viewport).
     clear: null, // e.g. { x: 0.5, y: 0.45, rx: 0.3, ry: 0.18 }
+    // Optional copy element whose footprint stays free of glyphs and pointer glow.
+    clearElement: null,
     ...opts,
   };
   const BEAM = { angle: -38, width: 0.14, sweep: 26, alpha: 0.22, offset: 0.5 };
@@ -75,6 +76,7 @@ export function mountGlyphField(host, opts = {}) {
   const lx = lit.getContext('2d');
 
   let cols = 0, rows = 0, W = 0, H = 0, extra = 0;
+  let quiet = null;
   let heat = new Float32Array(0);
   let hot = new Set();
   const trail = [];
@@ -99,6 +101,15 @@ export function mountGlyphField(host, opts = {}) {
   };
 
   const rgba = (rgb, a) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a.toFixed(3)})`;
+  const quietAlpha = (r, c) => {
+    if (!quiet) return 1;
+    const x = (c + 0.5) * o.cellW;
+    const y = (r + 0.5) * o.cellH - extra;
+    const dx = Math.max(quiet.left - x, 0, x - quiet.right);
+    const dy = Math.max(quiet.top - y, 0, y - quiet.bottom);
+    const t = Math.min(1, Math.hypot(dx, dy) / quiet.feather);
+    return t * t * (3 - 2 * t);
+  };
 
   let cache = new Float32Array(0);
   const drawCell = (r, c) => {
@@ -107,14 +118,15 @@ export function mountGlyphField(host, opts = {}) {
     if (ch === ' ') return;
     const f = cache[r * cols + c];
     const h = heat[r * cols + c];
-    if (f < 0 && h <= 0) return;
+    const visibility = quietAlpha(r, c);
+    if ((f < 0 && h <= 0) || visibility < 0.001) return;
     const a = f < 0 ? 0 : o.baseAlpha[0] + (o.baseAlpha[1] - o.baseAlpha[0]) * f;
     if (h > 0) {
       // mix toward glow
       const m = h;
       const col = o.base.map((v, i) => Math.round(v + (o.glow[i] - v) * m));
-      bx.fillStyle = rgba(col, a + (o.glowAlpha - a) * m);
-    } else bx.fillStyle = rgba(o.base, a);
+      bx.fillStyle = rgba(col, (a + (o.glowAlpha - a) * m) * visibility);
+    } else bx.fillStyle = rgba(o.base, a * visibility);
     bx.fillText(ch, c * o.cellW, r * o.cellH);
   };
 
@@ -123,6 +135,17 @@ export function mountGlyphField(host, opts = {}) {
     W = host.clientWidth;
     extra = 60;
     H = host.clientHeight + extra * 2;
+    if (o.clearElement) {
+      const hostBounds = host.getBoundingClientRect();
+      const copyBounds = o.clearElement.getBoundingClientRect();
+      quiet = {
+        left: copyBounds.left - hostBounds.left - 12,
+        right: copyBounds.right - hostBounds.left + 12,
+        top: copyBounds.top - hostBounds.top - 12,
+        bottom: copyBounds.bottom - hostBounds.top + 12,
+        feather: 96,
+      };
+    }
     inner.style.top = `${-extra}px`;
     inner.style.height = `${H}px`;
     cols = Math.ceil(W / o.cellW) + 1;
@@ -145,7 +168,9 @@ export function mountGlyphField(host, opts = {}) {
       const ch = charAt(r, c);
       if (ch === ' ') continue;
       const f = cache[r * cols + c];
-      lx.fillStyle = rgba(o.glow, f < 0 ? 0.05 : 0.18 + 0.5 * f);
+      const visibility = quietAlpha(r, c);
+      if (visibility < 0.001) continue;
+      lx.fillStyle = rgba(o.glow, (f < 0 ? 0.05 : 0.18 + 0.5 * f) * visibility);
       lx.fillText(ch, c * o.cellW, r * o.cellH);
     }
     applyBeam(performance.now());
@@ -225,11 +250,19 @@ export function mountGlyphField(host, opts = {}) {
   if (!coarse && !reduced) addEventListener('pointermove', onMove, { passive: true });
   if (!reduced) addEventListener('scroll', onScroll, { passive: true });
   if (o.beam && o.beam.sweep && !reduced) braf = requestAnimationFrame(beamLoop);
-  let rw = 0;
-  const ro = new ResizeObserver(() => { if (host.clientWidth !== rw) { rw = host.clientWidth; setup(); } });
+  let geometry = '';
+  const ro = new ResizeObserver(() => {
+    const next = [host.clientWidth, host.clientHeight, o.clearElement?.clientWidth, o.clearElement?.clientHeight].join('/');
+    if (next !== geometry) { geometry = next; setup(); }
+  });
   ro.observe(host);
+  if (o.clearElement) ro.observe(o.clearElement);
 
   return {
+    setAppearance(next) {
+      Object.assign(o, next);
+      setup();
+    },
     destroy() {
       cancelAnimationFrame(traf); cancelAnimationFrame(sraf); cancelAnimationFrame(braf);
       removeEventListener('pointermove', onMove); removeEventListener('scroll', onScroll);
