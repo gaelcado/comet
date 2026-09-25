@@ -35,6 +35,8 @@
     --quote-dim: #c7badb;
     --tweet-ink: rgba(236,231,247,0.82);
     --nav-control-height: 30px;
+    --nav-height: 64px;
+    --scroll-edge-band: 24px;
     --sans: "Geist", system-ui, -apple-system, sans-serif;
     --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
     --serif: "Instrument Serif", Georgia, serif;
@@ -65,6 +67,7 @@
   html {
     background: var(--bg);
     scroll-behavior: smooth;
+    scroll-padding-top: calc(var(--nav-height) + var(--scroll-edge-band));
     /* Always reserve the gutter so content never shifts; the styled
        transparent track makes the bar read as an overlay on black. */
     overflow-y: scroll;
@@ -89,7 +92,7 @@
     background: var(--bg);
     -webkit-font-smoothing: antialiased;
   }
-  .page-shell { position: relative; z-index: 1; background: var(--bg); }
+  .page-shell { position: relative; z-index: 1; padding-top: var(--nav-height); background: var(--bg); }
   .page-shell::after {
     content: "";
     position: absolute;
@@ -111,14 +114,42 @@
   .wrap { max-width: 1140px; margin: 0 auto; padding: 0 32px; }
 
   /* ── nav ─────────────────────────────────────────────── */
-  nav { position: relative; z-index: 50; }
+  .site-nav {
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 100;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .scroll-edge-fade {
+    position: fixed;
+    z-index: 90;
+    left: 0;
+    right: 0;
+    height: var(--scroll-edge-band);
+    opacity: 0;
+    pointer-events: none;
+    background: var(--bg);
+  }
+  .scroll-edge-fade[data-active="true"] { opacity: 1; }
+  .scroll-edge-fade.top {
+    top: var(--nav-height);
+    /* GPUI's edge fade uses alpha = distance² across the 24 px band. */
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000000fb 12.5%, #000000ef 25%, #000000db 37.5%, #000000bf 50%, #0000009b 62.5%, #00000070 75%, #0000003c 87.5%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000000fb 12.5%, #000000ef 25%, #000000db 37.5%, #000000bf 50%, #0000009b 62.5%, #00000070 75%, #0000003c 87.5%, transparent 100%);
+  }
+  .scroll-edge-fade.bottom {
+    bottom: 0;
+    -webkit-mask-image: linear-gradient(to top, #000 0%, #000000fb 12.5%, #000000ef 25%, #000000db 37.5%, #000000bf 50%, #0000009b 62.5%, #00000070 75%, #0000003c 87.5%, transparent 100%);
+    mask-image: linear-gradient(to top, #000 0%, #000000fb 12.5%, #000000ef 25%, #000000db 37.5%, #000000bf 50%, #0000009b 62.5%, #00000070 75%, #0000003c 87.5%, transparent 100%);
+  }
   /* logo · section links · actions, with the links truly centered */
   .nav-inner {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
     gap: 24px;
-    height: 64px;
+    height: var(--nav-height);
   }
   .nav-sections { display: flex; gap: 28px; font-size: 13.5px; }
   .nav-sections a { color: var(--dim); transition: color .15s; }
@@ -128,7 +159,7 @@
     .nav-sections { display: none; }
   }
   .logo { display: block; width: 87px; }
-  nav .links {
+  .site-nav .links {
     justify-self: end;
     display: flex;
     align-items: center;
@@ -232,6 +263,26 @@
   .hero h1 b { display: block; font-weight: 600; color: var(--ink); }
   .hero-agent { display: inline-flex; align-items: center; gap: .28em; white-space: nowrap; }
   .hero-agent .agent-icon { display: inline-block; width: .78em; height: .78em; flex: 0 0 auto; background-color: currentColor; }
+  .agent-icon-stack { display: inline-flex; align-items: center; padding-left: .2em; }
+  .stack-icon {
+    position: relative;
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    margin-left: -.2em;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: var(--bg-raise);
+    box-shadow: 0 0 0 1px var(--bg);
+  }
+  .stack-icon::before {
+    content: "";
+    position: absolute;
+    inset: 20%;
+    background: var(--dim);
+    -webkit-mask: var(--icon) no-repeat center / contain;
+    mask: var(--icon) no-repeat center / contain;
+  }
   .hero .cta-row {
     margin-top: 28px;
     display: flex;
@@ -317,6 +368,17 @@
     pointer-events: none;
   }
   .shot .wrap { max-width: 1240px; position: relative; }
+  .showcase-video {
+    display: block;
+    width: 100%;
+    aspect-ratio: 3008 / 1936;
+    object-fit: cover;
+    overflow: hidden;
+    background: var(--bg-raise);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 30px 100px -30px rgba(0,0,0,.8), 0 0 90px -30px rgba(139,92,246,.35);
+  }
   .screenshot-placeholder {
     position: relative;
     display: grid;
@@ -693,6 +755,7 @@
     flex-direction: column;
     height: 100vh;
     height: 100svh;
+    padding-top: var(--nav-height);
     overflow: hidden;
     background: var(--bg);
   }
@@ -811,7 +874,7 @@
   /* ── mobile ──────────────────────────────────────────── */
   @media (max-width: 640px) {
     .wrap { padding: 0 20px; }
-    .nav-inner { height: 56px; }
+    :root { --nav-height: 56px; }
     :root { --sec: 80px; --radius: 16px; }
     .hero-grid { padding: 36px 20px 32px; }
     .hero-grid { text-align: left; }
@@ -822,6 +885,7 @@
     .agent-icon { width: 20px; height: 20px; }
     .shot { padding: 28px 0 0; }
     .screenshot-placeholder { border-radius: 8px; }
+    .showcase-video { border-radius: 8px; }
     .sec-head { margin-bottom: 32px; text-align: left; }
     .sec-head p { font-size: 18px; }
     .plate-quote { aspect-ratio: auto; padding: 56px 0; }

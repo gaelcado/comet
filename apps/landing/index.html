@@ -22,9 +22,7 @@
 
 </head>
 <body>
-<div class="page-shell">
-
-  <nav>
+  <nav class="site-nav">
     <div class="wrap nav-inner">
       <a class="logo" href="/" aria-label="Zeron home">
         <img class="brand-wordmark dark" src="/assets/brand/zeron-wordmark-dark.svg" alt="" width="392" height="136" />
@@ -52,6 +50,10 @@
       </div>
     </div>
   </nav>
+  <div class="scroll-edge-fade top" aria-hidden="true"></div>
+  <div class="scroll-edge-fade bottom" aria-hidden="true"></div>
+
+<div class="page-shell">
 
   <header class="hero">
     <img class="hero-art" src="/assets/art/arc-poster-light.webp" alt="" aria-hidden="true" width="1024" height="1536" />
@@ -63,8 +65,8 @@
           <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/openai-mark.svg')"></span>Codex,</span>
           <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/grok-mark.svg')"></span>Grok,</span>
           <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/hermes-mark.svg')"></span>Hermes,</span>
-          <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/pi-mark.svg')"></span>Pi</span>
-          and more on your machines.
+          <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/pi-mark.svg')"></span>Pi,</span>
+          and <span class="hero-agent hero-agent-more"><span class="agent-icon-stack" aria-hidden="true"><span class="stack-icon" style="--icon: url('/assets/icons/cursor-mark.svg')"></span><span class="stack-icon" style="--icon: url('/assets/icons/devin-mark.svg')"></span><span class="stack-icon" style="--icon: url('/assets/icons/opencode-mark.svg')"></span><span class="stack-icon" style="--icon: url('/assets/icons/antigravity-mark.svg')"></span></span>more</span> on your machines.
         </h1>
         <div class="cta-row">
           <a class="btn" id="hero-download" href="#downloads">Download</a>
@@ -85,7 +87,10 @@
 
   <section class="shot">
     <div class="wrap">
-      <div class="screenshot-placeholder" role="img" aria-label="Zeron app screenshot coming soon"><span>App preview coming soon</span></div>
+      <video class="showcase-video" controls muted loop playsinline preload="none" poster="/assets/video/zeron-to-the-distant-sky-poster.jpg" aria-label="Zeron desktop app walkthrough">
+        <source src="/assets/video/zeron-to-the-distant-sky.mp4" type="video/mp4" />
+        Your browser does not support this video.
+      </video>
     </div>
   </section>
 
