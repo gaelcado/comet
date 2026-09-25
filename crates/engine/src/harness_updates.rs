@@ -790,10 +790,10 @@ impl HarnessUpdateCoordinator {
         }
         let applied = match plan {
             UpdatePlan::Command { executable, args } => {
-                self.mutate(harness, |status| {
-                    status.phase = HarnessUpdatePhase::Installing
-                });
-                run_command(&executable, args, UPDATE_TIMEOUT).await
+                match self.begin_install(harness, &cancel) {
+                    Ok(()) => run_command(&executable, args, UPDATE_TIMEOUT).await,
+                    Err(error) => Err(error),
+                }
             }
             UpdatePlan::CodexStandalone(install) => {
                 self.install_codex_standalone(harness, &current, install, &cancel)
@@ -864,7 +864,22 @@ impl HarnessUpdateCoordinator {
         result
     }
 
+    /// Serialize the final cancellation check and installation commit with
+    /// `cancel`: once cancellation is accepted, mutation cannot begin.
+    fn begin_install(&self, harness: HarnessId, cancel: &CancellationToken) -> Result<(), String> {
+        let _cancellations = lock(&self.inner.cancellations);
+        if cancel.is_cancelled() || !self.inner.registry.enabled_set().contains(&harness) {
+            return Err("update cancelled".into());
+        }
+        self.mutate(harness, |status| {
+            status.phase = HarnessUpdatePhase::Installing;
+            status.progress = None;
+        });
+        Ok(())
+    }
+
     pub fn cancel(&self, harness: HarnessId) -> bool {
+        let cancellations = lock(&self.inner.cancellations);
         if !matches!(
             self.status(harness).phase,
             HarnessUpdatePhase::WaitingForIdle
@@ -873,7 +888,7 @@ impl HarnessUpdateCoordinator {
         ) {
             return false;
         }
-        lock(&self.inner.cancellations)
+        cancellations
             .get(&harness)
             .map(|token| token.cancel())
             .is_some()
@@ -1226,13 +1241,7 @@ impl HarnessUpdateCoordinator {
         )
         .await?;
         validate_codex_package(&staging, version, &install.target)?;
-        if cancel.is_cancelled() || !self.inner.registry.enabled_set().contains(&harness) {
-            return Err("update cancelled".into());
-        }
-        self.mutate(harness, |status| {
-            status.phase = HarnessUpdatePhase::Installing;
-            status.progress = None;
-        });
+        self.begin_install(harness, cancel)?;
         let destination = releases.join(format!("{version}-{}", install.target));
         if destination.exists() {
             validate_codex_package(&destination, version, &install.target)?;
@@ -2421,6 +2430,66 @@ esac
         let release = write_codex_release(&root, "2.0.0", "fixture-target");
         assert!(validate_codex_package(&release, "2.0.1", "fixture-target").is_err());
         assert!(validate_codex_package(&release, "2.0.0", "other-target").is_err());
+    }
+
+    #[tokio::test]
+    async fn accepted_cancellation_and_installation_are_mutually_exclusive() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = Arc::new(HarnessRegistry::new());
+        let harness = HarnessId::ClaudeCode;
+        registry.register(Arc::new(ExecutableHarness(
+            temp.path().join("agent"),
+            harness,
+        )));
+        let coordinator = super::HarnessUpdateCoordinator::new(temp.path(), registry);
+
+        // Preparing covers vendor commands; Downloading covers staged Codex
+        // activation. Exercise both orderings and simultaneous contenders.
+        for phase in [
+            HarnessUpdatePhase::Preparing,
+            HarnessUpdatePhase::Downloading,
+        ] {
+            for ordering in 0..66 {
+                let token = tokio_util::sync::CancellationToken::new();
+                super::lock(&coordinator.inner.cancellations).insert(harness, token.clone());
+                coordinator.mutate(harness, |status| status.phase = phase);
+                let barrier = std::sync::Barrier::new(2);
+                let (cancelled, installed) = match ordering {
+                    0 => {
+                        let cancelled = coordinator.cancel(harness);
+                        (
+                            cancelled,
+                            coordinator.begin_install(harness, &token).is_ok(),
+                        )
+                    }
+                    1 => {
+                        let installed = coordinator.begin_install(harness, &token).is_ok();
+                        (coordinator.cancel(harness), installed)
+                    }
+                    _ => std::thread::scope(|scope| {
+                        let barrier = &barrier;
+                        let coordinator = &coordinator;
+                        let cancellation = scope.spawn(move || {
+                            barrier.wait();
+                            coordinator.cancel(harness)
+                        });
+                        barrier.wait();
+                        let installed = coordinator.begin_install(harness, &token).is_ok();
+                        (cancellation.join().unwrap(), installed)
+                    }),
+                };
+                assert_ne!(cancelled, installed);
+                assert_eq!(token.is_cancelled(), cancelled);
+                assert_eq!(
+                    coordinator.status(harness).phase,
+                    if installed {
+                        HarnessUpdatePhase::Installing
+                    } else {
+                        phase
+                    }
+                );
+            }
+        }
     }
 
     #[tokio::test]
