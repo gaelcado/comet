@@ -225,7 +225,13 @@ fn queue_panel_surface(theme: &Theme) -> gpui::Div {
     div()
         .occlude()
         .rounded_t(px(PANEL_RADIUS))
-        .bg(crate::popover::surface_bg(theme))
+        .bg(
+            if theme.is_frost() && matches!(theme.appearance, crate::theme::Appearance::Dark) {
+                theme.composer_sidebar_tint()
+            } else {
+                theme.input_glass_bg()
+            },
+        )
         .border_1()
         .border_color(theme.border)
         .when(!theme.is_frost(), |el| el.shadow_lg())
@@ -955,7 +961,6 @@ impl Composer {
             .tooltip_show_delay(std::time::Duration::from_millis(350))
             .child(
                 icon(glyph)
-                    .morph("queue-action-glyph")
                     .size(px(QUEUE_ICON_SIZE))
                     .text_color(theme.text_muted.opacity(0.8))
                     .group_hover(own, |s| s.text_color(theme.text)),

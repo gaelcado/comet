@@ -1,64 +1,66 @@
 {
-  "sourceFingerprint": "020e581be88dfa0a",
+  "sourceFingerprint": "98f75f3065b43dbb",
   "sourceFiles": 112,
-  "catalogedSourceFiles": 17,
-  "uncatalogedUiCandidates": 62,
-  "catalogEntries": 34,
-  "mountedEntries": 25,
+  "catalogedSourceFiles": 76,
+  "supportModules": 36,
+  "unreviewedSourceFiles": 0,
+  "consolidationDecisions": 12,
+  "catalogEntries": 111,
+  "mountedEntries": 33,
   "families": [
     {
       "name": "Action builders",
       "builders": [
         {
           "symbol": "btn_primary",
-          "references": 19,
+          "references": 13,
           "locations": [
-            "crates/ui/src/composer.rs:8680",
-            "crates/ui/src/settings/accounts.rs:840",
-            "crates/ui/src/settings/accounts.rs:1025",
-            "crates/ui/src/settings/appearance.rs:2615",
-            "crates/ui/src/settings/appearance.rs:2726",
-            "crates/ui/src/settings/appearance.rs:2913",
-            "crates/ui/src/settings/devices.rs:184",
-            "crates/ui/src/shell/actions_ui.rs:988"
+            "crates/ui/src/composer.rs:8685",
+            "crates/ui/src/shell/actions_ui.rs:1003",
+            "crates/ui/src/shell/sidebar_sections.rs:559",
+            "crates/ui/src/shell/spaces.rs:6445",
+            "crates/ui/src/shell.rs:7970",
+            "crates/ui/src/shell.rs:8028",
+            "crates/ui/src/shell.rs:8036",
+            "crates/ui/src/shell.rs:8134"
           ]
         },
         {
           "symbol": "btn_ghost",
-          "references": 21,
+          "references": 16,
           "locations": [
-            "crates/ui/src/composer.rs:8672",
-            "crates/ui/src/settings/accounts.rs:1020",
-            "crates/ui/src/settings/accounts.rs:1105",
-            "crates/ui/src/settings/appearance.rs:1466",
-            "crates/ui/src/settings/devices.rs:176",
-            "crates/ui/src/shell/actions_ui.rs:825",
-            "crates/ui/src/shell/actions_ui.rs:964",
-            "crates/ui/src/shell/actions_ui.rs:980"
+            "crates/ui/src/composer.rs:8677",
+            "crates/ui/src/shell/actions_ui.rs:840",
+            "crates/ui/src/shell/actions_ui.rs:979",
+            "crates/ui/src/shell/actions_ui.rs:995",
+            "crates/ui/src/shell/sidebar_sections.rs:551",
+            "crates/ui/src/shell/spaces.rs:5920",
+            "crates/ui/src/shell/spaces.rs:6437",
+            "crates/ui/src/shell/spaces.rs:6491"
           ]
         },
         {
           "symbol": "btn_danger",
           "references": 4,
           "locations": [
-            "crates/ui/src/shell/actions_ui.rs:835",
-            "crates/ui/src/shell/spaces.rs:6302",
-            "crates/ui/src/shell.rs:7722",
-            "crates/ui/src/shell.rs:8160"
+            "crates/ui/src/shell/actions_ui.rs:850",
+            "crates/ui/src/shell/spaces.rs:6499",
+            "crates/ui/src/shell.rs:8258",
+            "crates/ui/src/shell.rs:8704"
           ]
         },
         {
           "symbol": "ghost_action",
-          "references": 14,
+          "references": 9,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1403",
-            "crates/ui/src/settings/accounts.rs:1455",
-            "crates/ui/src/settings/appshots.rs:142",
-            "crates/ui/src/settings/completion.rs:82",
-            "crates/ui/src/settings/completion.rs:123",
-            "crates/ui/src/settings/devices.rs:378",
-            "crates/ui/src/settings/harnesses.rs:396",
-            "crates/ui/src/settings/harnesses.rs:1039"
+            "crates/ui/src/settings/accounts.rs:1936",
+            "crates/ui/src/settings/accounts.rs:1998",
+            "crates/ui/src/settings/appshots.rs:123",
+            "crates/ui/src/settings/archived.rs:320",
+            "crates/ui/src/settings/archived.rs:341",
+            "crates/ui/src/settings/harnesses.rs:590",
+            "crates/ui/src/settings/harnesses.rs:603",
+            "crates/ui/src/settings/harnesses.rs:695"
           ]
         },
         {
@@ -67,7 +69,7 @@
           "locations": [
             "crates/ui/src/browser/view.rs:18",
             "crates/ui/src/files/markdown_preview.rs:1124",
-            "crates/ui/src/files/mod.rs:1052",
+            "crates/ui/src/files/mod.rs:1055",
             "crates/ui/src/files/preview.rs:2222",
             "crates/ui/src/files/preview.rs:2304",
             "crates/ui/src/files/preview.rs:2315"
@@ -90,24 +92,24 @@
           "symbol": "search_input_frame",
           "references": 4,
           "locations": [
-            "crates/ui/src/changes.rs:4173",
-            "crates/ui/src/pickers.rs:3131",
-            "crates/ui/src/settings/appearance.rs:1849",
-            "crates/ui/src/shell/spaces.rs:3967"
+            "crates/ui/src/changes.rs:4189",
+            "crates/ui/src/pickers.rs:3243",
+            "crates/ui/src/settings/appearance.rs:1613",
+            "crates/ui/src/shell/spaces.rs:4012"
           ]
         },
         {
           "symbol": "dialog_field",
           "references": 8,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:998",
-            "crates/ui/src/settings/appearance.rs:2294",
-            "crates/ui/src/settings/devices.rs:166",
-            "crates/ui/src/shell/actions_ui.rs:864",
-            "crates/ui/src/shell/actions_ui.rs:867",
+            "crates/ui/src/settings/accounts.rs:1416",
+            "crates/ui/src/settings/appearance.rs:1863",
+            "crates/ui/src/settings/devices.rs:191",
+            "crates/ui/src/shell/actions_ui.rs:879",
+            "crates/ui/src/shell/actions_ui.rs:882",
             "crates/ui/src/shell/sidebar_sections.rs:542",
-            "crates/ui/src/shell/spaces.rs:6230",
-            "crates/ui/src/shell.rs:8086"
+            "crates/ui/src/shell/spaces.rs:6427",
+            "crates/ui/src/shell.rs:8630"
           ]
         }
       ]
@@ -119,14 +121,14 @@
           "symbol": "popover_card",
           "references": 29,
           "locations": [
+            "crates/ui/src/account_usage.rs:316",
             "crates/ui/src/badges.rs:170",
             "crates/ui/src/browser/linux/mod.rs:642",
-            "crates/ui/src/changes.rs:3953",
-            "crates/ui/src/changes.rs:4164",
+            "crates/ui/src/changes.rs:3969",
+            "crates/ui/src/changes.rs:4180",
             "crates/ui/src/composer.rs:4083",
-            "crates/ui/src/context_usage.rs:140",
-            "crates/ui/src/files/mod.rs:609",
-            "crates/ui/src/history.rs:3194"
+            "crates/ui/src/context_usage.rs:152",
+            "crates/ui/src/files/mod.rs:609"
           ]
         },
         {
@@ -135,26 +137,29 @@
           "locations": [
             "crates/ui/src/files/preview.rs:2726",
             "crates/ui/src/files/preview.rs:2816",
-            "crates/ui/src/pickers.rs:3094"
+            "crates/ui/src/pickers.rs:3206"
           ]
         },
         {
           "symbol": "palette_card",
-          "references": 0,
-          "locations": []
+          "references": 2,
+          "locations": [
+            "crates/ui/src/shell/command_palette.rs:365",
+            "crates/ui/src/shell/spaces.rs:6263"
+          ]
         },
         {
           "symbol": "dialog_card",
           "references": 21,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1117",
-            "crates/ui/src/settings/appearance.rs:2647",
-            "crates/ui/src/settings/appearance.rs:2700",
-            "crates/ui/src/settings/devices.rs:161",
-            "crates/ui/src/shell/actions_ui.rs:812",
-            "crates/ui/src/shell/actions_ui.rs:854",
+            "crates/ui/src/settings/accounts.rs:1469",
+            "crates/ui/src/settings/appearance.rs:2239",
+            "crates/ui/src/settings/appearance.rs:2293",
+            "crates/ui/src/settings/devices.rs:176",
+            "crates/ui/src/shell/actions_ui.rs:827",
+            "crates/ui/src/shell/actions_ui.rs:869",
             "crates/ui/src/shell/sidebar_sections.rs:497",
-            "crates/ui/src/shell/spaces.rs:6218"
+            "crates/ui/src/shell/spaces.rs:6415"
           ]
         }
       ]
@@ -164,44 +169,44 @@
       "builders": [
         {
           "symbol": "card_row",
-          "references": 24,
+          "references": 29,
           "locations": [
-            "crates/ui/src/settings/appearance.rs:2770",
-            "crates/ui/src/settings/appearance.rs:2896",
-            "crates/ui/src/settings/appearance.rs:3008",
-            "crates/ui/src/settings/appearance.rs:3058",
-            "crates/ui/src/settings/appearance.rs:3086",
-            "crates/ui/src/settings/appearance.rs:3161",
-            "crates/ui/src/settings/appearance.rs:3228",
-            "crates/ui/src/settings/appearance.rs:3270"
+            "crates/ui/src/settings/appearance.rs:371",
+            "crates/ui/src/settings/appearance.rs:2366",
+            "crates/ui/src/settings/appearance.rs:2502",
+            "crates/ui/src/settings/appearance.rs:2617",
+            "crates/ui/src/settings/appearance.rs:2666",
+            "crates/ui/src/settings/appearance.rs:2695",
+            "crates/ui/src/settings/appearance.rs:2754",
+            "crates/ui/src/settings/appearance.rs:2851"
           ]
         },
         {
           "symbol": "menu_row",
-          "references": 46,
+          "references": 45,
           "locations": [
+            "crates/ui/src/account_usage.rs:353",
             "crates/ui/src/browser/linux/mod.rs:653",
-            "crates/ui/src/changes.rs:3962",
-            "crates/ui/src/composer.rs:6727",
-            "crates/ui/src/composer.rs:7139",
+            "crates/ui/src/changes.rs:3978",
+            "crates/ui/src/composer.rs:6732",
+            "crates/ui/src/composer.rs:7144",
             "crates/ui/src/files/mod.rs:585",
             "crates/ui/src/history.rs:3200",
-            "crates/ui/src/history.rs:3238",
-            "crates/ui/src/history.rs:3298"
+            "crates/ui/src/history.rs:3238"
           ]
         },
         {
           "symbol": "menu_row_nav",
-          "references": 16,
+          "references": 15,
           "locations": [
-            "crates/ui/src/changes.rs:4140",
-            "crates/ui/src/pickers.rs:2153",
-            "crates/ui/src/pickers.rs:2241",
-            "crates/ui/src/pickers.rs:2257",
-            "crates/ui/src/pickers.rs:2279",
-            "crates/ui/src/pickers.rs:3273",
-            "crates/ui/src/pickers.rs:3384",
-            "crates/ui/src/settings/appearance.rs:1775"
+            "crates/ui/src/changes.rs:4156",
+            "crates/ui/src/pickers.rs:2265",
+            "crates/ui/src/pickers.rs:2353",
+            "crates/ui/src/pickers.rs:2369",
+            "crates/ui/src/pickers.rs:2391",
+            "crates/ui/src/pickers.rs:3385",
+            "crates/ui/src/pickers.rs:3496",
+            "crates/ui/src/settings/widgets.rs:1156"
           ]
         },
         {
@@ -213,7 +218,7 @@
           "symbol": "queue_row",
           "references": 1,
           "locations": [
-            "crates/ui/src/queue.rs:323"
+            "crates/ui/src/queue.rs:329"
           ]
         }
       ]
@@ -223,51 +228,49 @@
       "builders": [
         {
           "symbol": "badge",
-          "references": 7,
+          "references": 6,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:807",
-            "crates/ui/src/settings/appshots.rs:133",
-            "crates/ui/src/settings/appshots.rs:133",
-            "crates/ui/src/settings/appshots.rs:155",
-            "crates/ui/src/settings/appshots.rs:155",
-            "crates/ui/src/settings/appshots.rs:183",
-            "crates/ui/src/settings/appshots.rs:185"
+            "crates/ui/src/settings/appshots.rs:114",
+            "crates/ui/src/settings/appshots.rs:114",
+            "crates/ui/src/settings/appshots.rs:136",
+            "crates/ui/src/settings/appshots.rs:136",
+            "crates/ui/src/settings/appshots.rs:164",
+            "crates/ui/src/settings/appshots.rs:166"
           ]
         },
         {
           "symbol": "badge_active",
-          "references": 1,
-          "locations": [
-            "crates/ui/src/settings/accounts.rs:804"
-          ]
+          "references": 0,
+          "locations": []
         },
         {
           "symbol": "error_strip",
-          "references": 9,
+          "references": 11,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1318",
-            "crates/ui/src/settings/accounts.rs:1484",
-            "crates/ui/src/settings/appearance.rs:3265",
-            "crates/ui/src/settings/appearance.rs:3370",
-            "crates/ui/src/settings/archived.rs:327",
-            "crates/ui/src/settings/devices.rs:440",
-            "crates/ui/src/settings/harnesses.rs:486",
-            "crates/ui/src/settings/harnesses.rs:1148"
+            "crates/ui/src/settings/accounts.rs:1596",
+            "crates/ui/src/settings/accounts.rs:1707",
+            "crates/ui/src/settings/accounts.rs:1840",
+            "crates/ui/src/settings/accounts.rs:2023",
+            "crates/ui/src/settings/appearance.rs:2877",
+            "crates/ui/src/settings/appearance.rs:2962",
+            "crates/ui/src/settings/archived.rs:389",
+            "crates/ui/src/settings/devices.rs:424"
           ]
         },
         {
           "symbol": "warning_strip",
-          "references": 1,
+          "references": 2,
           "locations": [
-            "crates/ui/src/settings/accounts.rs:1420"
+            "crates/ui/src/settings/accounts.rs:1726",
+            "crates/ui/src/settings/accounts.rs:1962"
           ]
         },
         {
           "symbol": "pull_request_badge_preview",
           "references": 2,
           "locations": [
-            "crates/ui/src/shell.rs:6386",
-            "crates/ui/src/shell.rs:6450"
+            "crates/ui/src/shell.rs:6811",
+            "crates/ui/src/shell.rs:6875"
           ]
         }
       ]
@@ -277,15 +280,15 @@
     {
       "id": "literal-radii",
       "name": "Literal corner radii",
-      "count": 188,
+      "count": 179,
       "values": [
         {
           "value": "6.0",
-          "count": 48
+          "count": 44
         },
         {
           "value": "8.0",
-          "count": 30
+          "count": 33
         },
         {
           "value": "5.0",
@@ -293,27 +296,27 @@
         },
         {
           "value": "4.0",
-          "count": 19
-        },
-        {
-          "value": "7.0",
-          "count": 17
+          "count": 20
         },
         {
           "value": "12.0",
-          "count": 12
+          "count": 13
         },
         {
-          "value": "9.0",
+          "value": "7.0",
           "count": 10
         },
         {
           "value": "3.0",
-          "count": 8
+          "count": 9
         },
         {
           "value": "10.0",
           "count": 8
+        },
+        {
+          "value": "9.0",
+          "count": 7
         },
         {
           "value": "2.0",
@@ -325,7 +328,7 @@
         },
         {
           "value": "14.0",
-          "count": 3
+          "count": 2
         },
         {
           "value": "16.0",
@@ -351,15 +354,15 @@
         "crates/ui/src/browser/view.rs:355",
         "crates/ui/src/browser/view.rs:477",
         "crates/ui/src/change_requests.rs:79",
-        "crates/ui/src/changes.rs:1715",
-        "crates/ui/src/changes.rs:4015"
+        "crates/ui/src/changes.rs:1717",
+        "crates/ui/src/changes.rs:4031"
       ],
       "note": "The source uses several literal corner radii. Review them by surface and promote repeated semantic roles to shared metrics."
     },
     {
       "id": "literal-type",
       "name": "Literal type sizes",
-      "count": 132,
+      "count": 128,
       "values": [
         {
           "value": "11.0",
@@ -367,27 +370,27 @@
         },
         {
           "value": "12.0",
-          "count": 35
+          "count": 33
         },
         {
           "value": "11.5",
-          "count": 17
-        },
-        {
-          "value": "10.5",
           "count": 15
         },
         {
+          "value": "10.5",
+          "count": 14
+        },
+        {
           "value": "10.0",
-          "count": 11
+          "count": 12
         },
         {
           "value": "9.0",
-          "count": 4
+          "count": 3
         },
         {
           "value": "12.5",
-          "count": 1
+          "count": 2
         },
         {
           "value": "9.5",
@@ -395,25 +398,25 @@
         }
       ],
       "locations": [
+        "crates/ui/src/account_usage.rs:368",
+        "crates/ui/src/account_usage.rs:390",
         "crates/ui/src/badges.rs:137",
         "crates/ui/src/change_requests.rs:86",
         "crates/ui/src/change_requests.rs:99",
-        "crates/ui/src/changes.rs:1720",
-        "crates/ui/src/changes.rs:3528",
-        "crates/ui/src/changes.rs:3536",
-        "crates/ui/src/changes.rs:3546",
-        "crates/ui/src/changes.rs:3556",
-        "crates/ui/src/changes.rs:3749",
-        "crates/ui/src/changes.rs:3758",
-        "crates/ui/src/changes.rs:3832",
-        "crates/ui/src/changes.rs:3856"
+        "crates/ui/src/changes.rs:1722",
+        "crates/ui/src/changes.rs:3543",
+        "crates/ui/src/changes.rs:3551",
+        "crates/ui/src/changes.rs:3561",
+        "crates/ui/src/changes.rs:3571",
+        "crates/ui/src/changes.rs:3781",
+        "crates/ui/src/changes.rs:3790"
       ],
       "note": "Literal text sizes coexist with the typography scale. Check whether each is an intentional optical adjustment or a missing type role."
     },
     {
       "id": "pointer-actions",
       "name": "Pointer affordances",
-      "count": 163,
+      "count": 158,
       "values": [],
       "locations": [
         "crates/ui/src/browser/view.rs:153",
@@ -421,11 +424,11 @@
         "crates/ui/src/browser/view.rs:265",
         "crates/ui/src/browser/view.rs:359",
         "crates/ui/src/browser/view.rs:481",
-        "crates/ui/src/change_requests.rs:176",
-        "crates/ui/src/changes.rs:3507",
-        "crates/ui/src/changes.rs:3649",
-        "crates/ui/src/changes.rs:3806",
-        "crates/ui/src/changes.rs:4016",
+        "crates/ui/src/change_requests.rs:171",
+        "crates/ui/src/changes.rs:3522",
+        "crates/ui/src/changes.rs:3690",
+        "crates/ui/src/changes.rs:3830",
+        "crates/ui/src/changes.rs:4032",
         "crates/ui/src/comment_ui.rs:32",
         "crates/ui/src/comment_ui.rs:120"
       ],
@@ -434,7 +437,7 @@
     {
       "id": "explicit-button-roles",
       "name": "Explicit button roles",
-      "count": 33,
+      "count": 78,
       "values": [],
       "locations": [
         "crates/ui/src/browser/view.rs:215",
@@ -443,17 +446,32 @@
         "crates/ui/src/browser/view.rs:482",
         "crates/ui/src/comment_ui.rs:33",
         "crates/ui/src/comment_ui.rs:164",
-        "crates/ui/src/composer.rs:6063",
-        "crates/ui/src/composer.rs:6181",
-        "crates/ui/src/composer.rs:8700",
+        "crates/ui/src/composer.rs:6068",
+        "crates/ui/src/composer.rs:6186",
         "crates/ui/src/files/markdown_preview.rs:929",
         "crates/ui/src/files/mod.rs:54",
-        "crates/ui/src/files/mod.rs:355"
+        "crates/ui/src/files/mod.rs:355",
+        "crates/ui/src/files/preview.rs:2280"
       ],
       "note": "Compare with pointer affordances while auditing accessible interaction paths; GPUI controls can also supply roles themselves."
     }
   ],
   "modules": [
+    {
+      "path": "crates/ui/src/account_usage.rs",
+      "publicFunctions": 2,
+      "renderImpls": 1,
+      "exports": [
+        "used_fraction",
+        "active_account"
+      ],
+      "views": [
+        "AccountUsage"
+      ],
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
+    },
     {
       "path": "crates/ui/src/app_menus.rs",
       "publicFunctions": 5,
@@ -466,7 +484,9 @@
         "app_menus"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/appearance.rs",
@@ -489,7 +509,9 @@
         "reapply_window_background"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/appshots/linux/atspi.rs",
@@ -497,7 +519,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "Linux accessibility capture adapter"
     },
     {
       "path": "crates/ui/src/appshots/linux/mod.rs",
@@ -508,7 +532,9 @@
         "request_running_appshot"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "Linux capture orchestration"
     },
     {
       "path": "crates/ui/src/appshots/linux/portal.rs",
@@ -516,7 +542,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "Desktop portal capture adapter"
     },
     {
       "path": "crates/ui/src/appshots/linux/x11.rs",
@@ -524,7 +552,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "X11 capture adapter"
     },
     {
       "path": "crates/ui/src/appshots/macos.rs",
@@ -532,7 +562,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "macOS capture adapter"
     },
     {
       "path": "crates/ui/src/appshots/shortcut.rs",
@@ -547,7 +579,9 @@
         "capture_allowed"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/appshots.rs",
@@ -579,7 +613,9 @@
         "strip_context_for_display"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/attachments.rs",
@@ -611,7 +647,9 @@
         "lightbox_with_size"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/badges.rs",
@@ -624,7 +662,9 @@
       "views": [
         "BadgeCard"
       ],
-      "catalogEntries": 1
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/browser/linux/mod.rs",
@@ -632,7 +672,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "Linux embedded browser binding"
     },
     {
       "path": "crates/ui/src/browser/macos.rs",
@@ -640,7 +682,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "macOS embedded browser binding"
     },
     {
       "path": "crates/ui/src/browser/mod.rs",
@@ -650,7 +694,9 @@
         "bind_keys"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Browser key binding and module entry"
     },
     {
       "path": "crates/ui/src/browser/model.rs",
@@ -664,7 +710,9 @@
         "presentation"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "model",
+      "scopeReason": "Address normalization and navigation policy"
     },
     {
       "path": "crates/ui/src/browser/view.rs",
@@ -674,7 +722,9 @@
       "views": [
         "BrowserSurface"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/change_requests.rs",
@@ -692,7 +742,9 @@
       "views": [
         "ChangeRequestTooltip"
       ],
-      "catalogEntries": 1
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/changes.rs",
@@ -726,7 +778,9 @@
         "DiffHeaderTooltip",
         "Changes"
       ],
-      "catalogEntries": 2
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/comment_ui.rs",
@@ -739,7 +793,9 @@
         "render_comment_draft"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/comments.rs",
@@ -753,7 +809,9 @@
         "card_height"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "model",
+      "scopeReason": "Comment payload and layout calculations used by comment UI"
     },
     {
       "path": "crates/ui/src/composer.rs",
@@ -787,7 +845,9 @@
         "Composer",
         "Inputs"
       ],
-      "catalogEntries": 1
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/composer_dock/panel_handoff.rs",
@@ -795,7 +855,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Dock ownership and panel handoff"
     },
     {
       "path": "crates/ui/src/composer_dock.rs",
@@ -809,7 +871,9 @@
         "Fixture",
         "Fixture"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/composer_markdown.rs",
@@ -824,20 +888,25 @@
         "decorations"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/context_usage.rs",
-      "publicFunctions": 2,
-      "renderImpls": 1,
+      "publicFunctions": 5,
+      "renderImpls": 0,
       "exports": [
-        "render",
-        "has_window"
+        "chip",
+        "ring_chip",
+        "ring",
+        "has_window",
+        "card"
       ],
-      "views": [
-        "UsageCard"
-      ],
-      "catalogEntries": 0
+      "views": [],
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/edge_fade.rs",
@@ -849,7 +918,9 @@
       "views": [
         "Fixture"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/file_icons.rs",
@@ -862,7 +933,9 @@
         "has_specific_file_icon"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/client.rs",
@@ -872,7 +945,9 @@
         "request_params"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "data",
+      "scopeReason": "Workspace file requests"
     },
     {
       "path": "crates/ui/src/files/document.rs",
@@ -880,7 +955,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "model",
+      "scopeReason": "Document state and edits"
     },
     {
       "path": "crates/ui/src/files/editor.rs",
@@ -888,7 +965,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/editor_adapter.rs",
@@ -896,7 +975,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Editor to workspace document adapter"
     },
     {
       "path": "crates/ui/src/files/git_status.rs",
@@ -904,7 +985,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/image_preview.rs",
@@ -914,7 +997,9 @@
       "views": [
         "ImagePreview"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/markdown_media.rs",
@@ -922,7 +1007,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/markdown_preview.rs",
@@ -934,7 +1021,9 @@
         "TaskDocument",
         "Pair"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/mod.rs",
@@ -947,7 +1036,9 @@
         "WorkspacePathDragGhost",
         "FilesSurface"
       ],
-      "catalogEntries": 1
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/model.rs",
@@ -957,7 +1048,9 @@
         "parent_path"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "model",
+      "scopeReason": "Workspace path and tree model"
     },
     {
       "path": "crates/ui/src/files/preview.rs",
@@ -967,7 +1060,9 @@
       "views": [
         "FileEditorTooltip"
       ],
-      "catalogEntries": 1
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/search.rs",
@@ -975,7 +1070,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/tree.rs",
@@ -983,7 +1080,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 1
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/files/watch.rs",
@@ -991,7 +1090,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "data",
+      "scopeReason": "File update subscriptions"
     },
     {
       "path": "crates/ui/src/frost.rs",
@@ -1002,7 +1103,9 @@
         "layered"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/history.rs",
@@ -1027,31 +1130,9 @@
         "GitHistory",
         "HistorySearchFocusHarness"
       ],
-      "catalogEntries": 0
-    },
-    {
-      "path": "crates/ui/src/icons/element.rs",
-      "publicFunctions": 0,
-      "renderImpls": 0,
-      "exports": [],
-      "views": [],
-      "catalogEntries": 0
-    },
-    {
-      "path": "crates/ui/src/icons/generated.rs",
-      "publicFunctions": 0,
-      "renderImpls": 0,
-      "exports": [],
-      "views": [],
-      "catalogEntries": 0
-    },
-    {
-      "path": "crates/ui/src/icons/transition.rs",
-      "publicFunctions": 0,
-      "renderImpls": 0,
-      "exports": [],
-      "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/icons.rs",
@@ -1062,7 +1143,9 @@
         "icon"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/image_media.rs",
@@ -1077,7 +1160,9 @@
         "decode_raster_image"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "data",
+      "scopeReason": "Media decoding and cache lifetime"
     },
     {
       "path": "crates/ui/src/image_viewer.rs",
@@ -1088,7 +1173,9 @@
         "CachedSibling",
         "Harness"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/lib.rs",
@@ -1098,7 +1185,9 @@
         "run_app"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "bootstrap",
+      "scopeReason": "Application module wiring and startup"
     },
     {
       "path": "crates/ui/src/links.rs",
@@ -1111,7 +1200,9 @@
         "harness_conversation_link"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Conversation link parsing and routing"
     },
     {
       "path": "crates/ui/src/loaders.rs",
@@ -1129,7 +1220,9 @@
       "views": [
         "MiniSpinnerView"
       ],
-      "catalogEntries": 3
+      "catalogEntries": 3,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/markdown/link_destination.rs",
@@ -1141,7 +1234,9 @@
       "views": [
         "Destination"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/markdown/link_interaction.rs",
@@ -1154,7 +1249,9 @@
         "Fixture",
         "OutsideClickFixture"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Link click and hover routing for rendered Markdown"
     },
     {
       "path": "crates/ui/src/markdown/link_presentation.rs",
@@ -1164,7 +1261,9 @@
         "truncate"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/markdown/links.rs",
@@ -1172,7 +1271,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Link parsing helpers"
     },
     {
       "path": "crates/ui/src/markdown/mend.rs",
@@ -1182,7 +1283,9 @@
         "close_hanging"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "parser",
+      "scopeReason": "Partial Markdown repair while streaming"
     },
     {
       "path": "crates/ui/src/markdown/mermaid.rs",
@@ -1192,7 +1295,9 @@
         "render"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/markdown/mod.rs",
@@ -1200,7 +1305,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "bootstrap",
+      "scopeReason": "Markdown module entry"
     },
     {
       "path": "crates/ui/src/markdown/parser.rs",
@@ -1210,15 +1317,17 @@
         "parse_full"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "parser",
+      "scopeReason": "Markdown syntax tree parser"
     },
     {
       "path": "crates/ui/src/markdown/render.rs",
-      "publicFunctions": 22,
+      "publicFunctions": 23,
       "renderImpls": 3,
       "exports": [
-        "task_checkbox",
         "table_hairline",
+        "task_checkbox",
         "activate_link",
         "code_ui_for",
         "render_tree",
@@ -1229,6 +1338,7 @@
         "inline_code_wash",
         "flatten_runs",
         "paint_text_selection",
+        "selectable_text_wrap",
         "selection_test_bounds",
         "selection_frame_reset",
         "clear_selection_surface",
@@ -1245,7 +1355,9 @@
         "CodeBlockTooltip",
         "CodeSelectionHarness"
       ],
-      "catalogEntries": 1
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/markdown/selection.rs",
@@ -1269,7 +1381,9 @@
         "word_range"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Markdown selection state machine"
     },
     {
       "path": "crates/ui/src/markdown/veil.rs",
@@ -1284,7 +1398,9 @@
         "apply_veil"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/motion/windows_pulse.rs",
@@ -1292,7 +1408,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "Windows animation clock adapter"
     },
     {
       "path": "crates/ui/src/motion.rs",
@@ -1325,7 +1443,9 @@
         "fast_tier"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/new_thread_background_effects.rs",
@@ -1333,7 +1453,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/new_thread_background_image.rs",
@@ -1343,7 +1465,9 @@
         "decode"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "data",
+      "scopeReason": "Background image decoder"
     },
     {
       "path": "crates/ui/src/new_thread_background_mask.rs",
@@ -1355,7 +1479,9 @@
       "views": [
         "Fixture"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/notice.rs",
@@ -1365,7 +1491,9 @@
         "notice_chip"
       ],
       "views": [],
-      "catalogEntries": 1
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/notify.rs",
@@ -1376,7 +1504,9 @@
         "on_click"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/pickers.rs",
@@ -1410,7 +1540,21 @@
         "Fixture",
         "MouseFixture"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
+    },
+    {
+      "path": "crates/ui/src/popover/contained.rs",
+      "publicFunctions": 1,
+      "renderImpls": 0,
+      "exports": [
+        "contained_menu"
+      ],
+      "views": [],
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/popover/hover_intent.rs",
@@ -1418,11 +1562,13 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Hover-intent state for contextual surfaces"
     },
     {
       "path": "crates/ui/src/popover.rs",
-      "publicFunctions": 59,
+      "publicFunctions": 60,
       "renderImpls": 0,
       "exports": [
         "reap_popup",
@@ -1445,6 +1591,7 @@
         "anchored_menu_right",
         "nested_menu",
         "anchored_menu_below_gap",
+        "anchored_menu_below_layer",
         "anchored_menu_above",
         "anchored_menu_above_at",
         "full_width_menu_above",
@@ -1486,7 +1633,9 @@
         "menu_geometry"
       ],
       "views": [],
-      "catalogEntries": 6
+      "catalogEntries": 6,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/project_actions.rs",
@@ -1499,7 +1648,9 @@
         "draft_from_action"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/queue.rs",
@@ -1511,7 +1662,9 @@
         "QueueGhost",
         "QueueScrollTestView"
       ],
-      "catalogEntries": 1
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/rail.rs",
@@ -1528,23 +1681,34 @@
         "truncate_preview"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/accounts.rs",
-      "publicFunctions": 5,
+      "publicFunctions": 12,
       "renderImpls": 1,
       "exports": [
         "usage_level",
         "usage_color",
         "force_usage_for",
+        "is_openable_login_url",
         "format_reset",
-        "provider_accounts"
+        "signs_in",
+        "provider_name",
+        "reports_usage",
+        "keeps_one_login",
+        "add_account_label",
+        "provider_accounts",
+        "render_usage_meter"
       ],
       "views": [
         "AccountsPage"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/appearance.rs",
@@ -1555,7 +1719,9 @@
         "TranscriptWidthDrag",
         "AppearancePage"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/appshots.rs",
@@ -1563,7 +1729,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/archived.rs",
@@ -1575,7 +1743,9 @@
       "views": [
         "ArchivedPage"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/completion.rs",
@@ -1583,7 +1753,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/composer.rs",
@@ -1591,7 +1763,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/devices.rs",
@@ -1607,7 +1781,9 @@
       "views": [
         "DevicesPage"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/files.rs",
@@ -1617,20 +1793,23 @@
       "views": [
         "FilesSettingsPage"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/harnesses.rs",
-      "publicFunctions": 2,
+      "publicFunctions": 1,
       "renderImpls": 1,
       "exports": [
-        "blurb",
         "cli_name"
       ],
       "views": [
         "HarnessesPage"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/notifications.rs",
@@ -1640,7 +1819,9 @@
       "views": [
         "NotificationsPage"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/shortcuts.rs",
@@ -1655,13 +1836,33 @@
       "views": [
         "ShortcutsPage"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
+    },
+    {
+      "path": "crates/ui/src/settings/thread_naming.rs",
+      "publicFunctions": 0,
+      "renderImpls": 1,
+      "exports": [],
+      "views": [
+        "ThreadNamingCard"
+      ],
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings/widgets.rs",
-      "publicFunctions": 19,
-      "renderImpls": 0,
+      "publicFunctions": 44,
+      "renderImpls": 1,
       "exports": [
+        "set_sidebar_width",
+        "pane_bounds",
+        "column_width",
+        "dropdown",
+        "dropdown_rows",
+        "dropdown_list_height",
         "rail",
         "page_column",
         "page_header",
@@ -1669,6 +1870,11 @@
         "field_label",
         "option_card_row",
         "option_card",
+        "section_label",
+        "details_label",
+        "section",
+        "block_fill",
+        "row_divider",
         "section_card",
         "card_row",
         "row_tile",
@@ -1677,13 +1883,31 @@
         "badge",
         "badge_active",
         "toggle_switch",
+        "tab_selection_t",
+        "section_tab",
+        "select_fill",
+        "select_trigger",
+        "select_value",
+        "select_chevron",
+        "select_menu",
+        "select_row",
+        "select_check",
+        "close_select",
+        "select",
+        "action_button",
+        "text_action",
         "ghost_action",
-        "ghost_hover",
         "error_strip",
-        "warning_strip"
+        "warning_strip",
+        "scroll_faded",
+        "text_tooltip"
       ],
-      "views": [],
-      "catalogEntries": 7
+      "views": [
+        "TextTooltip"
+      ],
+      "catalogEntries": 11,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/settings.rs",
@@ -1719,7 +1943,9 @@
         "badge_combo_on"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "model",
+      "scopeReason": "Persisted settings schema and update store"
     },
     {
       "path": "crates/ui/src/shell/actions_ui.rs",
@@ -1729,7 +1955,9 @@
       "views": [
         "MenuTestView"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/shell/command_palette.rs",
@@ -1737,7 +1965,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/shell/files_panel.rs",
@@ -1745,7 +1975,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/shell/files_panel_workspace_tests.rs",
@@ -1755,7 +1987,9 @@
       "views": [
         "ClosedFixture"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "test",
+      "scopeReason": "Workspace fixture tests for file panel"
     },
     {
       "path": "crates/ui/src/shell/project_icon.rs",
@@ -1766,7 +2000,9 @@
         "ProjectIcon",
         "ProjectIconTooltip"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/shell/sidebar_pins.rs",
@@ -1774,7 +2010,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/shell/sidebar_sections.rs",
@@ -1782,7 +2020,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/shell/spaces.rs",
@@ -1794,7 +2034,9 @@
         "SidebarHost",
         "SidebarViewOptionsTooltip"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/shell/tabs.rs",
@@ -1802,12 +2044,14 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/shell.rs",
       "publicFunctions": 10,
-      "renderImpls": 7,
+      "renderImpls": 9,
       "exports": [
         "empty_sessions_message",
         "restore_focus_if_empty_on_next_frame",
@@ -1826,10 +2070,14 @@
         "DragGhost",
         "SidebarPane",
         "Shell",
+        "FooterHost",
         "TabHost",
-        "ShortcutHost"
+        "ShortcutHost",
+        "FocusHost"
       ],
-      "catalogEntries": 3
+      "catalogEntries": 6,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/sound.rs",
@@ -1842,19 +2090,24 @@
         "connectivity_sound_since"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "platform",
+      "scopeReason": "Native sound playback"
     },
     {
       "path": "crates/ui/src/state.rs",
-      "publicFunctions": 3,
+      "publicFunctions": 4,
       "renderImpls": 0,
       "exports": [
         "parse_orgs",
         "org_name_valid",
-        "sort_memberships"
+        "sort_memberships",
+        "canvas_panel_key"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "model",
+      "scopeReason": "App state and engine connection"
     },
     {
       "path": "crates/ui/src/surface_chrome.rs",
@@ -1865,7 +2118,9 @@
         "toolbar"
       ],
       "views": [],
-      "catalogEntries": 2
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/syntax_cache.rs",
@@ -1873,7 +2128,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "data",
+      "scopeReason": "Syntax-highlight cache"
     },
     {
       "path": "crates/ui/src/terminal/emulator.rs",
@@ -1881,7 +2138,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "renderer",
+      "scopeReason": "Terminal emulator state feeding the viewport"
     },
     {
       "path": "crates/ui/src/terminal/mod.rs",
@@ -1889,7 +2148,9 @@
       "renderImpls": 0,
       "exports": [],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "bootstrap",
+      "scopeReason": "Terminal module entry"
     },
     {
       "path": "crates/ui/src/terminal/panel.rs",
@@ -1911,7 +2172,9 @@
         "TabGhost",
         "TerminalPanel"
       ],
-      "catalogEntries": 0
+      "catalogEntries": 2,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/terminal/view.rs",
@@ -1925,7 +2188,9 @@
         "paste_bytes"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/theme.rs",
@@ -1959,7 +2224,9 @@
         "mix"
       ],
       "views": [],
-      "catalogEntries": 1
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/theme_library.rs",
@@ -1979,7 +2246,9 @@
         "reveal"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/transcript.rs",
@@ -2013,7 +2282,9 @@
         "CachedTranscript",
         "SizedTranscript"
       ],
-      "catalogEntries": 1
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/typography.rs",
@@ -2046,7 +2317,9 @@
         "set_font_size"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 1,
+      "role": "pattern",
+      "scopeReason": null
     },
     {
       "path": "crates/ui/src/workspace_links.rs",
@@ -2056,7 +2329,9 @@
         "resolve_workspace_file_link"
       ],
       "views": [],
-      "catalogEntries": 0
+      "catalogEntries": 0,
+      "role": "behavior",
+      "scopeReason": "Workspace file link resolution"
     }
   ]
 }

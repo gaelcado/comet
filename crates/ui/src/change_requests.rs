@@ -80,7 +80,7 @@ impl Render for ChangeRequestTooltip {
             .border_1()
             .border_color(theme.border_strong)
             .bg(crate::popover::surface_bg(theme))
-            .shadow_md()
+            .when(!theme.is_frost(), |el| el.shadow_md())
             .child(
                 div()
                     .text_size(px(11.0))
@@ -150,11 +150,6 @@ fn render_pull_request_badge(
     let model = ChangeRequestBadgeModel::from_summary(&summary);
     let color = model.tone.color(theme);
     let url = summary.url.clone();
-    let icon_path = if summary.state == zeron_proto::ChangeRequestState::Merged {
-        crate::icons::MERGE
-    } else {
-        crate::icons::PULL_REQUEST
-    };
     let tooltip_summary = summary;
     let composer = surface == ChangeRequestBadgeSurface::Composer;
 
@@ -187,8 +182,7 @@ fn render_pull_request_badge(
         })
         .when(composer, |element| {
             element.child(
-                crate::icons::icon(icon_path)
-                    .morph("pr-state-glyph")
+                crate::icons::icon(crate::icons::PULL_REQUEST)
                     .size(px(11.0))
                     .flex_none()
                     .text_color(color.opacity(0.85)),

@@ -2,7 +2,7 @@
 
 For the wider Zeron visual system, use the [native UI workbench](../ui-workbench/README.md).
 
-135 original control glyphs, two optical sizes, and 36 reversible state transitions. The standalone gallery lives in `apps/icon-lab` on `design/custom-icon-library`. The desktop integration lives in `crates/ui/src/icons` and `crates/ui/assets/custom-icons`. iOS uses the same vector source through SwiftUI Canvas and custom UIKit menu images.
+135 original control glyphs, two optical sizes, and 36 reversible state transitions. The standalone study lives in `apps/icon-lab` on `design/custom-icon-library`. The feature-gated native workbench loads `crates/ui/src/experimental_icons` and `crates/ui/assets/custom-icons`. iOS proposal sources live in `apps/icon-lab/proposals/ios`; current desktop and iOS app icon systems remain unchanged.
 
 Open `index.html`, or run `python3 -m http.server 8767 --bind 127.0.0.1` from this directory. Open http://localhost:8767. No dependencies are needed to view the gallery. **Refinements** compares Study 02 with 03; **The family** includes search, sizing and SVG exports; **In motion** supports playback, reversal and scrubbing; **Coverage** maps existing source names.
 
@@ -18,7 +18,7 @@ Study 03 keeps the closed panel frames and gives open rails a short, inset trave
 
 `motions.json` declares contour pairings and rigid rotation groups. `motion-geometry.js` produces exact SVG endpoints, matches cubic curves with De Casteljau subdivision, and preserves common frames. Arrows rotate as intact groups. Copy becomes a check, diff rows become an inset divider, and the eye closes along its lid. Unrelated contours use stroke erase/draw handoffs, labelled separately in the gallery.
 
-`motion-state.js` uses critical damping and retains position and velocity when interrupted. Reduced motion snaps to the destination; hidden views stop their animation frames. Scrubbing intentionally exposes static intermediate poses. The theme button uses the same appearance morph.
+`motion-state.js` uses critical damping and retains position and velocity when interrupted. Reduced motion snaps to the destination; hidden views stop their animation frames. Scrubbing intentionally exposes static intermediate poses. The workbench can preview the appearance morph; the current app retains its production transition.
 
 ## Build and verify
 
@@ -38,29 +38,24 @@ Verification covers both optical exports, stroke bounds, all 36 transitions at 1
 
 ## Coverage
 
-`inventory.json` records the source SHA and mappings. To rescan the containing Zeron repository and available contribution branches, use `python3 build.py --refresh-inventory`. This is a source scan of registered desktop assets, qualified Rust references, SwiftUI symbol literals and tool dispatch, not a runtime accessibility crawl. Dynamic image names need an integration audit. File and folder identities use the custom family too. Provider/app logos, uploaded art, OS-owned chrome, progress visualizations, and website marketing artwork remain outside this control family.
+`inventory.json` records the source SHA and mappings. To rescan the containing Zeron repository and available contribution branches, use `python3 build.py --refresh-inventory`. This is a source scan of registered desktop assets, qualified Rust references, SwiftUI symbol literals and tool dispatch, not a runtime accessibility crawl. Dynamic image names need an integration audit. The proposed file and folder identities are cataloged alongside the control family; current app file icons remain in place. Provider/app logos, uploaded art, OS-owned chrome, progress visualizations, and website marketing artwork remain outside this control family.
 
-## Native desktop integration
+## Native desktop experiment
 
-Run `node export-native.cjs` after rebuilding the gallery to synchronize native assets and constants. Existing control constant names remain aliases for the new family. Provider marks and the app logo retain their assets. File/folder rendering uses the custom family; the old file-theme manifest remains only for recognizing filename references and its assets are no longer served by the app.
+Run `node export-native.cjs` after rebuilding the gallery to synchronize the proposed assets and aliases. The workbench-only `experimental_icons` module loads that bank and its 36 motion pairs. A standard Zeron build excludes the `ui-workbench` feature, so it does not include the experimental renderer or assets. Production `icons::Assets` and the file icon theme keep their current behavior.
 
-`icons::icon(path)` selects the small optical SVG for static glyphs at 16px or below. `.morph("state-glyph")` opts a glyph into element-local motion; put it inside a control with a stable unique ID. Display size selects the optical master for every glyph, including motion: 1.75 units and small geometry at 16px or below, 1.75 units and standard geometry above 16px. Each transition has both optical banks, so its endpoints match the static exports. Initial mounts, unrelated icon changes and OS reduced motion render immediately. Unmounted elements stop requesting frames and their state expires with GPUI's frame state.
+The experimental `icon(path)` selects the small optical SVG at 16px or below. `.morph("state-glyph")` opts a glyph into element-local motion inside the workbench. Initial mounts, unrelated icon changes and reduced-motion settings render immediately. The 97-pose vector banks bound raster-cache identities while state progress remains interruptible.
 
-The native bank contains the 36 reviewed transitions plus system-to-light for the three-way appearance selector. Each uses 97 vector poses per optical size from the gallery engine, selected by an interruptible critically damped progress value. This bounds SVG raster-cache identities; temporal progress is continuous while geometry is quantized to 1/96. At rest, exact endpoint SVGs are used.
+```sh
+cargo check -p zeron --features ui-workbench
+cargo test -p zeron-ui --features ui-workbench --lib experimental_icons:: -- --test-threads=1
+scripts/run-macos-dev.sh ui-workbench
+```
 
-Connected controls include appearance navigation, left/right panes, pane expansion, unified/split diffs, wrapping, fold/disclosure controls, hidden files, favorites, copy confirmation, PR merged state, queue actions and composer send/stop. The protocol currently exposes open/closed/merged PR states, not draft; draft geometry remains available for future data support. Additional gallery concepts do not create new app behaviors automatically.
+## iOS proposal
 
-Validate with `cargo check -p zeron-ui --lib` and `cargo test -p zeron-ui --lib icons:: -- --test-threads=1`. Runtime review should use an isolated development app, never the production instance hosting the coding session.
+Run `node export-ios.cjs` to generate `proposals/ios/CustomIconLibrary.json` from the same 135 glyphs and 36 motion banks. `proposals/ios/ZeronIcon.swift` and `CustomIconTests.swift` preserve the SwiftUI experiment for a future iOS fixture. They are outside the iOS app target and do not replace current SF Symbols or line icons.
 
+Run `python3 audit-integration.py` to verify proposal exports, optical endpoints, desktop feature isolation and the absence of experimental icon calls in the current iOS app. This checks source boundaries and generated data; visual quality still needs native inspection when an iOS proposal harness exists.
 
-## iOS integration and coverage guard
-
-Run `node export-ios.cjs` to generate the SwiftUI payload from the same 135 glyphs and 36 motion banks. `ios-symbols.json` is the explicit compatibility map for existing call-site names. `ZeronIcon` draws custom paths, uses both optical sizes, and animates supported state pairs with an interruptible spring. Reduced motion snaps. Menu labels use template images rasterized from the same paths because UIKit menus require an Image.
-
-Run `python3 audit-integration.py` to check the two native exports, compatibility mappings, static Swift call sites, and absence of legacy SF Symbol rendering. Dynamic tool dispatch remains explicit in the inventory. This guard covers source integration; it does not establish runtime frame timing or replace interactive UI review.
-
-The iOS `CustomIconTests` decode every contour and motion frame, render all glyphs at 12/16/24px, and exercise every menu alias. App-owned compact loading indicators and Markdown task glyphs also use this family; branded loading artwork, determinate progress, and native system widgets retain their own rendering.
-
-Toolbar actions use 16px to match titlebar actions and menus; compact iOS queue actions use 14px consistently. Smaller disclosure/status glyphs and larger empty-state illustrations retain their distinct roles. Stroke widths are viewBox units and scale with the icon, as in the gallery.
-
-Current weight trial: all current glyphs, morphs and UIKit menu images use a uniform 1.75-unit stroke. The historical Study 02 comparison retains its original 1.5-unit stroke.
+Current weight trial: proposed glyphs and morphs use a uniform 1.75-unit stroke. The historical Study 02 comparison retains its original 1.5-unit stroke.

@@ -8,8 +8,8 @@ aliases={'more-horizontal': 'more', 'project-default': 'project', 'remote-server
 # Inventory preserves every registered asset and every source reference, including unused entries.
 registry=re.findall(r'\(([A-Z][A-Z_0-9]+), "([\w-]+)"\)',(REPO/'crates/ui/src/icons.rs').read_text())
 if not registry:
- registry=re.findall(r'pub const ([A-Z][A-Z_0-9]+): &str = "(?:custom-icons|icons)/([\w-]+)\.svg";', (REPO/'crates/ui/src/icons/generated.rs').read_text())
-source_files=list((REPO/'crates/ui/src').rglob('*.rs'))
+ registry=re.findall(r'pub const ([A-Z][A-Z_0-9]+): &str = "(?:custom-icons|icons)/([\w-]+)\.svg";', (REPO/'crates/ui/src/experimental_icons/generated.rs').read_text())
+source_files=[p for p in (REPO/'crates/ui/src').rglob('*.rs') if p.name not in {'ui_workbench.rs','experimental_icons.rs'} and 'experimental_icons' not in p.parts]
 refs=collections.defaultdict(list)
 for p in source_files:
  for n,l in enumerate(p.read_text().splitlines(),1):
@@ -19,7 +19,7 @@ for const,old in registry:
  brand=old.endswith('-mark') or old=='zeron-logo'
  target=None if brand else aliases.get(old,old)
  if target: assert target in icons,(const,target)
- entries.append(dict(constant=const,asset=old,custom=target,disposition='Preserve brand identity' if brand else 'Custom replacement',references=refs[const]))
+ entries.append(dict(constant=const,asset=old,custom=target,disposition='Preserve brand identity' if brand else 'Proposed replacement',references=refs[const]))
 # SF Symbols direct literals, conditional alternatives, and tool symbol dispatch.
 sf=collections.defaultdict(list)
 for p in (REPO/'apps/ios/Zeron').rglob('*.swift'):
@@ -38,6 +38,6 @@ for branch in ['codex/rich-composer','codex/native-interactions','codex/compact-
   if c not in {name for name,_ in registry}: branch_additions.append(dict(branch=branch,constant=c,asset=a,custom=aliases.get(a,a)))
 sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=REPO,text=True).strip()
 dirty=bool(subprocess.check_output(['git','status','--porcelain','--','crates/ui/src','apps/ios'],cwd=REPO,text=True).strip())
-inv={'source':'zeronsh/zeron','sha':sha,'dirty':dirty,'desktop':entries,'ios':ios,'branchAdditions':branch_additions,'fileIdentities':[str(p.relative_to(REPO)) for p in sorted((REPO/'crates/ui/assets/file-icons').rglob('*.svg'))], 'boundary':'Product controls across desktop and iOS; provider, app and user-uploaded project identities retained; file types use custom family. Website marketing artwork excluded. Literal and dispatch source scan; runtime-supplied image names require integration audit.'}
+inv={'source':'zeronsh/zeron','sha':sha,'dirty':dirty,'desktop':entries,'ios':ios,'branchAdditions':branch_additions,'fileIdentities':[str(p.relative_to(REPO)) for p in sorted((REPO/'crates/ui/assets/file-icons').rglob('*.svg'))], 'boundary':'Current desktop and iOS icon references mapped to proposed replacements. Production assets remain unchanged. Provider, app and user imagery remain outside the study. Literal and dispatch source scan; runtime-supplied image names require review.'}
 (ROOT/'inventory.json').write_text(json.dumps(inv,indent=2)+'\n')
 print(f'Scanned {len(entries)} desktop entries and {len(ios)} iOS symbols at {sha[:12]}')

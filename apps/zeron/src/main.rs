@@ -32,6 +32,7 @@ struct Cli {
 enum Command {
     /// Run the engine without a UI (local-only unless a saved session enables sync).
     Headless,
+    #[cfg(feature = "ui-workbench")]
     /// Open the native GPUI design workbench without starting the engine.
     UiWorkbench,
     /// Sign in and enable sync on the next engine start.
@@ -200,6 +201,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     match cli.command {
+        #[cfg(feature = "ui-workbench")]
         Some(Command::UiWorkbench) => {
             zeron_ui::ui_workbench::run(paths::data_dir());
             Ok(())

@@ -1,5 +1,5 @@
 {
-  "sourceFingerprint": "cebe177e1d6f",
+  "sourceFingerprint": "da5059b9f0f3",
   "metrics": {
     "Theme": [
       {
@@ -90,21 +90,21 @@
       },
       {
         "name": "ICON_SIZE",
-        "value": 16.0,
+        "value": 14.0,
         "unit": "px",
-        "source": "crates/ui/src/surface_chrome.rs:11"
+        "source": "crates/ui/src/surface_chrome.rs:10"
       },
       {
         "name": "CONTROL_GAP",
         "value": 4.0,
         "unit": "px",
-        "source": "crates/ui/src/surface_chrome.rs:12"
+        "source": "crates/ui/src/surface_chrome.rs:11"
       },
       {
         "name": "EDGE_INSET",
         "value": 8.0,
         "unit": "px",
-        "source": "crates/ui/src/surface_chrome.rs:13"
+        "source": "crates/ui/src/surface_chrome.rs:12"
       }
     ],
     "Composer": [
@@ -156,25 +156,25 @@
         "name": "ROW_TITLE_SIZE",
         "value": 13.0,
         "unit": "px",
-        "source": "crates/ui/src/settings/widgets.rs:151"
+        "source": "crates/ui/src/settings/widgets.rs:303"
       },
       {
         "name": "ROW_DESCRIPTION_SIZE",
         "value": 12.0,
         "unit": "px",
-        "source": "crates/ui/src/settings/widgets.rs:152"
+        "source": "crates/ui/src/settings/widgets.rs:304"
       },
       {
         "name": "OPTION_CARD_HEIGHT",
         "value": 148.0,
         "unit": "px",
-        "source": "crates/ui/src/settings/widgets.rs:222"
+        "source": "crates/ui/src/settings/widgets.rs:386"
       },
       {
         "name": "OPTION_CARD_RADIUS",
         "value": 6.0,
         "unit": "px",
-        "source": "crates/ui/src/settings/widgets.rs:229"
+        "source": "crates/ui/src/settings/widgets.rs:393"
       }
     ],
     "Popover": [
@@ -182,19 +182,19 @@
         "name": "CARD_RADIUS",
         "value": 12.0,
         "unit": "px",
-        "source": "crates/ui/src/popover.rs:305"
+        "source": "crates/ui/src/popover.rs:307"
       },
       {
         "name": "CARD_INSET",
         "value": 4.0,
         "unit": "px",
-        "source": "crates/ui/src/popover.rs:310"
+        "source": "crates/ui/src/popover.rs:312"
       },
       {
         "name": "MENU_GAP",
         "value": 2.0,
         "unit": "px",
-        "source": "crates/ui/src/popover.rs:307"
+        "source": "crates/ui/src/popover.rs:309"
       }
     ],
     "Typography": [

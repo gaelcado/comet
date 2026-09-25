@@ -65,7 +65,8 @@ struct SheetSelectRow: View {
                     }
                 }
                 Spacer(minLength: 8)
-                ZeronIcon(systemName: "checkmark").iconSize(14)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.text)                    .opacity(selected ? 1 : 0)
             }
             .padding(.horizontal, 16)
@@ -87,7 +88,8 @@ struct SheetLinkRow: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 if let systemImage {
-                    ZeronIcon(systemName: systemImage).iconSize(16)
+                    Image(systemName: systemImage)
+                        .font(.system(size: 15))
                         .foregroundStyle(Theme.textMuted)
                         .frame(width: 22)
                 }
@@ -101,7 +103,8 @@ struct SheetLinkRow: View {
                         .foregroundStyle(Theme.textMuted)
                         .lineLimit(1)
                 }
-                ZeronIcon(systemName: "chevron.right").iconSize(12)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textFaint)
             }
             .padding(.horizontal, 16)

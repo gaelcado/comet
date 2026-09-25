@@ -15,9 +15,9 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, BorderStyle, Bounds, Context, FontStyle, FontWeight, Hsla, Render, SharedString,
-    StyledText, TextRun, UnderlineStyle, Window, canvas, div, font, point, prelude::*, px, quad,
-    size,
+    AnyElement, BorderStyle, Bounds, Context, CursorStyle, Div, FontStyle, FontWeight, Hsla,
+    Render, SharedString, StyledText, TextRun, UnderlineStyle, Window, canvas, div, font, point,
+    prelude::*, px, quad, size,
 };
 use zeron_syntax::{HighlightKind, HighlightSpan, HighlightedDocument};
 
@@ -31,45 +31,6 @@ pub const MD_BLOCK_GAP: f32 = 12.0;
 /// Body text size / line height (zeron: 14px / 22px).
 pub const MD_TEXT_SIZE: f32 = 14.0;
 pub const MD_LINE_HEIGHT: f32 = 22.0;
-
-/// The native task marker used by transcript Markdown and the UI workbench.
-pub(crate) fn task_checkbox(
-    id: SharedString,
-    checked: bool,
-    enabled: bool,
-    label: String,
-    theme: &Theme,
-) -> gpui_base::Checkbox {
-    gpui_base::Checkbox::new(id)
-        .checked(checked)
-        .disabled(!enabled)
-        .when(enabled, |checkbox| checkbox.cursor_pointer())
-        .focus_visible(|style| style.border_color(theme.text))
-        .styles(|styles| styles.disabled(|style| style.opacity(0.5)))
-        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .accessibility_label(label)
-        .size(px(20.0))
-        .border_1()
-        .rounded(px(3.0))
-        .border_color(gpui::transparent_black())
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            crate::icons::icon(if checked {
-                crate::icons::CHECKBOX_CHECKED
-            } else {
-                crate::icons::CHECKBOX
-            })
-            .morph("task-state-glyph")
-            .size(px(18.0))
-            .text_color(if checked {
-                theme.accent
-            } else {
-                theme.text_muted
-            }),
-        )
-}
 /// Default code block metrics; the rendered size comes from the theme.
 pub const CODE_TEXT_SIZE: f32 = 12.5;
 pub const CODE_LINE_HEIGHT: f32 = 18.0;
@@ -104,6 +65,44 @@ pub const TABLE_MIN_COLUMN_WIDTH: f32 = 96.0;
 /// Hairline tone (zeron md theme `table.borderColor`: rgba(255,255,255,0.1)).
 pub fn table_hairline() -> Hsla {
     crate::theme::hairline(0.10)
+}
+
+/// The task marker used by editable Markdown lists. The owner supplies the
+/// state and change action, so the workbench can mount the production control.
+pub(crate) fn task_checkbox(
+    id: SharedString,
+    checked: bool,
+    enabled: bool,
+    label: SharedString,
+    theme: &Theme,
+) -> gpui_base::Checkbox {
+    gpui_base::Checkbox::new(id)
+        .checked(checked)
+        .disabled(!enabled)
+        .when(enabled, |checkbox| checkbox.cursor_pointer())
+        .focus_visible(|style| style.border_color(theme.text))
+        .styles(|styles| styles.disabled(|style| style.opacity(0.5)))
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .accessibility_label(label)
+        .size(px(16.0))
+        .border_1()
+        .rounded(px(3.0))
+        .border_color(if checked { theme.accent } else { theme.border })
+        .bg(if checked {
+            theme.accent
+        } else {
+            gpui::transparent_black()
+        })
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(checked, |checkbox| {
+            checkbox.child(
+                crate::icons::icon(crate::icons::CHECK)
+                    .size(px(12.0))
+                    .text_color(theme.bg),
+            )
+        })
 }
 
 /// Options for one rendered tree (a transcript row or a whole live message).
@@ -632,7 +631,7 @@ pub fn render_block(
                                 )),
                                 task.checked,
                                 toggle.is_some(),
-                                label,
+                                label.into(),
                                 theme,
                             )
                             .on_change(move |_, _, window, cx| {
@@ -1189,8 +1188,7 @@ pub(super) fn flat_text_presented_element(
     )
     .absolute()
     .size_full();
-    let child = div()
-        .relative()
+    let child = selectable_text_wrap()
         .child(underlay)
         .child(text_el)
         .into_any_element();
@@ -1282,6 +1280,17 @@ fn paint_text_selection_with_wash(
     register_selection_listeners(window, key, text, layout, None);
 }
 
+/// The wrapping div shared by every selectable text region: markdown
+/// paragraphs (and their table/list/quote kin), code lines, and the
+/// transcript's user bubbles. `relative` so the selection underlay can
+/// paint beneath the text, I-beam so hovering the region reads as text.
+/// Link hitboxes overlay the wrapper with `.cursor_pointer()` and the
+/// topmost hitbox under the mouse wins, so links inside keep the hand
+/// cursor.
+pub(crate) fn selectable_text_wrap() -> Div {
+    div().relative().cursor(CursorStyle::IBeam)
+}
+
 fn selectable_text_element(
     key: std::sync::Arc<str>,
     text: SharedString,
@@ -1298,8 +1307,7 @@ fn selectable_text_element(
     )
     .absolute()
     .size_full();
-    div()
-        .relative()
+    selectable_text_wrap()
         .child(underlay)
         .child(styled)
         .into_any_element()
@@ -1925,7 +1933,6 @@ fn code_icon_action(
         .tooltip(move |_, cx| cx.new(move |_| CodeBlockTooltip(label)).into())
         .child(
             crate::icons::icon(icon_path)
-                .morph("state-glyph")
                 .size(px(13.0))
                 .text_color(theme.text_muted),
         )
@@ -1971,7 +1978,6 @@ fn code_copy_button(
                 } else {
                     crate::icons::COPY
                 })
-                .morph("state-glyph")
                 .size(px(12.0))
                 .text_color(theme.text_muted),
             )
@@ -2162,14 +2168,9 @@ fn render_code_block_source_with_actions(
                 .into()
             })
             .child(
-                crate::icons::icon(if fit_content {
-                    crate::icons::WRAP
-                } else {
-                    crate::icons::UNWRAP
-                })
-                .morph("wrap-glyph")
-                .size(px(13.0))
-                .text_color(theme.text_muted),
+                crate::icons::icon(crate::icons::WRAP_TEXT)
+                    .size(px(13.0))
+                    .text_color(theme.text_muted),
             )
     });
     let mut actions = Vec::new();
@@ -2277,6 +2278,7 @@ fn render_code_block_source_with_actions(
                     .right(px(0.0))
                     .bottom(px(0.0))
                     .h(px(CODE_SCROLLBAR_HIT_HEIGHT))
+                    .cursor(CursorStyle::Arrow)
                     .on_hover(move |hovered, window, cx| hover(*hovered, window, cx))
                     .on_mouse_down(gpui::MouseButton::Left, move |event, window, cx| {
                         press(event.position.x, window, cx);
@@ -3003,6 +3005,16 @@ mod tests {
         cache.retain_rows(&std::collections::HashSet::new());
         assert!(cache.flats.is_empty());
         assert!(cache.code.is_empty());
+    }
+
+    #[test]
+    fn selectable_text_wrap_is_ibeam_cursor() {
+        // The wrapper shared by every selectable text region (paragraphs,
+        // code lines, user bubbles) must hover with the text cursor. Links
+        // and code action buttons paint their own `.cursor_pointer()`
+        // hitboxes above this wrapper, so they keep the hand cursor.
+        let mut wrap = selectable_text_wrap();
+        assert_eq!(wrap.style().mouse_cursor, Some(CursorStyle::IBeam));
     }
 
     #[test]

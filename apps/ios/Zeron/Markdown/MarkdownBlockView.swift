@@ -227,7 +227,7 @@ struct CodeBlockView: View {
             Button {
                 UIPasteboard.general.string = code
             } label: {
-                Label("Copy code", zeronIcon: "doc.on.doc")
+                Label("Copy code", systemImage: "doc.on.doc")
             }
         }
         .task(id: code) {
@@ -329,7 +329,8 @@ struct ListBlockView: View {
     @ViewBuilder
     private func marker(ix: Int, item: MDListItem) -> some View {
         if let checked = item.checked {
-            ZeronIcon(systemName: checked ? "checkmark.square.fill" : "square").iconSize(12)
+            Image(systemName: checked ? "checkmark.square.fill" : "square")
+                .font(.system(size: 12))
                 .foregroundStyle(checked ? Theme.accent.opacity(0.85) : Theme.textMuted)
                 .frame(height: markerHeight)
         } else if let start = orderedStart {

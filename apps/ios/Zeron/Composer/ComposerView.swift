@@ -176,7 +176,8 @@ struct ComposerShell<Chips: View>: View {
         Button {
             onAttach?()
         } label: {
-            ZeronIcon(systemName: "plus").iconSize(16)
+            Image(systemName: "plus")
+                .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(Theme.textMuted)
                 .frame(width: 44, height: 44)
                 .background(whiteAlpha(0.06), in: Circle())
@@ -211,8 +212,13 @@ struct ComposerShell<Chips: View>: View {
                     ProgressView()
                         .controlSize(.small)
                         .tint(Theme.bg)
+                } else if showStop, !hasContent {
+                    RoundedRectangle(cornerRadius: 3.5)
+                        .fill(Theme.bg)
+                        .frame(width: 12, height: 12)
                 } else {
-                    ZeronIcon(showStop && !hasContent ? "stop" : "send", size: 18)
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(buttonActive ? Theme.bg : Theme.textFaint)
                 }
             }

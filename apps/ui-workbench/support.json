@@ -1,0 +1,182 @@
+[
+  {
+    "path": "crates/ui/src/appshots/linux/atspi.rs",
+    "role": "platform",
+    "reason": "Linux accessibility capture adapter"
+  },
+  {
+    "path": "crates/ui/src/appshots/linux/mod.rs",
+    "role": "platform",
+    "reason": "Linux capture orchestration"
+  },
+  {
+    "path": "crates/ui/src/appshots/linux/portal.rs",
+    "role": "platform",
+    "reason": "Desktop portal capture adapter"
+  },
+  {
+    "path": "crates/ui/src/appshots/linux/x11.rs",
+    "role": "platform",
+    "reason": "X11 capture adapter"
+  },
+  {
+    "path": "crates/ui/src/appshots/macos.rs",
+    "role": "platform",
+    "reason": "macOS capture adapter"
+  },
+  {
+    "path": "crates/ui/src/browser/linux/mod.rs",
+    "role": "platform",
+    "reason": "Linux embedded browser binding"
+  },
+  {
+    "path": "crates/ui/src/browser/macos.rs",
+    "role": "platform",
+    "reason": "macOS embedded browser binding"
+  },
+  {
+    "path": "crates/ui/src/browser/mod.rs",
+    "role": "behavior",
+    "reason": "Browser key binding and module entry"
+  },
+  {
+    "path": "crates/ui/src/browser/model.rs",
+    "role": "model",
+    "reason": "Address normalization and navigation policy"
+  },
+  {
+    "path": "crates/ui/src/comments.rs",
+    "role": "model",
+    "reason": "Comment payload and layout calculations used by comment UI"
+  },
+  {
+    "path": "crates/ui/src/composer_dock/panel_handoff.rs",
+    "role": "behavior",
+    "reason": "Dock ownership and panel handoff"
+  },
+  {
+    "path": "crates/ui/src/files/client.rs",
+    "role": "data",
+    "reason": "Workspace file requests"
+  },
+  {
+    "path": "crates/ui/src/files/document.rs",
+    "role": "model",
+    "reason": "Document state and edits"
+  },
+  {
+    "path": "crates/ui/src/files/editor_adapter.rs",
+    "role": "behavior",
+    "reason": "Editor to workspace document adapter"
+  },
+  {
+    "path": "crates/ui/src/files/model.rs",
+    "role": "model",
+    "reason": "Workspace path and tree model"
+  },
+  {
+    "path": "crates/ui/src/files/watch.rs",
+    "role": "data",
+    "reason": "File update subscriptions"
+  },
+  {
+    "path": "crates/ui/src/image_media.rs",
+    "role": "data",
+    "reason": "Media decoding and cache lifetime"
+  },
+  {
+    "path": "crates/ui/src/lib.rs",
+    "role": "bootstrap",
+    "reason": "Application module wiring and startup"
+  },
+  {
+    "path": "crates/ui/src/links.rs",
+    "role": "behavior",
+    "reason": "Conversation link parsing and routing"
+  },
+  {
+    "path": "crates/ui/src/markdown/link_interaction.rs",
+    "role": "behavior",
+    "reason": "Link click and hover routing for rendered Markdown"
+  },
+  {
+    "path": "crates/ui/src/markdown/links.rs",
+    "role": "behavior",
+    "reason": "Link parsing helpers"
+  },
+  {
+    "path": "crates/ui/src/markdown/mend.rs",
+    "role": "parser",
+    "reason": "Partial Markdown repair while streaming"
+  },
+  {
+    "path": "crates/ui/src/markdown/mod.rs",
+    "role": "bootstrap",
+    "reason": "Markdown module entry"
+  },
+  {
+    "path": "crates/ui/src/markdown/parser.rs",
+    "role": "parser",
+    "reason": "Markdown syntax tree parser"
+  },
+  {
+    "path": "crates/ui/src/markdown/selection.rs",
+    "role": "behavior",
+    "reason": "Markdown selection state machine"
+  },
+  {
+    "path": "crates/ui/src/motion/windows_pulse.rs",
+    "role": "platform",
+    "reason": "Windows animation clock adapter"
+  },
+  {
+    "path": "crates/ui/src/new_thread_background_image.rs",
+    "role": "data",
+    "reason": "Background image decoder"
+  },
+  {
+    "path": "crates/ui/src/popover/hover_intent.rs",
+    "role": "behavior",
+    "reason": "Hover-intent state for contextual surfaces"
+  },
+  {
+    "path": "crates/ui/src/settings.rs",
+    "role": "model",
+    "reason": "Persisted settings schema and update store"
+  },
+  {
+    "path": "crates/ui/src/shell/files_panel_workspace_tests.rs",
+    "role": "test",
+    "reason": "Workspace fixture tests for file panel"
+  },
+  {
+    "path": "crates/ui/src/sound.rs",
+    "role": "platform",
+    "reason": "Native sound playback"
+  },
+  {
+    "path": "crates/ui/src/state.rs",
+    "role": "model",
+    "reason": "App state and engine connection"
+  },
+  {
+    "path": "crates/ui/src/syntax_cache.rs",
+    "role": "data",
+    "reason": "Syntax-highlight cache"
+  },
+  {
+    "path": "crates/ui/src/terminal/emulator.rs",
+    "role": "renderer",
+    "reason": "Terminal emulator state feeding the viewport"
+  },
+  {
+    "path": "crates/ui/src/terminal/mod.rs",
+    "role": "bootstrap",
+    "reason": "Terminal module entry"
+  },
+  {
+    "path": "crates/ui/src/workspace_links.rs",
+    "role": "behavior",
+    "reason": "Workspace file link resolution"
+  }
+]

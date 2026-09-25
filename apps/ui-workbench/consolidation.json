@@ -1,0 +1,169 @@
+[
+  {
+    "id": "settings-actions",
+    "priority": "High",
+    "family": "Action hierarchy",
+    "current": "Settings, dialogs, file toolbars and queues use separate button recipes.",
+    "sources": [
+      "crates/ui/src/settings/widgets.rs",
+      "crates/ui/src/popover.rs",
+      "crates/ui/src/files/mod.rs",
+      "crates/ui/src/queue.rs"
+    ],
+    "target": "Define shared action tones and keyboard/focus contract, then keep density variants where context requires them.",
+    "status": "open"
+  },
+  {
+    "id": "settings-selects",
+    "priority": "High",
+    "family": "Selection controls",
+    "current": "Settings select, popover menu and model picker overlap in trigger, option row and dismissal behavior.",
+    "sources": [
+      "crates/ui/src/settings/widgets.rs",
+      "crates/ui/src/popover.rs",
+      "crates/ui/src/pickers.rs"
+    ],
+    "target": "Extract a common selection interaction model; keep each surface layout as a named variant.",
+    "status": "open"
+  },
+  {
+    "id": "status-semantics",
+    "priority": "High",
+    "family": "Status semantics",
+    "current": "Badges, connection pills, PR states and notices carry similar states with separate color and copy decisions.",
+    "sources": [
+      "crates/ui/src/settings/widgets.rs",
+      "crates/ui/src/shell.rs",
+      "crates/ui/src/change_requests.rs",
+      "crates/ui/src/notice.rs"
+    ],
+    "target": "Map semantic states and severity to shared color, text and icon rules; document intentional domain exceptions.",
+    "status": "open"
+  },
+  {
+    "id": "navigation-rows",
+    "priority": "High",
+    "family": "Navigation rows",
+    "current": "Settings tabs, session rows, file rows and terminal tabs implement selection and roving focus independently.",
+    "sources": [
+      "crates/ui/src/settings/widgets.rs",
+      "crates/ui/src/shell.rs",
+      "crates/ui/src/files/tree.rs",
+      "crates/ui/src/terminal/panel.rs"
+    ],
+    "target": "Share focus and selected-state contracts while retaining distinct information density.",
+    "status": "open"
+  },
+  {
+    "id": "overlay-geometry",
+    "priority": "High",
+    "family": "Overlay geometry",
+    "current": "Dialogs, palettes, settings dropdowns and contextual menus own their own width and viewport rules.",
+    "sources": [
+      "crates/ui/src/popover.rs",
+      "crates/ui/src/popover/contained.rs",
+      "crates/ui/src/settings/widgets.rs",
+      "crates/ui/src/shell/command_palette.rs"
+    ],
+    "target": "Centralize containment and placement, with explicit dialog, palette and compact-menu presets.",
+    "status": "open"
+  },
+  {
+    "id": "input-frames",
+    "priority": "Medium",
+    "family": "Input frames",
+    "current": "Composer, file search, settings fields and dialog fields vary in inset, icon and focus treatment.",
+    "sources": [
+      "crates/ui/src/composer.rs",
+      "crates/ui/src/surface_chrome.rs",
+      "crates/ui/src/settings/widgets.rs",
+      "crates/ui/src/popover.rs"
+    ],
+    "target": "Define frame roles and align padding, focus, disabled and error behavior by role.",
+    "status": "open"
+  },
+  {
+    "id": "collections",
+    "priority": "Medium",
+    "family": "Collection anatomy",
+    "current": "Sidebar sessions, files, queue items, accounts and device rows repeat title, metadata, action and status structures.",
+    "sources": [
+      "crates/ui/src/shell.rs",
+      "crates/ui/src/files/tree.rs",
+      "crates/ui/src/queue.rs",
+      "crates/ui/src/settings/accounts.rs",
+      "crates/ui/src/settings/devices.rs"
+    ],
+    "target": "Document row anatomy and extract only the shared pieces that preserve domain-specific behavior.",
+    "status": "open"
+  },
+  {
+    "id": "file-identity",
+    "priority": "Medium",
+    "family": "File identity",
+    "current": "File type icons and path labels appear in the tree, picker, attachments and transcript.",
+    "sources": [
+      "crates/ui/src/file_icons.rs",
+      "crates/ui/src/files/tree.rs",
+      "crates/ui/src/attachments.rs",
+      "crates/ui/src/transcript.rs"
+    ],
+    "target": "Reuse one file identity resolver and name/path truncation rule across surfaces.",
+    "status": "open"
+  },
+  {
+    "id": "loading-feedback",
+    "priority": "Medium",
+    "family": "Loading and progress",
+    "current": "Spinners, skeletons, progress rings and sync indicators use different motion and interruption rules.",
+    "sources": [
+      "crates/ui/src/loaders.rs",
+      "crates/ui/src/popover.rs",
+      "crates/ui/src/shell.rs",
+      "crates/ui/src/settings/widgets.rs"
+    ],
+    "target": "Name loading states and choose one native treatment for each duration and interruption class.",
+    "status": "open"
+  },
+  {
+    "id": "type-metrics",
+    "priority": "Medium",
+    "family": "Type and spacing metrics",
+    "current": "Settings has a clear row scale while neighboring surfaces retain many literal type, radius and gap values.",
+    "sources": [
+      "crates/ui/src/settings/widgets.rs",
+      "crates/ui/src/typography.rs",
+      "crates/ui/src/shell.rs",
+      "crates/ui/src/popover.rs"
+    ],
+    "target": "Promote repeated semantic metrics and record optical exceptions with owners.",
+    "status": "open"
+  },
+  {
+    "id": "accessibility-controls",
+    "priority": "Medium",
+    "family": "Interactive semantics",
+    "current": "Pointer affordances span custom divs and GPUI controls with different role, label and focus implementations.",
+    "sources": [
+      "crates/ui/src/shell.rs",
+      "crates/ui/src/settings/widgets.rs",
+      "crates/ui/src/files/mod.rs",
+      "crates/ui/src/popover.rs"
+    ],
+    "target": "Require role, accessible name, focus and keyboard behavior at each shared control seam.",
+    "status": "open"
+  },
+  {
+    "id": "current-target-motion",
+    "priority": "High",
+    "family": "Current and target boundary",
+    "current": "The custom icon and morph study previously replaced production paths in this branch.",
+    "sources": [
+      "crates/ui/src/icons.rs",
+      "crates/ui/src/experimental_icons.rs",
+      "crates/ui/src/ui_workbench.rs"
+    ],
+    "target": "Keep current icons in icons::Assets; load proposed SVGs and morphs through a workbench-only asset source until adopted.",
+    "status": "open"
+  }
+]

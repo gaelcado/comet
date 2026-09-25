@@ -5380,6 +5380,9 @@ pub struct Composer {
     route_snap_until: Option<Instant>,
     _observe: Subscription,
     _pickers_observe: Subscription,
+    /// The footer's rings: plan usage of the session harness's live
+    /// account, and context occupancy — each opening a popover.
+    account_usage: Entity<crate::account_usage::AccountUsage>,
     _picker_focus: Subscription,
     _input_events: Subscription,
 }
@@ -5451,6 +5454,7 @@ impl Composer {
             input
         });
         let pickers = cx.new(|cx| Pickers::new(state.clone(), cx));
+        let account_usage = cx.new(|cx| crate::account_usage::AccountUsage::new(state.clone(), cx));
         // The footer toolbar (checkout kind + ref picker) is rendered INLINE
         // by the composer from picker state — a pickers-side notify (refs
         // loaded, popover toggled, pick made) must repaint the composer too.
@@ -5590,6 +5594,7 @@ impl Composer {
             route_snap_until: None,
             _observe: observe,
             _pickers_observe: pickers_observe,
+            account_usage,
             _picker_focus: picker_focus,
             _input_events: input_events,
         };
@@ -8693,48 +8698,50 @@ impl Composer {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = Theme::of(cx);
-        let stopping = mode == SendButtonMode::Stop;
-        let blocked = !stopping && self.send_blocked(cx);
-        div()
-            .id("composer-primary-action")
-            .role(gpui::Role::Button)
-            .aria_label(if stopping {
-                "Stop response"
-            } else if mode == SendButtonMode::Queue {
-                "Queue message"
-            } else {
-                "Send message"
-            })
-            .size(px(28.0))
-            .flex_none()
-            .rounded_full()
-            .bg(theme.text)
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(blocked, |el| el.opacity(0.35))
-            .when(!blocked, |el| {
-                el.cursor_pointer()
-                    .hover(|s| s.opacity(0.85))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if stopping {
-                            this.interrupt_selected(cx);
-                        } else {
-                            this.on_submit(cx);
-                        }
-                    }))
-            })
-            .child(
-                crate::icons::icon(if stopping {
-                    crate::icons::STOP
-                } else {
-                    crate::icons::SEND
-                })
-                .morph("send-stop-glyph")
-                .size(px(18.0))
-                .text_color(theme.bg),
-            )
-            .into_any_element()
+        // Zeron composer-actions.tsx: a size-7 filled circle — up-arrow to
+        // send/queue, a dark rounded square on the same light circle to stop.
+        match mode {
+            SendButtonMode::Stop => div()
+                .id("composer-stop")
+                .size(px(28.0))
+                .flex_none()
+                .rounded_full()
+                .bg(theme.text)
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.85))
+                .on_click(cx.listener(|this, _, _, cx| this.interrupt_selected(cx)))
+                .child(div().size(px(11.0)).rounded(px(3.0)).bg(theme.bg))
+                .into_any_element(),
+            SendButtonMode::Send | SendButtonMode::Queue => {
+                // Share the submission guard with Enter, including pending
+                // edits and the new-session runnable-agent check.
+                let blocked = self.send_blocked(cx);
+                div()
+                    .id("composer-send")
+                    .size(px(28.0))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(theme.text)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(blocked, |el| el.opacity(0.35))
+                    .when(!blocked, |el| {
+                        el.cursor_pointer()
+                            .hover(|s| s.opacity(0.85))
+                            .on_click(cx.listener(|this, _, _, cx| this.on_submit(cx)))
+                    })
+                    .child(
+                        crate::icons::icon(crate::icons::ARROW_UP)
+                            .size(px(14.0))
+                            .text_color(theme.bg),
+                    )
+                    .into_any_element()
+            }
+        }
     }
 }
 
@@ -9252,16 +9259,7 @@ impl Render for Composer {
         let appshot_strip = self.render_appshot_strip(&theme, window, cx);
         let comments_chip = self.render_comments_chip(&theme, cx);
 
-        // A translucent cool silver/slate edge sits more naturally on frost
-        // than the general-purpose white/black separator color.
-        let pill_border = if theme.is_frost() {
-            match theme.appearance {
-                crate::theme::Appearance::Dark => gpui::hsla(210.0 / 360.0, 0.18, 0.78, 0.09),
-                crate::theme::Appearance::Light => gpui::hsla(210.0 / 360.0, 0.18, 0.32, 0.10),
-            }
-        } else {
-            theme.border
-        };
+        let pill_border = theme.composer_surface_border();
         // Compensate for the transcript canvas beneath the frosted surface.
         // Keep the opaque fallback when frost is disabled or unsupported.
         let pill = div()
@@ -9278,10 +9276,8 @@ impl Render for Composer {
             .rounded(px(surface_radius))
             .border_1()
             .border_color(pill_border)
-            .when(theme.is_frost(), |el| el.bg(theme.composer_sidebar_tint()))
-            .when(!theme.is_frost(), |el| {
-                el.bg(theme.input_glass_bg()).shadow_lg()
-            });
+            .bg(theme.composer_surface_bg())
+            .when(!theme.is_frost(), |el| el.shadow_lg());
         // The pill's bottom edge is stationary on screen (the composer sits at
         // the bottom of the shell column; growth moves the TOP edge), so the
         // controls pin to the bottom and only the text glides with the reveal
@@ -9568,7 +9564,18 @@ impl Render for Composer {
                 self.pickers
                     .update(cx, |pickers, cx| pickers.render_footer(cx))
             });
-            let usage = self.state.read(cx).context_usage;
+            if session_chrome_opacity > 0.0 {
+                let harness = self.pickers.read(cx).resolved(cx).harness;
+                let target = {
+                    let state = self.state.read(cx);
+                    state
+                        .selected_chat_row()
+                        .map(|chat| chat.device_id.clone())
+                        .filter(|device| state.local_device_id.as_ref() != Some(device))
+                };
+                self.account_usage
+                    .update(cx, |usage, cx| usage.track(harness, target, cx));
+            }
             container.child(
                 div()
                     .w_full()
@@ -9599,15 +9606,16 @@ impl Render for Composer {
                                 .items_center()
                                 .opacity(session_chrome_opacity)
                                 .child(div().flex_1().min_w_0().children(footer.flatten()))
-                                .children(crate::context_usage::has_window(usage).then(|| {
-                                    div().flex_none().pr(px(10.0)).child(
-                                        crate::context_usage::render(
-                                            usage,
-                                            self.state.clone(),
-                                            &theme,
-                                        ),
-                                    )
-                                })),
+                                .child(
+                                    // The footer row's own 4px gap: the PR badge
+                                    // ends flush with the row, so the rings keep
+                                    // their distance here.
+                                    div()
+                                        .flex_none()
+                                        .pl(px(4.0))
+                                        .pr(px(10.0))
+                                        .child(self.account_usage.clone()),
+                                ),
                         )
                     }),
             )

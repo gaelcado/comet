@@ -1,9 +1,14 @@
-//! Custom Zeron file and folder glyphs. The legacy manifest is retained only
-//! for recognizing filename references; runtime rendering uses the shared family.
+//! Deterministic file and folder identity icons backed by Symbols.
+//!
+//! Resolution preserves the VS Code theme's semantics: exact basenames win,
+//! followed by the longest matching compound extension, an optional
+//! syntax-language or MIME hint, and finally the generic file/folder icon. The
+//! authored SVG colors are preserved in light mode; dark mode lifts the
+//! palette's darker accents without replacing polychrome artwork with a tint.
 
 use std::{borrow::Cow, collections::HashMap, sync::LazyLock};
 
-use gpui::{AssetSource, Result, SharedString, Styled as _};
+use gpui::{AssetSource, Img, Result, SharedString, Styled as _, img};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use zeron_syntax::LanguageId;
@@ -189,46 +194,14 @@ pub fn asset_path(identity: FileIconIdentity<'_>, appearance: Appearance) -> Sha
     SharedString::from(format!("{ASSET_PREFIX}{variant}{asset}"))
 }
 
-/// Render every file and directory using the original Zeron control family.
-/// The legacy manifest below remains a filename-classification reference only.
-pub fn icon(identity: FileIconIdentity<'_>, appearance: Appearance) -> crate::icons::Icon {
-    crate::icons::icon(custom_icon_path(identity))
-        .morph("file-identity-glyph")
-        .text_color(Theme::for_appearance(appearance).text_muted)
-}
-
-fn custom_icon_path(identity: FileIconIdentity<'_>) -> &'static str {
-    use crate::icons;
-    if identity.kind == FileIconKind::Directory {
-        return if identity.expanded {
-            icons::FOLDER_OPEN
-        } else {
-            icons::FOLDER
-        };
-    }
-    let name = basename(identity.name).to_ascii_lowercase();
-    let extension = name.rsplit('.').next().unwrap_or("");
-    match extension {
-        "md" | "mdx" | "markdown" | "rst" => icons::FILE_MARKDOWN,
-        "json" | "jsonc" | "jsonl" | "yaml" | "yml" | "toml" | "xml" | "csv" | "tsv" | "ini"
-        | "lock" => icons::FILE_DATA,
-        "css" | "scss" | "sass" | "less" | "styl" => icons::FILE_STYLE,
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif" | "ico" | "bmp" | "tiff" => {
-            icons::FILE_IMAGE
-        }
-        _ if identity
-            .mime_type
-            .is_some_and(|mime| mime.starts_with("image/")) =>
-        {
-            icons::FILE_IMAGE
-        }
-        "rs" | "swift" | "js" | "jsx" | "ts" | "tsx" | "py" | "rb" | "go" | "c" | "h" | "cpp"
-        | "hpp" | "java" | "kt" | "sh" | "bash" | "zsh" | "html" | "vue" | "svelte" => {
-            icons::FILE_CODE
-        }
-        _ if identity.language.is_some() => icons::FILE_CODE,
-        _ => icons::DOCUMENT,
-    }
+/// Build a decorative, polychrome file-theme image.
+///
+/// GPUI's [`gpui::Svg`] element is intentionally monochrome: it extracts only
+/// an alpha mask and requires a `text_color` before it paints. Loading the same
+/// embedded SVG through [`gpui::img`] rasterizes its authored fills into a
+/// polychrome image, preserving the VS Code theme artwork.
+pub fn icon(identity: FileIconIdentity<'_>, appearance: Appearance) -> Img {
+    img(asset_path(identity, appearance)).flex_none()
 }
 
 /// Whether a filename resolves to a themed identity rather than the generic
@@ -536,33 +509,5 @@ mod tests {
         }
         assert!(Assets.list("icons/").unwrap().is_empty());
         assert!(Assets.load("file-icons/nope.svg").unwrap().is_none());
-    }
-}
-
-#[cfg(test)]
-mod custom_family_tests {
-    use super::*;
-    #[test]
-    fn file_categories_use_custom_family() {
-        use crate::icons::*;
-        for (name, expected) in [
-            ("readme.md", FILE_MARKDOWN),
-            ("config.toml", FILE_DATA),
-            ("main.rs", FILE_CODE),
-            ("app.css", FILE_STYLE),
-            ("photo.png", FILE_IMAGE),
-            ("manual.pdf", DOCUMENT),
-            ("recording.mp4", DOCUMENT),
-        ] {
-            assert_eq!(custom_icon_path(FileIconIdentity::file(name)), expected);
-        }
-        assert_eq!(
-            custom_icon_path(FileIconIdentity::directory("src", false)),
-            FOLDER
-        );
-        assert_eq!(
-            custom_icon_path(FileIconIdentity::directory("src", true)),
-            FOLDER_OPEN
-        );
     }
 }

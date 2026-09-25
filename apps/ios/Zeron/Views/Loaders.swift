@@ -1,4 +1,9 @@
-// Custom status glyphs and branded loading/progress artwork.
+// Loaders + status indicators — ports of crates/ui/src/loaders.rs.
+//
+// gradient-spin-pulse: a 3×3 cell grid with per-row "sunrise" tints; each cell
+// pulses once per 750ms with phase = distance from bottom-center, so the wave
+// travels upward. The mini variant (2×3) snakes clockwise around the perimeter
+// and marks Working rows in lists.
 
 import SwiftUI
 
@@ -25,22 +30,69 @@ enum GradientSpin {
     }
 }
 
-/// Shared custom loading glyph, frozen when reduced motion is enabled.
+/// 3×3 working indicator for the status strip (cell 2.5, arrow-up wave).
 struct WorkingSpinner: View {
     var cellSize: CGFloat = 2.5
-    var body: some View { MiniSpinner(cellSize: cellSize) }
-}
-
-struct MiniSpinner: View {
-    var cellSize: CGFloat = 2.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         TimelineView(.animation(paused: reduceMotion)) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate / Motion.gradientSpinPeriod
-            ZeronIcon("loading", size: cellSize * 4)
-                .foregroundStyle(GradientSpin.rowTints[1])
-                .rotationEffect(.degrees(reduceMotion ? 0 : phase.truncatingRemainder(dividingBy: 1) * 360))
+            let t = timeline.date.timeIntervalSinceReferenceDate / Motion.gradientSpinPeriod
+            grid(time: t)
+        }
+    }
+
+    private func grid(time: Double) -> some View {
+        VStack(spacing: cellSize * 0.8) {
+            ForEach(0..<3, id: \.self) { row in
+                HStack(spacing: cellSize * 0.8) {
+                    ForEach(0..<3, id: \.self) { col in
+                        let dx = Double(col - 1)
+                        let dy = Double(2 - row)  // distance from bottom-center
+                        let dist = (dx * dx + dy * dy).squareRoot() / 2.5
+                        Rectangle()
+                            .fill(GradientSpin.rowTints[row])
+                            .frame(width: cellSize, height: cellSize)
+                            .opacity(GradientSpin.opacity(phase: time - dist))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 2×3 mini spinner — cells snake clockwise around the perimeter ring
+/// (loaders.rs mini_gradient_spinner). Used in session rows / tabs.
+struct MiniSpinner: View {
+    var cellSize: CGFloat = 2.0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    // Perimeter order for a 2-wide × 3-tall grid, clockwise.
+    private static let ring: [(row: Int, col: Int)] = [
+        (0, 0), (0, 1), (1, 1), (2, 1), (2, 0), (1, 0),
+    ]
+
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate / Motion.gradientSpinPeriod
+            grid(time: t)
+        }
+    }
+
+    private func grid(time: Double) -> some View {
+        VStack(spacing: cellSize * 0.8) {
+            ForEach(0..<3, id: \.self) { row in
+                HStack(spacing: cellSize * 0.8) {
+                    ForEach(0..<2, id: \.self) { col in
+                        let ix = Self.ring.firstIndex { $0 == (row, col) } ?? 0
+                        let phase = Double(ix) / Double(Self.ring.count)
+                        Rectangle()
+                            .fill(GradientSpin.rowTints[row])
+                            .frame(width: cellSize, height: cellSize)
+                            .opacity(GradientSpin.opacity(phase: time - phase))
+                    }
+                }
+            }
         }
     }
 }
@@ -177,7 +229,8 @@ struct StatusCorner: View {
     var body: some View {
         HStack(spacing: 4) {
             if indicator == .completed {
-                ZeronIcon(systemName: "checkmark").iconSize(9)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(indicator.dotColor)
             } else {
                 Circle()

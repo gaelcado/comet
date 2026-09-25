@@ -33,7 +33,7 @@ struct SpaceView: View {
                             model.archive(chatId: chat.id)
                         }
                     } label: {
-                        Label("Archive", zeronIcon: "archivebox")
+                        Label("Archive", systemImage: "archivebox")
                     }
                     .tint(Theme.surfaceRaised)
                 }
@@ -56,7 +56,8 @@ struct SpaceView: View {
                         .lineLimit(1)
                     if let space {
                         HStack(spacing: 4) {
-                            ZeronIcon(systemName: "folder").iconSize(9)
+                            Image(systemName: "folder")
+                                .font(.system(size: 9))
                             Text("\(space.path) · \(model.deviceName(space.deviceId))")
                                 .lineLimit(1)
                                 .truncationMode(.head)
@@ -70,7 +71,7 @@ struct SpaceView: View {
                 Button {
                     path.append(.newSession(spaceId: spaceId))
                 } label: {
-                    ZeronIcon(systemName: "plus")
+                    Image(systemName: "plus")
                 }
                 .accessibilityLabel("New session")
             }
@@ -85,7 +86,8 @@ struct SpaceView: View {
 
     private var emptyState: some View {
         VStack(spacing: 14) {
-            ZeronIcon(systemName: "bubble.left.and.bubble.right").iconSize(28)
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 28, weight: .light))
                 .foregroundStyle(Theme.textFaint)
             Text("No sessions in this space")
                 .font(Theme.sans(13))
@@ -164,7 +166,8 @@ struct NewSpaceSheet: View {
                     Button {
                         dismiss()
                     } label: {
-                        ZeronIcon(systemName: "xmark").iconSize(13)
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .semibold))
                     }
                     .accessibilityLabel("Close")
                 }
@@ -228,7 +231,8 @@ struct NewSpaceSheet: View {
                     Task { await load(path: parent) }
                 }
             } label: {
-                ZeronIcon(systemName: "chevron.left").iconSize(13)
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(listing?.parent == nil ? Theme.textFaint.opacity(0.4) : Theme.text)
                     .frame(width: 32, height: 32)
                     .background(whiteAlpha(0.06), in: Circle())
@@ -315,7 +319,8 @@ struct NewSpaceSheet: View {
                         .padding(.vertical, 3)
                         .background(Theme.accent.opacity(0.12), in: Capsule())
                 }
-                ZeronIcon(systemName: "chevron.right").iconSize(12)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textFaint)
             }
             .padding(.horizontal, 16)
@@ -337,7 +342,8 @@ struct NewSpaceSheet: View {
 
     private var emptyDevices: some View {
         VStack(spacing: 12) {
-            ZeronIcon(systemName: "desktopcomputer").iconSize(30)
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 30, weight: .light))
                 .foregroundStyle(Theme.textFaint)
             Text("No devices yet")
                 .font(Theme.sans(15, weight: .medium))

@@ -9,6 +9,9 @@ publish.workspace = true
 name = "zeron"
 path = "src/main.rs"
 
+[features]
+ui-workbench = ["zeron-ui/ui-workbench"]
+
 [dependencies]
 zeron-engine.workspace = true
 zeron-rpc.workspace = true

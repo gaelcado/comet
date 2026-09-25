@@ -53,7 +53,7 @@ use crate::history::{
     GitHistoryViewButton,
 };
 use crate::markdown::render;
-use crate::motion::{self, AnimationExt as _, COLLAPSE};
+use crate::motion::{self, AnimationExt as _, CHEVRON, COLLAPSE};
 use crate::popover::{self, Popup};
 use crate::state::{AppState, EngineHandle};
 use crate::theme::Theme;
@@ -1700,6 +1700,8 @@ pub struct Changes {
 pub enum ChangesEvent {
     /// A History row was clicked — open this commit as its own diff tab.
     OpenCommit(GitHistoryCommit),
+    /// Open the post-change path in the workspace file browser.
+    OpenFile(String),
 }
 
 impl gpui::EventEmitter<ChangesEvent> for Changes {}
@@ -3474,11 +3476,24 @@ impl Changes {
         };
         let chevron = div().flex_none().size(px(14.0)).child(
             crate::icons::icon(chevron_icon)
-                .morph("disclosure-glyph")
                 .size(px(13.0))
                 .text_color(theme.text_muted.opacity(0.7)),
         );
-        let chevron = chevron.into_any_element();
+        let chevron: AnyElement = if fold.animating() {
+            chevron
+                .with_animation(
+                    SharedString::from(format!(
+                        "chev-{}-{path}-{}",
+                        presentation.key_prefix(),
+                        fold.epoch
+                    )),
+                    CHEVRON.animation(),
+                    |el, t| el.opacity(0.25 + 0.75 * t),
+                )
+                .into_any_element()
+        } else {
+            chevron.into_any_element()
+        };
 
         // Header row: chevron + mono path (one quiet tone) + right-aligned
         // +N / −N counts on a slightly raised wash. The header carries the
@@ -3558,6 +3573,32 @@ impl Changes {
                         .child(SharedString::from(format!("−{dels}"))),
                 )
             })
+            .child(
+                div()
+                    .id(("diff-open-file", ix))
+                    .flex_none()
+                    .size(px(crate::surface_chrome::CONTROL_SIZE))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(crate::surface_chrome::CONTROL_RADIUS))
+                    .hover(|s| s.bg(theme.ink(0.08)))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    })
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(ChangesEvent::OpenFile(path.clone()));
+                    }))
+                    .tooltip(|_, cx| cx.new(|_| DiffHeaderTooltip("Open in file browser")).into())
+                    .tooltip_show_delay(Duration::from_millis(350))
+                    .child(
+                        crate::icons::icon(crate::icons::DOCUMENT)
+                            .size(px(crate::surface_chrome::ICON_SIZE))
+                            .text_color(theme.text_muted),
+                    ),
+            )
             .into_any_element()
     }
 
@@ -3667,7 +3708,6 @@ impl Changes {
             })
             .child(
                 crate::icons::icon(icon_path)
-                    .morph("state-glyph")
                     .size(px(crate::surface_chrome::ICON_SIZE))
                     .text_color(if active {
                         theme.text
@@ -3682,11 +3722,7 @@ impl Changes {
     fn split_toggle(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         Self::header_toggle(
             "changes-split",
-            if self.mode.is_split() {
-                crate::icons::SPLIT
-            } else {
-                crate::icons::UNIFIED
-            },
+            crate::icons::SPLIT_COLUMNS,
             self.mode.is_split(),
             theme,
         )
@@ -3700,11 +3736,7 @@ impl Changes {
     fn wrap_toggle(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         Self::header_toggle(
             "changes-wrap",
-            if self.wrap_lines {
-                crate::icons::WRAP
-            } else {
-                crate::icons::UNWRAP
-            },
+            crate::icons::WRAP_TEXT,
             self.wrap_lines,
             theme,
         )
@@ -3762,19 +3794,11 @@ impl Changes {
                 .child(self.split_toggle(&theme, cx))
                 .child(self.wrap_toggle(&theme, cx))
                 .child(
-                    Self::header_button(
-                        "changes-fold-all",
-                        if self.all_collapsed() {
-                            crate::icons::UNFOLD
-                        } else {
-                            crate::icons::FOLD
-                        },
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.toggle_collapse_all(cx);
-                    })),
+                    Self::header_button("changes-fold-all", crate::icons::FOLD_VERTICAL, &theme)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_collapse_all(cx);
+                        })),
                 )
                 .into_any_element();
         }
@@ -3903,19 +3927,11 @@ impl Changes {
                 .child(self.split_toggle(&theme, cx))
                 .child(self.wrap_toggle(&theme, cx))
                 .child(
-                    Self::header_button(
-                        "changes-fold-all",
-                        if self.all_collapsed() {
-                            crate::icons::UNFOLD
-                        } else {
-                            crate::icons::FOLD
-                        },
-                        &theme,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.toggle_collapse_all(cx);
-                    })),
+                    Self::header_button("changes-fold-all", crate::icons::FOLD_VERTICAL, &theme)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_collapse_all(cx);
+                        })),
                 )
                 .into_any_element()
         };

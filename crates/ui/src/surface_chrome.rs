@@ -7,8 +7,7 @@ use crate::theme::Theme;
 pub(crate) const HEADER_HEIGHT: f32 = Theme::TITLEBAR_HEIGHT;
 pub(crate) const CONTROL_SIZE: f32 = 24.0;
 pub(crate) const CONTROL_RADIUS: f32 = 6.0;
-/// Toolbar actions share the titlebar/menu 16px optical size.
-pub(crate) const ICON_SIZE: f32 = 16.0;
+pub(crate) const ICON_SIZE: f32 = 14.0;
 pub(crate) const CONTROL_GAP: f32 = 4.0;
 pub(crate) const EDGE_INSET: f32 = 8.0;
 

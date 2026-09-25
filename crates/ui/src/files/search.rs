@@ -634,11 +634,9 @@ impl FilesSurface {
                 this.search_state.active = index;
                 this.activate_search_result(cx);
             }))
-            .when(crate::click_activation_drag_enabled(), |element| {
-                element.on_drag(drag_payload, |payload, _, _, cx| {
-                    cx.stop_propagation();
-                    workspace_path_drag_ghost(payload, cx)
-                })
+            .on_drag(drag_payload, |payload, _, _, cx| {
+                cx.stop_propagation();
+                workspace_path_drag_ghost(payload, cx)
             })
             .child(
                 div()
@@ -654,7 +652,6 @@ impl FilesSurface {
                             } else {
                                 icons::ALT_ARROW_RIGHT
                             })
-                            .morph("state-glyph")
                             .size(px(11.0))
                             .text_color(theme.text_faint),
                         )

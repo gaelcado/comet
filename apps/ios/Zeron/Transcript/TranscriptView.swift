@@ -43,7 +43,8 @@ struct TranscriptView: View {
                         scroll.arm()
                         scroll.jumpToLatest?(!reduceMotion)
                     } label: {
-                        ZeronIcon(systemName: "arrow.down").iconSize(15)
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(Theme.text)
                             .frame(width: 40, height: 40)
                     }
@@ -310,7 +311,7 @@ struct UserBubble: View {
                         Button {
                             UIPasteboard.general.string = parsed.text
                         } label: {
-                            Label("Copy", zeronIcon: "doc.on.doc")
+                            Label("Copy", systemImage: "doc.on.doc")
                         }
                     }
             }
@@ -454,7 +455,8 @@ struct ToolGroupView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: toggle) {
                 HStack(spacing: 10) {
-                    ZeronIcon(systemName: "chevron.right").iconSize(11)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
                         .rotationEffect(.degrees(open ? 90 : 0))
                         .frame(width: 26)
                     Text(toolGroupSummary(tools))
@@ -512,7 +514,8 @@ struct ToolChipRow: View {
             HStack(alignment: .top, spacing: 10) {
                 VStack(spacing: 5) {
                     Rectangle().fill(Theme.borderStrong).frame(width: 1, height: 5)
-                    ZeronIcon(systemName: tool.call.chipSymbol).iconSize(14)
+                    Image(systemName: tool.call.chipSymbol)
+                        .font(.system(size: 14))
                         .foregroundStyle(tool.isError ? Theme.danger : Theme.textMuted)
                         .frame(width: 26, height: 18)
                     Rectangle().fill(continues ? Theme.borderStrong : .clear)
@@ -550,7 +553,7 @@ struct ToolChipRow: View {
         .accessibilityValue(expanded ? "Expanded" : "Collapsed")
         .accessibilityHint("Shows the full tool details")
         .contextMenu {
-            Button("Copy details", zeronIcon: "doc.on.doc") {
+            Button("Copy details", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = tool.call.expandedDetail
             }
         }
@@ -564,7 +567,8 @@ struct ErrorChipView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            ZeronIcon(systemName: "exclamationmark.triangle").iconSize(10)
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 10))
                 .foregroundStyle(Theme.dangerSoft.opacity(0.8))
                 .frame(width: 20, height: 20)
                 .background(Theme.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
@@ -591,7 +595,8 @@ struct InputChipView: View {
     var body: some View {
         // Neutral throughout — resolution never recolors.
         HStack(spacing: 8) {
-            ZeronIcon(systemName: "bubble.left.and.text.bubble.right").iconSize(10)
+            Image(systemName: "bubble.left.and.text.bubble.right")
+                .font(.system(size: 10))
                 .foregroundStyle(Theme.textMuted)
                 .frame(width: 20, height: 20)
                 .background(whiteAlpha(0.09), in: RoundedRectangle(cornerRadius: 6))

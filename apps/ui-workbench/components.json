@@ -30,7 +30,7 @@
     "id": "toggle",
     "name": "Toggle switch",
     "group": "Inputs",
-    "description": "18×32 switch; the parent owns state and activation.",
+    "description": "18\u00d732 switch; the parent owns state and activation.",
     "source": "crates/ui/src/settings/widgets.rs",
     "icon": "tuning",
     "workbench": "mounted"
@@ -304,5 +304,698 @@
     "source": "crates/ui/src/shell.rs",
     "icon": "folder",
     "workbench": "mounted"
+  },
+  {
+    "id": "settings-action",
+    "name": "Settings action button",
+    "group": "Actions",
+    "description": "Primary, secondary and destructive controls inside the new settings blocks.",
+    "source": "crates/ui/src/settings/widgets.rs",
+    "icon": "check",
+    "workbench": "mounted"
+  },
+  {
+    "id": "queue-actions",
+    "name": "Queue actions",
+    "group": "Actions",
+    "description": "Edit, reorder, send and remove controls on pending messages.",
+    "source": "crates/ui/src/queue.rs",
+    "icon": "send",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "project-actions",
+    "name": "Project actions",
+    "group": "Actions",
+    "description": "Run, test, lint and build action affordances in project context.",
+    "source": "crates/ui/src/project_actions.rs",
+    "icon": "play",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "comment-actions",
+    "name": "Comment actions",
+    "group": "Actions",
+    "description": "Add, edit and resolve controls in file review.",
+    "source": "crates/ui/src/comment_ui.rs",
+    "icon": "comment",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "titlebar-actions",
+    "name": "Titlebar controls",
+    "group": "Actions",
+    "description": "Window and panel controls with platform-specific hit targets.",
+    "source": "crates/ui/src/shell.rs",
+    "icon": "window-maximize",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-select",
+    "name": "Settings select",
+    "group": "Inputs",
+    "description": "The new settings select trigger, option rows, disclosure and constrained menu.",
+    "source": "crates/ui/src/settings/widgets.rs",
+    "icon": "chevron-down",
+    "workbench": "mounted"
+  },
+  {
+    "id": "shortcut-recorder",
+    "name": "Shortcut recorder",
+    "group": "Inputs",
+    "description": "Record, conflict and reset states for keyboard shortcuts.",
+    "source": "crates/ui/src/settings/shortcuts.rs",
+    "icon": "keyboard",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "model-picker",
+    "name": "Model and reasoning picker",
+    "group": "Inputs",
+    "description": "Provider model, reasoning and account choices in contextual menus.",
+    "source": "crates/ui/src/pickers.rs",
+    "icon": "widget",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "mention-picker",
+    "name": "Mention picker",
+    "group": "Inputs",
+    "description": "Composer path and context suggestions with keyboard selection.",
+    "source": "crates/ui/src/composer.rs",
+    "icon": "search",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "project-picker",
+    "name": "Project picker",
+    "group": "Inputs",
+    "description": "Space and project selection with search and recent context.",
+    "source": "crates/ui/src/shell/spaces.rs",
+    "icon": "folder",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "connection-state",
+    "name": "Connection state",
+    "group": "Feedback",
+    "description": "Queued, syncing and offline states shown beside live conversations.",
+    "source": "crates/ui/src/shell.rs",
+    "icon": "wifi-off",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "context-usage",
+    "name": "Context usage",
+    "group": "Feedback",
+    "description": "Token budget ring, thresholds and detailed usage card.",
+    "source": "crates/ui/src/context_usage.rs",
+    "icon": "info",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "account-usage",
+    "name": "Account usage",
+    "group": "Feedback",
+    "description": "Plan usage and reset information for the active provider account.",
+    "source": "crates/ui/src/account_usage.rs",
+    "icon": "info",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "notification-banner",
+    "name": "Native notification",
+    "group": "Feedback",
+    "description": "System-facing notification content and follow-up actions.",
+    "source": "crates/ui/src/notify.rs",
+    "icon": "bell",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "update-state",
+    "name": "Update state",
+    "group": "Feedback",
+    "description": "Available, downloading and ready-to-restart treatments.",
+    "source": "crates/ui/src/settings/devices.rs",
+    "icon": "refresh",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-navigation",
+    "name": "Settings navigation",
+    "group": "Navigation",
+    "description": "Grouped section tabs, selected wash, back action and keyboard travel.",
+    "source": "crates/ui/src/settings/widgets.rs",
+    "icon": "settings",
+    "workbench": "mounted"
+  },
+  {
+    "id": "space-navigation",
+    "name": "Space navigation",
+    "group": "Navigation",
+    "description": "Space switcher and project context in the sidebar.",
+    "source": "crates/ui/src/shell/spaces.rs",
+    "icon": "folder",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "terminal-tabs",
+    "name": "Terminal tabs",
+    "group": "Navigation",
+    "description": "Terminal selection, close, reorder and active context.",
+    "source": "crates/ui/src/terminal/panel.rs",
+    "icon": "terminal",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "history-navigation",
+    "name": "History navigation",
+    "group": "Navigation",
+    "description": "Refs, columns, selection and resize in Git history.",
+    "source": "crates/ui/src/history.rs",
+    "icon": "branch",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "browser-navigation",
+    "name": "Browser navigation",
+    "group": "Navigation",
+    "description": "Address, back, forward and reload within the browser surface.",
+    "source": "crates/ui/src/browser/view.rs",
+    "icon": "globe",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "palette-results",
+    "name": "Palette results",
+    "group": "Navigation",
+    "description": "Search result rows and keyboard navigation for global commands.",
+    "source": "crates/ui/src/shell/command_palette.rs",
+    "icon": "search",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "device-row",
+    "name": "Device row",
+    "group": "Collections",
+    "description": "Connected device identity, availability and workspace metadata.",
+    "source": "crates/ui/src/settings/devices.rs",
+    "icon": "monitor",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "provider-account-row",
+    "name": "Provider account row",
+    "group": "Collections",
+    "description": "Account identity, sign-in and plan information in settings.",
+    "source": "crates/ui/src/settings/accounts.rs",
+    "icon": "key",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "shortcut-row",
+    "name": "Shortcut row",
+    "group": "Collections",
+    "description": "Command, assigned keys, conflicts and reset affordance.",
+    "source": "crates/ui/src/settings/shortcuts.rs",
+    "icon": "keyboard",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "archived-session-row",
+    "name": "Archived session row",
+    "group": "Collections",
+    "description": "Archived conversation metadata with restore and removal actions.",
+    "source": "crates/ui/src/settings/archived.rs",
+    "icon": "archive",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "attachment-rail",
+    "name": "Attachment rail",
+    "group": "Collections",
+    "description": "Files and images staged for a message, with preview and removal.",
+    "source": "crates/ui/src/attachments.rs",
+    "icon": "paperclip",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "comment-card",
+    "name": "Review comment card",
+    "group": "Collections",
+    "description": "Location, author, draft and resolved states for file comments.",
+    "source": "crates/ui/src/comment_ui.rs",
+    "icon": "comment",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "history-row",
+    "name": "History row",
+    "group": "Collections",
+    "description": "Commit identity, author, ref and changed-path treatments.",
+    "source": "crates/ui/src/history.rs",
+    "icon": "branch",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "file-identity",
+    "name": "File identity",
+    "group": "Collections",
+    "description": "Language and filename-aware file icons in tree and search results.",
+    "source": "crates/ui/src/file_icons.rs",
+    "icon": "file-code",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-page",
+    "name": "Settings page",
+    "group": "Composed",
+    "description": "Centered column, section labels, filled row blocks and adaptive controls.",
+    "source": "crates/ui/src/settings/widgets.rs",
+    "icon": "settings",
+    "workbench": "mounted"
+  },
+  {
+    "id": "new-session",
+    "name": "New session canvas",
+    "group": "Composed",
+    "description": "Project picker, starting actions and composer before a chat exists.",
+    "source": "crates/ui/src/shell.rs",
+    "icon": "compose",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "browser-surface",
+    "name": "Browser surface",
+    "group": "Composed",
+    "description": "Full native browser toolbar, viewport and loading/error states.",
+    "source": "crates/ui/src/browser/view.rs",
+    "icon": "globe",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "terminal-surface",
+    "name": "Terminal surface",
+    "group": "Composed",
+    "description": "Terminal tabs, renderer, input and resizable panel.",
+    "source": "crates/ui/src/terminal/panel.rs",
+    "icon": "terminal",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "image-preview",
+    "name": "Image preview",
+    "group": "Composed",
+    "description": "Zoom and navigation on workspace images.",
+    "source": "crates/ui/src/files/image_preview.rs",
+    "icon": "image",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "markdown-preview",
+    "name": "Markdown preview",
+    "group": "Composed",
+    "description": "Rendered document with task interaction and file context.",
+    "source": "crates/ui/src/files/markdown_preview.rs",
+    "icon": "document",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "file-editor",
+    "name": "File editor",
+    "group": "Composed",
+    "description": "Editor toolbar, path, save state and preview modes.",
+    "source": "crates/ui/src/files/mod.rs",
+    "icon": "file-code",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "markdown-code",
+    "name": "Markdown code block",
+    "group": "Composed",
+    "description": "Syntax, line numbers, wrap, copy and scrolling in transcripts.",
+    "source": "crates/ui/src/markdown/render.rs",
+    "icon": "file-code",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-appearance",
+    "name": "Appearance settings",
+    "group": "Composed",
+    "description": "Theme, font, density and background controls in current settings.",
+    "source": "crates/ui/src/settings/appearance.rs",
+    "icon": "tuning",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-notifications",
+    "name": "Notification settings",
+    "group": "Composed",
+    "description": "Notification preferences, sound and permission states.",
+    "source": "crates/ui/src/settings/notifications.rs",
+    "icon": "bell",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-files",
+    "name": "File settings",
+    "group": "Composed",
+    "description": "Editor, preview and file display preferences.",
+    "source": "crates/ui/src/settings/files.rs",
+    "icon": "folder",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-providers",
+    "name": "Provider settings",
+    "group": "Composed",
+    "description": "Installed providers, accounts, models and completion controls.",
+    "source": "crates/ui/src/settings/harnesses.rs",
+    "icon": "widget",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "current-glyphs",
+    "name": "Current control glyphs",
+    "group": "Foundations",
+    "description": "The control icons shipped in the app today.",
+    "source": "crates/ui/src/icons.rs",
+    "icon": "settings",
+    "workbench": "mounted"
+  },
+  {
+    "id": "appearance-state",
+    "name": "Appearance state",
+    "group": "Foundations",
+    "description": "Effective mode, accent and surface selection shared by native views.",
+    "source": "crates/ui/src/appearance.rs",
+    "icon": "sun",
+    "workbench": "mounted"
+  },
+  {
+    "id": "theme-library",
+    "name": "Theme library",
+    "group": "Foundations",
+    "description": "Installed theme variants, roles and theme import states.",
+    "source": "crates/ui/src/theme_library.rs",
+    "icon": "tuning",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "type-system",
+    "name": "Typography",
+    "group": "Foundations",
+    "description": "Registered UI, code and terminal faces with scale selection.",
+    "source": "crates/ui/src/typography.rs",
+    "icon": "text",
+    "workbench": "mounted"
+  },
+  {
+    "id": "motion-system",
+    "name": "Motion timing",
+    "group": "Foundations",
+    "description": "The production motion catalog and reduced-motion behavior.",
+    "source": "crates/ui/src/motion.rs",
+    "icon": "refresh",
+    "workbench": "mounted"
+  },
+  {
+    "id": "frost-surface",
+    "name": "Frost surface",
+    "group": "Foundations",
+    "description": "Translucent surface and layered material primitives.",
+    "source": "crates/ui/src/frost.rs",
+    "icon": "window-maximize",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "action-menu",
+    "name": "Action menu",
+    "group": "Actions",
+    "description": "Session and project action menus in shell context.",
+    "source": "crates/ui/src/shell/actions_ui.rs",
+    "icon": "menu",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "thread-naming",
+    "name": "Thread naming controls",
+    "group": "Inputs",
+    "description": "Automatic naming and local naming preferences.",
+    "source": "crates/ui/src/settings/thread_naming.rs",
+    "icon": "edit",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "appshot-shortcut",
+    "name": "Appshot shortcut",
+    "group": "Inputs",
+    "description": "Capture shortcut recording and validation.",
+    "source": "crates/ui/src/appshots/shortcut.rs",
+    "icon": "keyboard",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "appshot-feedback",
+    "name": "Appshot feedback",
+    "group": "Feedback",
+    "description": "Capture success, failure and pending upload states.",
+    "source": "crates/ui/src/appshots.rs",
+    "icon": "image",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "edge-fade",
+    "name": "Scrollable edge fade",
+    "group": "Navigation",
+    "description": "Content-aware fade at native scroll edges.",
+    "source": "crates/ui/src/edge_fade.rs",
+    "icon": "arrow-down",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "scroll-rail",
+    "name": "Scroll rail",
+    "group": "Navigation",
+    "description": "Ticks, active thumb and drag affordance for long content.",
+    "source": "crates/ui/src/rail.rs",
+    "icon": "drag",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "contained-popover",
+    "name": "Contained popover",
+    "group": "Navigation",
+    "description": "Viewport-constrained placement shared by native menus.",
+    "source": "crates/ui/src/popover/contained.rs",
+    "icon": "menu",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "project-icon",
+    "name": "Project icon",
+    "group": "Collections",
+    "description": "Project identity, image and fallback variants.",
+    "source": "crates/ui/src/shell/project_icon.rs",
+    "icon": "folder",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "composer-dock",
+    "name": "Composer dock",
+    "group": "Composed",
+    "description": "The floating composer and its relationship to the transcript.",
+    "source": "crates/ui/src/composer_dock.rs",
+    "icon": "send",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "image-viewer",
+    "name": "Image viewer",
+    "group": "Composed",
+    "description": "Full-size media preview, sibling navigation and controls.",
+    "source": "crates/ui/src/image_viewer.rs",
+    "icon": "image",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "link-destination",
+    "name": "Link destination card",
+    "group": "Composed",
+    "description": "Native preview and routing choice for transcript links.",
+    "source": "crates/ui/src/markdown/link_destination.rs",
+    "icon": "globe",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "mermaid-block",
+    "name": "Mermaid block",
+    "group": "Composed",
+    "description": "Diagram rendering and failure state inside Markdown.",
+    "source": "crates/ui/src/markdown/mermaid.rs",
+    "icon": "grid",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "new-thread-background",
+    "name": "New-thread background",
+    "group": "Composed",
+    "description": "Masked visual surface behind the new-session canvas.",
+    "source": "crates/ui/src/new_thread_background_mask.rs",
+    "icon": "window-maximize",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "application-menu",
+    "name": "Application menu",
+    "group": "Actions",
+    "description": "Platform menu commands and keyboard shortcuts.",
+    "source": "crates/ui/src/app_menus.rs",
+    "icon": "menu",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "composer-rich-text",
+    "name": "Composer Markdown treatment",
+    "group": "Inputs",
+    "description": "Inline syntax, lists and code decoration while drafting.",
+    "source": "crates/ui/src/composer_markdown.rs",
+    "icon": "file-code",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "link-presentation",
+    "name": "Inline link treatment",
+    "group": "Collections",
+    "description": "Truncated and stateful destination text in messages.",
+    "source": "crates/ui/src/markdown/link_presentation.rs",
+    "icon": "globe",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "streaming-text",
+    "name": "Streaming text reveal",
+    "group": "Feedback",
+    "description": "Incremental message text veil with reduced-motion behavior.",
+    "source": "crates/ui/src/markdown/veil.rs",
+    "icon": "refresh",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "terminal-viewport",
+    "name": "Terminal viewport",
+    "group": "Composed",
+    "description": "Rendered cells, selection and input beneath the terminal panel.",
+    "source": "crates/ui/src/terminal/view.rs",
+    "icon": "terminal",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-composer",
+    "name": "Composer settings",
+    "group": "Composed",
+    "description": "Draft behavior, send shortcut and editor controls.",
+    "source": "crates/ui/src/settings/composer.rs",
+    "icon": "send",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-completion",
+    "name": "Completion settings",
+    "group": "Inputs",
+    "description": "Completion and suggestion preferences across providers.",
+    "source": "crates/ui/src/settings/completion.rs",
+    "icon": "check",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "settings-appshots",
+    "name": "Appshot settings",
+    "group": "Composed",
+    "description": "Capture behavior, sound and local appshot preferences.",
+    "source": "crates/ui/src/settings/appshots.rs",
+    "icon": "image",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "file-search",
+    "name": "File search results",
+    "group": "Navigation",
+    "description": "Query, match emphasis and file-result navigation.",
+    "source": "crates/ui/src/files/search.rs",
+    "icon": "search",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "file-editor-surface",
+    "name": "Editor surface",
+    "group": "Composed",
+    "description": "Text editor document, selection and save presentation.",
+    "source": "crates/ui/src/files/editor.rs",
+    "icon": "file-code",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "git-file-state",
+    "name": "Git file state",
+    "group": "Feedback",
+    "description": "Modified, added and deleted file treatments across file surfaces.",
+    "source": "crates/ui/src/files/git_status.rs",
+    "icon": "branch",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "markdown-media",
+    "name": "Markdown media",
+    "group": "Composed",
+    "description": "Images and linked media embedded in document previews.",
+    "source": "crates/ui/src/files/markdown_media.rs",
+    "icon": "image",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "files-panel",
+    "name": "Files panel",
+    "group": "Navigation",
+    "description": "File explorer, search, preview and panel resizing.",
+    "source": "crates/ui/src/shell/files_panel.rs",
+    "icon": "folder",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "sidebar-pins",
+    "name": "Pinned sessions",
+    "group": "Navigation",
+    "description": "Pinned grouping and reorder affordances in the sidebar.",
+    "source": "crates/ui/src/shell/sidebar_pins.rs",
+    "icon": "pin",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "sidebar-sections",
+    "name": "Sidebar sections",
+    "group": "Navigation",
+    "description": "Session section headings, collapse and attention ordering.",
+    "source": "crates/ui/src/shell/sidebar_sections.rs",
+    "icon": "list",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "surface-tab-strip",
+    "name": "Surface tab strip",
+    "group": "Navigation",
+    "description": "Conversation tab order, drag and close states.",
+    "source": "crates/ui/src/shell/tabs.rs",
+    "icon": "browser",
+    "workbench": "needs-fixture"
+  },
+  {
+    "id": "new-thread-effects",
+    "name": "New-thread effects",
+    "group": "Composed",
+    "description": "Background treatment and visibility rules on new sessions.",
+    "source": "crates/ui/src/new_thread_background_effects.rs",
+    "icon": "window-maximize",
+    "workbench": "needs-fixture"
   }
 ]
