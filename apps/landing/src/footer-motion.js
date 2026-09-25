@@ -30,6 +30,7 @@ if (footer && reveal) {
     const frame = footer.querySelector('.footer-frame');
     const landscape = footer.querySelector('.footer-landscape');
     const far = footer.querySelector('.footer-plane--far');
+    const middle = footer.querySelector('.footer-plane--middle');
     const near = footer.querySelector('.footer-plane--near');
 
     gsap.fromTo(frame, { opacity: 0 }, {
@@ -45,23 +46,27 @@ if (footer && reveal) {
     });
 
     const timeline = gsap.timeline({
-      defaults: { ease: 'power2.out' },
+      defaults: { ease: 'sine.out', duration: 1 },
       scrollTrigger: {
         trigger: reveal,
         start: 'top bottom',
         end: 'bottom bottom',
-        scrub: true,
+        scrub: 0.45,
         invalidateOnRefresh: true,
       },
     });
+    // Keep the bank visible from the start, with restrained depth separation.
+    // Shared easing maintains layer order while gently settling into the scene.
     // Downward page scroll moves scenery upward. Foreground travels faster.
-    // Both plates extend to the bottom and start BELOW their resting position,
+    // All three plates extend to the bottom and start BELOW their resting position,
     // so their full overlap covers every frame without a repeated edge strip.
     timeline
-      .fromTo(far, { y: () => Math.min(12, landscape.clientHeight * 0.025) },
-        { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(near, { y: () => Math.min(48, landscape.clientHeight * 0.1) },
-        { y: 0, ease: 'none', duration: 1 }, 0);
+      .fromTo(far, { y: () => Math.min(18, landscape.clientHeight * 0.03) },
+        { y: 0 }, 0)
+      .fromTo(middle, { y: () => Math.min(38, landscape.clientHeight * 0.065) },
+        { y: 0 }, 0)
+      .fromTo(near, { y: () => Math.min(68, landscape.clientHeight * 0.115) },
+        { y: 0 }, 0);
 
     if (quote) {
       gsap.fromTo(quote.querySelectorAll('.plate-img'), { yPercent: -2 }, {
