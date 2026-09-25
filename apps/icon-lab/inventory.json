@@ -1,7 +1,7 @@
 {
   "source": "zeronsh/zeron",
-  "sha": "df8930be646292bfa56713ba2c90d456f29fa84e",
-  "dirty": true,
+  "sha": "31cae509c092bbbb3d3b0f4484b2d0b236fabf85",
+  "dirty": false,
   "desktop": [
     {
       "constant": "PROJECT_DEFAULT",

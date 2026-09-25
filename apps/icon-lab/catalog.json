@@ -24,11 +24,10 @@
     ],
     "note": "Floating 8-unit rail: shorter travel and generous clearance above and below, including during the morph.",
     "legacy": [
-      "panel-left-open",
-      "panel-left-open"
+      "sidebar-minimalistic-left"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5349"
+      "crates/ui/src/shell.rs:5641"
     ],
     "status": "Used"
   },
@@ -56,13 +55,9 @@
       }
     ],
     "note": "The approved closed rail is retained exactly; the open state grows from this same inset mark.",
-    "legacy": [
-      "panel-left-closed"
-    ],
-    "references": [
-      "crates/ui/src/shell.rs:5347"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "panel-right-open",
@@ -89,11 +84,10 @@
     ],
     "note": "Floating 8-unit rail: shorter travel and generous clearance above and below, including during the morph.",
     "legacy": [
-      "panel-right-open",
-      "panel-right-open"
+      "sidebar-minimalistic"
     ],
     "references": [
-      "crates/ui/src/shell/tabs.rs:379"
+      "crates/ui/src/shell/tabs.rs:410"
     ],
     "status": "Used"
   },
@@ -121,13 +115,9 @@
       }
     ],
     "note": "The approved closed rail is retained exactly; the open state grows from this same inset mark.",
-    "legacy": [
-      "panel-right-closed"
-    ],
-    "references": [
-      "crates/ui/src/shell/tabs.rs:381"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "panel-bottom-open",
@@ -153,9 +143,7 @@
       }
     ],
     "note": "Floating bottom rail shares the side panels\u2019 8-unit open length and inset spacing.",
-    "legacy": [
-      "panel-bottom-open"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -183,9 +171,7 @@
       }
     ],
     "note": "Approved compact bottom handle, retained unchanged.",
-    "legacy": [
-      "panel-bottom-closed"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -218,8 +204,9 @@
     ],
     "references": [
       "crates/ui/src/browser/view.rs:411",
-      "crates/ui/src/shell.rs:5363",
-      "crates/ui/src/shell/spaces.rs:5973"
+      "crates/ui/src/shell.rs:5654",
+      "crates/ui/src/shell.rs:6154",
+      "crates/ui/src/shell/spaces.rs:6189"
     ],
     "status": "Used"
   },
@@ -252,8 +239,8 @@
     ],
     "references": [
       "crates/ui/src/browser/view.rs:422",
-      "crates/ui/src/changes.rs:4088",
-      "crates/ui/src/shell.rs:5370"
+      "crates/ui/src/changes.rs:4104",
+      "crates/ui/src/shell.rs:5661"
     ],
     "status": "Used"
   },
@@ -285,7 +272,7 @@
       "arrow-up"
     ],
     "references": [
-      "crates/ui/src/shell/spaces.rs:6016"
+      "crates/ui/src/composer.rs:8738"
     ],
     "status": "Used"
   },
@@ -317,8 +304,7 @@
       "arrow-down"
     ],
     "references": [
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:46",
-      "crates/ui/src/shell/spaces.rs:6017"
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:46"
     ],
     "status": "Used"
   },
@@ -407,29 +393,28 @@
     ],
     "note": "",
     "legacy": [
-      "chevron-down",
-      "chevron-down"
+      "alt-arrow-down"
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:145",
       "apps/ios/Zeron/Views/ArchivedShelf.swift:66",
       "apps/ios/Zeron/Views/HomeView.swift:175",
       "apps/ios/Zeron/Views/NewSessionView.swift:569",
-      "apps/ios/Zeron/Views/NewSessionView.swift:689",
-      "crates/ui/src/changes.rs:3473",
-      "crates/ui/src/changes.rs:3838",
-      "crates/ui/src/changes.rs:4050",
-      "crates/ui/src/files/search.rs:653",
-      "crates/ui/src/files/tree.rs:291",
+      "apps/ios/Zeron/Views/NewSessionView.swift:691",
+      "crates/ui/src/changes.rs:3475",
+      "crates/ui/src/changes.rs:3862",
+      "crates/ui/src/changes.rs:4066",
+      "crates/ui/src/files/search.rs:651",
+      "crates/ui/src/files/tree.rs:289",
       "crates/ui/src/history.rs:3976",
-      "crates/ui/src/pickers.rs:2702",
-      "crates/ui/src/settings/appearance.rs:1897",
-      "crates/ui/src/settings/appearance.rs:1994",
-      "crates/ui/src/shell/actions_ui.rs:1057",
-      "crates/ui/src/shell/spaces.rs:3717",
-      "crates/ui/src/terminal/panel.rs:1653",
+      "crates/ui/src/pickers.rs:2814",
+      "crates/ui/src/settings/harnesses.rs:573",
+      "crates/ui/src/settings/widgets.rs:1136",
+      "crates/ui/src/shell/actions_ui.rs:1102",
+      "crates/ui/src/shell/spaces.rs:3762",
+      "crates/ui/src/terminal/panel.rs:1674",
       "crates/ui/src/transcript.rs:5666",
-      "crates/ui/src/transcript.rs:7224",
+      "crates/ui/src/transcript.rs:7223",
       "crates/ui/src/transcript.rs:8213"
     ],
     "status": "Used"
@@ -451,12 +436,11 @@
     ],
     "note": "",
     "legacy": [
-      "chevron-up",
-      "chevron-up"
+      "alt-arrow-up"
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:143",
-      "apps/ios/Zeron/Views/NewSessionView.swift:689",
+      "apps/ios/Zeron/Views/NewSessionView.swift:691",
       "crates/ui/src/transcript.rs:5664"
     ],
     "status": "Used"
@@ -478,13 +462,11 @@
     ],
     "note": "",
     "legacy": [
-      "chevron-left",
-      "chevron-left"
+      "alt-arrow-left"
     ],
     "references": [
-      "apps/ios/Zeron/Views/SpaceView.swift:231",
-      "crates/ui/src/shell.rs:5868",
-      "crates/ui/src/shell.rs:7996"
+      "apps/ios/Zeron/Views/SpaceView.swift:234",
+      "crates/ui/src/shell.rs:8544"
     ],
     "status": "Used"
   },
@@ -505,24 +487,23 @@
     ],
     "note": "",
     "legacy": [
-      "chevron-right",
-      "chevron-right"
+      "alt-arrow-right"
     ],
     "references": [
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:457",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:458",
       "apps/ios/Zeron/Views/ArchivedShelf.swift:66",
-      "apps/ios/Zeron/Views/SheetUI.swift:104",
+      "apps/ios/Zeron/Views/SheetUI.swift:106",
       "apps/ios/Zeron/Views/SignInView.swift:201",
-      "apps/ios/Zeron/Views/SpaceView.swift:318",
-      "crates/ui/src/changes.rs:3471",
-      "crates/ui/src/files/preview.rs:2184",
-      "crates/ui/src/files/search.rs:655",
-      "crates/ui/src/files/tree.rs:293",
-      "crates/ui/src/pickers.rs:4206",
-      "crates/ui/src/shell.rs:7946",
-      "crates/ui/src/shell/spaces.rs:2149",
-      "crates/ui/src/shell/spaces.rs:3357",
-      "crates/ui/src/shell/spaces.rs:5866",
+      "apps/ios/Zeron/Views/SpaceView.swift:322",
+      "crates/ui/src/changes.rs:3473",
+      "crates/ui/src/files/search.rs:653",
+      "crates/ui/src/files/tree.rs:291",
+      "crates/ui/src/pickers.rs:4322",
+      "crates/ui/src/settings/harnesses.rs:575",
+      "crates/ui/src/shell.rs:8494",
+      "crates/ui/src/shell/spaces.rs:2193",
+      "crates/ui/src/shell/spaces.rs:3401",
+      "crates/ui/src/shell/spaces.rs:6036",
       "crates/ui/src/transcript.rs:8215"
     ],
     "status": "Used"
@@ -568,12 +549,11 @@
     ],
     "note": "Two complete corner arrows rotate as rigid units. Arrowhead and shaft stay attached at every pose.",
     "legacy": [
-      "expand",
-      "expand"
+      "expand-arrows"
     ],
     "references": [
       "crates/ui/src/history.rs:3628",
-      "crates/ui/src/shell.rs:11423",
+      "crates/ui/src/shell.rs:12079",
       "crates/ui/src/shell/tabs.rs:38"
     ],
     "status": "Used"
@@ -619,11 +599,10 @@
     ],
     "note": "Two complete corner arrows rotate as rigid units. Arrowhead and shaft stay attached at every pose.",
     "legacy": [
-      "collapse",
-      "collapse"
+      "collapse-arrows"
     ],
     "references": [
-      "crates/ui/src/shell.rs:11424",
+      "crates/ui/src/shell.rs:12080",
       "crates/ui/src/shell/tabs.rs:36"
     ],
     "status": "Used"
@@ -653,12 +632,11 @@
     ],
     "note": "",
     "legacy": [
-      "fold",
-      "fold"
+      "fold-vertical"
     ],
     "references": [
-      "crates/ui/src/changes.rs:3770",
-      "crates/ui/src/changes.rs:3911",
+      "crates/ui/src/changes.rs:3797",
+      "crates/ui/src/changes.rs:3930",
       "crates/ui/src/history.rs:1661",
       "crates/ui/src/history.rs:3630"
     ],
@@ -688,14 +666,9 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "unfold"
-    ],
-    "references": [
-      "crates/ui/src/changes.rs:3768",
-      "crates/ui/src/changes.rs:3909"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "menu",
@@ -729,9 +702,7 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "menu"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -774,13 +745,13 @@
     ],
     "note": "Solid dots with no extra outline; optical dots stay 1.5px wide at a 16px render size.",
     "legacy": [
-      "more",
-      "more"
+      "more-horizontal"
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:150",
+      "crates/ui/src/settings/accounts.rs:1165",
       "crates/ui/src/shell/sidebar_sections.rs:331",
-      "crates/ui/src/shell/spaces.rs:3788"
+      "crates/ui/src/shell/spaces.rs:3833"
     ],
     "status": "Used"
   },
@@ -820,8 +791,8 @@
       "home"
     ],
     "references": [
-      "crates/ui/src/shell/spaces.rs:5719",
-      "crates/ui/src/shell/spaces.rs:5911"
+      "crates/ui/src/shell/spaces.rs:5842",
+      "crates/ui/src/shell/spaces.rs:5994"
     ],
     "status": "Used"
   },
@@ -845,7 +816,7 @@
       "window-minimize"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5546"
+      "crates/ui/src/shell.rs:5837"
     ],
     "status": "Used"
   },
@@ -869,7 +840,7 @@
       "window-maximize"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5556"
+      "crates/ui/src/shell.rs:5847"
     ],
     "status": "Used"
   },
@@ -901,7 +872,7 @@
       "window-restore"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5554"
+      "crates/ui/src/shell.rs:5845"
     ],
     "status": "Used"
   },
@@ -935,22 +906,19 @@
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:324",
       "apps/ios/Zeron/Views/SpaceView.swift:59",
-      "crates/ui/src/file_icons.rs:206",
       "crates/ui/src/files/preview.rs:2309",
-      "crates/ui/src/pickers.rs:2784",
-      "crates/ui/src/pickers.rs:2841",
-      "crates/ui/src/pickers.rs:2924",
-      "crates/ui/src/pickers.rs:3005",
-      "crates/ui/src/pickers.rs:3362",
-      "crates/ui/src/settings/files.rs:124",
-      "crates/ui/src/settings/files.rs:156",
-      "crates/ui/src/shell.rs:5767",
+      "crates/ui/src/pickers.rs:2896",
+      "crates/ui/src/pickers.rs:2953",
+      "crates/ui/src/pickers.rs:3036",
+      "crates/ui/src/pickers.rs:3117",
+      "crates/ui/src/pickers.rs:3474",
+      "crates/ui/src/shell.rs:6202",
       "crates/ui/src/shell/command_palette.rs:52",
-      "crates/ui/src/shell/spaces.rs:3291",
-      "crates/ui/src/shell/spaces.rs:3299",
-      "crates/ui/src/shell/spaces.rs:3674",
-      "crates/ui/src/shell/spaces.rs:5751",
-      "crates/ui/src/shell/spaces.rs:5939"
+      "crates/ui/src/shell/spaces.rs:3335",
+      "crates/ui/src/shell/spaces.rs:3343",
+      "crates/ui/src/shell/spaces.rs:3719",
+      "crates/ui/src/shell/spaces.rs:5715",
+      "crates/ui/src/shell/spaces.rs:5866"
     ],
     "status": "Used"
   },
@@ -986,13 +954,9 @@
       }
     ],
     "note": "The back stays fixed while the front flap opens; its top edge draws in as the folder opens.",
-    "legacy": [
-      "folder-open"
-    ],
-    "references": [
-      "crates/ui/src/file_icons.rs:204"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "repository",
@@ -1027,16 +991,14 @@
     ],
     "note": "Two legible code brackets replace three cramped internal strokes.",
     "legacy": [
-      "repository",
-      "repository"
+      "folder-with-files"
     ],
     "references": [
-      "crates/ui/src/pickers.rs:2842",
-      "crates/ui/src/pickers.rs:2922",
-      "crates/ui/src/pickers.rs:3006",
-      "crates/ui/src/pickers.rs:3360",
-      "crates/ui/src/pickers.rs:3369",
-      "crates/ui/src/settings/appearance.rs:2897",
+      "crates/ui/src/pickers.rs:2954",
+      "crates/ui/src/pickers.rs:3034",
+      "crates/ui/src/pickers.rs:3118",
+      "crates/ui/src/pickers.rs:3472",
+      "crates/ui/src/pickers.rs:3481",
       "crates/ui/src/transcript.rs:7745"
     ],
     "status": "Used"
@@ -1073,12 +1035,10 @@
       }
     ],
     "note": "Shared folder body, centred addition mark.",
-    "legacy": [
-      "folder-add"
-    ],
+    "legacy": [],
     "references": [
       "apps/ios/Zeron/Views/HomeView.swift:167",
-      "apps/ios/Zeron/Views/HomeView.swift:248"
+      "apps/ios/Zeron/Views/HomeView.swift:249"
     ],
     "status": "Used"
   },
@@ -1107,11 +1067,10 @@
     ],
     "note": "A restrained Z route inside a clipped workspace tile replaces the accidental A.",
     "legacy": [
-      "project",
-      "project"
+      "project-default"
     ],
     "references": [
-      "crates/ui/src/shell/spaces.rs:3298"
+      "crates/ui/src/shell/spaces.rs:3342"
     ],
     "status": "Used"
   },
@@ -1152,16 +1111,14 @@
     ],
     "references": [
       "apps/ios/Zeron/Views/NewSessionView.swift:131",
-      "apps/ios/Zeron/Views/SpaceView.swift:340",
-      "crates/ui/src/pickers.rs:2775",
-      "crates/ui/src/settings/accounts.rs:300",
-      "crates/ui/src/settings/devices.rs:263",
-      "crates/ui/src/settings/harnesses.rs:765",
-      "crates/ui/src/settings/notifications.rs:354",
-      "crates/ui/src/shell.rs:5763",
-      "crates/ui/src/shell.rs:5770",
-      "crates/ui/src/shell/spaces.rs:5695",
-      "crates/ui/src/shell/spaces.rs:5894",
+      "apps/ios/Zeron/Views/SpaceView.swift:345",
+      "crates/ui/src/appearance.rs:54",
+      "crates/ui/src/pickers.rs:2887",
+      "crates/ui/src/settings/accounts.rs:521",
+      "crates/ui/src/settings/harnesses.rs:381",
+      "crates/ui/src/shell.rs:6198",
+      "crates/ui/src/shell.rs:6206",
+      "crates/ui/src/shell/spaces.rs:2081",
       "crates/ui/src/transcript.rs:5938"
     ],
     "status": "Used"
@@ -1194,12 +1151,12 @@
       "laptop"
     ],
     "references": [
-      "crates/ui/src/settings/accounts.rs:298",
-      "crates/ui/src/settings/devices.rs:260",
-      "crates/ui/src/settings/harnesses.rs:763",
-      "crates/ui/src/shell/spaces.rs:3290",
-      "crates/ui/src/shell/spaces.rs:5692",
-      "crates/ui/src/shell/spaces.rs:5892"
+      "crates/ui/src/settings/accounts.rs:519",
+      "crates/ui/src/settings/accounts.rs:553",
+      "crates/ui/src/settings/harnesses.rs:379",
+      "crates/ui/src/settings/harnesses.rs:413",
+      "crates/ui/src/shell/spaces.rs:2078",
+      "crates/ui/src/shell/spaces.rs:3334"
     ],
     "status": "Used"
   },
@@ -1228,15 +1185,12 @@
     ],
     "note": "Continuous handset corners with a clear home indicator.",
     "legacy": [
-      "phone",
-      "phone"
+      "smartphone"
     ],
     "references": [
-      "crates/ui/src/settings/accounts.rs:299",
-      "crates/ui/src/settings/devices.rs:262",
-      "crates/ui/src/settings/harnesses.rs:764",
-      "crates/ui/src/shell/spaces.rs:5694",
-      "crates/ui/src/shell/spaces.rs:5893"
+      "crates/ui/src/settings/accounts.rs:520",
+      "crates/ui/src/settings/harnesses.rs:380",
+      "crates/ui/src/shell/spaces.rs:2080"
     ],
     "status": "Used"
   },
@@ -1297,12 +1251,11 @@
     ],
     "note": "Matched drive modules and precise indicator spacing.",
     "legacy": [
-      "server",
-      "server"
+      "remote-server"
     ],
     "references": [
-      "crates/ui/src/shell.rs:6082",
-      "crates/ui/src/shell.rs:6352"
+      "crates/ui/src/shell.rs:6517",
+      "crates/ui/src/shell.rs:6787"
     ],
     "status": "Used"
   },
@@ -1339,12 +1292,11 @@
     ],
     "note": "Taper softened at the top; indicator separated from the enclosure.",
     "legacy": [
-      "drive",
-      "drive"
+      "hard-drive"
     ],
     "references": [
-      "crates/ui/src/shell/spaces.rs:5721",
-      "crates/ui/src/shell/spaces.rs:5913"
+      "crates/ui/src/shell/spaces.rs:5844",
+      "crates/ui/src/shell/spaces.rs:5996"
     ],
     "status": "Used"
   },
@@ -1407,21 +1359,19 @@
     "note": "One equator replaces two cramped latitude lines; readable at 16px.",
     "legacy": [
       "globe",
-      "globe"
+      "global"
     ],
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:325",
       "crates/ui/src/browser/view.rs:328",
       "crates/ui/src/browser/view.rs:458",
       "crates/ui/src/markdown/link_interaction.rs:332",
-      "crates/ui/src/settings/appearance.rs:2774",
-      "crates/ui/src/settings/devices.rs:261",
-      "crates/ui/src/shell.rs:7298",
-      "crates/ui/src/shell.rs:7310",
-      "crates/ui/src/shell.rs:9124",
-      "crates/ui/src/shell.rs:9340",
-      "crates/ui/src/shell.rs:9634",
-      "crates/ui/src/shell/spaces.rs:5693",
+      "crates/ui/src/shell.rs:10179",
+      "crates/ui/src/shell.rs:7780",
+      "crates/ui/src/shell.rs:7792",
+      "crates/ui/src/shell.rs:9650",
+      "crates/ui/src/shell.rs:9866",
+      "crates/ui/src/shell/spaces.rs:2079",
       "crates/ui/src/transcript.rs:7746"
     ],
     "status": "Used"
@@ -1458,9 +1408,7 @@
       }
     ],
     "note": "Chrome divider stays clear of the frame corners.",
-    "legacy": [
-      "browser"
-    ],
+    "legacy": [],
     "references": [
       "apps/ios/Zeron/Composer/Appshots.swift:105"
     ],
@@ -1499,17 +1447,16 @@
     ],
     "note": "A short deliberate tail and uneven text lengths give the conversation family character.",
     "legacy": [
-      "chat",
-      "chat"
+      "chat-round-line"
     ],
     "references": [
       "crates/ui/src/comment_ui.rs:239",
       "crates/ui/src/comment_ui.rs:96",
       "crates/ui/src/comments.rs:185",
-      "crates/ui/src/composer.rs:5888",
+      "crates/ui/src/composer.rs:5893",
       "crates/ui/src/files/preview.rs:2643",
       "crates/ui/src/files/preview.rs:2746",
-      "crates/ui/src/settings/notifications.rs:242",
+      "crates/ui/src/pickers.rs:4948",
       "crates/ui/src/transcript.rs:7711",
       "crates/ui/src/transcript.rs:8033",
       "crates/ui/src/transcript.rs:8390"
@@ -1540,12 +1487,10 @@
       }
     ],
     "note": "Secondary bubble no longer creates a long confusing zigzag tail.",
-    "legacy": [
-      "chats"
-    ],
+    "legacy": [],
     "references": [
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:594",
-      "apps/ios/Zeron/Views/SpaceView.swift:88"
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:598",
+      "apps/ios/Zeron/Views/SpaceView.swift:89"
     ],
     "status": "Used"
   },
@@ -1582,17 +1527,16 @@
     ],
     "note": "Inset handle is centred in the archive body with consistent stroke weight.",
     "legacy": [
-      "archive",
-      "archive"
+      "archive-minimalistic"
     ],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:288",
+      "apps/ios/Zeron/Views/HomeView.swift:289",
       "apps/ios/Zeron/Views/SpaceView.swift:36",
-      "crates/ui/src/settings/archived.rs:161",
-      "crates/ui/src/settings/archived.rs:272",
-      "crates/ui/src/shell.rs:5771",
-      "crates/ui/src/shell.rs:6057",
-      "crates/ui/src/shell.rs:7929"
+      "crates/ui/src/settings/archived.rs:171",
+      "crates/ui/src/settings/archived.rs:283",
+      "crates/ui/src/shell.rs:6207",
+      "crates/ui/src/shell.rs:6492",
+      "crates/ui/src/shell.rs:8477"
     ],
     "status": "Used"
   },
@@ -1637,13 +1581,12 @@
     ],
     "note": "Restore arrow sits fully inside the archive, with clear separation from the lid.",
     "legacy": [
-      "unarchive",
-      "unarchive"
+      "archive-up-minimalistic"
     ],
     "references": [
-      "apps/ios/Zeron/Views/ArchivedShelf.swift:115",
-      "crates/ui/src/settings/archived.rs:246",
-      "crates/ui/src/shell.rs:6055"
+      "apps/ios/Zeron/Views/ArchivedShelf.swift:116",
+      "crates/ui/src/settings/archived.rs:257",
+      "crates/ui/src/shell.rs:6490"
     ],
     "status": "Used"
   },
@@ -1675,8 +1618,8 @@
       "pin"
     ],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:448",
-      "crates/ui/src/shell.rs:7919"
+      "apps/ios/Zeron/Views/HomeView.swift:450",
+      "crates/ui/src/shell.rs:8467"
     ],
     "status": "Used"
   },
@@ -1704,11 +1647,9 @@
       }
     ],
     "note": "Narrower neck, softened shoulder, same silhouette in selected state.",
-    "legacy": [
-      "pin-active"
-    ],
+    "legacy": [],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:389"
+      "apps/ios/Zeron/Views/HomeView.swift:390"
     ],
     "status": "Used"
   },
@@ -1752,11 +1693,9 @@
       }
     ],
     "note": "Occluded contours are cut away beneath the slash instead of forming a black knot.",
-    "legacy": [
-      "unpin"
-    ],
+    "legacy": [],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:448"
+      "apps/ios/Zeron/Views/HomeView.swift:450"
     ],
     "status": "Used"
   },
@@ -1785,11 +1724,10 @@
     ],
     "note": "",
     "legacy": [
-      "clock",
-      "clock"
+      "clock-circle"
     ],
     "references": [
-      "crates/ui/src/shell/spaces.rs:3293"
+      "crates/ui/src/shell/spaces.rs:3337"
     ],
     "status": "Used"
   },
@@ -1849,7 +1787,7 @@
       "calendar"
     ],
     "references": [
-      "crates/ui/src/shell/spaces.rs:3294"
+      "crates/ui/src/shell/spaces.rs:3338"
     ],
     "status": "Used"
   },
@@ -1882,21 +1820,22 @@
     ],
     "references": [
       "apps/ios/Zeron/Composer/ComposerView.swift:179",
-      "apps/ios/Zeron/Views/ArchivedShelf.swift:126",
-      "apps/ios/Zeron/Views/HomeView.swift:251",
-      "apps/ios/Zeron/Views/SpaceView.swift:73",
+      "apps/ios/Zeron/Views/ArchivedShelf.swift:127",
+      "apps/ios/Zeron/Views/HomeView.swift:252",
+      "apps/ios/Zeron/Views/SpaceView.swift:74",
       "crates/ui/src/comment_ui.rs:41",
       "crates/ui/src/files/preview.rs:2671",
-      "crates/ui/src/pickers.rs:2286",
-      "crates/ui/src/shell.rs:5383",
-      "crates/ui/src/shell.rs:9341",
-      "crates/ui/src/shell.rs:9612",
-      "crates/ui/src/shell/actions_ui.rs:625",
-      "crates/ui/src/shell/actions_ui.rs:790",
-      "crates/ui/src/shell/spaces.rs:3574",
-      "crates/ui/src/shell/spaces.rs:3999",
-      "crates/ui/src/shell/spaces.rs:4979",
-      "crates/ui/src/terminal/panel.rs:1626"
+      "crates/ui/src/pickers.rs:2398",
+      "crates/ui/src/settings/accounts.rs:1647",
+      "crates/ui/src/shell.rs:10157",
+      "crates/ui/src/shell.rs:5674",
+      "crates/ui/src/shell.rs:9867",
+      "crates/ui/src/shell/actions_ui.rs:640",
+      "crates/ui/src/shell/actions_ui.rs:805",
+      "crates/ui/src/shell/spaces.rs:3619",
+      "crates/ui/src/shell/spaces.rs:4044",
+      "crates/ui/src/shell/spaces.rs:5024",
+      "crates/ui/src/terminal/panel.rs:1647"
     ],
     "status": "Used"
   },
@@ -1925,28 +1864,28 @@
     ],
     "note": "",
     "legacy": [
-      "close",
+      "queue-close",
       "close"
     ],
     "references": [
       "apps/ios/Zeron/Composer/Attachments.swift:496",
-      "apps/ios/Zeron/Composer/Attachments.swift:746",
+      "apps/ios/Zeron/Composer/Attachments.swift:748",
       "apps/ios/Zeron/Composer/QueuePanelView.swift:133",
-      "apps/ios/Zeron/Views/HomeView.swift:242",
-      "apps/ios/Zeron/Views/NewSessionView.swift:1010",
-      "apps/ios/Zeron/Views/NewSessionView.swift:651",
-      "apps/ios/Zeron/Views/NewSessionView.swift:748",
-      "apps/ios/Zeron/Views/NewSessionView.swift:809",
-      "apps/ios/Zeron/Views/NewSessionView.swift:936",
-      "apps/ios/Zeron/Views/SpaceView.swift:167",
+      "apps/ios/Zeron/Views/HomeView.swift:243",
+      "apps/ios/Zeron/Views/NewSessionView.swift:1017",
+      "apps/ios/Zeron/Views/NewSessionView.swift:652",
+      "apps/ios/Zeron/Views/NewSessionView.swift:751",
+      "apps/ios/Zeron/Views/NewSessionView.swift:813",
+      "apps/ios/Zeron/Views/NewSessionView.swift:942",
+      "apps/ios/Zeron/Views/SpaceView.swift:169",
       "crates/ui/src/history.rs:1800",
-      "crates/ui/src/pickers.rs:2266",
-      "crates/ui/src/queue.rs:473",
-      "crates/ui/src/settings/appearance.rs:2589",
-      "crates/ui/src/shell.rs:5565",
-      "crates/ui/src/shell.rs:9521",
+      "crates/ui/src/pickers.rs:2378",
+      "crates/ui/src/queue.rs:479",
+      "crates/ui/src/settings/appearance.rs:2173",
+      "crates/ui/src/shell.rs:10066",
+      "crates/ui/src/shell.rs:5856",
       "crates/ui/src/shell/sidebar_sections.rs:527",
-      "crates/ui/src/terminal/panel.rs:1515"
+      "crates/ui/src/terminal/panel.rs:1539"
     ],
     "status": "Used"
   },
@@ -1974,11 +1913,9 @@
       }
     ],
     "note": "Compact head, balanced stem; matches the composer action weight.",
-    "legacy": [
-      "send"
-    ],
+    "legacy": [],
     "references": [
-      "crates/ui/src/composer.rs:8731"
+      "apps/ios/Zeron/Composer/ComposerView.swift:220"
     ],
     "status": "Used"
   },
@@ -2007,12 +1944,11 @@
     ],
     "note": "Same arrow geometry as send, turned exactly 90 degrees.",
     "legacy": [
-      "send-now",
-      "send-now"
+      "queue-send"
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:138",
-      "crates/ui/src/queue.rs:1030"
+      "crates/ui/src/queue.rs:1035"
     ],
     "status": "Used"
   },
@@ -2035,11 +1971,8 @@
     "legacy": [
       "stop"
     ],
-    "references": [
-      "apps/ios/Zeron/Composer/ComposerView.swift:215",
-      "crates/ui/src/composer.rs:8729"
-    ],
-    "status": "Used"
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "play",
@@ -2058,13 +1991,12 @@
     ],
     "note": "Optically shifted right with equal corner tension; no pinched triangle tip.",
     "legacy": [
-      "play",
-      "play"
+      "action-play"
     ],
     "references": [
       "crates/ui/src/project_actions.rs:221"
     ],
-    "status": "Used"
+    "status": "Contribution"
   },
   {
     "name": "pause",
@@ -2090,11 +2022,9 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "pause"
-    ],
+    "legacy": [],
     "references": [],
-    "status": "State / extension"
+    "status": "Contribution"
   },
   {
     "name": "paperclip",
@@ -2113,12 +2043,13 @@
     ],
     "note": "Nested parallel runs and even turn radii; counters stay open at 16px.",
     "legacy": [
-      "paperclip",
+      "queue-paperclip",
       "paperclip"
     ],
     "references": [
-      "crates/ui/src/composer.rs:9242",
-      "crates/ui/src/queue.rs:904"
+      "crates/ui/src/composer.rs:9249",
+      "crates/ui/src/icons.rs:15",
+      "crates/ui/src/queue.rs:910"
     ],
     "status": "Used"
   },
@@ -2147,17 +2078,15 @@
     ],
     "note": "Equal barrel width with a clipped graphite tip.",
     "legacy": [
-      "edit",
-      "edit"
+      "pen"
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:133",
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:322",
       "crates/ui/src/comment_ui.rs:174",
-      "crates/ui/src/queue.rs:416",
-      "crates/ui/src/settings/devices.rs:390",
-      "crates/ui/src/shell.rs:7910",
-      "crates/ui/src/shell/spaces.rs:6184",
+      "crates/ui/src/queue.rs:422",
+      "crates/ui/src/shell.rs:8458",
+      "crates/ui/src/shell/spaces.rs:6381",
       "crates/ui/src/transcript.rs:7743",
       "crates/ui/src/transcript.rs:8034",
       "crates/ui/src/transcript.rs:8391"
@@ -2189,8 +2118,7 @@
     ],
     "note": "",
     "legacy": [
-      "compose",
-      "compose"
+      "pen-new-square"
     ],
     "references": [
       "crates/ui/src/shell/command_palette.rs:51"
@@ -2226,15 +2154,15 @@
     ],
     "references": [
       "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:230",
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:313",
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:553",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:314",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:556",
       "crates/ui/src/markdown/link_interaction.rs:338",
-      "crates/ui/src/markdown/render.rs:1957",
+      "crates/ui/src/markdown/render.rs:1979",
       "crates/ui/src/notice.rs:123",
-      "crates/ui/src/shell.rs:7940",
-      "crates/ui/src/shell.rs:8010",
-      "crates/ui/src/shell.rs:8028",
-      "crates/ui/src/shell.rs:8047",
+      "crates/ui/src/shell.rs:8488",
+      "crates/ui/src/shell.rs:8558",
+      "crates/ui/src/shell.rs:8576",
+      "crates/ui/src/shell.rs:8595",
       "crates/ui/src/transcript.rs:6563"
     ],
     "status": "Used"
@@ -2256,30 +2184,28 @@
     ],
     "note": "Balanced ascent and shorter entry stroke; coherent at small sizes.",
     "legacy": [
-      "check",
+      "queue-check",
       "check"
     ],
     "references": [
-      "apps/ios/Zeron/Views/HomeView.swift:210",
-      "apps/ios/Zeron/Views/Loaders.swift:180",
-      "apps/ios/Zeron/Views/NewSessionView.swift:870",
+      "apps/ios/Zeron/Views/HomeView.swift:211",
+      "apps/ios/Zeron/Views/Loaders.swift:232",
+      "apps/ios/Zeron/Views/NewSessionView.swift:875",
       "apps/ios/Zeron/Views/SessionHostPickerSheet.swift:32",
       "apps/ios/Zeron/Views/SheetUI.swift:68",
       "crates/ui/src/history.rs:3217",
       "crates/ui/src/history.rs:3258",
       "crates/ui/src/markdown/link_interaction.rs:381",
-      "crates/ui/src/markdown/render.rs:1955",
-      "crates/ui/src/pickers.rs:4247",
-      "crates/ui/src/queue.rs:462",
-      "crates/ui/src/settings/appearance.rs:1788",
-      "crates/ui/src/settings/appearance.rs:1944",
-      "crates/ui/src/settings/appearance.rs:2152",
-      "crates/ui/src/settings/appearance.rs:2416",
-      "crates/ui/src/settings/notifications.rs:205",
-      "crates/ui/src/shell.rs:5987",
-      "crates/ui/src/shell.rs:6096",
-      "crates/ui/src/shell/actions_ui.rs:941",
-      "crates/ui/src/shell/spaces.rs:3434",
+      "crates/ui/src/markdown/render.rs:101",
+      "crates/ui/src/markdown/render.rs:1977",
+      "crates/ui/src/pickers.rs:4363",
+      "crates/ui/src/queue.rs:468",
+      "crates/ui/src/settings/appearance.rs:1988",
+      "crates/ui/src/settings/widgets.rs:1168",
+      "crates/ui/src/shell.rs:6422",
+      "crates/ui/src/shell.rs:6531",
+      "crates/ui/src/shell/actions_ui.rs:956",
+      "crates/ui/src/shell/spaces.rs:3478",
       "crates/ui/src/transcript.rs:6561"
     ],
     "status": "Used"
@@ -2353,12 +2279,11 @@
     ],
     "note": "Solid dots with no extra outline; optical dots stay 1.5px wide at a 16px render size.",
     "legacy": [
-      "drag",
-      "drag",
-      "drag"
+      "drag-handle",
+      "queue-drag-handle"
     ],
     "references": [
-      "crates/ui/src/queue.rs:496"
+      "crates/ui/src/queue.rs:502"
     ],
     "status": "Used"
   },
@@ -2394,11 +2319,9 @@
       }
     ],
     "note": "Clean capsule, open cradle, no doubled bottom curve.",
-    "legacy": [
-      "microphone"
-    ],
+    "legacy": [],
     "references": [],
-    "status": "State / extension"
+    "status": "Contribution"
   },
   {
     "name": "microphone-off",
@@ -2456,9 +2379,7 @@
       }
     ],
     "note": "Slash occludes the body and cradle; mute stays legible instead of overprinting lines.",
-    "legacy": [
-      "microphone-off"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -2510,9 +2431,7 @@
       }
     ],
     "note": "Asymmetric signal with a calm tapered envelope.",
-    "legacy": [
-      "waveform"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -2548,9 +2467,7 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "link"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -2599,9 +2516,8 @@
     ],
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:320",
-      "crates/ui/src/file_icons.rs:230",
-      "crates/ui/src/settings/appearance.rs:2776",
-      "crates/ui/src/shell.rs:9326",
+      "crates/ui/src/changes.rs:3597",
+      "crates/ui/src/shell.rs:9852",
       "crates/ui/src/transcript.rs:7741"
     ],
     "status": "Used"
@@ -2699,10 +2615,8 @@
       "file-code"
     ],
     "references": [
-      "crates/ui/src/file_icons.rs:227",
-      "crates/ui/src/file_icons.rs:229",
       "crates/ui/src/files/preview.rs:2255",
-      "crates/ui/src/markdown/render.rs:1858"
+      "crates/ui/src/markdown/render.rs:1881"
     ],
     "status": "Used"
   },
@@ -2741,10 +2655,8 @@
     "legacy": [
       "file-style"
     ],
-    "references": [
-      "crates/ui/src/file_icons.rs:215"
-    ],
-    "status": "Used"
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "file-data",
@@ -2789,10 +2701,8 @@
     "legacy": [
       "file-data"
     ],
-    "references": [
-      "crates/ui/src/file_icons.rs:214"
-    ],
-    "status": "Used"
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "file-markdown",
@@ -2837,10 +2747,8 @@
     "legacy": [
       "file-markdown"
     ],
-    "references": [
-      "crates/ui/src/file_icons.rs:212"
-    ],
-    "status": "Used"
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "file-image",
@@ -2877,12 +2785,8 @@
     "legacy": [
       "file-image"
     ],
-    "references": [
-      "crates/ui/src/file_icons.rs:217",
-      "crates/ui/src/file_icons.rs:223",
-      "crates/ui/src/settings/appearance.rs:3137"
-    ],
-    "status": "Used"
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "image",
@@ -2916,11 +2820,9 @@
       }
     ],
     "note": "Landscape meets the inside of the frame; consistent image corner geometry.",
-    "legacy": [
-      "image"
-    ],
+    "legacy": [],
     "references": [
-      "apps/ios/Zeron/Composer/QueuePanelView.swift:205"
+      "apps/ios/Zeron/Composer/QueuePanelView.swift:206"
     ],
     "status": "Used"
   },
@@ -2964,13 +2866,11 @@
       }
     ],
     "note": "Warning area is deliberately kept clear of the image silhouette.",
-    "legacy": [
-      "image-error"
-    ],
+    "legacy": [],
     "references": [
       "apps/ios/Zeron/Composer/Appshots.swift:100",
-      "apps/ios/Zeron/Composer/Attachments.swift:584",
-      "apps/ios/Zeron/Composer/Attachments.swift:677"
+      "apps/ios/Zeron/Composer/Attachments.swift:585",
+      "apps/ios/Zeron/Composer/Attachments.swift:679"
     ],
     "status": "Used"
   },
@@ -3007,8 +2907,7 @@
     ],
     "note": "Open lower recess eliminates the doubled bottom border.",
     "legacy": [
-      "save",
-      "save"
+      "floppy-disk"
     ],
     "references": [],
     "status": "State / extension"
@@ -3062,15 +2961,13 @@
     ],
     "note": "Narrow tapered bin and inset slats replace a dense rectangular stack.",
     "legacy": [
-      "trash",
-      "trash"
+      "trash-bin-minimalistic"
     ],
     "references": [
       "apps/ios/Zeron/Composer/QueuePanelView.swift:147",
-      "crates/ui/src/queue.rs:432",
-      "crates/ui/src/settings/accounts.rs:833",
-      "crates/ui/src/shell.rs:7962",
-      "crates/ui/src/shell/spaces.rs:6198"
+      "crates/ui/src/queue.rs:438",
+      "crates/ui/src/shell.rs:8510",
+      "crates/ui/src/shell/spaces.rs:6395"
     ],
     "status": "Used"
   },
@@ -3102,10 +2999,9 @@
       "eye"
     ],
     "references": [
-      "crates/ui/src/files/mod.rs:1070",
+      "crates/ui/src/files/mod.rs:1073",
       "crates/ui/src/files/preview.rs:2257",
-      "crates/ui/src/markdown/render.rs:1856",
-      "crates/ui/src/settings/files.rs:215"
+      "crates/ui/src/markdown/render.rs:1879"
     ],
     "status": "Used"
   },
@@ -3153,8 +3049,7 @@
       "eye-closed"
     ],
     "references": [
-      "crates/ui/src/files/mod.rs:1072",
-      "crates/ui/src/settings/appearance.rs:3271"
+      "crates/ui/src/files/mod.rs:1075"
     ],
     "status": "Used"
   },
@@ -3183,17 +3078,16 @@
     ],
     "note": "",
     "legacy": [
-      "search",
-      "search",
-      "search"
+      "magnifer",
+      "palette-search"
     ],
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:323",
-      "crates/ui/src/files/mod.rs:1038",
+      "crates/ui/src/files/mod.rs:1041",
       "crates/ui/src/history.rs:1709",
       "crates/ui/src/history.rs:1742",
-      "crates/ui/src/pickers.rs:3593",
-      "crates/ui/src/popover.rs:1007",
+      "crates/ui/src/pickers.rs:3705",
+      "crates/ui/src/popover.rs:1026",
       "crates/ui/src/transcript.rs:7744"
     ],
     "status": "Used"
@@ -3239,12 +3133,11 @@
     ],
     "note": "Return loop opens up; arrow stays clear of adjacent text rows.",
     "legacy": [
-      "wrap",
-      "wrap"
+      "wrap-text"
     ],
     "references": [
-      "crates/ui/src/changes.rs:3704",
-      "crates/ui/src/markdown/render.rs:2151"
+      "crates/ui/src/changes.rs:3739",
+      "crates/ui/src/markdown/render.rs:2171"
     ],
     "status": "Used"
   },
@@ -3288,14 +3181,9 @@
       }
     ],
     "note": "Rows align with the wrapped state, ready for a controlled loop transition.",
-    "legacy": [
-      "unwrap"
-    ],
-    "references": [
-      "crates/ui/src/changes.rs:3706",
-      "crates/ui/src/markdown/render.rs:2153"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "split",
@@ -3322,11 +3210,10 @@
     ],
     "note": "Floating centre divider uses the same inset language as the panel controls.",
     "legacy": [
-      "split",
-      "split"
+      "split-columns"
     ],
     "references": [
-      "crates/ui/src/changes.rs:3686"
+      "crates/ui/src/changes.rs:3725"
     ],
     "status": "Used"
   },
@@ -3370,13 +3257,9 @@
       }
     ],
     "note": "Text rows identify unified content; no ambiguous empty frame.",
-    "legacy": [
-      "unified"
-    ],
-    "references": [
-      "crates/ui/src/changes.rs:3688"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "list",
@@ -3439,12 +3322,11 @@
     ],
     "references": [
       "crates/ui/src/files/preview.rs:2328",
-      "crates/ui/src/settings/files.rs:185",
-      "crates/ui/src/shell.rs:9138",
-      "crates/ui/src/shell.rs:9334",
-      "crates/ui/src/shell.rs:9337",
-      "crates/ui/src/shell.rs:9663",
-      "crates/ui/src/shell/spaces.rs:3292"
+      "crates/ui/src/shell.rs:10208",
+      "crates/ui/src/shell.rs:9664",
+      "crates/ui/src/shell.rs:9860",
+      "crates/ui/src/shell.rs:9863",
+      "crates/ui/src/shell/spaces.rs:3336"
     ],
     "status": "Used"
   },
@@ -3489,13 +3371,11 @@
     ],
     "note": "",
     "legacy": [
-      "grid",
-      "grid"
+      "widget"
     ],
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:327",
-      "crates/ui/src/settings/appearance.rs:3087",
-      "crates/ui/src/shell.rs:5764",
+      "crates/ui/src/shell.rs:6199",
       "crates/ui/src/transcript.rs:7750"
     ],
     "status": "Used"
@@ -3549,20 +3429,19 @@
     ],
     "note": "Identical node centres and radii across the Git family; branch joins the trunk tangentially, below the source node.",
     "legacy": [
-      "branch",
-      "branch"
+      "git-branch"
     ],
     "references": [
       "crates/ui/src/history.rs:1185",
-      "crates/ui/src/pickers.rs:2855",
-      "crates/ui/src/pickers.rs:2944",
-      "crates/ui/src/pickers.rs:2999",
-      "crates/ui/src/shell.rs:6420",
-      "crates/ui/src/shell.rs:9144",
-      "crates/ui/src/shell.rs:9332",
-      "crates/ui/src/shell.rs:9677",
-      "crates/ui/src/shell/spaces.rs:3295",
-      "crates/ui/src/shell/spaces.rs:5763"
+      "crates/ui/src/pickers.rs:2967",
+      "crates/ui/src/pickers.rs:3056",
+      "crates/ui/src/pickers.rs:3111",
+      "crates/ui/src/shell.rs:10222",
+      "crates/ui/src/shell.rs:6855",
+      "crates/ui/src/shell.rs:9670",
+      "crates/ui/src/shell.rs:9858",
+      "crates/ui/src/shell/spaces.rs:3339",
+      "crates/ui/src/shell/spaces.rs:5870"
     ],
     "status": "Used"
   },
@@ -3642,8 +3521,8 @@
       "pull-request"
     ],
     "references": [
-      "crates/ui/src/change_requests.rs:156",
-      "crates/ui/src/shell/spaces.rs:3296"
+      "crates/ui/src/change_requests.rs:185",
+      "crates/ui/src/shell/spaces.rs:3340"
     ],
     "status": "Used"
   },
@@ -3703,13 +3582,9 @@
       }
     ],
     "note": "A returning branch arrow points toward the trunk with clear space around the junction. Shared Git nodes retain consistent diameter.",
-    "legacy": [
-      "merge"
-    ],
-    "references": [
-      "crates/ui/src/change_requests.rs:154"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "commit",
@@ -3743,9 +3618,7 @@
       }
     ],
     "note": "Even round node with aligned tangent tracks and consistent Git-family weight.",
-    "legacy": [
-      "commit"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -3868,15 +3741,10 @@
     ],
     "note": "",
     "legacy": [
-      "sort-ascending",
-      "sort-ascending"
+      "sort-vertical"
     ],
-    "references": [
-      "crates/ui/src/settings/accounts.rs:370",
-      "crates/ui/src/settings/appearance.rs:2097",
-      "crates/ui/src/settings/harnesses.rs:834"
-    ],
-    "status": "Used"
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "sort-descending",
@@ -3926,9 +3794,7 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "sort-descending"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -4084,13 +3950,9 @@
       }
     ],
     "note": "The half-screen divider stays inside the screen edge.",
-    "legacy": [
-      "appearance-system"
-    ],
-    "references": [
-      "crates/ui/src/appearance.rs:54"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "settings",
@@ -4174,11 +4036,12 @@
     "note": "Balanced 3\u20139\u20133 slider rhythm. Each track clears the round knob rather than merging into its stroke; optical tracks have extra clearance.",
     "legacy": [
       "settings",
-      "settings"
+      "settings-minimalistic"
     ],
     "references": [
-      "crates/ui/src/shell.rs:7351",
-      "crates/ui/src/shell/actions_ui.rs:741",
+      "crates/ui/src/shell.rs:6205",
+      "crates/ui/src/shell.rs:7891",
+      "crates/ui/src/shell/actions_ui.rs:756",
       "crates/ui/src/shell/command_palette.rs:53"
     ],
     "status": "Used"
@@ -4267,8 +4130,7 @@
       "tuning"
     ],
     "references": [
-      "crates/ui/src/settings/appearance.rs:3059",
-      "crates/ui/src/settings/appearance.rs:3229"
+      "crates/ui/src/shell.rs:6201"
     ],
     "status": "Used"
   },
@@ -4313,11 +4175,10 @@
     ],
     "note": "",
     "legacy": [
-      "key",
-      "key"
+      "key-minimalistic"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5765"
+      "crates/ui/src/shell.rs:6200"
     ],
     "status": "Used"
   },
@@ -4353,9 +4214,7 @@
       }
     ],
     "note": "Rounded lock body with a slim centred key slot.",
-    "legacy": [
-      "lock"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -4391,9 +4250,7 @@
       }
     ],
     "note": "A deliberate 2.5-unit shackle opening is visible at small sizes.",
-    "legacy": [
-      "unlock"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -4461,7 +4318,7 @@
       "keyboard"
     ],
     "references": [
-      "crates/ui/src/shell.rs:5769"
+      "crates/ui/src/shell.rs:6204"
     ],
     "status": "Used"
   },
@@ -4485,7 +4342,7 @@
       "command"
     ],
     "references": [
-      "crates/ui/src/composer.rs:7150"
+      "crates/ui/src/composer.rs:7155"
     ],
     "status": "Used"
   },
@@ -4522,11 +4379,10 @@
     ],
     "note": "",
     "legacy": [
-      "logout",
-      "logout"
+      "logout-2"
     ],
     "references": [
-      "crates/ui/src/shell.rs:7334"
+      "crates/ui/src/shell.rs:7816"
     ],
     "status": "Used"
   },
@@ -4562,9 +4418,7 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "user"
-    ],
+    "legacy": [],
     "references": [
       "apps/ios/Zeron/Views/HomeView.swift:111"
     ],
@@ -4590,7 +4444,7 @@
       "star"
     ],
     "references": [
-      "crates/ui/src/pickers.rs:3932"
+      "crates/ui/src/pickers.rs:4045"
     ],
     "status": "Used"
   },
@@ -4611,12 +4465,11 @@
     ],
     "note": "",
     "legacy": [
-      "star-active",
-      "star-active"
+      "star-bold"
     ],
     "references": [
-      "crates/ui/src/pickers.rs:3535",
-      "crates/ui/src/pickers.rs:3930"
+      "crates/ui/src/pickers.rs:3647",
+      "crates/ui/src/pickers.rs:4043"
     ],
     "status": "Used"
   },
@@ -4656,8 +4509,7 @@
       "bell"
     ],
     "references": [
-      "crates/ui/src/settings/notifications.rs:315",
-      "crates/ui/src/shell.rs:5768"
+      "crates/ui/src/shell.rs:6203"
     ],
     "status": "Used"
   },
@@ -4709,9 +4561,7 @@
       }
     ],
     "note": "The slash has a full stroke-width channel through the bell; no crossing knot at the rim.",
-    "legacy": [
-      "bell-off"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -4748,13 +4598,10 @@
     ],
     "note": "",
     "legacy": [
-      "volume",
-      "volume"
+      "volume-loud"
     ],
-    "references": [
-      "crates/ui/src/settings/notifications.rs:174"
-    ],
-    "status": "Used"
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "volume-off",
@@ -4788,9 +4635,7 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "volume-off"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -4831,12 +4676,12 @@
     ],
     "references": [
       "apps/ios/Zeron/Transcript/TranscriptRows.swift:319",
-      "crates/ui/src/pickers.rs:3470",
-      "crates/ui/src/pickers.rs:4811",
-      "crates/ui/src/shell.rs:9129",
-      "crates/ui/src/shell.rs:9339",
-      "crates/ui/src/shell.rs:9648",
-      "crates/ui/src/terminal/panel.rs:1568",
+      "crates/ui/src/pickers.rs:3582",
+      "crates/ui/src/pickers.rs:4949",
+      "crates/ui/src/shell.rs:10193",
+      "crates/ui/src/shell.rs:9655",
+      "crates/ui/src/shell.rs:9865",
+      "crates/ui/src/terminal/panel.rs:1590",
       "crates/ui/src/transcript.rs:7740"
     ],
     "status": "Used"
@@ -4886,12 +4731,11 @@
     ],
     "note": "Clipped robot shoulder, offset antenna and calm facial features form a recognizable Zeron agent.",
     "legacy": [
-      "agent",
-      "agent"
+      "bot"
     ],
     "references": [
-      "crates/ui/src/shell.rs:9338",
-      "crates/ui/src/shell/spaces.rs:3297",
+      "crates/ui/src/shell.rs:9864",
+      "crates/ui/src/shell/spaces.rs:3341",
       "crates/ui/src/transcript.rs:7748",
       "crates/ui/src/transcript.rs:7749"
     ],
@@ -4946,11 +4790,10 @@
     ],
     "note": "A carved four-point spark and clipped wand echo the project shoulder.",
     "legacy": [
-      "skills",
-      "skills"
+      "magic-stick-3"
     ],
     "references": [
-      "crates/ui/src/composer.rs:7148"
+      "crates/ui/src/composer.rs:7153"
     ],
     "status": "Used"
   },
@@ -4971,11 +4814,10 @@
     ],
     "note": "Slightly eased lightning turns; distinctive narrow central offset.",
     "legacy": [
-      "bolt",
-      "bolt"
+      "fast-tier"
     ],
     "references": [
-      "crates/ui/src/pickers.rs:4892"
+      "crates/ui/src/pickers.rs:5030"
     ],
     "status": "Used"
   },
@@ -5012,8 +4854,7 @@
     ],
     "note": "",
     "legacy": [
-      "test",
-      "test"
+      "action-test"
     ],
     "references": [
       "crates/ui/src/project_actions.rs:222"
@@ -5057,8 +4898,7 @@
     ],
     "note": "Readable code brackets and a separate passing check replace the broken document fragment.",
     "legacy": [
-      "lint",
-      "lint"
+      "action-lint"
     ],
     "references": [
       "crates/ui/src/project_actions.rs:223"
@@ -5082,8 +4922,7 @@
     ],
     "note": "One continuous closed spanner outline. The jaw has a clear open bite, without loose ends or self-overlapping edges.",
     "legacy": [
-      "configure",
-      "configure"
+      "action-configure"
     ],
     "references": [
       "crates/ui/src/project_actions.rs:224"
@@ -5131,8 +4970,7 @@
     ],
     "note": "",
     "legacy": [
-      "build",
-      "build"
+      "action-build"
     ],
     "references": [
       "crates/ui/src/project_actions.rs:225"
@@ -5216,8 +5054,7 @@
     ],
     "note": "Slimmer bug body and evenly radiating legs reduce congestion.",
     "legacy": [
-      "debug",
-      "debug"
+      "action-debug"
     ],
     "references": [
       "crates/ui/src/project_actions.rs:226"
@@ -5306,12 +5143,9 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "checkbox"
-    ],
+    "legacy": [],
     "references": [
-      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332",
-      "crates/ui/src/markdown/render.rs:613"
+      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332"
     ],
     "status": "Used"
   },
@@ -5339,12 +5173,9 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "checkbox-checked"
-    ],
+    "legacy": [],
     "references": [
-      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332",
-      "crates/ui/src/markdown/render.rs:611"
+      "apps/ios/Zeron/Markdown/MarkdownBlockView.swift:332"
     ],
     "status": "Used"
   },
@@ -5393,11 +5224,12 @@
     ],
     "references": [
       "crates/ui/src/browser/view.rs:433",
-      "crates/ui/src/changes.rs:3888",
+      "crates/ui/src/changes.rs:3912",
       "crates/ui/src/files/mod.rs:340",
       "crates/ui/src/history.rs:3974",
-      "crates/ui/src/settings/accounts.rs:1468",
-      "crates/ui/src/shell/actions_ui.rs:691"
+      "crates/ui/src/settings/accounts.rs:1699",
+      "crates/ui/src/settings/accounts.rs:2013",
+      "crates/ui/src/shell/actions_ui.rs:706"
     ],
     "status": "Used"
   },
@@ -5429,9 +5261,8 @@
       "restart"
     ],
     "references": [
-      "crates/ui/src/settings/shortcuts.rs:604",
-      "crates/ui/src/settings/shortcuts.rs:796",
-      "crates/ui/src/shell.rs:7322"
+      "crates/ui/src/settings/shortcuts.rs:751",
+      "crates/ui/src/shell.rs:7804"
     ],
     "status": "Used"
   },
@@ -5477,9 +5308,7 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "wifi"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -5553,9 +5382,9 @@
       "wifi-off"
     ],
     "references": [
-      "crates/ui/src/pickers.rs:2178",
-      "crates/ui/src/shell/spaces.rs:3708",
-      "crates/ui/src/shell/spaces.rs:3939"
+      "crates/ui/src/pickers.rs:2290",
+      "crates/ui/src/shell/spaces.rs:3753",
+      "crates/ui/src/shell/spaces.rs:3984"
     ],
     "status": "Used"
   },
@@ -5592,11 +5421,10 @@
     ],
     "note": "",
     "legacy": [
-      "info",
-      "info"
+      "info-circle"
     ],
     "references": [
-      "crates/ui/src/settings/appearance.rs:2519"
+      "crates/ui/src/settings/appearance.rs:2101"
     ],
     "status": "Used"
   },
@@ -5624,9 +5452,7 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "success"
-    ],
+    "legacy": [],
     "references": [],
     "status": "State / extension"
   },
@@ -5663,13 +5489,12 @@
     ],
     "note": "",
     "legacy": [
-      "error",
-      "error"
+      "close-circle"
     ],
     "references": [
       "crates/ui/src/comment_ui.rs:125",
-      "crates/ui/src/composer.rs:5985",
-      "crates/ui/src/composer.rs:6203",
+      "crates/ui/src/composer.rs:5990",
+      "crates/ui/src/composer.rs:6208",
       "crates/ui/src/files/preview.rs:2786"
     ],
     "status": "Used"
@@ -5707,11 +5532,10 @@
     ],
     "note": "",
     "legacy": [
-      "add",
-      "add"
+      "add-circle"
     ],
     "references": [
-      "crates/ui/src/settings/accounts.rs:1410"
+      "crates/ui/src/settings/accounts.rs:1949"
     ],
     "status": "Used"
   },
@@ -5748,18 +5572,16 @@
     ],
     "note": "",
     "legacy": [
-      "warning",
-      "warning"
+      "danger-triangle"
     ],
     "references": [
-      "apps/ios/Zeron/Transcript/TranscriptView.swift:567",
+      "apps/ios/Zeron/Transcript/TranscriptView.swift:570",
       "crates/ui/src/notice.rs:77",
       "crates/ui/src/notice.rs:83",
-      "crates/ui/src/settings/appearance.rs:2542",
-      "crates/ui/src/settings/notifications.rs:279",
-      "crates/ui/src/settings/widgets.rs:474",
-      "crates/ui/src/settings/widgets.rs:504",
-      "crates/ui/src/shell/actions_ui.rs:607"
+      "crates/ui/src/settings/appearance.rs:2124",
+      "crates/ui/src/settings/widgets.rs:1581",
+      "crates/ui/src/settings/widgets.rs:1611",
+      "crates/ui/src/shell/actions_ui.rs:623"
     ],
     "status": "Used"
   },
@@ -5779,14 +5601,9 @@
       }
     ],
     "note": "",
-    "legacy": [
-      "loading"
-    ],
-    "references": [
-      "crates/ui/src/loaders.rs:116",
-      "crates/ui/src/loaders.rs:217"
-    ],
-    "status": "Used"
+    "legacy": [],
+    "references": [],
+    "status": "State / extension"
   },
   {
     "name": "file-tree",
@@ -5832,7 +5649,7 @@
       "file-tree"
     ],
     "references": [
-      "crates/ui/src/shell/tabs.rs:360"
+      "crates/ui/src/shell/tabs.rs:392"
     ],
     "status": "Used"
   },
@@ -5900,10 +5717,8 @@
       }
     ],
     "note": "Draft dots occupy the eventual request route. They join into that route; nodes and trunk stay fixed.",
-    "legacy": [
-      "pull-request-draft"
-    ],
+    "legacy": [],
     "references": [],
-    "status": "State / extension"
+    "status": "Contribution"
   }
 ]
