@@ -1,9 +1,8 @@
-# Native mobile sheet evidence
+# Mobile rows at 15af555a
 
-Branch fix/harness-update-lifecycle, SHA 5d139f8f. Worktree /Users/gaelcado/zeron/work/agent-updates.
-Build: /tmp/pr389-ios-evidence/Build/Products/Debug-iphonesimulator/Zeron.app/Zeron.
-iPhone 17 Pro, iOS 26.3, simulator 21D6E476-0681-4087-845F-0E860E50CCEE. Dark appearance, default text size, demo fixtures.
-Captures: native simctl framebuffer, updates.png (-demo -route updates:dev-mac), devices.png (-demo -sheet devices).
-Build and 2 HarnessUpdatesUITests passed; /tmp/pr389-native-sheet-tests.xcresult.
-Both pane corner masks and toolbar outlines visually inspected.
-Not verified in this iteration: other devices/OS versions, RTL, larger text, slowed motion.
+Source: fix/harness-update-lifecycle at 15af555a, rebased onto bbf590c8.
+Executable: /tmp/pr389-ios-evidence/Build/Products/Debug-iphonesimulator/Zeron.app/Zeron.
+iPhone 17 Pro / iOS 26.3, simulator 4FC55F0A-1A0E-4088-9736-D2CAB560B01A. Dark appearance, default text size, synthetic demo data.
+Native framebuffer captures: -demo -route updates:dev-mac; -demo -sheet devices.
+Both UI tests passed after row sizing correction. The strengthened available-row hittability test also passed. Desktop UI compile passed after rebase; workspace formatting reports unrelated drift.
+Other sizes, RTL and accessibility text sizes not verified in this iteration.
