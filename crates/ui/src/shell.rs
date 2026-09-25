@@ -711,9 +711,35 @@ pub struct ChatPanels {
     /// The surface host portion of the right pane is visible (historically
     /// the Changes pane). The pane itself shows when either portion does.
     pub changes_open: bool,
+    /// Opening order for the smart panel limit. Zero predates an explicit open.
+    terminal_opened_at: u64,
+    changes_opened_at: u64,
     /// Which surface tab renders; validated against the live tab list each
     /// frame (a closed tab falls back gracefully).
     pub right_active: RightSurface,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuxiliaryPanel {
+    Sidebar,
+    Right,
+    Terminal,
+}
+
+/// Choose the oldest visible auxiliary panel, keeping the panel being opened.
+fn smart_panel_victim(
+    max_panels: usize,
+    visible: [(AuxiliaryPanel, bool, u64); 3],
+    keep: Option<AuxiliaryPanel>,
+) -> Option<AuxiliaryPanel> {
+    if 1 + visible.iter().filter(|(_, open, _)| *open).count() <= max_panels {
+        return None;
+    }
+    visible
+        .into_iter()
+        .filter(|(panel, open, _)| *open && Some(*panel) != keep)
+        .min_by_key(|(_, _, opened_at)| *opened_at)
+        .map(|(panel, _, _)| panel)
 }
 
 /// The session-scoped panel map. Keys are chat ids; the new-chat canvas uses
@@ -1721,6 +1747,9 @@ pub struct Shell {
     pub(super) jump_hints: bool,
     /// Lazy panes: no entity (and no RPC) until first opened.
     terminal: Option<Entity<TerminalPanel>>,
+    /// A hidden terminal may still hold window focus until the next frame.
+    /// Transfer it only if no newly opened surface claimed focus first.
+    smart_focus_handoff: Vec<FocusHandle>,
     /// Embedded terminal host for right-pane Terminal surfaces — a SEPARATE
     /// entity from the bottom drawer's (own PTYs, own grid geometry; one
     /// panel can only size one visible grid at a time).
@@ -1885,6 +1914,8 @@ pub struct Shell {
     /// Session-scoped panel open flags (terminal / changes per chat; §1.10-1.11
     /// parity — heights stay in [`UiSettings`]).
     panels: SessionPanels,
+    panel_open_sequence: u64,
+    sidebar_opened_at: u64,
     /// The panel key of the chat currently shown ("" = new-chat canvas).
     active_chat: String,
     /// Last selected session survives opening the blank Appshot destination.
@@ -2176,6 +2207,7 @@ impl Shell {
             sidebar_disclosure_motion: std::collections::HashMap::new(),
             jump_hints: false,
             terminal: None,
+            smart_focus_handoff: Vec::new(),
             right_terminal: None,
             right_plus: popover::Popup::default(),
             project_actions: crate::project_actions::ProjectActionsController::default(),
@@ -2282,6 +2314,8 @@ impl Shell {
             data_dir,
             settings,
             panels: SessionPanels::default(),
+            panel_open_sequence: 0,
+            sidebar_opened_at: 0,
             active_chat: String::new(),
             last_appshot_chat: None,
             sidebar_prev_order: Vec::new(),
@@ -2693,7 +2727,8 @@ impl Shell {
             if let Some(panel) = self.terminal.clone() {
                 panel.update(cx, |panel, cx| panel.set_open(panels.terminal_open, cx));
             }
-            if panels.changes_open
+            self.reconcile_smart_panels(None, cx);
+            if self.panels.get(&self.panel_key(cx)).changes_open
                 && let RightSurface::Diff(id) = self.resolved_right_active(cx)
                 && let Some(changes) = self.diffs.get(&id).cloned()
             {
@@ -2766,18 +2801,95 @@ impl Shell {
         self.panels.get(&self.panel_key(cx)).terminal_open
     }
 
+    fn record_panel_open(&mut self, panel: AuxiliaryPanel, key: &str) {
+        self.panel_open_sequence += 1;
+        let opened_at = self.panel_open_sequence;
+        match panel {
+            AuxiliaryPanel::Sidebar => self.sidebar_opened_at = opened_at,
+            AuxiliaryPanel::Right => self
+                .panels
+                .update(key, |panels| panels.changes_opened_at = opened_at),
+            AuxiliaryPanel::Terminal => self
+                .panels
+                .update(key, |panels| panels.terminal_opened_at = opened_at),
+        }
+    }
+
+    /// Closing a panel only changes visibility. Its size, surface tabs, and
+    /// terminal sessions remain available when the user reopens it.
+    fn reconcile_smart_panels(&mut self, keep: Option<AuxiliaryPanel>, cx: &mut Context<Self>) {
+        if !matches!(self.route, Route::Chat) {
+            return;
+        }
+        let Some(max_panels) = self.settings.panel_behavior.max_panels() else {
+            return;
+        };
+        let key = self.panel_key(cx);
+        loop {
+            let panels = self.panels.get(&key);
+            let victim = smart_panel_victim(
+                max_panels,
+                [
+                    (
+                        AuxiliaryPanel::Sidebar,
+                        !self.settings.sidebar_collapsed,
+                        self.sidebar_opened_at,
+                    ),
+                    (
+                        AuxiliaryPanel::Right,
+                        self.right_pane_open(cx),
+                        panels.changes_opened_at,
+                    ),
+                    (
+                        AuxiliaryPanel::Terminal,
+                        panels.terminal_open,
+                        panels.terminal_opened_at,
+                    ),
+                ],
+                keep,
+            );
+            match victim {
+                Some(AuxiliaryPanel::Sidebar) => self.toggle_sidebar(cx),
+                Some(AuxiliaryPanel::Right) => {
+                    self.toggle_right_pane(cx);
+                    if let Some(panel) = &self.right_terminal {
+                        self.smart_focus_handoff.push(panel.read(cx).focus_handle());
+                    }
+                    if keep.is_none() || keep == Some(AuxiliaryPanel::Sidebar) {
+                        self.composer
+                            .update(cx, |composer, _| composer.focus_pending = true);
+                    }
+                }
+                Some(AuxiliaryPanel::Terminal) => {
+                    self.set_terminal_open(false, &key, cx);
+                    if let Some(panel) = &self.terminal {
+                        self.smart_focus_handoff.push(panel.read(cx).focus_handle());
+                    }
+                    if keep.is_none() || keep == Some(AuxiliaryPanel::Sidebar) {
+                        self.composer
+                            .update(cx, |composer, _| composer.focus_pending = true);
+                    }
+                }
+                None => break,
+            }
+        }
+    }
+
     fn right_target(&self, cx: &App) -> f32 {
+        self.right_target_for_sidebar(cx, self.sidebar_now())
+    }
+
+    fn right_target_for_sidebar(&self, cx: &App, sidebar: f32) -> f32 {
         if !self.right_pane_open(cx) {
             0.0
         } else {
             // Manual sizing preserves a usable conversation column. Takeover
             // intentionally consumes it completely. Both ride the sidebar
             // tween so toggling it remains seamless.
-            let sidebar_now = self.sidebar_now();
             if self.right_pane_expanded {
                 right_pane_takeover_width(
                     self.viewport_width - self.files_reserved_width(cx),
-                    sidebar_now,
+                    sidebar,
                 )
             } else {
                 self.settings
@@ -2796,6 +2908,10 @@ impl Shell {
         self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed;
         self.sidebar_tween = Some(WidthTween::new(from, self.sidebar_target()));
         self.schedule_save(cx);
+        if !self.settings.sidebar_collapsed {
+            self.record_panel_open(AuxiliaryPanel::Sidebar, "");
+            self.reconcile_smart_panels(Some(AuxiliaryPanel::Sidebar), cx);
+        }
         cx.notify();
     }
 
@@ -2838,13 +2954,21 @@ impl Shell {
         let was_expanded = self.right_pane_expanded;
         let key = self.panel_key(cx);
         self.panels.update(&key, |p| p.changes_open = open);
+        if open {
+            self.record_panel_open(AuxiliaryPanel::Right, &key);
+        }
         if !open {
             self.suspend_file_images(cx);
             // Closing always leaves takeover mode — reopening at full bleed
             // with the conversation gone read as a broken chat.
             self.right_pane_expanded = false;
         }
-        let to = self.right_target(cx);
+        if open {
+            self.reconcile_smart_panels(Some(AuxiliaryPanel::Right), cx);
+        }
+        // Smart behavior may have just started closing the sidebar. Target
+        // its final width so the two matching tweens land without a snap.
+        let to = self.right_target_for_sidebar(cx, self.sidebar_target());
         self.right_tween = Some(WidthTween::new(from, to));
         self.right_takeover_content_tween = None;
         self.main_takeover_tween = was_expanded.then(|| {
@@ -3468,12 +3592,8 @@ impl Shell {
             return false;
         };
 
-        let key = self.panel_key(cx);
-        let was_open = self.panels.get(&key).changes_open;
-        let from = self.right_target(cx);
-        self.panels.update(&key, |panel| panel.changes_open = true);
-        if !was_open {
-            self.right_tween = Some(WidthTween::new(from, self.right_target(cx)));
+        if !self.right_pane_open(cx) {
+            self.toggle_right_pane(cx);
         }
         self.add_file_surface_at(
             owner,
@@ -3957,6 +4077,9 @@ impl Shell {
                 panel.changes_open = true;
                 panel.right_active = surface;
             });
+            // The save guard is explicitly revealing this file. Treat the
+            // right pane as the requested opening when the smart cap applies.
+            self.record_panel_open(AuxiliaryPanel::Right, &key);
             self.apply_nav(NavEntry::Chat(key), cx);
         }
     }
@@ -4023,15 +4146,13 @@ impl Shell {
     /// animates 200 ms; closing detaches (PTYs stay alive), opening restores.
     /// The flag is per chat (zeron `sessionPanels`).
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let from = self.terminal_target(cx);
         let key = self.panel_key(cx);
-        let open = self.panels.toggle_terminal(&key);
-        self.terminal_tween = Some(WidthTween::new(from, self.terminal_target(cx)));
-        let panel = self.terminal_panel(cx);
-        panel.update(cx, |panel, cx| panel.set_open(open, cx));
+        let open = !self.panels.get(&key).terminal_open;
+        self.set_terminal_open(open, &key, cx);
         if open {
             self.composer
                 .update(cx, |composer, _| composer.focus_pending = false);
+            let panel = self.terminal_panel(cx);
             panel.update(cx, |panel, cx| panel.request_focus(cx));
             // Opening lands keyboard focus IN the shell — typing goes straight
             // to the prompt, no click needed (zeron terminal-panel.tsx: the
@@ -4047,6 +4168,18 @@ impl Shell {
             // `useHotkey(toggleShortcut, ... setOpenScoped(!open))`.)
             window.focus(&self.composer.focus_handle(cx), cx);
         }
+    }
+
+    fn set_terminal_open(&mut self, open: bool, key: &str, cx: &mut Context<Self>) {
+        let from = self.eval_tween(self.terminal_tween, self.terminal_target(cx));
+        self.panels
+            .update(key, |panels| panels.terminal_open = open);
+        if open {
+            self.record_panel_open(AuxiliaryPanel::Terminal, key);
+        }
+        self.terminal_tween = Some(WidthTween::new(from, self.terminal_target(cx)));
+        let panel = self.terminal_panel(cx);
+        panel.update(cx, |panel, cx| panel.set_open(open, cx));
         self.terminal_tween_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(RESIZE.total().mul_f32(motion::speed_scale()) + Duration::from_millis(30))
@@ -4057,6 +4190,9 @@ impl Shell {
             })
             .ok();
         }));
+        if open {
+            self.reconcile_smart_panels(Some(AuxiliaryPanel::Terminal), cx);
+        }
         cx.notify();
     }
 
@@ -4090,6 +4226,7 @@ impl Shell {
     ) {
         let x = f32::from(event.event.position.x);
         let sample = sidebar_drag_sample(x, self.sidebar_resize_edge, self.reduced_motion);
+        let was_collapsed = self.settings.sidebar_collapsed;
         self.settings.sidebar_width = sample.width;
         self.settings.sidebar_collapsed = false;
         self.pane_resize_dragging = Some(PaneResizeKind::Sidebar);
@@ -4102,6 +4239,10 @@ impl Shell {
         self.pane_resize_active = sample.edge.is_none().then_some(PaneResizeKind::Sidebar);
         self.sidebar_resize_edge = sample.edge;
         self.schedule_save(cx);
+        if was_collapsed {
+            self.record_panel_open(AuxiliaryPanel::Sidebar, "");
+            self.reconcile_smart_panels(Some(AuxiliaryPanel::Sidebar), cx);
+        }
         cx.notify();
     }
 
@@ -4219,6 +4360,7 @@ impl Shell {
         self.settings.transcript_width = current.transcript_width;
         self.settings.skill_completion_by_harness = current.skill_completion_by_harness;
         self.settings.skills_in_slash_menu = current.skills_in_slash_menu;
+        self.settings.panel_behavior = current.panel_behavior;
     }
 
     fn retry_engine(&mut self, cx: &mut Context<Self>) {
@@ -4395,6 +4537,7 @@ impl Shell {
         self.settings_focus_pending = false;
         self.route = Route::Chat;
         self.settings_restore_pending = true;
+        self.reconcile_smart_panels(None, cx);
         cx.notify();
     }
 
@@ -4432,6 +4575,8 @@ impl Shell {
                 let target = (!chat_id.is_empty()).then_some(chat_id);
                 if self.state.read(cx).selected_chat != target {
                     self.state.update(cx, |s, cx| s.select_chat(target, cx));
+                } else {
+                    self.reconcile_smart_panels(None, cx);
                 }
             }
             NavEntry::Settings(section) => {
@@ -4490,6 +4635,12 @@ impl Shell {
                         |this: &mut Shell, _, event: &AppearanceSettingsEvent, cx| match *event {
                             AppearanceSettingsEvent::CodeFontSizeChanged(size) => {
                                 this.set_code_font_size(size, cx);
+                            }
+                            AppearanceSettingsEvent::PanelBehaviorChanged(behavior) => {
+                                this.settings.panel_behavior = behavior;
+                                // Settings replaces the conversation while it is open.
+                                // Apply the new cap when returning to a chat.
+                                cx.notify();
                             }
                         },
                     ));
@@ -11507,6 +11658,18 @@ impl Render for Shell {
         }
 
         self.render_time = Some(std::time::Instant::now());
+        if self
+            .smart_focus_handoff
+            .drain(..)
+            .any(|hidden_focus| hidden_focus.is_focused(window))
+        {
+            let fallback = if matches!(self.route, Route::Chat) {
+                self.composer.focus_handle(cx)
+            } else {
+                self.shortcut_focus.clone()
+            };
+            window.focus(&fallback, cx);
+        }
         if self.all_file_edits_flushed(cx)
             && let Some(action) = self.pending_exit.take()
         {
@@ -13749,6 +13912,11 @@ mod exit_regressions {
             let terminal_size = 15.0 + index as f32;
             let code_size = 11.0 + index as f32;
             let transcript_width = 736.0 + 16.0 * index as f32;
+            let panel_behavior = if index % 2 == 0 {
+                settings::PanelBehavior::Smart2
+            } else {
+                settings::PanelBehavior::Smart4
+            };
             let geometry = Some(settings::WindowGeometry {
                 display_uuid: Some(uuid::Uuid::from_u128(7)),
                 x: 80.0 + index as f32,
@@ -13778,6 +13946,7 @@ mod exit_regressions {
                                 separate_from_slash: true,
                             },
                         );
+                        settings.panel_behavior = panel_behavior;
                     });
                     for step in 0..3 {
                         shell.settings.sidebar_width = 290.0 + step as f32;
@@ -13804,6 +13973,7 @@ mod exit_regressions {
                                 .skill_completion(zeron_proto::HarnessId::ClaudeCode)
                                 .separate_from_slash
                         );
+                        assert_eq!(current.panel_behavior, panel_behavior);
                     }
                     settings::flush(cx);
                     let loaded = settings::UiSettings::load(dir.path());
@@ -13815,6 +13985,7 @@ mod exit_regressions {
                     assert_eq!(loaded.code_font_family, code_family);
                     assert_eq!(loaded.code_font_size, code_size);
                     assert_eq!(loaded.transcript_width, transcript_width);
+                    assert_eq!(loaded.panel_behavior, panel_behavior);
                     assert_eq!(loaded.sidebar_width, 292.0);
                     assert_eq!(loaded.right_pane_width, 542.0);
                     assert_eq!(loaded.terminal_height, 302.0);
@@ -15514,4 +15685,143 @@ impl Shell {
         self.sidebar_new_keys.clear();
         cx.notify();
     }
+}
+
+#[cfg(test)]
+mod smart_panel_rebase_tests {
+    use super::*;
+    use gpui::{AppContext, TestAppContext};
+
+    #[test]
+    fn smart_panel_victim_respects_count_opening_order_and_requested_panel() {
+        use AuxiliaryPanel::{Right, Sidebar, Terminal};
+        let visible = [(Sidebar, true, 1), (Right, true, 3), (Terminal, true, 2)];
+        assert_eq!(smart_panel_victim(4, visible, None), None);
+        assert_eq!(smart_panel_victim(3, visible, None), Some(Sidebar));
+        assert_eq!(
+            smart_panel_victim(2, visible, Some(Sidebar)),
+            Some(Terminal)
+        );
+        assert_eq!(
+            smart_panel_victim(2, visible, Some(Terminal)),
+            Some(Sidebar)
+        );
+        assert_eq!(
+            smart_panel_victim(
+                2,
+                [(Sidebar, false, 1), (Right, true, 3), (Terminal, false, 2)],
+                None
+            ),
+            None
+        );
+    }
+
+    #[gpui::test]
+    fn smart_panels_reconcile_toggles_limits_and_chat_flags(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            crate::history::init(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                cx,
+            );
+            let mut settings = settings::UiSettings::default();
+            settings.panel_behavior = settings::PanelBehavior::Smart2;
+            settings::init(settings, dir.path(), cx);
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            Shell::new(
+                state,
+                EngineBootConfig {
+                    data_dir: dir.path().into(),
+                    ipc_port: 0,
+                    edge_url: "http://127.0.0.1:1".into(),
+                    edge_token: None,
+                    org_id: None,
+                    workos_client_id: None,
+                    default_harness: zeron_proto::HarnessId::Mock,
+                },
+                cx,
+            )
+        });
+        window
+            .update(cx, |shell, window, cx| {
+                shell.active_chat = "a".into();
+                shell.viewport_width = 1000.0;
+                shell.settings.right_pane_width = 520.0;
+                shell.toggle_right_pane(cx);
+                assert!(shell.right_pane_open(cx));
+                assert!(shell.settings.sidebar_collapsed);
+                assert_eq!(shell.right_tween.unwrap().to, 520.0);
+                let end =
+                    shell.right_tween.unwrap().started + RESIZE.total() + Duration::from_millis(1);
+                shell.render_time = Some(end);
+                assert_eq!(shell.right_now(cx), shell.right_target(cx));
+                shell.render_time = None;
+
+                shell.toggle_terminal(window, cx);
+                assert!(shell.terminal_open(cx));
+                assert!(!shell.right_pane_open(cx));
+                let terminal = shell.terminal.clone().unwrap();
+                shell.toggle_right_pane(cx);
+                assert!(shell.right_pane_open(cx));
+                assert!(!shell.terminal_open(cx));
+                assert!(shell.terminal.is_some());
+                assert_eq!(shell.terminal.as_ref().unwrap(), &terminal);
+                assert_eq!(
+                    shell.settings.terminal_height,
+                    settings::TERMINAL_DEFAULT_HEIGHT
+                );
+                assert!(!shell.smart_focus_handoff.is_empty());
+                let _ = shell.render(window, cx);
+                assert!(shell.composer.focus_handle(cx).is_focused(window));
+                let newly_focused_surface = cx.focus_handle();
+                window.focus(&newly_focused_surface, cx);
+                shell
+                    .smart_focus_handoff
+                    .push(terminal.read(cx).focus_handle());
+                let _ = shell.render(window, cx);
+                assert!(newly_focused_surface.is_focused(window));
+
+                shell.panels.update("b", |panels| {
+                    panels.changes_open = true;
+                    panels.terminal_open = true;
+                });
+                shell.record_panel_open(AuxiliaryPanel::Right, "b");
+                shell.record_panel_open(AuxiliaryPanel::Terminal, "b");
+                shell.active_chat = "b".into();
+                shell.reconcile_smart_panels(None, cx);
+                assert!(!shell.panels.get("b").changes_open);
+                assert!(shell.panels.get("b").terminal_open);
+                assert!(shell.panels.get("a").changes_open);
+
+                settings::update(settings::SavePolicy::Immediate, cx, |settings| {
+                    settings.panel_behavior = settings::PanelBehavior::Smart3;
+                });
+                shell.sync_independent_settings(cx);
+                shell
+                    .panels
+                    .update("b", |panels| panels.changes_open = true);
+                shell.record_panel_open(AuxiliaryPanel::Right, "b");
+                shell.open_settings(SettingsSection::Appearance, cx);
+                settings::update(settings::SavePolicy::Immediate, cx, |settings| {
+                    settings.panel_behavior = settings::PanelBehavior::Smart2;
+                });
+                shell.sync_independent_settings(cx);
+                shell.reconcile_smart_panels(None, cx);
+                assert!(shell.panels.get("b").changes_open);
+                shell.close_settings(cx);
+                assert!(shell.panels.get("b").changes_open);
+                assert!(!shell.panels.get("b").terminal_open);
+
+            })
+            .unwrap();
+    }
+
 }

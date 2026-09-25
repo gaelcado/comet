@@ -62,13 +62,18 @@ impl Shell {
         }
 
         let selected = self.active_chat == chat_id;
-        self.panels
-            .update(&chat_id, |panels| panels.terminal_open = true);
+        let was_open = self.panels.get(&chat_id).terminal_open;
         if selected {
-            self.terminal_tween = None;
-            self.terminal_tween_task = None;
-            panel.update(cx, |panel, cx| panel.set_open(true, cx));
+            if !was_open {
+                self.set_terminal_open(true, &chat_id, cx);
+            }
             panel.update(cx, |panel, cx| panel.select_tab_by_key(tab, cx));
+        } else {
+            self.panels
+                .update(&chat_id, |panels| panels.terminal_open = true);
+            if !was_open {
+                self.record_panel_open(AuxiliaryPanel::Terminal, &chat_id);
+            }
         }
         cx.notify();
     }
@@ -441,12 +446,11 @@ impl Shell {
         let tab = panel.update(cx, |panel, cx| {
             panel.reserve_tab_for_chat(context.chat_id.clone(), action.name.clone(), cx)
         });
-        self.panels
-            .update(&context.chat_id, |panels| panels.terminal_open = true);
-        self.terminal_tween = None;
-        self.terminal_tween_task = None;
+        let was_open = self.panels.get(&context.chat_id).terminal_open;
+        if !was_open {
+            self.set_terminal_open(true, &context.chat_id, cx);
+        }
         panel.update(cx, |panel, cx| {
-            panel.set_open(true, cx);
             panel.select_tab_by_key(tab, cx);
         });
 

@@ -53,6 +53,40 @@ pub const TERMINAL_MAX_VH: f32 = 0.55;
 pub const TERMINAL_ABS_MAX_HEIGHT: f32 = 2000.0;
 pub const TERMINAL_DEFAULT_HEIGHT: f32 = 280.0;
 
+/// Maximum visible top-level panels. The conversation always counts as one;
+/// the sidebar, right pane, and bottom terminal share the remaining slots.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PanelBehavior {
+    #[default]
+    Manual,
+    Smart2,
+    Smart3,
+    Smart4,
+}
+
+impl PanelBehavior {
+    pub const ALL: [Self; 4] = [Self::Manual, Self::Smart2, Self::Smart3, Self::Smart4];
+
+    pub const fn max_panels(self) -> Option<usize> {
+        match self {
+            Self::Manual => None,
+            Self::Smart2 => Some(2),
+            Self::Smart3 => Some(3),
+            Self::Smart4 => Some(4),
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "Manual",
+            Self::Smart2 => "2 panels",
+            Self::Smart3 => "3 panels",
+            Self::Smart4 => "4 panels",
+        }
+    }
+}
+
 /// Debounce for settings writes after a drag/toggle.
 pub const SAVE_DEBOUNCE_MS: u64 = 400;
 
@@ -741,6 +775,9 @@ pub struct UiSettings {
     /// compatibility; no longer read or written by the shell.
     pub right_pane_open: bool,
     pub terminal_height: f32,
+    /// When enabled, opening a panel hides the least recently opened other
+    /// panel if the selected cap would be exceeded.
+    pub panel_behavior: PanelBehavior,
     /// Legacy — see [`Self::right_pane_open`].
     pub terminal_open: bool,
     /// Customizable shortcut combos (feature-inventory §1.4).
@@ -857,6 +894,7 @@ impl Default for UiSettings {
             right_pane_width: RIGHT_PANE_DEFAULT,
             right_pane_open: false,
             terminal_height: TERMINAL_DEFAULT_HEIGHT,
+            panel_behavior: PanelBehavior::Manual,
             terminal_open: false,
             keymap: KeymapConfig::default(),
             escape_stops_active_agent: false,
@@ -2204,6 +2242,19 @@ mod tests {
     }
 
     #[test]
+    fn panel_behavior_defaults_to_manual_for_existing_settings() {
+        let legacy: UiSettings = serde_json::from_str(r#"{"sidebarWidth":300}"#).unwrap();
+        assert_eq!(legacy.panel_behavior, PanelBehavior::Manual);
+        for behavior in PanelBehavior::ALL {
+            let mut settings = legacy.clone();
+            settings.panel_behavior = behavior;
+            let restored: UiSettings =
+                serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+            assert_eq!(restored.panel_behavior, behavior);
+        }
+    }
+
+    #[test]
     fn round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let settings = UiSettings {
@@ -2257,6 +2308,7 @@ mod tests {
             right_pane_open: true,
             terminal_height: 320.0,
             terminal_open: true,
+            panel_behavior: PanelBehavior::Smart3,
             keymap: KeymapConfig {
                 toggle_sidebar: "mod-shift-s".into(),
                 ..KeymapConfig::default()
