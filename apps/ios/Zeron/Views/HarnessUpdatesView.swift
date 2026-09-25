@@ -110,7 +110,7 @@ struct HarnessUpdatesView: View {
 
     private var contents: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 12) {
                     Image(systemName: model.devices.first { $0.id == deviceId }?.platform == "macos" ? "laptopcomputer" : "server.rack")
                         .font(.system(size: 20, weight: .regular))
@@ -132,20 +132,25 @@ struct HarnessUpdatesView: View {
                     Spacer(minLength: 8)
                     actionButton("Check for updates", .check, nil)
                 }
+                .padding(.bottom, 12)
                 Divider()
                 if !supported {
                     Text("Update Zeron on this device to manage agent updates.")
                         .foregroundStyle(Theme.textMuted)
+                        .padding(.vertical, 12)
                 } else if !online {
                     Text("Device offline. Updates can be started when it reconnects.")
                         .foregroundStyle(Theme.textMuted)
+                        .padding(.vertical, 12)
                 } else if !updates.connected {
                     Label("Connecting to device…", systemImage: "wifi")
                         .foregroundStyle(Theme.textMuted)
+                        .padding(.vertical, 12)
                 }
                 if let error = updates.error {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(Theme.sans(13)).foregroundStyle(Theme.warning)
+                        .padding(.vertical, 12)
                 }
                 if !updates.statuses.isEmpty {
                     VStack(spacing: 0) {
@@ -164,6 +169,7 @@ struct HarnessUpdatesView: View {
                     .font(Theme.sans(12))
                     .foregroundStyle(Theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 16)
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
@@ -180,11 +186,11 @@ struct HarnessUpdatesView: View {
     }
 
     private func updateRow(_ status: HarnessUpdateStatus) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            HarnessBadge(harness: status.harness, size: 24)
-                .frame(width: 28, height: 44)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                HarnessBadge(harness: status.harness, size: 24)
+                    .frame(width: 28, height: 28)
+                    .accessibilityHidden(true)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
                         agentTitle(status)
@@ -197,6 +203,8 @@ struct HarnessUpdatesView: View {
                         rowAction(status)
                     }
                 }
+            }
+            VStack(alignment: .leading, spacing: 8) {
                 if status.phase != "available" || status.latestVersion == nil {
                     HStack(alignment: .top, spacing: 6) {
                         if status.active {
@@ -223,6 +231,7 @@ struct HarnessUpdatesView: View {
                         .accessibilityLabel(command)
                 }
             }
+            .padding(.leading, 40)
         }
         .padding(.vertical, 12)
     }
@@ -307,17 +316,18 @@ struct DeviceUpdatesList: View {
                     VStack(spacing: 0) {
                         ForEach(model.executionDevices) { device in
                             NavigationLink(value: device.id) {
-                                HStack(spacing: 14) {
+                                HStack(spacing: 12) {
                                     Image(systemName: device.platform == "macos" ? "laptopcomputer" : "server.rack")
-                                        .font(.system(size: 24, weight: .regular))
-                                        .frame(width: 32)
+                                        .font(.system(size: 20, weight: .regular))
+                                        .frame(width: 28, height: 28)
                                         .foregroundStyle(Theme.textMuted)
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(device.name).font(Theme.sans(16, weight: .medium))
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(device.name).font(Theme.sans(15, weight: .semibold))
+                                            .fixedSize(horizontal: false, vertical: true)
                                         HStack(spacing: 6) {
                                             Circle().fill(model.deviceOnline(device.id) ? Theme.statusCompleted : Theme.textFaint)
                                                 .frame(width: 5, height: 5)
-                                            Text(model.deviceOnline(device.id) ? "Online · Agent updates" : "Offline")
+                                            Text(model.deviceOnline(device.id) ? "Online" : "Offline")
                                                 .font(Theme.sans(12)).foregroundStyle(Theme.textMuted)
                                         }
                                     }
@@ -326,14 +336,14 @@ struct DeviceUpdatesList: View {
                                         .font(.system(size: 12, weight: .semibold))
                                         .foregroundStyle(Theme.textFaint)
                                 }
-                                .padding(.vertical, 16)
-                                .padding(.horizontal, 4)
+                                .frame(minHeight: 44)
+                                .padding(.vertical, 12)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("device-updates-\(device.id)")
                             if device.id != model.executionDevices.last?.id {
-                                Divider().padding(.leading, 50).padding(.trailing, 4)
+                                Divider().padding(.leading, 40)
                             }
                         }
                     }
