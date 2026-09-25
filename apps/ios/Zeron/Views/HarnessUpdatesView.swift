@@ -121,26 +121,29 @@ struct HarnessUpdatesView: View {
 
     private var contents: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 12) {
                     Image(systemName: model.devices.first { $0.id == deviceId }?.platform == "macos" ? "laptopcomputer" : "server.rack")
-                        .font(.system(size: 22, weight: .medium))
-                        .frame(width: 32)
+                        .font(.system(size: 20, weight: .regular))
+                        .frame(width: 28)
                         .foregroundStyle(Theme.textMuted)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(model.deviceName(deviceId)).font(Theme.sans(17, weight: .semibold))
+                        Text(model.deviceName(deviceId))
+                            .font(Theme.sans(15, weight: .semibold))
+                            .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 6) {
                             Circle().fill(online ? Theme.statusCompleted : Theme.textFaint)
                                 .frame(width: 5, height: 5)
                                 .accessibilityHidden(true)
                             Text(online ? "Online" : "Offline")
                         }
-                            .font(Theme.sans(12))
-                            .foregroundStyle(Theme.textMuted)
+                        .font(Theme.sans(12))
+                        .foregroundStyle(Theme.textMuted)
                     }
-                    Spacer()
+                    Spacer(minLength: 8)
+                    actionButton("Check for updates", .check, nil)
                 }
-                .padding(.horizontal, 4)
+                Divider()
                 if !supported {
                     Text("Update Zeron on this device to manage agent updates.")
                         .foregroundStyle(Theme.textMuted)
@@ -160,7 +163,7 @@ struct HarnessUpdatesView: View {
                         ForEach(updates.statuses) { status in
                             updateRow(status)
                             if status.id != updates.statuses.last?.id {
-                                Divider().padding(.leading, 48).padding(.trailing, 4)
+                                Divider().padding(.leading, 40)
                             }
                         }
                     }
@@ -168,12 +171,14 @@ struct HarnessUpdatesView: View {
                 if updates.connected, updates.statuses.isEmpty {
                     Text("No enabled agents on this device.")
                 }
-                Text("Updates wait for idle agents and continue after you close this pane.")
+                Text("Updates run when agents are idle, even after you close this pane.")
                     .font(Theme.sans(12))
                     .foregroundStyle(Theme.textMuted)
-                    .padding(.horizontal, 4)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 20)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                 sheetHeight = height + 64
                 onContentHeight?(height + 64)
@@ -183,22 +188,18 @@ struct HarnessUpdatesView: View {
         .containerBackground(.clear, for: .navigation)
         .navigationTitle("Agent updates")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                actionButton("Check for updates", .check, nil)
-            }
-        }
     }
 
     private func updateRow(_ status: HarnessUpdateStatus) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            HarnessBadge(harness: status.harness, size: 26)
-                .frame(width: 32, height: 44)
+            HarnessBadge(harness: status.harness, size: 24)
+                .frame(width: 28, height: 44)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 8) {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
                         agentTitle(status)
+                            .fixedSize(horizontal: true, vertical: false)
                         Spacer(minLength: 8)
                         rowAction(status)
                     }
@@ -220,9 +221,6 @@ struct HarnessUpdatesView: View {
                 .font(Theme.sans(12))
                 .foregroundStyle(status.phase == "failed" ? Theme.warning :
                                  ["updated", "current"].contains(status.phase) ? Theme.statusCompleted : Theme.textMuted)
-                if let fraction = status.progress?.fraction, status.active {
-                    ProgressView(value: fraction).tint(Theme.accent)
-                }
                 if !status.actionable, ["available", "manual-action-required"].contains(status.phase),
                    let command = status.manualCommand {
                     Text(command)
@@ -235,8 +233,7 @@ struct HarnessUpdatesView: View {
                 }
             }
         }
-        .padding(.vertical, 16)
-        .padding(.horizontal, 4)
+        .padding(.vertical, 12)
     }
 
     private func agentTitle(_ status: HarnessUpdateStatus) -> some View {
@@ -247,7 +244,7 @@ struct HarnessUpdatesView: View {
                     .accessibilityLabel("Installed \(installed)")
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
