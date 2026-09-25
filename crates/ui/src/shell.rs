@@ -5726,6 +5726,17 @@ impl Shell {
             )
     }
 
+    fn main_target_width(&self, right_width: f32, cx: &App) -> f32 {
+        // The flex column follows the visible sidebar, not its destination.
+        // Sizing the composer from sidebar_target() made it overflow that
+        // column while the sidebar closed beside an open right pane.
+        conversation_width(
+            self.viewport_width - self.files_reserved_width(cx),
+            self.sidebar_now(),
+            right_width,
+        )
+    }
+
     fn tween_active(&self, tween: Option<WidthTween>) -> bool {
         tween.is_some_and(|tween| {
             !self.reduced_motion
@@ -11938,11 +11949,7 @@ impl Render for Shell {
                 if panel_handoff {
                     self.motion_active.set(true);
                 }
-                let main_target_width = conversation_width(
-                    viewport - self.files_reserved_width(cx),
-                    self.sidebar_target(),
-                    right_target_width,
-                );
+                let main_target_width = self.main_target_width(right_target_width, cx);
                 let main_transition = self.active_tween_endpoints(self.main_takeover_tween);
                 let main_content_width =
                     stable_panel_content_width(main_target_width, main_transition);
@@ -13656,6 +13663,32 @@ mod exit_regressions {
                 shell.sidebar_tween = tween;
                 shell.toggle_sidebar(cx);
                 assert_eq!(shell.sidebar_tween.unwrap().from, width);
+
+                // With the right pane open, the composer must use the live
+                // center column as the sidebar opens and closes, including
+                // frames where the right pane hits its chat-width clamp.
+                let key = shell.panel_key(cx);
+                assert!(shell.panels.toggle_changes(&key));
+                shell.right_tween = None;
+                shell.settings.sidebar_width = 256.0;
+                shell.settings.right_pane_width = 520.0;
+                shell.viewport_width = 1024.0;
+                let started = std::time::Instant::now();
+                for (collapsed, from, to) in [(false, 0.0, 256.0), (true, 256.0, 0.0)] {
+                    shell.settings.sidebar_collapsed = collapsed;
+                    shell.sidebar_tween = Some(WidthTween { from, to, started });
+                    for progress in [0.0, 0.5, 1.0] {
+                        shell.render_time = Some(started + duration.mul_f32(progress));
+                        let sidebar = shell.sidebar_now();
+                        let right = shell.right_now(cx);
+                        let live_column = conversation_width(
+                            shell.viewport_width - shell.files_reserved_width(cx),
+                            sidebar,
+                            right,
+                        );
+                        assert_eq!(shell.main_target_width(right, cx), live_column);
+                    }
+                }
                 shell.render_time = None;
                 assert!(!shell.tween_active(tween));
                 assert_eq!(shell.active_tween_endpoints(tween), None);
