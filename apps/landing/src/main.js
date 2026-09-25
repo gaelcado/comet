@@ -89,7 +89,7 @@ const heroPalette = () => document.documentElement.dataset.theme === 'light'
 const heroField = mountGlyphField(document.querySelector('.page-shell'), {
   ...heroPalette(),
   endElement: document.querySelector('.showcase-frame'),
-  endFraction: 0.75,
+  endFraction: 0.8,
   clearTextElements: [...document.querySelectorAll('.hero h1, .hero .cta-row .text-link, .hero .cta-ver, .used-by p')],
   clearElements: [...document.querySelectorAll('.used-by-logos a')],
   clearFeather: 20,

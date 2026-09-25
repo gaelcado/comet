@@ -238,10 +238,8 @@
     height: .68em;
     margin-inline-end: .24em;
     vertical-align: -.055em;
-    background-color: currentColor;
   }
   .hero-agent:hover { color: var(--ink); }
-  .hero-agent:hover .agent-icon { background-color: var(--purple-hi); }
   .agent-icon-stack { display: inline-flex; align-items: center; margin-inline-end: .28em; vertical-align: -.08em; }
   .stack-icon {
     position: relative;
@@ -259,13 +257,11 @@
     content: "";
     position: absolute;
     inset: 20%;
-    background: var(--dim);
+    background: var(--harness-paint, var(--dim));
+    filter: saturate(.9);
     -webkit-mask: var(--icon) no-repeat center / contain;
     mask: var(--icon) no-repeat center / contain;
   }
-  .hero-agent-more:hover .stack-icon::before { background: var(--purple-hi); }
-  [data-theme="light"] .hero-agent:hover .agent-icon,
-  [data-theme="light"] .hero-agent-more:hover .stack-icon::before { background-color: var(--purple); }
   .hero .cta-row {
     margin-top: 28px;
     display: flex;
@@ -410,15 +406,29 @@
   .screenshot-placeholder.small { aspect-ratio: 907 / 627; border-radius: 12px; }
 
   /* ── agent marks ─────────────────────────────────────── */
+  [data-harness="claude"] { --harness-paint: #d97757; }
+  [data-harness="codex"] { --harness-paint: #10a37f; }
+  [data-harness="grok"] { --harness-paint: #b8c4dc; }
+  [data-harness="hermes"] { --harness-paint: #ffbf00; }
+  [data-harness="pi"] { --harness-paint: #d282b9; }
+  [data-harness="cursor"] { --harness-paint: #d5cfc2; }
+  [data-harness="devin"] { --harness-paint: #6daefa; }
+  [data-harness="opencode"] { --harness-paint: #7bc9ad; }
+  [data-harness="antigravity"] { --harness-paint: linear-gradient(135deg, #4285f4, #ea4335 42%, #fbbc05 68%, #34a853); }
+  [data-theme="light"] [data-harness="grok"] { --harness-paint: #647591; }
+  [data-theme="light"] [data-harness="hermes"] { --harness-paint: #9b7200; }
+  [data-theme="light"] [data-harness="pi"] { --harness-paint: #a14886; }
+  [data-theme="light"] [data-harness="cursor"] { --harness-paint: #675f52; }
+  [data-theme="light"] [data-harness="devin"] { --harness-paint: #2974c0; }
+  [data-theme="light"] [data-harness="opencode"] { --harness-paint: #318269; }
   .agent-icon {
     width: 19px;
     height: 19px;
-    background-color: var(--faint);
-    transition: background-color .2s;
+    background: var(--harness-paint, var(--faint));
+    filter: saturate(.9);
     -webkit-mask: var(--icon) no-repeat center / contain;
     mask: var(--icon) no-repeat center / contain;
   }
-  .agent-icon:hover { background-color: var(--purple-hi); }
 
   /* ── panel (harnesses · gallery · devices) ───────────── */
   /* one bordered frame with corner ticks; cells divide with hairlines
