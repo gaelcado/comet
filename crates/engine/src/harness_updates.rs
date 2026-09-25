@@ -430,7 +430,11 @@ impl HarnessUpdateCoordinator {
         *worker = Some(tokio::spawn(async move {
             let mut retry = FIRST_RETRY;
             loop {
-                let snapshot = coordinator.check_all().await;
+                // Shutdown must not wait out slow probes or registry requests.
+                let snapshot = tokio::select! {
+                    _ = coordinator.inner.shutdown.cancelled() => break,
+                    snapshot = coordinator.check_all() => snapshot,
+                };
                 let failed = snapshot
                     .iter()
                     .any(|status| status.phase == HarnessUpdatePhase::Failed);
@@ -628,7 +632,12 @@ impl HarnessUpdateCoordinator {
                 .map(UpdateCheck::Version),
             LatestSource::Command(args) => {
                 let lease = self.inner.registry.execution_lease(harness).await;
-                let result = run_version_command(&executable, args).await;
+                let result = run_command_output(&executable, args, COMMAND_TIMEOUT)
+                    .await
+                    .and_then(|output| {
+                        extract_latest_version(&output)
+                            .ok_or_else(|| "command returned no recognizable version".into())
+                    });
                 drop(lease);
                 result.map(UpdateCheck::Version)
             }
@@ -1794,12 +1803,22 @@ async fn run_command_output(
     Ok(if stdout.is_empty() { stderr } else { stdout })
 }
 
-fn extract_version(text: &str) -> Option<String> {
+fn version_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|character: char| {
         !(character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '+'))
     })
-    .find(|candidate| version_numbers(candidate).is_some())
+    .filter(|candidate| version_numbers(candidate).is_some())
     .map(|candidate| candidate.trim_start_matches('v').to_owned())
+}
+
+fn extract_version(text: &str) -> Option<String> {
+    version_tokens(text).next()
+}
+
+/// Update checks name the installed release before the candidate
+/// (`available: 1.0.4 -> 1.0.41`), so the release is the final version.
+fn extract_latest_version(text: &str) -> Option<String> {
+    version_tokens(text).last()
 }
 
 fn version_numbers(version: &str) -> Option<Vec<u64>> {
@@ -1842,8 +1861,9 @@ fn version_is_newer(latest: &str, installed: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        LatestSource, activate_codex_release, codex_standalone_install, extract_version,
-        opencode_release_package, provider, validate_codex_package, version_is_newer,
+        LatestSource, activate_codex_release, codex_standalone_install, extract_latest_version,
+        extract_version, opencode_release_package, provider, validate_codex_package,
+        version_is_newer,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1992,6 +2012,71 @@ mod tests {
             Some("1.4.0".into())
         );
         assert_eq!(extract_version("no release here"), None);
+    }
+
+    #[test]
+    fn update_checks_report_the_candidate_after_the_installed_version() {
+        assert_eq!(
+            extract_latest_version(
+                "A new version of Grok Build is available: 1.0.4 -> 1.0.41 [stable]"
+            ),
+            Some("1.0.41".into())
+        );
+        assert_eq!(
+            extract_latest_version("grok 1.0.41 (d846eb93d9) [stable]"),
+            Some("1.0.41".into())
+        );
+        assert_eq!(extract_latest_version("no release here"), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn command_update_check_offers_the_newer_release() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("grok");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\ncase \"$1:$2\" in\n  version:) echo 'grok 1.0.4 (d846eb93d9) [stable]' ;;\n  update:--check) echo 'A new version of Grok Build is available: 1.0.4 -> 1.0.41 [stable]' ;;\n  *) exit 2 ;;\nesac\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let registry = Arc::new(HarnessRegistry::new());
+        registry.register(Arc::new(ExecutableHarness(executable, HarnessId::Grok)));
+        let coordinator = super::HarnessUpdateCoordinator::new(temp.path(), registry);
+        coordinator.check_one(HarnessId::Grok).await.unwrap();
+        let status = coordinator.status(HarnessId::Grok);
+        assert_eq!(status.phase, HarnessUpdatePhase::Available);
+        assert_eq!(status.installed_version.as_deref(), Some("1.0.4"));
+        assert_eq!(status.latest_version.as_deref(), Some("1.0.41"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shutdown_does_not_wait_for_a_slow_periodic_check() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("grok");
+        std::fs::write(&executable, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let registry = Arc::new(HarnessRegistry::new());
+        registry.register(Arc::new(ExecutableHarness(executable, HarnessId::Grok)));
+        let coordinator = super::HarnessUpdateCoordinator::new(temp.path(), registry);
+        let mut watch = coordinator.watch();
+        coordinator.start();
+        // The startup check is now blocked in the CLI's version probe.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while coordinator.status(HarnessId::Grok).phase != HarnessUpdatePhase::Checking
+                || !super::lock(&coordinator.inner.operation_gates).contains_key(&HarnessId::Grok)
+            {
+                watch.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), coordinator.shutdown())
+            .await
+            .expect("shutdown waited for a probe that can take the full command timeout");
     }
 
     #[cfg(unix)]
