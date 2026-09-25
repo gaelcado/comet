@@ -204,6 +204,7 @@ struct HarnessUpdatesView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             VStack(alignment: .leading, spacing: 8) {
                 if status.phase != "available" || status.latestVersion == nil {
                     HStack(alignment: .top, spacing: 6) {
@@ -233,6 +234,7 @@ struct HarnessUpdatesView: View {
             }
             .padding(.leading, 40)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 12)
     }
 

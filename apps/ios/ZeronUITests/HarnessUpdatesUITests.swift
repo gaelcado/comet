@@ -14,7 +14,7 @@ final class HarnessUpdatesUITests: XCTestCase {
 
     func testOfflineFixtureCanCancelRetryAndCompleteUpdates() {
         XCTAssertTrue(app.navigationBars["Agent updates"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Codex"].exists)
+        XCTAssertTrue(app.staticTexts["Codex"].isHittable)
         XCTAssertTrue(app.staticTexts["Claude Code"].exists)
         XCTAssertTrue(app.staticTexts["OpenCode"].exists)
         XCTAssertTrue(app.staticTexts["cursor-agent update"].exists)
