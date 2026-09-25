@@ -36,6 +36,23 @@ systemTheme.addEventListener('change', () => {
 });
 syncThemeButton();
 
+const navDownload = document.getElementById('nav-download');
+const hero = document.querySelector('.hero');
+const nav = document.querySelector('.site-nav');
+let navUpdateQueued = false;
+function syncNavDownload() {
+  navUpdateQueued = false;
+  navDownload.hidden = hero.getBoundingClientRect().bottom > nav.getBoundingClientRect().bottom;
+}
+function queueNavUpdate() {
+  if (navUpdateQueued) return;
+  navUpdateQueued = true;
+  requestAnimationFrame(syncNavDownload);
+}
+addEventListener('scroll', queueNavUpdate, { passive: true });
+addEventListener('resize', queueNavUpdate);
+syncNavDownload();
+
 const showcaseVideo = document.querySelector('.showcase-video');
 if (showcaseVideo) {
   showcaseVideo.muted = true;
