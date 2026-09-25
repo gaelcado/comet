@@ -819,11 +819,20 @@
     position: fixed;
     inset: auto 0 0;
     z-index: 0;
-    display: flex;
-    flex-direction: column;
     height: 55vh;
     height: 55svh;
+    padding: clamp(8px, .9vw, 14px);
     overflow: hidden;
+    background: var(--bg);
+  }
+  .footer-frame {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border: clamp(6px, .7vw, 10px) solid var(--purple);
     background: var(--bg);
   }
   .footer-intro {
