@@ -10,6 +10,21 @@ const quote = document.querySelector('.plate-quote');
 
 if (footer && reveal) {
   gsap.registerPlugin(ScrollTrigger);
+  // Clip the fixed frame to the portion uncovered by the scrolling document.
+  // This also keeps its side border from leaking beside the scrollbar at zoom.
+  const syncFooterClip = () => {
+    const bounds = footer.getBoundingClientRect();
+    const covered = Math.max(0, Math.min(bounds.height, reveal.getBoundingClientRect().top - bounds.top));
+    footer.style.clipPath = `inset(${covered}px 0 0)`;
+  };
+  ScrollTrigger.create({
+    trigger: reveal,
+    start: 'top bottom',
+    end: 'bottom bottom',
+    onUpdate: syncFooterClip,
+    onRefresh: syncFooterClip,
+  });
+  syncFooterClip();
   gsap.matchMedia().add('(prefers-reduced-motion: no-preference)', () => {
     const frame = footer.querySelector('.footer-frame');
     const landscape = footer.querySelector('.footer-landscape');
