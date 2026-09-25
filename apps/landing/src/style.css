@@ -814,7 +814,6 @@
     flex-direction: column;
     height: 100vh;
     height: 100svh;
-    padding-top: var(--nav-height);
     overflow: hidden;
     background: var(--bg);
   }
