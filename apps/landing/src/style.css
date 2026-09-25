@@ -70,24 +70,12 @@
     background: var(--bg);
     scroll-behavior: smooth;
     scroll-padding-top: calc(var(--nav-height) + 24px);
-    /* Reserve the gutter and paint it so the fixed footer cannot show
-       through beside sections that cover the rest of the viewport. */
+    /* Keep page scrolling without a browser-painted gutter beside the frame. */
     overflow-y: scroll;
-    /* clip x here, NOT on body: overflow on body would make it a second
-       scroll container and draw a second scrollbar next to this one */
     overflow-x: hidden;
-    scrollbar-width: thin;
-    scrollbar-color: #2a2140 var(--bg);
+    scrollbar-width: none;
   }
-  ::-webkit-scrollbar { width: 10px; background: var(--bg); }
-  ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb {
-    background: #2a2140;
-    border-radius: 5px;
-    border: 2px solid transparent;
-    background-clip: content-box;
-  }
-  ::-webkit-scrollbar-thumb:hover { background-color: #3d3060; }
+  html::-webkit-scrollbar { display: none; }
   body {
     font-family: var(--sans);
     color: var(--ink);
@@ -817,8 +805,9 @@
   }
   .footer-stage {
     position: fixed;
-    inset: auto 0 0;
+    inset: auto auto 0 0;
     z-index: 0;
+    width: 100vw;
     height: 100vh;
     height: 100svh;
     overflow: hidden;
@@ -834,7 +823,7 @@
     height: 100%;
     overflow: hidden;
     border: solid var(--footer-band);
-    border-width: clamp(6px, .7vw, 10px) clamp(6px, .7vw, 10px) 0;
+    border-width: 0 clamp(6px, .7vw, 10px);
     background: var(--bg);
     opacity: 0;
   }
@@ -849,22 +838,24 @@
     z-index: 1;
     display: grid;
     width: 100%;
-    max-width: 1360px;
-    grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr);
+    max-width: 1800px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: end;
-    gap: clamp(48px, 5vw, 80px);
-    padding-inline: clamp(32px, 3.5vw, 52px);
-    padding-block: clamp(24px, 3vh, 40px);
+    gap: clamp(32px, 5vw, 112px);
+    padding-inline: clamp(28px, 4vw, 72px);
+    padding-block: clamp(18px, 2.8svh, 36px);
   }
   .footer-intro h2 {
-    margin-inline-start: clamp(12px, 2vw, 28px);
+    width: min(100%, 620px);
     font-family: var(--serif);
-    font-size: clamp(48px, 5.7vw, 82px);
+    font-size: clamp(44px, min(5.4vw, 8.2svh), 84px);
     font-weight: 400;
     line-height: 1;
     letter-spacing: -.025em;
+    text-wrap: balance;
+    transform: translateY(clamp(12px, 2.3svh, 30px));
   }
-  .footer-intro-copy { justify-self: end; text-align: right; }
+  .footer-intro-copy { width: min(100%, 620px); justify-self: end; text-align: right; }
   .footer-intro p { color: var(--dim); font-size: 16px; line-height: 1.6; }
   .footer-intro p span { display: block; }
   .footer-intro .cta-row {
@@ -893,7 +884,7 @@
     align-items: center;
     gap: clamp(14px, 2vw, 28px);
     min-height: var(--footer-rail-height);
-    padding-inline: clamp(12px, 1vw, 20px);
+    padding-inline: 0;
     color: #fff;
     background: var(--footer-band);
     font-size: 12px;
@@ -913,8 +904,9 @@
   .footer-bar small { font-size: inherit; white-space: nowrap; }
 
   @media (max-width: 900px) {
+    .footer-frame { grid-template-rows: minmax(300px, 38%) minmax(0, 1fr) auto; }
     .footer-intro { grid-template-columns: 1fr; align-items: start; gap: 22px; }
-    .footer-intro h2 { margin-inline-start: 0; }
+    .footer-intro h2 { transform: none; }
     .footer-intro-copy { justify-self: start; text-align: left; }
     .footer-intro p span { display: inline; }
     .footer-intro .cta-row { justify-content: flex-start; }
@@ -925,9 +917,6 @@
   }
 
   /* Paper edition: the same compositions in their light palette. */
-  [data-theme="light"] { scrollbar-color: #b6adbf var(--bg); }
-  [data-theme="light"] ::-webkit-scrollbar-thumb { background-color: #b6adbf; }
-  [data-theme="light"] ::-webkit-scrollbar-thumb:hover { background-color: #91839f; }
   [data-theme="light"] .btn.ghost:hover { background: rgba(97,64,232,.07); border-color: #ab9bc0; }
   [data-theme="light"] .plate { background: #e9e2da; }
   [data-theme="light"] .showcase-frame::after { box-shadow: inset 0 1px 0 rgba(255,255,255,.8), inset 0 0 0 1px rgba(23,20,29,.1), inset 0 -30px 70px -50px rgba(45,30,70,.38); }
@@ -966,12 +955,12 @@
     .wall { grid-template-columns: 1fr; height: 520px; }
     .wall-col:nth-child(2) { display: none; }
     .dl-list li { grid-template-columns: 100px 1fr auto; }
-    .footer-frame { --footer-rail-height: 64px; grid-template-rows: minmax(270px, 35%) minmax(0, 1fr) auto; }
+    .footer-frame { --footer-rail-height: 64px; grid-template-rows: minmax(300px, 35%) minmax(0, 1fr) auto; }
     .footer-intro { padding-block: 22px; gap: 10px; }
     .footer-intro h2 { font-size: clamp(44px, 10.5vw, 60px); }
     .footer-intro p { font-size: 14px; }
     .footer-intro .cta-row { margin-top: 14px; }
-    .footer-bar { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 2px 8px; padding: 3px 10px; font-size: 11px; }
+    .footer-bar { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 2px 8px; padding: 3px 0; font-size: 11px; }
     .footer-wordmark { width: 68px; }
     .footer-note, .footer-bar small { font-size: 11px; }
     .foot-links { grid-column: 1 / -1; grid-row: 2; justify-self: center; justify-content: center; gap: 8px 14px; }
