@@ -157,6 +157,7 @@ pub struct HarnessesPage {
     /// passthrough). Retargeted by the page-header device switcher.
     target_device: Option<String>,
     device_select: widgets::SelectState,
+    policy_selects: std::collections::HashMap<HarnessId, widgets::SelectState>,
     /// Last refused/failed toggle (engine guards), shown in the error strip.
     error: Option<String>,
     load_task: Option<Task<()>>,
@@ -181,6 +182,7 @@ impl HarnessesPage {
             updates: Loadable::Idle,
             target_device: None,
             device_select: widgets::SelectState::default(),
+            policy_selects: Default::default(),
             error: None,
             load_task: None,
             toggle_task: None,
@@ -306,6 +308,7 @@ impl HarnessesPage {
         }
         self.installing = None;
         self.install_task = None;
+        self.policy_selects.clear();
         self.target_device = target;
         if let Some(accounts) = &self.accounts_page {
             accounts.update(cx, |page, cx| {
@@ -922,32 +925,43 @@ impl HarnessesPage {
                         )
                     })
                     .when_some(update, |el, status| {
-                        let (label, next) = match status.policy {
-                            HarnessUpdatePolicy::Notify => {
-                                ("Updates: Notify", HarnessUpdatePolicy::AutoWhenIdle)
-                            }
-                            HarnessUpdatePolicy::AutoWhenIdle => {
-                                ("Updates: Auto", HarnessUpdatePolicy::Off)
-                            }
-                            HarnessUpdatePolicy::Off => {
-                                ("Updates: Off", HarnessUpdatePolicy::Notify)
-                            }
-                        };
+                        let policies = [
+                            HarnessUpdatePolicy::Notify,
+                            HarnessUpdatePolicy::AutoWhenIdle,
+                            HarnessUpdatePolicy::Off,
+                        ];
+                        let selected = policies
+                            .iter()
+                            .position(|policy| *policy == status.policy)
+                            .unwrap_or(0);
+                        let closed = widgets::SelectState::default();
                         el.child(
-                            div()
-                                .id(("harness-update-policy", ix))
-                                .flex_none()
-                                .px(px(8.0))
-                                .py(px(5.0))
-                                .rounded(px(6.0))
-                                .text_size(crate::typography::ui_rems(10.5))
-                                .text_color(theme.text_muted)
-                                .cursor_pointer()
-                                .hover(|style| style.bg(crate::theme::ink(0.05)))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_update_policy(harness, next, cx)
-                                }))
-                                .child(label),
+                            widgets::select(
+                                format!("harness-update-policy-{ix}"),
+                                "Update policy",
+                                &theme,
+                                move |page: &mut Self| {
+                                    page.policy_selects.entry(harness).or_default()
+                                },
+                            )
+                            .options(
+                                [
+                                    widgets::SelectOption::new("Notify")
+                                        .detail("Install only when you choose Update"),
+                                    widgets::SelectOption::new("Auto when idle")
+                                        .detail("Install automatically after active runs finish"),
+                                    widgets::SelectOption::new("Off")
+                                        .detail("Disable update monitoring"),
+                                ],
+                                selected,
+                            )
+                            .menu_width(300.0)
+                            .on_select(move |page, selected, _, cx| {
+                                if let Some(policy) = policies.get(selected) {
+                                    page.set_update_policy(harness, *policy, cx);
+                                }
+                            })
+                            .render(self.policy_selects.get(&harness).unwrap_or(&closed), cx),
                         )
                     })
                     .when(

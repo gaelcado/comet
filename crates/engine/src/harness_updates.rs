@@ -274,6 +274,12 @@ fn can_apply_update(harness: HarnessId, executable: &Path) -> bool {
     update_plan(harness, executable).is_ok()
 }
 
+struct ActiveUpdate {
+    cancel: CancellationToken,
+    automatic: bool,
+    previous_phase: HarnessUpdatePhase,
+}
+
 struct Inner {
     registry: Arc<HarnessRegistry>,
     order: Vec<HarnessId>,
@@ -281,7 +287,7 @@ struct Inner {
     prefs: Mutex<Preferences>,
     statuses: Mutex<HashMap<HarnessId, HarnessUpdateStatus>>,
     status_tx: watch::Sender<Vec<HarnessUpdateStatus>>,
-    cancellations: Mutex<HashMap<HarnessId, CancellationToken>>,
+    cancellations: Mutex<HashMap<HarnessId, ActiveUpdate>>,
     operation_gates: Mutex<HashMap<HarnessId, Arc<tokio::sync::Mutex<()>>>>,
     check_slots: tokio::sync::Semaphore,
     shutdown: CancellationToken,
@@ -314,7 +320,10 @@ impl Drop for UpdateIntentGuard {
         if self.complete {
             return;
         }
-        lock(&self.coordinator.inner.cancellations).remove(&self.harness);
+        let previous_phase = lock(&self.coordinator.inner.cancellations)
+            .remove(&self.harness)
+            .map(|update| update.previous_phase)
+            .unwrap_or(HarnessUpdatePhase::ManualActionRequired);
         self.coordinator.inner.registry.end_update(self.harness);
         self.coordinator.mutate(self.harness, |status| {
             if matches!(
@@ -330,10 +339,8 @@ impl Drop for UpdateIntentGuard {
             } else {
                 status.phase = if status.policy == HarnessUpdatePolicy::Off {
                     HarnessUpdatePhase::Dormant
-                } else if status.latest_version.is_some() {
-                    HarnessUpdatePhase::Available
                 } else {
-                    HarnessUpdatePhase::ManualActionRequired
+                    previous_phase
                 };
             }
         });
@@ -508,7 +515,7 @@ impl HarnessUpdateCoordinator {
             // A policy change, disable, dismissal, or another update may have
             // won while this task waited for the provider operation slot.
             if coordinator.automatic_update_ready(harness)
-                && let Err(error) = coordinator.apply_locked(harness).await
+                && let Err(error) = coordinator.apply_locked(harness, true).await
             {
                 tracing::warn!(?harness, %error, "automatic harness update failed");
             }
@@ -722,11 +729,11 @@ impl HarnessUpdateCoordinator {
             _ = self.inner.shutdown.cancelled() => return Err("update cancelled".into()),
             operation = self.operation_gate(harness).lock_owned() => operation,
         };
-        self.apply_locked(harness).await
+        self.apply_locked(harness, false).await
     }
 
     /// Caller holds the provider operation lock through verification.
-    async fn apply_locked(&self, harness: HarnessId) -> Result<String, String> {
+    async fn apply_locked(&self, harness: HarnessId, automatic: bool) -> Result<String, String> {
         if self.inner.shutdown.is_cancelled() {
             return Err("update cancelled".into());
         }
@@ -751,7 +758,17 @@ impl HarnessUpdateCoordinator {
             if cancellations.contains_key(&harness) {
                 return Err("an update is already in progress".into());
             }
-            cancellations.insert(harness, cancel.clone());
+            if automatic && self.policy(harness) != HarnessUpdatePolicy::AutoWhenIdle {
+                return Err("update cancelled".into());
+            }
+            cancellations.insert(
+                harness,
+                ActiveUpdate {
+                    cancel: cancel.clone(),
+                    automatic,
+                    previous_phase: current.phase,
+                },
+            );
         }
         self.inner.registry.begin_update(harness);
         let mut intent = UpdateIntentGuard {
@@ -867,7 +884,14 @@ impl HarnessUpdateCoordinator {
     /// Serialize the final cancellation check and installation commit with
     /// `cancel`: once cancellation is accepted, mutation cannot begin.
     fn begin_install(&self, harness: HarnessId, cancel: &CancellationToken) -> Result<(), String> {
-        let _cancellations = lock(&self.inner.cancellations);
+        let cancellations = lock(&self.inner.cancellations);
+        if cancellations
+            .get(&harness)
+            .is_some_and(|update| update.automatic)
+            && self.policy(harness) != HarnessUpdatePolicy::AutoWhenIdle
+        {
+            cancel.cancel();
+        }
         if cancel.is_cancelled() || !self.inner.registry.enabled_set().contains(&harness) {
             return Err("update cancelled".into());
         }
@@ -890,7 +914,7 @@ impl HarnessUpdateCoordinator {
         }
         cancellations
             .get(&harness)
-            .map(|token| token.cancel())
+            .map(|update| update.cancel.cancel())
             .is_some()
     }
 
@@ -922,19 +946,32 @@ impl HarnessUpdateCoordinator {
     ) -> HarnessUpdateStatus {
         let current = self.status(harness);
         let was_applicable = current.phase == HarnessUpdatePhase::Available && current.can_apply;
-        lock(&self.inner.prefs).policies.insert(harness, policy);
-        self.persist_preferences();
-        let mutating = self.is_mutating(harness);
-        if policy == HarnessUpdatePolicy::Off {
-            self.cancel(harness);
-        }
-        self.mutate(harness, |status| {
-            status.policy = policy;
-            if policy == HarnessUpdatePolicy::Off && !mutating {
-                status.phase = HarnessUpdatePhase::Dormant;
-                status.error = None;
+        {
+            // Policy selection and the installation boundary share the same
+            // lock: a queued automatic request cannot outlive opting out.
+            let active = lock(&self.inner.cancellations);
+            lock(&self.inner.prefs).policies.insert(harness, policy);
+            if let Some(update) = active.get(&harness)
+                && (policy == HarnessUpdatePolicy::Off
+                    || (update.automatic && policy != HarnessUpdatePolicy::AutoWhenIdle))
+                && !matches!(
+                    self.status(harness).phase,
+                    HarnessUpdatePhase::Installing
+                        | HarnessUpdatePhase::Verifying
+                        | HarnessUpdatePhase::Updated
+                )
+            {
+                update.cancel.cancel();
             }
-        });
+            self.mutate(harness, |status| {
+                status.policy = policy;
+                if policy == HarnessUpdatePolicy::Off && !active.contains_key(&harness) {
+                    status.phase = HarnessUpdatePhase::Dormant;
+                    status.error = None;
+                }
+            });
+        }
+        self.persist_preferences();
         if policy == HarnessUpdatePolicy::AutoWhenIdle && was_applicable {
             self.schedule_automatic_update(harness);
         } else if policy != HarnessUpdatePolicy::Off {
@@ -963,8 +1000,8 @@ impl HarnessUpdateCoordinator {
 
     pub async fn shutdown(&self) {
         self.inner.shutdown.cancel();
-        for token in lock(&self.inner.cancellations).values() {
-            token.cancel();
+        for update in lock(&self.inner.cancellations).values() {
+            update.cancel.cancel();
         }
         let worker = lock(&self.inner.worker).take();
         if let Some(worker) = worker {
@@ -1371,17 +1408,18 @@ impl HarnessUpdateCoordinator {
     }
 
     fn finish_cancelled(&self, harness: HarnessId) {
-        lock(&self.inner.cancellations).remove(&harness);
+        let previous_phase = lock(&self.inner.cancellations)
+            .remove(&harness)
+            .map(|update| update.previous_phase)
+            .unwrap_or(HarnessUpdatePhase::ManualActionRequired);
         self.inner.registry.end_update(harness);
         let enabled = self.inner.registry.enabled_set().contains(&harness);
         self.mutate(harness, |status| {
             status.progress = None;
             status.phase = if !enabled || status.policy == HarnessUpdatePolicy::Off {
                 HarnessUpdatePhase::Dormant
-            } else if status.latest_version.is_some() {
-                HarnessUpdatePhase::Available
             } else {
-                HarnessUpdatePhase::ManualActionRequired
+                previous_phase
             };
             status.error = None;
         });
@@ -2136,6 +2174,142 @@ esac
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn notify_cancels_waiting_automatic_but_preserves_explicit_updates() {
+        use zeron_proto::HarnessUpdatePolicy;
+        for automatic in [true, false] {
+            let (temp, coordinator) = automatic_fixture();
+            coordinator.check_one(HarnessId::Grok).await.unwrap();
+            let running = coordinator
+                .inner
+                .registry
+                .execution_lease(HarnessId::Grok)
+                .await;
+            let explicit = if automatic {
+                coordinator.set_policy(HarnessId::Grok, HarnessUpdatePolicy::AutoWhenIdle);
+                None
+            } else {
+                // Start explicit work under Auto, without scheduling a
+                // competing automatic task as part of fixture setup.
+                super::lock(&coordinator.inner.prefs)
+                    .policies
+                    .insert(HarnessId::Grok, HarnessUpdatePolicy::AutoWhenIdle);
+                coordinator.mutate(HarnessId::Grok, |status| {
+                    status.policy = HarnessUpdatePolicy::AutoWhenIdle
+                });
+                let update = coordinator.clone();
+                Some(tokio::spawn(
+                    async move { update.apply(HarnessId::Grok).await },
+                ))
+            };
+            wait_for_phase(
+                &coordinator,
+                HarnessId::Grok,
+                HarnessUpdatePhase::WaitingForIdle,
+            )
+            .await;
+            coordinator.set_policy(HarnessId::Grok, HarnessUpdatePolicy::Notify);
+            if automatic {
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while coordinator.inner.registry.update_pending(HarnessId::Grok) {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("Notify cancels without waiting for the active run");
+                wait_for_phase(&coordinator, HarnessId::Grok, HarnessUpdatePhase::Available).await;
+            } else {
+                assert!(
+                    !super::lock(&coordinator.inner.cancellations)[&HarnessId::Grok]
+                        .cancel
+                        .is_cancelled()
+                );
+            }
+            drop(running);
+            if let Some(explicit) = explicit {
+                explicit.await.unwrap().unwrap();
+            }
+            // Wait for every task using the operation gate before observing
+            // the installed version; no timing-based absence assertion.
+            let _operation = coordinator
+                .operation_gate(HarnessId::Grok)
+                .lock_owned()
+                .await;
+            assert_eq!(
+                std::fs::read_to_string(temp.path().join("version")).unwrap(),
+                if automatic { "1.0.0\n" } else { "2.0.0\n" }
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_versionless_available_update_preserves_its_notice() {
+        let (temp, _) = automatic_fixture();
+        let registry = Arc::new(HarnessRegistry::new());
+        registry.register(Arc::new(ExecutableHarness(
+            temp.path().join("agent"),
+            HarnessId::Hermes,
+        )));
+        let coordinator = super::HarnessUpdateCoordinator::new(temp.path(), registry.clone());
+        coordinator.mutate(HarnessId::Hermes, |status| {
+            status.phase = HarnessUpdatePhase::Available;
+            status.latest_version = None;
+            status.can_apply = true;
+        });
+        let running = registry.execution_lease(HarnessId::Hermes).await;
+        let update = coordinator.clone();
+        let apply = tokio::spawn(async move { update.apply(HarnessId::Hermes).await });
+        wait_for_phase(
+            &coordinator,
+            HarnessId::Hermes,
+            HarnessUpdatePhase::WaitingForIdle,
+        )
+        .await;
+        assert!(coordinator.cancel(HarnessId::Hermes));
+        assert_eq!(apply.await.unwrap().unwrap_err(), "update cancelled");
+        let status = coordinator.status(HarnessId::Hermes);
+        assert_eq!(status.phase, HarnessUpdatePhase::Available);
+        assert_eq!(status.latest_version, None);
+        assert!(status.show_update_notice());
+        drop(running);
+    }
+
+    #[tokio::test]
+    async fn automatic_install_boundary_rechecks_policy_for_commands_and_downloads() {
+        use zeron_proto::HarnessUpdatePolicy;
+        let temp = tempfile::tempdir().unwrap();
+        let registry = Arc::new(HarnessRegistry::new());
+        registry.register(Arc::new(ExecutableHarness(
+            temp.path().join("agent"),
+            HarnessId::Grok,
+        )));
+        let coordinator = super::HarnessUpdateCoordinator::new(temp.path(), registry);
+        for phase in [
+            HarnessUpdatePhase::Preparing,
+            HarnessUpdatePhase::Downloading,
+        ] {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            super::lock(&coordinator.inner.cancellations).insert(
+                HarnessId::Grok,
+                super::ActiveUpdate {
+                    cancel: cancel.clone(),
+                    automatic: true,
+                    previous_phase: HarnessUpdatePhase::Available,
+                },
+            );
+            coordinator.mutate(HarnessId::Grok, |status| status.phase = phase);
+            // Simulate a policy change before the final activation boundary.
+            super::lock(&coordinator.inner.prefs)
+                .policies
+                .insert(HarnessId::Grok, HarnessUpdatePolicy::Notify);
+            assert!(coordinator.begin_install(HarnessId::Grok, &cancel).is_err());
+            assert!(cancel.is_cancelled());
+            assert_eq!(coordinator.status(HarnessId::Grok).phase, phase);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn disabling_an_agent_cancels_its_waiting_automatic_update() {
         use zeron_proto::HarnessUpdatePolicy;
         let (temp, coordinator) = automatic_fixture();
@@ -2151,6 +2325,9 @@ esac
             status.can_apply = true;
             status.latest_version = Some("2.0.0".into());
         });
+        super::lock(&coordinator.inner.prefs)
+            .policies
+            .insert(HarnessId::Grok, HarnessUpdatePolicy::AutoWhenIdle);
         coordinator.schedule_automatic_update(HarnessId::Grok);
         wait_for_phase(
             &coordinator,
@@ -2451,7 +2628,14 @@ esac
         ] {
             for ordering in 0..66 {
                 let token = tokio_util::sync::CancellationToken::new();
-                super::lock(&coordinator.inner.cancellations).insert(harness, token.clone());
+                super::lock(&coordinator.inner.cancellations).insert(
+                    harness,
+                    super::ActiveUpdate {
+                        cancel: token.clone(),
+                        automatic: false,
+                        previous_phase: HarnessUpdatePhase::Available,
+                    },
+                );
                 coordinator.mutate(harness, |status| status.phase = phase);
                 let barrier = std::sync::Barrier::new(2);
                 let (cancelled, installed) = match ordering {
@@ -2503,7 +2687,11 @@ esac
         let coordinator = super::HarnessUpdateCoordinator::new(temp.path(), registry);
         super::lock(&coordinator.inner.cancellations).insert(
             HarnessId::ClaudeCode,
-            tokio_util::sync::CancellationToken::new(),
+            super::ActiveUpdate {
+                cancel: tokio_util::sync::CancellationToken::new(),
+                automatic: false,
+                previous_phase: HarnessUpdatePhase::Available,
+            },
         );
         coordinator.mutate(HarnessId::ClaudeCode, |status| {
             status.phase = HarnessUpdatePhase::Installing
