@@ -257,10 +257,8 @@
     content: "";
     position: absolute;
     inset: 20%;
-    background: var(--harness-paint, var(--dim));
-    filter: saturate(.9);
-    -webkit-mask: var(--icon) no-repeat center / contain;
-    mask: var(--icon) no-repeat center / contain;
+    background: var(--icon) no-repeat center / contain;
+    filter: var(--brand-filter, saturate(.9));
   }
   .hero .cta-row {
     margin-top: 28px;
@@ -301,6 +299,9 @@
   .used-by-logos a:is(:hover, :focus-visible)::after { opacity: 0; }
   .used-by-logos a:is(:hover, :focus-visible) img { opacity: 1; }
   [data-theme="light"] .used-by-logos a::after { background-color: var(--dim); }
+  .used-by-logos a[href="https://cursor.com"]::after { display: none; }
+  .used-by-logos a[href="https://cursor.com"] img { opacity: 1; filter: saturate(.9); }
+  [data-theme="light"] .used-by-logos a[href="https://cursor.com"] img { filter: invert(1) saturate(.9); }
   @media (max-width: 900px) {
     .hero-grid { padding-top: 56px; }
   }
@@ -413,28 +414,24 @@
   .screenshot-placeholder.small { aspect-ratio: 907 / 627; border-radius: 12px; }
 
   /* ── agent marks ─────────────────────────────────────── */
-  [data-harness="claude"] { --harness-paint: #d97757; }
-  [data-harness="codex"] { --harness-paint: #10a37f; }
-  [data-harness="grok"] { --harness-paint: #b8c4dc; }
-  [data-harness="hermes"] { --harness-paint: #ffbf00; }
-  [data-harness="pi"] { --harness-paint: #d282b9; }
-  [data-harness="cursor"] { --harness-paint: #d5cfc2; }
-  [data-harness="devin"] { --harness-paint: #6daefa; }
-  [data-harness="opencode"] { --harness-paint: #7bc9ad; }
-  [data-harness="antigravity"] { --harness-paint: linear-gradient(135deg, #4285f4, #ea4335 42%, #fbbc05 68%, #34a853); }
-  [data-theme="light"] [data-harness="grok"] { --harness-paint: #647591; }
-  [data-theme="light"] [data-harness="hermes"] { --harness-paint: #9b7200; }
-  [data-theme="light"] [data-harness="pi"] { --harness-paint: #a14886; }
-  [data-theme="light"] [data-harness="cursor"] { --harness-paint: #675f52; }
-  [data-theme="light"] [data-harness="devin"] { --harness-paint: #2974c0; }
-  [data-theme="light"] [data-harness="opencode"] { --harness-paint: #318269; }
+  /* Brand SVGs retain their own fills, gradients and internal opacity. */
   .agent-icon {
     width: 19px;
     height: 19px;
-    background: var(--harness-paint, var(--faint));
-    filter: saturate(.9);
-    -webkit-mask: var(--icon) no-repeat center / contain;
-    mask: var(--icon) no-repeat center / contain;
+    background: var(--icon) no-repeat center / contain;
+    filter: var(--brand-filter, saturate(.9));
+  }
+  :root:not([data-theme="light"]) [data-harness="codex"],
+  :root:not([data-theme="light"]) [data-harness="grok"],
+  :root:not([data-theme="light"]) [data-harness="cursor"],
+  :root:not([data-theme="light"]) [data-harness="devin"] {
+    --brand-filter: invert(1) saturate(.9);
+  }
+  :root:not([data-theme="light"]) [data-harness="hermes"] {
+    --icon: url('/assets/icons/hermes-mark-dark.svg') !important;
+  }
+  :root:not([data-theme="light"]) [data-harness="opencode"] {
+    --icon: url('/assets/icons/opencode-mark-dark.svg') !important;
   }
 
   /* ── panel (harnesses · gallery · devices) ───────────── */
@@ -894,26 +891,15 @@
     justify-content: flex-start;
   }
   .footer-landscape {
-    --footer-far: url('/assets/art/footer-dark-far.webp');
-    --footer-middle: url('/assets/art/footer-dark-middle.webp');
-    --footer-near: url('/assets/art/footer-dark-near.webp');
+    --footer-far: url('/assets/art/footer-dark-distance-v2.webp');
+    --footer-near: url('/assets/art/footer-dark-foreground-v2.webp');
     position: absolute;
     inset: 0;
     overflow: hidden;
   }
   [data-theme="light"] .footer-landscape {
-    --footer-far: url('/assets/art/footer-light-far.webp');
-    --footer-middle: url('/assets/art/footer-light-middle.webp');
-    --footer-near: url('/assets/art/footer-light-near.webp');
-  }
-  /* The near plane rises during reveal. Keep only its bottom edge underneath
-     so that motion never opens a blank strip above the footer rail. */
-  .footer-landscape::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: var(--footer-near) center / cover no-repeat;
-    clip-path: inset(94% 0 0);
+    --footer-far: url('/assets/art/footer-light-distance-v2.webp');
+    --footer-near: url('/assets/art/footer-light-foreground-v2.webp');
   }
   .footer-plane {
     position: absolute;
@@ -924,7 +910,6 @@
     pointer-events: none;
   }
   .footer-plane--far { background-image: var(--footer-far); }
-  .footer-plane--middle { background-image: var(--footer-middle); }
   .footer-plane--near { background-image: var(--footer-near); }
   .footer-bar {
     position: relative;
@@ -960,7 +945,7 @@
 
   @media (max-width: 900px) {
     .footer-frame { grid-template-rows: minmax(300px, 38%) minmax(0, 1fr) auto; }
-    .footer-plane, .footer-landscape::before { background-position: 70% center; }
+    .footer-plane { background-position: 70% center; }
     .footer-intro { grid-template-columns: 1fr; align-items: start; gap: 22px; }
     .footer-intro h2 { transform: none; }
     .footer-intro-copy { justify-self: start; text-align: left; }
