@@ -11,11 +11,24 @@ const quote = document.querySelector('.plate-quote');
 if (footer && reveal) {
   gsap.registerPlugin(ScrollTrigger);
   gsap.matchMedia().add('(prefers-reduced-motion: no-preference)', () => {
+    const frame = footer.querySelector('.footer-frame');
     const landscape = footer.querySelector('.footer-landscape');
     const sun = footer.querySelector('.footer-plane--sun');
     const far = footer.querySelector('.footer-plane--far');
     const middle = footer.querySelector('.footer-plane--middle');
     const near = footer.querySelector('.footer-plane--near');
+
+    gsap.fromTo(frame, { opacity: 0 }, {
+      opacity: 1,
+      ease: 'none',
+      scrollTrigger: {
+        trigger: reveal,
+        start: 'top bottom',
+        end: 'top 45%',
+        scrub: 0.25,
+        invalidateOnRefresh: true,
+      },
+    });
 
     const timeline = gsap.timeline({
       defaults: { ease: 'power2.out' },

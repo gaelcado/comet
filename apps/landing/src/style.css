@@ -70,17 +70,17 @@
     background: var(--bg);
     scroll-behavior: smooth;
     scroll-padding-top: calc(var(--nav-height) + 24px);
-    /* Always reserve the gutter so content never shifts; the styled
-       transparent track makes the bar read as an overlay on black. */
+    /* Reserve the gutter and paint it so the fixed footer cannot show
+       through beside sections that cover the rest of the viewport. */
     overflow-y: scroll;
     /* clip x here, NOT on body: overflow on body would make it a second
        scroll container and draw a second scrollbar next to this one */
     overflow-x: hidden;
     scrollbar-width: thin;
-    scrollbar-color: #2a2140 transparent;
+    scrollbar-color: #2a2140 var(--bg);
   }
-  ::-webkit-scrollbar { width: 10px; background: transparent; }
-  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar { width: 10px; background: var(--bg); }
+  ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb {
     background: #2a2140;
     border-radius: 5px;
@@ -835,6 +835,7 @@
     border: solid var(--footer-band);
     border-width: clamp(6px, .7vw, 10px) clamp(6px, .7vw, 10px) 0;
     background: var(--bg);
+    opacity: 0;
   }
   .footer-media {
     position: relative;
@@ -862,13 +863,16 @@
     line-height: 1;
     letter-spacing: -.025em;
   }
-  .footer-intro p { max-width: 42ch; color: var(--dim); font-size: 16px; line-height: 1.6; }
+  .footer-intro-copy { justify-self: end; text-align: right; }
+  .footer-intro p { color: var(--dim); font-size: 16px; line-height: 1.6; }
+  .footer-intro p span { display: block; }
   .footer-intro .cta-row {
     margin-top: 26px;
     display: flex;
     align-items: center;
     gap: 12px 20px;
     flex-wrap: wrap;
+    justify-content: flex-end;
   }
   .footer-landscape { position: absolute; inset: 0; overflow: hidden; }
   .footer-plane {
@@ -910,10 +914,17 @@
   @media (max-width: 900px) {
     .footer-intro { grid-template-columns: 1fr; align-items: start; gap: 22px; }
     .footer-intro h2 { margin-inline-start: 0; }
+    .footer-intro-copy { justify-self: start; text-align: left; }
+    .footer-intro p span { display: inline; }
+    .footer-intro .cta-row { justify-content: flex-start; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .footer-frame { opacity: 1; }
   }
 
   /* Paper edition: the same compositions in their light palette. */
-  [data-theme="light"] { scrollbar-color: #b6adbf transparent; }
+  [data-theme="light"] { scrollbar-color: #b6adbf var(--bg); }
   [data-theme="light"] ::-webkit-scrollbar-thumb { background-color: #b6adbf; }
   [data-theme="light"] ::-webkit-scrollbar-thumb:hover { background-color: #91839f; }
   [data-theme="light"] .btn.ghost:hover { background: rgba(97,64,232,.07); border-color: #ab9bc0; }
