@@ -23,8 +23,8 @@ use crate::settings::widgets;
 use crate::state::AppState;
 use crate::theme::Theme;
 
-const PR_PAGE_MAX_WIDTH: f32 = 768.0;
-const PR_PAGE_HORIZONTAL_PADDING: f32 = Theme::SPACE_LG + Theme::SPACE_SM;
+const PR_PAGE_MAX_WIDTH: f32 = 760.0;
+const PR_PAGE_HORIZONTAL_PADDING: f32 = 40.0;
 const PR_TABLE_ROW_HEIGHT: f32 = 64.0;
 const PR_SCROLL_FADE_BAND: f32 = 24.0;
 
@@ -1588,7 +1588,7 @@ fn render_grouped_requests(
         .w_full()
         .flex()
         .flex_col()
-        .gap(px(Theme::SPACE_LG))
+        .gap(px(32.0))
         .children(PullRequestGroup::ALL.into_iter().filter_map(|group| {
             let rows: Vec<_> = items
                 .iter()
@@ -1610,6 +1610,9 @@ fn render_grouped_requests(
             Some(
                 div()
                     .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
                     .child(
                         div()
                             .id(SharedString::from(format!(
@@ -1621,8 +1624,8 @@ fn render_grouped_requests(
                             .aria_label(format!("{}, {} pull requests", group.label(), rows.len()))
                             .aria_expanded(!closed)
                             .tab_index(0)
-                            .min_h(px(32.0))
-                            .px(px(Theme::SPACE_SM))
+                            .min_h(px(24.0))
+                            .px(px(8.0))
                             .flex()
                             .items_center()
                             .gap(px(Theme::SPACE_SM))
@@ -1664,16 +1667,7 @@ fn render_grouped_requests(
                                         gpui::percentage(reveal * 0.25),
                                     )),
                             )
-                            .child(
-                                div()
-                                    .text_size(crate::typography::ui_rems(12.0))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(theme.text)
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .child(group.label()),
-                            )
+                            .child(widgets::section_label(theme, group.label()).px_0())
                             .child(
                                 div()
                                     .text_size(crate::typography::ui_rems(11.0))
@@ -1696,18 +1690,20 @@ fn render_grouped_requests(
                                 .absolute()
                                 .inset_0(),
                             )
-                            .children(rows.into_iter().map(|item| {
-                                div()
-                                    .rounded(px(6.0))
-                                    .when(selected_url == Some(item.url.as_str()), |el| {
-                                        el.bg(theme.glass_hover())
-                                    })
-                                    .child(render_table_row(item, layout, sort_field, theme))
+                            .children(rows.into_iter().enumerate().map(|(index, item)| {
+                                render_table_row(
+                                    item,
+                                    layout,
+                                    sort_field,
+                                    index == 0,
+                                    selected_url == Some(item.url.as_str()),
+                                    theme,
+                                )
                             }));
                         el.child(
-                            div()
+                            widgets::section_card(theme)
+                                .mt_0()
                                 .w_full()
-                                .overflow_hidden()
                                 .when_some(tween, |el, motion| {
                                     el.h(px(motion.current()))
                                         .opacity(0.35 + 0.65 * reveal)
@@ -1727,10 +1723,14 @@ fn render_table_row(
     item: &ChangeRequestListItem,
     layout: PullRequestTableLayout,
     sort_field: PullRequestSortField,
+    first: bool,
+    selected: bool,
     theme: &Theme,
 ) -> AnyElement {
     let url = item.url.clone();
-    let row = div()
+    let row = widgets::card_row(theme, first)
+        .flex_nowrap()
+        .min_w_0()
         .id(SharedString::from(format!(
             "pull-request-row-{}",
             pull_request_key(item)
@@ -1745,17 +1745,12 @@ fn render_table_row(
             status_description(item)
         ))
         .tab_index(0)
-        .w_full()
         .min_h(px(PR_TABLE_ROW_HEIGHT))
-        .py(px(Theme::SPACE_MD))
-        .px(px(Theme::SPACE_SM))
-        .rounded(px(6.0))
-        .border_1()
-        .border_color(gpui::transparent_black())
-        .focus_visible(|style| style.border_color(theme.accent).bg(theme.glass_hover()))
+        .when(selected, |el| el.bg(theme.glass_hover()))
+        .focus_visible(|style| style.bg(theme.accent.opacity(0.12)))
         .flex_none()
         .cursor_pointer()
-        .hover(|style| style.bg(crate::theme::ink(0.035)))
+        .hover(|style| style.bg(theme.glass_hover()))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             crate::pull_request_detail::open(&url, window, cx);
@@ -1790,6 +1785,7 @@ fn render_table_row(
     if layout == PullRequestTableLayout::Narrow {
         row.flex()
             .flex_col()
+            .items_stretch()
             .gap(px(Theme::SPACE_SM))
             .child(render_pr_identity(item, theme))
             .child(
@@ -2234,6 +2230,8 @@ mod tests {
                 &self.item,
                 table_layout(width),
                 PullRequestSortField::Updated,
+                true,
+                false,
                 Theme::of(cx),
             ))
         }
@@ -2658,7 +2656,7 @@ mod tests {
                 title.size.width > px(120.0),
                 "statuses squeezed title at {width}"
             );
-            assert!(title.right() <= row.right(), "title overflow at {width}");
+            assert!(title.right() <= row.right(), "title overflow at {width}: row={row:?}, title={title:?}");
             cx.simulate_mouse_move(title.center(), None, gpui::Modifiers::default());
             cx.run_until_parked();
             assert_eq!(
@@ -2796,8 +2794,8 @@ mod tests {
         cx.simulate_resize(gpui::size(px(1200.0), px(800.0)));
         cx.run_until_parked();
         let column = cx.debug_bounds("pull-requests-column").unwrap();
-        assert_eq!(column.size.width, px(768.0));
-        assert_eq!(column.left(), px(216.0));
+        assert_eq!(column.size.width, px(760.0));
+        assert_eq!(column.left(), px(220.0));
     }
 
     #[test]
@@ -2926,11 +2924,11 @@ mod tests {
         assert_eq!(table_layout(899.0), PullRequestTableLayout::Compact);
         assert_eq!(table_layout(900.0), PullRequestTableLayout::Wide);
         assert_eq!(
-            table_layout(table_content_width(687.0)),
+            table_layout(table_content_width(719.0)),
             PullRequestTableLayout::Narrow
         );
         assert_eq!(
-            table_layout(table_content_width(688.0)),
+            table_layout(table_content_width(720.0)),
             PullRequestTableLayout::Compact
         );
         assert_eq!(

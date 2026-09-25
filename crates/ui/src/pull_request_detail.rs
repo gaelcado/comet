@@ -895,21 +895,7 @@ fn status_chip(raw: &str, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-fn section_heading(label: &str, glyph: &'static str, theme: &Theme) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(8.0))
-        .child(
-            crate::icons::icon(glyph)
-                .size(px(16.0))
-                .text_color(theme.text_muted),
-        )
-        .child(widgets::row_title(theme, label))
-        .into_any_element()
-}
-
-fn field(label: &str, value: String, theme: &Theme) -> AnyElement {
+fn field(label: &str, value: String, first: bool, theme: &Theme) -> AnyElement {
     let content = if matches!(label, "Status" | "Review") {
         status_chip(&value, theme)
     } else if label == "Changes" {
@@ -936,25 +922,19 @@ fn field(label: &str, value: String, theme: &Theme) -> AnyElement {
             .child(value)
             .into_any_element()
     };
-    div()
-        .flex()
-        .items_start()
-        .gap(px(12.0))
-        .py(px(6.0))
+    widgets::card_row(theme, first)
         .child(
             div()
                 .w(px(80.0))
                 .flex_none()
                 .flex()
                 .items_center()
-                .gap(px(8.0))
-                .text_color(theme.text_muted)
-                .child(SharedString::from(label.to_owned())),
+                .child(widgets::row_title(theme, label)),
         )
         .child(
             div()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(120.0))
                 .flex()
                 .items_center()
                 .child(content),
@@ -977,8 +957,7 @@ impl Render for PullRequestDetailPage {
         let content = {
             let mut column = widgets::page_column()
                 .id("pr-content-column").debug_selector(|| "pr-content-column".into())
-                .max_w(px(768.0))
-                .px(px(24.0))
+                .max_w(px(760.0))
                 .when(self.tab == Tab::Code, |el| el.h_full().min_h_0())
                 .pt(px(24.0))
                 .pb(px(if self.tab == Tab::Activity {
@@ -1004,6 +983,7 @@ impl Render for PullRequestDetailPage {
                         div()
                             .flex_none()
                             .mb(px(12.0))
+                            .px(px(8.0))
                             .text_size(crate::typography::ui_rems(12.0))
                             .flex()
                             .flex_wrap()
@@ -1040,21 +1020,32 @@ impl Render for PullRequestDetailPage {
                                     .child(format!("{repository} · #{}", detail.number)),
                             ),
                     )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(crate::typography::ui_rems(22.0))
-                            .line_height(px(30.0))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(detail.title.clone()),
-                    )
-                    .when(self.tab == Tab::Summary, |el| {
+                    .child(widgets::page_header(&theme, &detail.title, None))
+                    .when_some(self.fetched.filter(|_| self.tab != Tab::Code), |el, fetched| {
+                        let age = if fetched.elapsed().as_secs() < 60 {
+                            "just now".into()
+                        } else {
+                            format!("{}m ago", fetched.elapsed().as_secs() / 60)
+                        };
                         el.child(
                             div()
-                                .mt(px(24.0))
+                                .mt(px(12.0))
+                                .px(px(8.0))
+                                .text_size(px(11.0))
+                                .text_color(theme.text_muted)
+                                .child(format!("Loaded {age} · Refresh to check for changes")),
+                        )
+                    })
+                    .when(self.tab == Tab::Summary, |el| {
+                        el.child(widgets::section(
+                            &theme,
+                            "Overview",
+                            widgets::section_card(&theme)
+                                .mt_0()
                                 .child(field(
                                     "Branch",
                                     format!("{} → {}", detail.head_ref_name, detail.base_ref_name),
+                                    true,
                                     &theme,
                                 ))
                                 .child(field(
@@ -1064,6 +1055,7 @@ impl Render for PullRequestDetailPage {
                                     } else {
                                         detail.state.clone()
                                     },
+                                    false,
                                     &theme,
                                 ))
                                 .child(field(
@@ -1073,6 +1065,7 @@ impl Render for PullRequestDetailPage {
                                     } else {
                                         detail.review_decision.replace('_', " ").to_lowercase()
                                     },
+                                    false,
                                     &theme,
                                 ))
                                 .child(field(
@@ -1083,60 +1076,48 @@ impl Render for PullRequestDetailPage {
                                         detail.additions,
                                         detail.deletions
                                     ),
+                                    false,
                                     &theme,
                                 )),
-                        )
+                        ))
                     });
-                if let Some(fetched) = self.fetched.filter(|_| self.tab != Tab::Code) {
-                    let age = if fetched.elapsed().as_secs() < 60 {
-                        "just now".into()
-                    } else {
-                        format!("{}m ago", fetched.elapsed().as_secs() / 60)
-                    };
-                    column = column.child(
-                        div()
-                            .mt(px(12.0))
-                            .text_size(px(11.0))
-                            .text_color(theme.text_muted)
-                            .child(format!("Loaded {age} · Refresh to check for changes")),
-                    );
-                }
-                column = column.child(div().flex_none().h(px(20.0)));
                 match self.tab {
                     Tab::Summary => {
-                        column = column.child(section_heading(
-                            "Description",
-                            crate::icons::DOCUMENT,
-                            &theme,
-                        ));
-                        if detail.body.is_empty() {
-                            column = column.child(
-                                div()
-                                    .mt(px(12.0))
-                                    .text_color(theme.text_muted)
-                                    .child("No description provided."),
+                        let description = div()
+                            .p(px(16.0))
+                            .min_h(px(60.0))
+                            .when(detail.body.is_empty(), |el| {
+                                el.text_color(theme.text_muted)
+                                    .child("No description provided.")
+                            })
+                            .when_some(
+                                self.body.as_ref().filter(|_| !detail.body.is_empty()),
+                                |el, body| {
+                                    el.child(rich_text(
+                                        body,
+                                        "pr-description".into(),
+                                        &self.url,
+                                        &theme,
+                                        window,
+                                        cx.weak_entity(),
+                                    ))
+                                },
                             );
-                        } else if let Some(body) = &self.body {
-                            column = column.child(div().mt(px(12.0)).child(rich_text(
-                                body,
-                                "pr-description".into(),
-                                &self.url,
-                                &theme,
-                                window,
-                                cx.weak_entity(),
-                            )));
-                        }
+                        column = column.child(widgets::section(
+                            &theme,
+                            "Description",
+                            widgets::section_card(&theme).mt_0().child(description),
+                        ));
                     }
                     Tab::Checks => {
-                        column = column.child(div().child(section_heading(
-                            "Checks",
-                            crate::icons::CHECKLIST,
-                            &theme,
-                        )));
+                        let mut checks = widgets::section_card(&theme)
+                            .mt_0()
+                            .id("pr-checks-card")
+                            .debug_selector(|| "pr-checks-card".into());
                         if detail.status_check_rollup.is_empty() {
-                            column = column.child(
+                            checks = checks.child(
                                 div()
-                                    .mt(px(12.0))
+                                    .p(px(16.0))
                                     .text_color(theme.text_muted)
                                     .child("No checks reported."),
                             );
@@ -1158,19 +1139,10 @@ impl Render for PullRequestDetailPage {
                                 &check.details_url
                             }
                             .clone();
-                            column = column.child(
-                                div()
+                            checks = checks.child(
+                                widgets::card_row(&theme, index == 0)
                                     .id(SharedString::from(format!("pr-check-{index}")))
                                     .debug_selector(move || format!("pr-check-{index}"))
-                                    .mt(px(if index == 0 { 12.0 } else { 4.0 }))
-                                    .mx(px(-12.0))
-                                    .px(px(12.0))
-                                    .min_h(px(40.0))
-                                    .py(px(6.0))
-                                    .flex()
-                                    .flex_wrap()
-                                    .items_center()
-                                    .gap(px(8.0))
                                     .child(div()
                                         .id(SharedString::from(format!("pr-check-name-{index}")))
                                         .debug_selector(move || format!("pr-check-name-{index}"))
@@ -1188,6 +1160,7 @@ impl Render for PullRequestDetailPage {
                                     }),
                             );
                         }
+                        column = column.child(widgets::section(&theme, "Checks", checks));
                     }
                     Tab::Code => {
                         if let Some(error) = &self.diff_error {
@@ -1974,7 +1947,9 @@ mod tests {
         page.read_with(cx, |page, _| assert!(page.tab == Tab::Checks));
         let check = cx.debug_bounds("pr-check-0").unwrap();
         let check_name = cx.debug_bounds("pr-check-name-0").unwrap();
-        assert_eq!(check_name.left() - check.left(), px(12.0), "hover surface must inset its label");
+        let card = cx.debug_bounds("pr-checks-card").unwrap();
+        assert_eq!(check.left() - card.left(), px(16.0));
+        assert_eq!(check_name.left(), check.left());
         assert!(check_name.top() > check.top() && check_name.bottom() < check.bottom());
         let code = cx.debug_bounds("pr-code").unwrap();
         cx.simulate_mouse_down(
@@ -2060,8 +2035,8 @@ mod tests {
             let nav = cx.debug_bounds("pr-detail-nav").unwrap();
             let mine = cx.debug_bounds("pr-message-0").unwrap();
             let other = cx.debug_bounds("pr-message-1").unwrap();
-            assert_eq!(composer.left(), column.left() + px(24.0));
-            assert_eq!(composer.right(), column.right() - px(24.0));
+            assert_eq!(composer.left(), column.left() + px(40.0));
+            assert_eq!(composer.right(), column.right() - px(40.0));
             assert_eq!(nav.center().x, composer.center().x);
             assert_eq!(mine.right(), composer.right());
             assert_eq!(other.left(), composer.left());

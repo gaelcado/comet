@@ -256,7 +256,7 @@ impl PullRequestDetailPage {
             .right_0()
             .flex()
             .justify_center()
-            .child(div().w_full().max_w(px(768.0)).px(px(24.0)).child(stack))
+            .child(div().w_full().max_w(px(760.0)).px(px(40.0)).child(stack))
             .into_any_element()
     }
 
