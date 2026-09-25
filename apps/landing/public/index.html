@@ -19,6 +19,9 @@
   })();
 </script>
 <script defer src="/telemetry.js"></script>
+<script defer src="/vendor/gsap.min.js"></script>
+<script defer src="/vendor/ScrollTrigger.min.js"></script>
+<script defer src="/footer-motion.js"></script>
 <style>
   @font-face {
     font-family: "Geist";
@@ -667,7 +670,15 @@
     font-size: 14px;
   }
   .dl-name { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; }
-  .platform-icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .platform-icon {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    background: currentColor;
+    -webkit-mask: var(--platform-icon) no-repeat center / contain;
+    mask: var(--platform-icon) no-repeat center / contain;
+  }
   .dl-meta { font-size: 13px; color: var(--faint); white-space: nowrap; }
   .dl-list .btn.ghost[aria-disabled="true"] {
     opacity: .4;
@@ -760,8 +771,7 @@
     .footer-intro { grid-template-columns: 1fr; align-items: start; gap: 22px; }
   }
 
-  /* Paper edition: same structure, with the supplied light art and the
-     engraved dark companions. */
+  /* Paper edition: the same compositions in their light palette. */
   [data-theme="light"] { scrollbar-color: #b6adbf transparent; }
   [data-theme="light"] ::-webkit-scrollbar-thumb { background-color: #b6adbf; }
   [data-theme="light"] ::-webkit-scrollbar-thumb:hover { background-color: #91839f; }
@@ -784,15 +794,24 @@
     display: block;
     position: absolute;
     top: 0;
-    right: 0;
-    width: min(52%, 900px);
+    right: -3%;
+    width: min(47%, 760px);
     height: 100%;
     object-fit: cover;
     object-position: 70% 54%;
-    opacity: .22;
+    opacity: .18;
     filter: saturate(.7);
-    -webkit-mask-image: radial-gradient(ellipse at 75% 52%, #000 8%, transparent 76%);
-    mask-image: radial-gradient(ellipse at 75% 52%, #000 8%, transparent 76%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 35%, #000 100%);
+    mask-image: linear-gradient(to right, transparent 0%, transparent 35%, #000 100%);
+  }
+  [data-theme="light"] .hero-copy { position: relative; }
+  [data-theme="light"] .hero-copy::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: -60px -80px;
+    background: radial-gradient(ellipse at 50% 42%, var(--bg) 28%, rgba(247,244,238,.92) 52%, transparent 76%);
+    pointer-events: none;
   }
   [data-theme="light"] .footer-landscape::after { background: linear-gradient(to bottom, var(--bg), transparent 22%, transparent 56%, var(--bg)); }
 
@@ -804,6 +823,8 @@
     .hero-grid { padding: 36px 20px 32px; }
     .hero-grid { text-align: left; }
     .hero-copy { margin: 0; }
+    [data-theme="light"] .hero-art { display: none; }
+    [data-theme="light"] .hero-copy::before { display: none; }
     .hero .cta-row, .used-by-logos { justify-content: flex-start; }
     .agent-icon { width: 20px; height: 20px; }
     .shot { padding: 28px 0 0; }
@@ -1145,12 +1166,6 @@
 
 
   <section class="downloads" aria-labelledby="downloads-title">
-    <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
-      <symbol id="platform-mac" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 20h8m-4-3v3"/></symbol>
-      <symbol id="platform-windows" viewBox="0 0 24 24"><path d="m3 5 7-1v7H3Zm9-1.3L21 2v9h-9ZM3 13h7v7l-7-1Zm9 0h9v9l-9-1.7Z"/></symbol>
-      <symbol id="platform-linux" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
-      <symbol id="platform-ios" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18.5h2"/></symbol>
-    </svg>
     <div class="wrap" id="downloads">
       <header class="sec-head">
         <p id="downloads-title"><b>Download Zeron.</b> Available for macOS, Windows and Linux. iOS is on the way.</p>
@@ -1159,16 +1174,16 @@
         <div>
           <h3>Zeron for desktop</h3>
           <ul class="dl-list">
-            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-mac"/></svg>macOS</span><span class="dl-meta">Apple silicon · dmg</span><a class="btn ghost small" data-platform-download="macos" href="https://zeron.sh/releases/zeron-0.2.66-macos-arm64.dmg">Download</a></li>
-            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-windows"/></svg>Windows</span><span class="dl-meta">x64 · portable zip</span><a class="btn ghost small" data-platform-download="windows" href="https://zeron.sh/releases/zeron-0.2.66-windows-x86_64.zip">Download</a></li>
-            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-linux"/></svg>Linux</span><span class="dl-meta">x64 · tar.gz</span><a class="btn ghost small" data-platform-download="linux" href="https://zeron.sh/releases/zeron-0.2.66-linux-x86_64.tar.gz">Download</a></li>
-            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-linux"/></svg>Linux</span><span class="dl-meta">arm64 · tar.gz</span><a class="btn ghost small" data-platform-download="linux-arm" href="https://zeron.sh/releases/zeron-0.2.66-linux-aarch64.tar.gz">Download</a></li>
+            <li><span class="dl-name"><span class="platform-icon" aria-hidden="true" style="--platform-icon:url('/assets/icons/apple.svg')"></span>macOS</span><span class="dl-meta">Apple silicon · dmg</span><a class="btn ghost small" data-platform-download="macos" href="https://zeron.sh/releases/zeron-0.2.66-macos-arm64.dmg">Download</a></li>
+            <li><span class="dl-name"><span class="platform-icon" aria-hidden="true" style="--platform-icon:url('/assets/icons/windows.svg')"></span>Windows</span><span class="dl-meta">x64 · portable zip</span><a class="btn ghost small" data-platform-download="windows" href="https://zeron.sh/releases/zeron-0.2.66-windows-x86_64.zip">Download</a></li>
+            <li><span class="dl-name"><span class="platform-icon" aria-hidden="true" style="--platform-icon:url('/assets/icons/linux.svg')"></span>Linux</span><span class="dl-meta">x64 · tar.gz</span><a class="btn ghost small" data-platform-download="linux" href="https://zeron.sh/releases/zeron-0.2.66-linux-x86_64.tar.gz">Download</a></li>
+            <li><span class="dl-name"><span class="platform-icon" aria-hidden="true" style="--platform-icon:url('/assets/icons/linux.svg')"></span>Linux</span><span class="dl-meta">arm64 · tar.gz</span><a class="btn ghost small" data-platform-download="linux-arm" href="https://zeron.sh/releases/zeron-0.2.66-linux-aarch64.tar.gz">Download</a></li>
           </ul>
         </div>
         <div>
           <h3>Zeron for mobile</h3>
           <ul class="dl-list">
-            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-ios"/></svg>iOS</span><span class="dl-meta">Coming soon</span><span class="btn ghost small" role="link" aria-disabled="true">App Store ↗</span></li>
+            <li><span class="dl-name"><span class="platform-icon" aria-hidden="true" style="--platform-icon:url('/assets/icons/apple.svg')"></span>iOS</span><span class="dl-meta">Coming soon</span><span class="btn ghost small" role="link" aria-disabled="true">App Store ↗</span></li>
           </ul>
         </div>
       </div>
@@ -1190,7 +1205,7 @@
       </div>
     </div>
     <div class="footer-landscape" aria-hidden="true">
-      <img class="dark" src="/assets/art/footer-dark-signal.webp" alt="" width="1536" height="1024" loading="lazy" decoding="async" />
+      <img class="dark" src="/assets/art/footer-mountains-dark.webp" alt="" width="1672" height="941" loading="lazy" decoding="async" />
       <img class="light" src="/assets/art/footer-mountains-light.webp" alt="" width="1672" height="941" loading="lazy" decoding="async" />
     </div>
     <div class="wrap footer-inner">
