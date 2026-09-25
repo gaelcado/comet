@@ -1,11 +1,10 @@
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
-// The page scrolls away to uncover a stationary footer below the CTA prelude.
+// The page scrolls away to uncover one framed, viewport-sized footer.
 // Four source-aligned cutouts move independently as the footer is uncovered.
 const footer = document.querySelector('.footer-stage');
 const reveal = document.querySelector('.footer-reveal-space');
-const prelude = document.querySelector('.footer-intro-section');
 const nav = document.querySelector('.site-nav');
 const quote = document.querySelector('.plate-quote');
 
@@ -56,9 +55,9 @@ if (footer && reveal) {
       autoAlpha: 0,
       ease: 'none',
       scrollTrigger: {
-        trigger: prelude,
-        start: 'top 75%',
-        end: 'top top',
+        trigger: reveal,
+        start: 'top 70%',
+        end: 'top 45%',
         scrub: 0.35,
         invalidateOnRefresh: true,
       },
@@ -66,8 +65,8 @@ if (footer && reveal) {
   });
   gsap.matchMedia().add('(prefers-reduced-motion: reduce)', () => {
     ScrollTrigger.create({
-      trigger: prelude,
-      start: 'top top',
+      trigger: reveal,
+      start: 'top 45%',
       onEnter: () => gsap.set(nav, { autoAlpha: 0 }),
       onLeaveBack: () => gsap.set(nav, { autoAlpha: 1 }),
     });
