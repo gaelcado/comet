@@ -235,6 +235,8 @@
     text-wrap: balance;
   }
   .hero h1 b { display: block; font-weight: 600; color: var(--ink); }
+  .hero-agent { display: inline-flex; align-items: center; gap: .28em; white-space: nowrap; }
+  .hero-agent .agent-icon { display: inline-block; width: .78em; height: .78em; flex: 0 0 auto; background-color: currentColor; }
   .hero .cta-row {
     margin-top: 28px;
     display: flex;
@@ -355,15 +357,7 @@
   }
   .screenshot-placeholder.small { aspect-ratio: 907 / 627; border-radius: 12px; box-shadow: none; }
 
-  /* ── agents ──────────────────────────────────────────── */
-  .agents {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 26px;
-    margin-bottom: 32px;
-    flex-wrap: wrap;
-  }
+  /* ── agent marks ─────────────────────────────────────── */
   .agent-icon {
     width: 22px;
     height: 22px;
@@ -585,8 +579,8 @@
   .plate-quote p {
     margin: 0 auto;
     max-width: 24ch;
-    font-family: var(--sans);
-    font-weight: 500;
+    font-family: var(--serif);
+    font-weight: 400;
     font-size: clamp(26px, 3.2vw, 44px);
     line-height: 1.12;
     letter-spacing: -0.01em;
@@ -665,14 +659,15 @@
   .dl-list { list-style: none; border-top: 1px solid var(--line-soft); }
   .dl-list li {
     display: grid;
-    grid-template-columns: 84px 1fr auto;
+    grid-template-columns: 112px 1fr auto;
     align-items: center;
     gap: 12px;
     padding: 12px 0;
     border-bottom: 1px solid var(--line-soft);
     font-size: 14px;
   }
-  .dl-name { font-weight: 600; }
+  .dl-name { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; }
+  .platform-icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .dl-meta { font-size: 13px; color: var(--faint); white-space: nowrap; }
   .dl-list .btn.ghost[aria-disabled="true"] {
     opacity: .4;
@@ -687,21 +682,32 @@
   }
 
   /* ── footer ──────────────────────────────────────────── */
-  .footer-stage { overflow: hidden; background: var(--bg); }
+  .footer-stage {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100svh;
+    min-height: 640px;
+    overflow: hidden;
+    background: var(--bg);
+  }
   .footer-intro {
+    position: relative;
+    z-index: 1;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, .8fr);
     align-items: end;
     gap: clamp(32px, 7vw, 110px);
-    padding-top: clamp(90px, 10vw, 150px);
-    padding-bottom: clamp(68px, 8vw, 112px);
+    padding-top: clamp(36px, 6vh, 76px);
+    padding-bottom: 0;
   }
   .footer-intro h2 {
-    font-family: var(--sans);
-    font-size: clamp(42px, 5.1vw, 74px);
-    font-weight: 500;
-    line-height: 1.06;
-    letter-spacing: -.04em;
+    font-family: var(--serif);
+    font-size: clamp(48px, 6vw, 86px);
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: -.025em;
   }
   .footer-intro p { max-width: 42ch; color: var(--dim); font-size: 16px; line-height: 1.6; }
   .footer-intro .cta-row {
@@ -711,13 +717,13 @@
     gap: 12px 20px;
     flex-wrap: wrap;
   }
-  .footer-landscape { position: relative; height: clamp(350px, 49vw, 690px); overflow: hidden; }
+  .footer-landscape { position: absolute; inset: 28% 0 0; overflow: hidden; }
   .footer-landscape img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
-    object-position: 50% 38%;
+    object-position: 50% 50%;
   }
   .footer-landscape img.light, [data-theme="light"] .footer-landscape img.dark { display: none; }
   [data-theme="light"] .footer-landscape img.light { display: block; }
@@ -725,12 +731,12 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(to bottom, transparent 54%, rgba(6,4,10,.32) 72%, var(--bg) 100%);
+    background: linear-gradient(to bottom, var(--bg), transparent 24%, transparent 62%, var(--bg));
   }
-  .footer-inner { position: relative; margin-top: clamp(-155px, -11vw, -66px); }
+  .footer-inner { position: relative; z-index: 1; margin-top: auto; }
   .footer-wordmark {
     display: block;
-    width: min(100%, 1120px);
+    width: min(76%, 860px);
     margin-inline: auto;
   }
   .foot {
@@ -738,9 +744,9 @@
     grid-template-columns: 1fr auto auto;
     align-items: center;
     gap: 28px;
-    margin-top: clamp(50px, 7vw, 110px);
-    padding-top: 24px;
-    padding-bottom: 48px;
+    margin-top: clamp(12px, 2vh, 28px);
+    padding-top: 14px;
+    padding-bottom: clamp(16px, 3vh, 30px);
     border-top: 1px solid var(--line);
     font-size: 13px;
     color: var(--dim);
@@ -788,7 +794,7 @@
     -webkit-mask-image: radial-gradient(ellipse at 75% 52%, #000 8%, transparent 76%);
     mask-image: radial-gradient(ellipse at 75% 52%, #000 8%, transparent 76%);
   }
-  [data-theme="light"] .footer-landscape::after { background: linear-gradient(to bottom, transparent 54%, rgba(247,244,238,.30) 72%, var(--bg) 100%); }
+  [data-theme="light"] .footer-landscape::after { background: linear-gradient(to bottom, var(--bg), transparent 22%, transparent 56%, var(--bg)); }
 
   /* ── mobile ──────────────────────────────────────────── */
   @media (max-width: 640px) {
@@ -798,8 +804,7 @@
     .hero-grid { padding: 36px 20px 32px; }
     .hero-grid { text-align: left; }
     .hero-copy { margin: 0; }
-    .hero .agents, .hero .cta-row, .used-by-logos { justify-content: flex-start; }
-    .agents { gap: 22px; margin-bottom: 26px; }
+    .hero .cta-row, .used-by-logos { justify-content: flex-start; }
     .agent-icon { width: 20px; height: 20px; }
     .shot { padding: 28px 0 0; }
     .screenshot-placeholder { border-radius: 8px; }
@@ -809,14 +814,16 @@
     .plate-quote p { font-size: 26px; }
     .wall { grid-template-columns: 1fr; height: 520px; }
     .wall-col:nth-child(2) { display: none; }
-    .dl-list li { grid-template-columns: 70px 1fr auto; }
-    .footer-intro { padding-top: 84px; padding-bottom: 64px; }
+    .dl-list li { grid-template-columns: 100px 1fr auto; }
+    .footer-stage { min-height: 580px; }
+    .footer-intro { padding-top: clamp(32px, 7vh, 64px); gap: 14px; }
     .footer-intro h2 { font-size: clamp(46px, 11vw, 64px); }
-    .footer-landscape { height: clamp(370px, 125vw, 550px); }
-    .footer-landscape img { object-position: 58% center; }
-    .footer-inner { margin-top: -48px; }
+    .footer-intro p { font-size: 14px; }
+    .footer-intro .cta-row { margin-top: 14px; }
+    .footer-landscape { inset: 34% 0 0; }
+    .footer-landscape img { object-position: 60% center; }
     .footer-wordmark { width: 100%; }
-    .foot { grid-template-columns: 1fr; justify-items: center; gap: 18px; margin-top: 58px; padding-top: 28px; padding-bottom: 40px; text-align: center; }
+    .foot { grid-template-columns: 1fr; justify-items: center; gap: 8px; margin-top: 18px; padding-top: 12px; padding-bottom: 18px; text-align: center; }
     .foot-links { justify-content: center; }
   }
   @media (max-width: 460px) {
@@ -858,19 +865,14 @@
     <img class="hero-art" src="/assets/art/arc-poster-light.webp" alt="" aria-hidden="true" width="1024" height="1536" />
     <div class="wrap hero-grid">
       <div class="hero-copy">
-        <div class="agents" aria-label="Supported agents">
-          <span class="agent-icon" title="Claude Code" style="--icon: url('/assets/icons/claude-mark.svg')"></span>
-          <span class="agent-icon" title="Codex" style="--icon: url('/assets/icons/openai-mark.svg')"></span>
-          <span class="agent-icon" title="Cursor" style="--icon: url('/assets/icons/cursor-mark.svg')"></span>
-          <span class="agent-icon" title="Grok" style="--icon: url('/assets/icons/grok-mark.svg')"></span>
-          <span class="agent-icon" title="Hermes" style="--icon: url('/assets/icons/hermes-mark.svg')"></span>
-          <span class="agent-icon" title="Pi" style="--icon: url('/assets/icons/pi-mark.svg')"></span>
-          <span class="agent-icon" title="Devin" style="--icon: url('/assets/icons/devin-mark.svg')"></span>
-          <span class="agent-icon" title="OpenCode" style="--icon: url('/assets/icons/opencode-mark.svg')"></span>
-        </div>
         <h1>
-          <b>Access your agents from any device.</b> Zeron runs Claude Code,
-          Codex, Grok, Hermes, Pi and more on your machines.
+          <b>Access your agents from any device.</b> Zeron runs
+          <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/claude-mark.svg')"></span>Claude Code,</span>
+          <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/openai-mark.svg')"></span>Codex,</span>
+          <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/grok-mark.svg')"></span>Grok,</span>
+          <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/hermes-mark.svg')"></span>Hermes,</span>
+          <span class="hero-agent"><span class="agent-icon" aria-hidden="true" style="--icon: url('/assets/icons/pi-mark.svg')"></span>Pi</span>
+          and more on your machines.
         </h1>
         <div class="cta-row">
           <a class="btn" id="hero-download" href="#downloads">Download</a>
@@ -1143,6 +1145,12 @@
 
 
   <section class="downloads" aria-labelledby="downloads-title">
+    <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+      <symbol id="platform-mac" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 20h8m-4-3v3"/></symbol>
+      <symbol id="platform-windows" viewBox="0 0 24 24"><path d="m3 5 7-1v7H3Zm9-1.3L21 2v9h-9ZM3 13h7v7l-7-1Zm9 0h9v9l-9-1.7Z"/></symbol>
+      <symbol id="platform-linux" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
+      <symbol id="platform-ios" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18.5h2"/></symbol>
+    </svg>
     <div class="wrap" id="downloads">
       <header class="sec-head">
         <p id="downloads-title"><b>Download Zeron.</b> Available for macOS, Windows and Linux. iOS is on the way.</p>
@@ -1151,16 +1159,16 @@
         <div>
           <h3>Zeron for desktop</h3>
           <ul class="dl-list">
-            <li><span class="dl-name">macOS</span><span class="dl-meta">Apple silicon · dmg</span><a class="btn ghost small" data-platform-download="macos" href="https://zeron.sh/releases/zeron-0.2.66-macos-arm64.dmg">Download</a></li>
-            <li><span class="dl-name">Windows</span><span class="dl-meta">x64 · portable zip</span><a class="btn ghost small" data-platform-download="windows" href="https://zeron.sh/releases/zeron-0.2.66-windows-x86_64.zip">Download</a></li>
-            <li><span class="dl-name">Linux</span><span class="dl-meta">x64 · tar.gz</span><a class="btn ghost small" data-platform-download="linux" href="https://zeron.sh/releases/zeron-0.2.66-linux-x86_64.tar.gz">Download</a></li>
-            <li><span class="dl-name">Linux</span><span class="dl-meta">arm64 · tar.gz</span><a class="btn ghost small" data-platform-download="linux-arm" href="https://zeron.sh/releases/zeron-0.2.66-linux-aarch64.tar.gz">Download</a></li>
+            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-mac"/></svg>macOS</span><span class="dl-meta">Apple silicon · dmg</span><a class="btn ghost small" data-platform-download="macos" href="https://zeron.sh/releases/zeron-0.2.66-macos-arm64.dmg">Download</a></li>
+            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-windows"/></svg>Windows</span><span class="dl-meta">x64 · portable zip</span><a class="btn ghost small" data-platform-download="windows" href="https://zeron.sh/releases/zeron-0.2.66-windows-x86_64.zip">Download</a></li>
+            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-linux"/></svg>Linux</span><span class="dl-meta">x64 · tar.gz</span><a class="btn ghost small" data-platform-download="linux" href="https://zeron.sh/releases/zeron-0.2.66-linux-x86_64.tar.gz">Download</a></li>
+            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-linux"/></svg>Linux</span><span class="dl-meta">arm64 · tar.gz</span><a class="btn ghost small" data-platform-download="linux-arm" href="https://zeron.sh/releases/zeron-0.2.66-linux-aarch64.tar.gz">Download</a></li>
           </ul>
         </div>
         <div>
           <h3>Zeron for mobile</h3>
           <ul class="dl-list">
-            <li><span class="dl-name">iOS</span><span class="dl-meta">Coming soon</span><span class="btn ghost small" role="link" aria-disabled="true">App Store ↗</span></li>
+            <li><span class="dl-name"><svg class="platform-icon" aria-hidden="true"><use href="#platform-ios"/></svg>iOS</span><span class="dl-meta">Coming soon</span><span class="btn ghost small" role="link" aria-disabled="true">App Store ↗</span></li>
           </ul>
         </div>
       </div>
@@ -1182,7 +1190,7 @@
       </div>
     </div>
     <div class="footer-landscape" aria-hidden="true">
-      <img class="dark" src="/assets/art/footer-mountains-dark.webp" alt="" width="1672" height="941" loading="lazy" decoding="async" />
+      <img class="dark" src="/assets/art/footer-dark-signal.webp" alt="" width="1536" height="1024" loading="lazy" decoding="async" />
       <img class="light" src="/assets/art/footer-mountains-light.webp" alt="" width="1672" height="941" loading="lazy" decoding="async" />
     </div>
     <div class="wrap footer-inner">
