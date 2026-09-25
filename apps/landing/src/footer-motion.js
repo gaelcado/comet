@@ -2,7 +2,8 @@ import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 // The page scrolls away to uncover one framed, viewport-sized footer.
-// Three soft-masked depth bands move independently over the source-aligned base.
+// Three transparent terrain cutouts move at different depths; the sky is the
+// live footer surface and glyph field, not part of the raster artwork.
 const footer = document.querySelector('.footer-stage');
 const reveal = document.querySelector('.footer-reveal-space');
 const nav = document.querySelector('.site-nav');
@@ -55,9 +56,9 @@ if (footer && reveal) {
       },
     });
     timeline
-      .fromTo(far, { y: () => landscape.clientHeight * 0.012 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(middle, { y: () => landscape.clientHeight * 0.027 }, { y: 0, ease: 'none', duration: 1 }, 0)
-      .fromTo(near, { y: () => landscape.clientHeight * 0.045 }, { y: 0, ease: 'none', duration: 1 }, 0);
+      .fromTo(far, { y: () => -landscape.clientHeight * 0.01 }, { y: 0, ease: 'none', duration: 1 }, 0)
+      .fromTo(middle, { y: () => -landscape.clientHeight * 0.03 }, { y: 0, ease: 'none', duration: 1 }, 0)
+      .fromTo(near, { y: () => -landscape.clientHeight * 0.055 }, { y: 0, ease: 'none', duration: 1 }, 0);
 
     if (quote) {
       gsap.fromTo(quote.querySelectorAll('.plate-img'), { yPercent: -2 }, {

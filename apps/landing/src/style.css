@@ -841,7 +841,7 @@
     clip-path: inset(100% 0 0);
   }
   .footer-frame {
-    --footer-rail-height: 56px;
+    --footer-rail-height: 64px;
     position: relative;
     display: grid;
     grid-template-rows: 30% minmax(0, 1fr) auto;
@@ -864,11 +864,12 @@
     z-index: 1;
     display: grid;
     width: 100%;
-    max-width: 1800px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-width: 980px;
+    grid-template-columns: minmax(0, 360px) minmax(0, 420px);
     align-items: end;
-    gap: clamp(32px, 5vw, 112px);
-    padding-inline: clamp(28px, 4vw, 72px);
+    justify-content: center;
+    gap: clamp(40px, 4vw, 64px);
+    padding-inline: clamp(28px, 3vw, 52px);
     padding-block: clamp(18px, 2.8svh, 36px);
   }
   .footer-intro h2 {
@@ -881,7 +882,7 @@
     text-wrap: balance;
     transform: translateY(clamp(12px, 2.3svh, 30px));
   }
-  .footer-intro-copy { width: min(100%, 620px); justify-self: end; text-align: right; }
+  .footer-intro-copy { width: min(100%, 420px); justify-self: start; text-align: left; }
   .footer-intro p { color: var(--dim); font-size: 16px; line-height: 1.6; }
   .footer-intro p span { display: block; }
   .footer-intro .cta-row {
@@ -890,43 +891,48 @@
     align-items: center;
     gap: 12px 20px;
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
   .footer-landscape {
-    --footer-art: url('/assets/art/footer-dark-wide.webp');
+    --footer-far: url('/assets/art/footer-dark-far.webp');
+    --footer-middle: url('/assets/art/footer-dark-middle.webp');
+    --footer-near: url('/assets/art/footer-dark-near.webp');
     position: absolute;
     inset: 0;
     overflow: hidden;
-    background: var(--footer-art) center / cover no-repeat;
   }
-  [data-theme="light"] .footer-landscape { --footer-art: url('/assets/art/footer-light-wide.webp'); }
+  [data-theme="light"] .footer-landscape {
+    --footer-far: url('/assets/art/footer-light-far.webp');
+    --footer-middle: url('/assets/art/footer-light-middle.webp');
+    --footer-near: url('/assets/art/footer-light-near.webp');
+  }
+  /* The near plane rises during reveal. Keep only its bottom edge underneath
+     so that motion never opens a blank strip above the footer rail. */
+  .footer-landscape::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--footer-near) center / cover no-repeat;
+    clip-path: inset(94% 0 0);
+  }
   .footer-plane {
     position: absolute;
     inset: 0;
-    background: var(--footer-art) center / cover no-repeat;
+    background-position: center;
+    background-size: cover;
+    background-repeat: no-repeat;
     pointer-events: none;
   }
-  /* Each depth band reuses the same master image, with soft overlap at the
-     cutout boundaries so responsive crops and scroll motion reveal no seams. */
-  .footer-plane--far {
-    -webkit-mask-image: linear-gradient(to bottom, #000 0 46%, transparent 58%);
-    mask-image: linear-gradient(to bottom, #000 0 46%, transparent 58%);
-  }
-  .footer-plane--middle {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 38%, #000 52% 70%, transparent 82%);
-    mask-image: linear-gradient(to bottom, transparent 38%, #000 52% 70%, transparent 82%);
-  }
-  .footer-plane--near {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 64%, #000 76%);
-    mask-image: linear-gradient(to bottom, transparent 64%, #000 76%);
-  }
+  .footer-plane--far { background-image: var(--footer-far); }
+  .footer-plane--middle { background-image: var(--footer-middle); }
+  .footer-plane--near { background-image: var(--footer-near); }
   .footer-bar {
     position: relative;
     z-index: 1;
     min-height: var(--footer-rail-height);
     color: #fff;
     background: var(--footer-band);
-    font-size: 12px;
+    font-size: 13px;
   }
   .footer-bar-inner {
     display: grid;
@@ -935,9 +941,8 @@
     gap: clamp(14px, 2vw, 28px);
     min-height: var(--footer-rail-height);
     width: 100%;
-    max-width: 1800px;
     margin-inline: auto;
-    padding-inline: clamp(28px, 4vw, 72px);
+    padding-inline: clamp(28px, 4vw, 80px);
   }
   .footer-wordmark {
     display: block;
@@ -955,7 +960,7 @@
 
   @media (max-width: 900px) {
     .footer-frame { grid-template-rows: minmax(300px, 38%) minmax(0, 1fr) auto; }
-    .footer-landscape, .footer-plane { background-position: 70% center; }
+    .footer-plane, .footer-landscape::before { background-position: 70% center; }
     .footer-intro { grid-template-columns: 1fr; align-items: start; gap: 22px; }
     .footer-intro h2 { transform: none; }
     .footer-intro-copy { justify-self: start; text-align: left; }
