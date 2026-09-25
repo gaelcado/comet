@@ -822,7 +822,6 @@
     z-index: 0;
     height: 100vh;
     height: 100svh;
-    padding: clamp(8px, .9vw, 14px);
     overflow: hidden;
     background: var(--bg);
   }
