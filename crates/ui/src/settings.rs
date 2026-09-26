@@ -778,6 +778,8 @@ pub struct UiSettings {
     /// When enabled, opening a panel hides the least recently opened other
     /// panel if the selected cap would be exceeded.
     pub panel_behavior: PanelBehavior,
+    /// Reopen panels hidden by the smart limit when their replacement closes.
+    pub restore_evicted_panels: bool,
     /// Legacy — see [`Self::right_pane_open`].
     pub terminal_open: bool,
     /// Customizable shortcut combos (feature-inventory §1.4).
@@ -895,6 +897,7 @@ impl Default for UiSettings {
             right_pane_open: false,
             terminal_height: TERMINAL_DEFAULT_HEIGHT,
             panel_behavior: PanelBehavior::Manual,
+            restore_evicted_panels: false,
             terminal_open: false,
             keymap: KeymapConfig::default(),
             escape_stops_active_agent: false,
@@ -2245,12 +2248,15 @@ mod tests {
     fn panel_behavior_defaults_to_manual_for_existing_settings() {
         let legacy: UiSettings = serde_json::from_str(r#"{"sidebarWidth":300}"#).unwrap();
         assert_eq!(legacy.panel_behavior, PanelBehavior::Manual);
+        assert!(!legacy.restore_evicted_panels);
         for behavior in PanelBehavior::ALL {
             let mut settings = legacy.clone();
             settings.panel_behavior = behavior;
+            settings.restore_evicted_panels = true;
             let restored: UiSettings =
                 serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
             assert_eq!(restored.panel_behavior, behavior);
+            assert!(restored.restore_evicted_panels);
         }
     }
 
@@ -2309,6 +2315,7 @@ mod tests {
             terminal_height: 320.0,
             terminal_open: true,
             panel_behavior: PanelBehavior::Smart3,
+            restore_evicted_panels: true,
             keymap: KeymapConfig {
                 toggle_sidebar: "mod-shift-s".into(),
                 ..KeymapConfig::default()

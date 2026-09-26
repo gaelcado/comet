@@ -265,8 +265,10 @@ impl Shell {
         // the pane itself would sit under the drag region and never see a
         // click. Closed, it is just the stable open/close toggle. Hidden on
         // the new-session canvas (user request) — nothing to diff yet.
-        let right_pane_open = !on_canvas && self.right_pane_open(cx);
-        let takeover = right_pane_open && self.right_pane_expanded;
+        let right_pane_visible =
+            !on_canvas && (self.right_pane_open(cx) || self.tween_active(self.right_tween));
+        let takeover = right_pane_visible
+            && (self.right_pane_expanded || self.tween_active(self.main_takeover_tween));
         // In takeover the title hides and the strip owns the whole band, so
         // the row's left inset pulls back to the sidebar seam — the title
         // inset would push the scope dropdown off the pane's own left gutter
@@ -312,7 +314,7 @@ impl Shell {
         let trailing_width = if on_canvas {
             0.0
         } else {
-            let surface = if right_pane_open {
+            let surface = if right_pane_visible {
                 widths.surface_reveal
             } else {
                 0.0
@@ -337,7 +339,7 @@ impl Shell {
                 // the tab strip); a wheel over the tabs must scroll the
                 // strip, never the surface behind it.
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
-            if right_pane_open {
+            if right_pane_visible {
                 // The right pane's SURFACE TABS (t3 RightPanelTabs) — the diff
                 // options that used to live here moved into the pane's own
                 // second row; expand stays in this band (user request).
@@ -903,5 +905,60 @@ mod titlebar_geometry_tests {
             shell.right_now(cx)
         });
         assert!((f32::from(row.left()) - (800.0 - pane_width)).abs() < 0.5);
+
+        // Closing the surface must keep its header mounted behind the same
+        // shrinking mask as the pane; Files and the fixed toggles remain in
+        // their own slots while both widths move.
+        cx.simulate_resize(gpui::size(px(1400.0), px(600.0)));
+        for files_open in [false, true] {
+            for progress in [0.0, 0.1, 0.25, 0.5, 0.75] {
+                shell.update(cx, |shell, _| {
+                    shell.settings.sidebar_collapsed = true;
+                    shell.sidebar_tween = None;
+                    shell.right_edge_bounce = None;
+                    shell.panels.update("session", |panels| {
+                        panels.changes_open = false;
+                        panels.files_open = files_open;
+                    });
+                    shell.files_tween = None;
+                    shell.right_tween = Some(WidthTween {
+                        from: 520.0,
+                        to: 0.0,
+                        started,
+                    });
+                    shell.render_time = Some(started + duration.mul_f32(progress));
+                });
+                host.update(cx, |_, cx| cx.notify());
+                cx.update(|window, cx| window.draw(cx).clear());
+                let toggle = cx.debug_bounds("toggle-changes").unwrap();
+                let files_toggle = cx.debug_bounds("toggle-files-panel").unwrap();
+                let expand = cx.debug_bounds("expand-changes");
+                let strip = cx.debug_bounds("right-titlebar-controls").unwrap();
+                let (right, files, pad) = shell.read_with(cx, |shell, cx| {
+                    (
+                        shell.right_visible_width(cx),
+                        shell.files_visible_width(cx),
+                        shell.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET),
+                    )
+                });
+                assert!((f32::from(toggle.left()) - (1400.0 - pad - 28.0)).abs() < 0.5);
+                assert!(files_toggle.right() + px(PANEL_TOGGLE_GAP) <= toggle.left());
+                if right + files >= pad + PANEL_TOGGLE_SLOTS {
+                    assert!(
+                        (f32::from(strip.left()) - (1400.0 - right - files)).abs() < 0.5,
+                        "header drift with Right {right}px and Files {files}px"
+                    );
+                }
+                if right > 160.0 {
+                    assert!(
+                        expand.is_some(),
+                        "surface controls vanished early at {right}px"
+                    );
+                }
+                if let Some(expand) = expand {
+                    assert!(expand.right() + px(4.0) <= files_toggle.left());
+                }
+            }
+        }
     }
 }

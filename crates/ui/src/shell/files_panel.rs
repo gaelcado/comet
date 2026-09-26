@@ -80,7 +80,7 @@ impl Shell {
         self.files_target_for_sidebar(self.sidebar_now(), cx)
     }
 
-    fn files_target_for_sidebar(&self, sidebar: f32, cx: &App) -> f32 {
+    pub(super) fn files_target_for_sidebar(&self, sidebar: f32, cx: &App) -> f32 {
         self.files_layout_for_sidebar(
             if self.files_panel_open(cx) {
                 self.settings.files_panel_width
@@ -276,6 +276,7 @@ impl Shell {
             .update(&self.panel_key(cx), |p| p.files_open = false);
         self.clear_surface_transitions();
         self.files_tween = Some(WidthTween::new(from, 0.0));
+        self.restore_smart_panels(AuxiliaryPanel::Files, cx);
         cx.notify();
     }
 
@@ -369,9 +370,10 @@ impl Shell {
             .child(
                 div()
                     .h_full()
+                    .relative()
                     .w(px(self.files_visible_width(cx)))
                     .overflow_hidden()
-                    .child(inner),
+                    .child(inner.absolute().top_0().right_0()),
             )
             .when(
                 self.files_panel_open(cx) && !self.tween_active(self.files_tween),

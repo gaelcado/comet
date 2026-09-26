@@ -728,6 +728,12 @@ enum AuxiliaryPanel {
     Terminal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SmartPanelRestore {
+    opener: AuxiliaryPanel,
+    hidden: AuxiliaryPanel,
+}
+
 /// Choose the oldest visible auxiliary panel, keeping the panel being opened.
 fn smart_panel_victim<const N: usize>(
     max_panels: usize,
@@ -1922,6 +1928,9 @@ pub struct Shell {
     panels: SessionPanels,
     panel_open_sequence: u64,
     sidebar_opened_at: u64,
+    /// Session-local automatic closures; explicit closes never enter this history.
+    smart_panel_restores: std::collections::HashMap<String, Vec<SmartPanelRestore>>,
+    smart_panel_eviction_in_progress: bool,
     /// The panel key of the chat currently shown ("" = new-chat canvas).
     active_chat: String,
     /// Last selected session survives opening the blank Appshot destination.
@@ -2339,6 +2348,8 @@ impl Shell {
             panels: SessionPanels::default(),
             panel_open_sequence: 0,
             sidebar_opened_at: 0,
+            smart_panel_restores: Default::default(),
+            smart_panel_eviction_in_progress: false,
             active_chat: String::new(),
             last_appshot_chat: None,
             sidebar_prev_order: Vec::new(),
@@ -2825,6 +2836,16 @@ impl Shell {
     }
 
     fn record_panel_open(&mut self, panel: AuxiliaryPanel, key: &str) {
+        // A deliberate reopen supersedes any older promise to restore this
+        // panel when a different opener closes.
+        let history_key = if panel == AuxiliaryPanel::Sidebar {
+            &self.active_chat
+        } else {
+            key
+        };
+        if let Some(history) = self.smart_panel_restores.get_mut(history_key) {
+            history.retain(|entry| entry.hidden != panel);
+        }
         self.panel_open_sequence += 1;
         let opened_at = self.panel_open_sequence;
         match panel {
@@ -2839,6 +2860,71 @@ impl Shell {
                 .panels
                 .update(key, |panels| panels.terminal_opened_at = opened_at),
         }
+    }
+
+    fn visible_auxiliary_panels(&self, cx: &App) -> usize {
+        let panels = self.panels.get(&self.panel_key(cx));
+        usize::from(!self.settings.sidebar_collapsed)
+            + usize::from(self.right_pane_open(cx))
+            + usize::from(self.files_panel_open(cx))
+            + usize::from(panels.terminal_open)
+    }
+
+    /// Restore only the panels this opener actually displaced. A later manual
+    /// reopen cancels the old entry, and a nested smart eviction retains the
+    /// earlier chain until that restored opener is itself closed.
+    fn restore_smart_panels(&mut self, opener: AuxiliaryPanel, cx: &mut Context<Self>) {
+        if !self.settings.restore_evicted_panels || self.smart_panel_eviction_in_progress {
+            return;
+        }
+        let Some(limit) = self.settings.panel_behavior.max_panels() else {
+            return;
+        };
+        let key = self.panel_key(cx);
+        let mut history = self.smart_panel_restores.remove(&key).unwrap_or_default();
+        let mut hidden = Vec::new();
+        history.retain(|entry| {
+            if entry.opener == opener {
+                hidden.push(entry.hidden);
+                false
+            } else {
+                true
+            }
+        });
+        if !history.is_empty() {
+            self.smart_panel_restores.insert(key.clone(), history);
+        }
+        for panel in hidden.into_iter().rev() {
+            if 1 + self.visible_auxiliary_panels(cx) >= limit {
+                break;
+            }
+            match panel {
+                AuxiliaryPanel::Sidebar if self.settings.sidebar_collapsed => {
+                    self.toggle_sidebar_visibility(false, cx);
+                }
+                AuxiliaryPanel::Right if !self.right_pane_open(cx) => {
+                    self.set_surfaces_open(true, cx);
+                }
+                AuxiliaryPanel::Files
+                    if !self.files_panel_open(cx) && self.files.contains_key(&key) =>
+                {
+                    // The explorer entity survives smart eviction. Restore its
+                    // column without stealing focus from the panel just closed.
+                    let from = self.files_visible_width(cx);
+                    self.panels.update(&key, |p| p.files_open = true);
+                    self.record_panel_open(AuxiliaryPanel::Files, &key);
+                    self.files_tween = Some(WidthTween::new(
+                        from,
+                        self.files_target_for_sidebar(self.sidebar_target(), cx),
+                    ));
+                }
+                AuxiliaryPanel::Terminal if !self.terminal_open(cx) => {
+                    self.set_terminal_open(true, &key, cx);
+                }
+                _ => {}
+            }
+        }
+        cx.notify();
     }
 
     /// Closing a panel only changes visibility. Its size, surface tabs, and
@@ -2879,6 +2965,7 @@ impl Shell {
                 ],
                 keep,
             );
+            self.smart_panel_eviction_in_progress = victim.is_some();
             match victim {
                 Some(AuxiliaryPanel::Sidebar) => self.toggle_sidebar_visibility(false, cx),
                 Some(AuxiliaryPanel::Right) => {
@@ -2910,7 +2997,17 @@ impl Shell {
                 }
                 None => break,
             }
+            self.smart_panel_eviction_in_progress = false;
+            if self.settings.restore_evicted_panels
+                && let (Some(opener), Some(hidden)) = (keep, victim)
+            {
+                self.smart_panel_restores
+                    .entry(key.clone())
+                    .or_default()
+                    .push(SmartPanelRestore { opener, hidden });
+            }
         }
+        self.smart_panel_eviction_in_progress = false;
     }
 
     fn right_target(&self, cx: &App) -> f32 {
@@ -2958,6 +3055,8 @@ impl Shell {
         if !self.settings.sidebar_collapsed {
             self.record_panel_open(AuxiliaryPanel::Sidebar, "");
             self.reconcile_smart_panels(Some(AuxiliaryPanel::Sidebar), cx);
+        } else {
+            self.restore_smart_panels(AuxiliaryPanel::Sidebar, cx);
         }
         cx.notify();
     }
@@ -3005,13 +3104,14 @@ impl Shell {
             self.record_panel_open(AuxiliaryPanel::Right, &key);
         }
         if !open {
-            self.suspend_file_images(cx);
             // Closing always leaves takeover mode — reopening at full bleed
             // with the conversation gone read as a broken chat.
             self.right_pane_expanded = false;
         }
         if open {
             self.reconcile_smart_panels(Some(AuxiliaryPanel::Right), cx);
+        } else {
+            self.restore_smart_panels(AuxiliaryPanel::Right, cx);
         }
         // Smart behavior may have just started closing the sidebar. Target
         // its final width so the two matching tweens land without a snap.
@@ -4239,6 +4339,8 @@ impl Shell {
         }));
         if open {
             self.reconcile_smart_panels(Some(AuxiliaryPanel::Terminal), cx);
+        } else if key == self.panel_key(cx) {
+            self.restore_smart_panels(AuxiliaryPanel::Terminal, cx);
         }
         cx.notify();
     }
@@ -4410,7 +4512,13 @@ impl Shell {
         self.settings.transcript_width = current.transcript_width;
         self.settings.skill_completion_by_harness = current.skill_completion_by_harness;
         self.settings.skills_in_slash_menu = current.skills_in_slash_menu;
+        if self.settings.panel_behavior != current.panel_behavior
+            || (self.settings.restore_evicted_panels && !current.restore_evicted_panels)
+        {
+            self.smart_panel_restores.clear();
+        }
         self.settings.panel_behavior = current.panel_behavior;
+        self.settings.restore_evicted_panels = current.restore_evicted_panels;
     }
 
     fn retry_engine(&mut self, cx: &mut Context<Self>) {
@@ -4688,9 +4796,16 @@ impl Shell {
                             }
                             AppearanceSettingsEvent::PanelBehaviorChanged(behavior) => {
                                 this.settings.panel_behavior = behavior;
+                                this.smart_panel_restores.clear();
                                 // Settings replaces the conversation while it is open.
                                 // Apply the new cap when returning to a chat.
                                 cx.notify();
+                            }
+                            AppearanceSettingsEvent::RestoreEvictedPanelsChanged(restore) => {
+                                this.settings.restore_evicted_panels = restore;
+                                if !restore {
+                                    this.smart_panel_restores.clear();
+                                }
                             }
                         },
                     ));
@@ -10162,18 +10277,22 @@ impl Shell {
     /// page (its options row + the lazy [`Changes`] viewer), workspace Files,
     /// an embedded terminal, or the surface picker when no tabs exist.
     fn render_right_pane(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        if !self.right_pane_open(cx) && !self.tween_active(self.right_tween) {
+            // Let image previews paint through the close mask before releasing
+            // their resources. A quick reversal never unloads the frame.
+            self.suspend_file_images(cx);
+        }
         let theme = Theme::of(cx).clone();
         let content: AnyElement = if self.right_pane_open(cx) || self.tween_active(self.right_tween)
         {
             match self.resolved_right_active(cx) {
-                // Rendering a Files surface activates its image. Keep it unmounted
-                // throughout the closing animation after suspending its resources.
-                RightSurface::File(_) if !self.right_pane_open(cx) => {
-                    gpui::Empty.into_any_element()
-                }
                 RightSurface::File(id) => {
                     if let Some(file) = self.file_surfaces.get(&id).cloned() {
-                        file.update(cx, |file, cx| file.ensure_loaded(cx));
+                        // Keep the last file frame behind the closing mask. Loading
+                        // while closing would reactivate suspended image resources.
+                        if self.right_pane_open(cx) {
+                            file.update(cx, |file, cx| file.ensure_loaded(cx));
+                        }
                         file.into_any_element()
                     } else {
                         self.render_surface_picker(cx)
@@ -11049,7 +11168,9 @@ impl Shell {
     /// hiding the conversation column; toggling back restores the saved
     /// width. Rides the same width tween as open/close so the jump glides.
     fn toggle_right_pane_expand(&mut self, cx: &mut Context<Self>) {
-        let from = self.right_target(cx);
+        // A second click during the first expansion starts at the painted
+        // seam, not the previous destination.
+        let from = self.right_visible_width(cx);
         self.right_edge_bounce = None;
         self.right_resize_edge = None;
         self.finish_pane_resize(PaneResizeKind::Right);
@@ -13922,14 +14043,17 @@ mod exit_regressions {
                 assert!(!shell.right_pane_open(cx));
                 assert!(shell.tween_active(shell.right_tween));
                 assert!(
-                    !files.read(cx).test_images_visible(),
-                    "closing suspends image resources immediately"
+                    files.read(cx).test_images_visible(),
+                    "file content stays painted through the closing mask"
                 );
+                let frame_time = shell.render_time;
+                shell.render_time = Some(shell.right_tween.unwrap().started + duration);
                 let _ = shell.render_right_pane(window, cx);
                 assert!(
                     !files.read(cx).test_images_visible(),
-                    "closing animation must not reactivate images"
+                    "image resources suspend once the close animation ends"
                 );
+                shell.render_time = frame_time;
                 shell.settings.sidebar_collapsed = true;
                 shell.sidebar_tween = tween;
                 shell.toggle_sidebar(cx);
@@ -16040,6 +16164,95 @@ mod smart_panel_rebase_tests {
                 shell.reconcile_smart_panels(Some(AuxiliaryPanel::Files), cx);
                 assert!(shell.files_panel_open(cx));
                 assert!(!shell.right_pane_open(cx));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn smart_panels_restore_only_automatic_closures_in_opening_order(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            crate::history::init(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                cx,
+            );
+            let mut settings = settings::UiSettings::default();
+            settings.panel_behavior = settings::PanelBehavior::Smart2;
+            settings.restore_evicted_panels = true;
+            settings::init(settings, dir.path(), cx);
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            Shell::new(
+                state,
+                EngineBootConfig {
+                    data_dir: dir.path().into(),
+                    ipc_port: 0,
+                    edge_url: "http://127.0.0.1:1".into(),
+                    edge_token: None,
+                    org_id: None,
+                    workos_client_id: None,
+                    default_harness: zeron_proto::HarnessId::Mock,
+                },
+                cx,
+            )
+        });
+        window
+            .update(cx, |shell, _window, cx| {
+                shell.active_chat = "a".into();
+                shell.viewport_width = 1200.0;
+                shell.toggle_right_pane(cx);
+                assert!(shell.settings.sidebar_collapsed);
+                assert!(shell.right_pane_open(cx));
+
+                // The terminal displaces Right, then closing it restores
+                // Right; closing Right subsequently restores the sidebar.
+                shell.set_terminal_open(true, "a", cx);
+                assert!(!shell.right_pane_open(cx));
+                assert!(shell.terminal_open(cx));
+                shell.set_terminal_open(false, "a", cx);
+                assert!(shell.right_pane_open(cx));
+                assert!(shell.settings.sidebar_collapsed);
+                shell.toggle_right_pane(cx);
+                assert!(!shell.settings.sidebar_collapsed);
+                assert!(!shell.right_pane_open(cx));
+
+                // A deliberate sidebar reopen cancels Right's older promise
+                // to restore it. Its own eviction of Right is reversible.
+                shell.toggle_right_pane(cx);
+                shell.toggle_sidebar(cx);
+                assert!(!shell.settings.sidebar_collapsed);
+                assert!(!shell.right_pane_open(cx));
+                shell.toggle_sidebar(cx);
+                assert!(shell.right_pane_open(cx));
+                shell.toggle_right_pane(cx);
+                assert!(shell.settings.sidebar_collapsed);
+
+                // Files follows the same policy without recreating its entity.
+                shell.toggle_right_pane(cx);
+                assert!(shell.right_pane_open(cx));
+                shell.panels.update("a", |panels| panels.files_open = true);
+                shell.record_panel_open(AuxiliaryPanel::Files, "a");
+                shell.reconcile_smart_panels(Some(AuxiliaryPanel::Files), cx);
+                assert!(!shell.right_pane_open(cx));
+                shell.close_files_panel(cx);
+                assert!(shell.right_pane_open(cx));
+
+                // Expansion reversal starts at the painted seam mid-flight.
+                shell.right_tween = None;
+                shell.files_tween = None;
+                shell.toggle_right_pane_expand(cx);
+                let expansion = shell.right_tween.unwrap();
+                shell.render_time = Some(expansion.started + RESIZE.total() / 2);
+                let painted = shell.right_visible_width(cx);
+                shell.toggle_right_pane_expand(cx);
+                assert!((shell.right_tween.unwrap().from - painted).abs() < 0.001);
             })
             .unwrap();
     }

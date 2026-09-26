@@ -53,6 +53,7 @@ pub enum FontKind {
 pub enum AppearanceSettingsEvent {
     CodeFontSizeChanged(f32),
     PanelBehaviorChanged(PanelBehavior),
+    RestoreEvictedPanelsChanged(bool),
 }
 
 impl FontKind {
@@ -1124,11 +1125,22 @@ fn panel_behavior_choice(
     behavior: PanelBehavior,
     selected: bool,
 ) -> gpui::Stateful<gpui::Div> {
+    panel_choice(
+        theme,
+        format!("panel-behavior-{}", behavior.label()),
+        behavior.label(),
+        selected,
+    )
+}
+
+fn panel_choice(
+    theme: &Theme,
+    id: String,
+    label: &'static str,
+    selected: bool,
+) -> gpui::Stateful<gpui::Div> {
     div()
-        .id(SharedString::from(format!(
-            "panel-behavior-{}",
-            behavior.label()
-        )))
+        .id(SharedString::from(id))
         .h(px(30.0))
         .px(px(10.0))
         .rounded(px(7.0))
@@ -1156,7 +1168,7 @@ fn panel_behavior_choice(
         .when(!selected, |control| {
             control.hover(|style| style.bg(theme.surface_raised_hover))
         })
-        .child(behavior.label())
+        .child(label)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2629,6 +2641,26 @@ impl Render for AppearancePage {
                     }))
             })
             .collect::<Vec<_>>();
+        let restore_controls = [(false, "Stay closed"), (true, "Reopen")]
+            .into_iter()
+            .map(|(restore, label)| {
+                panel_choice(
+                    &theme,
+                    format!("restore-evicted-panels-{restore}"),
+                    label,
+                    restore == ui_settings.restore_evicted_panels,
+                )
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    crate::settings::update(SavePolicy::Immediate, cx, |settings| {
+                        settings.restore_evicted_panels = restore;
+                    });
+                    cx.emit(AppearanceSettingsEvent::RestoreEvictedPanelsChanged(
+                        restore,
+                    ));
+                    cx.notify();
+                }))
+            })
+            .collect::<Vec<_>>();
         let cards = AppearanceMode::ALL
             .into_iter()
             .map(|mode| {
@@ -3097,7 +3129,7 @@ impl Render for AppearancePage {
                                     &theme,
                                     "Layout",
                                     widgets::section_card(&theme).mt_0().child(
-                                        widgets::card_row(&theme, true)
+                                        widgets::card_row(&theme, false)
                                             .child(widgets::row_tile(&theme, icons::WIDGET))
                                             .child(
                                                 div()
@@ -3124,6 +3156,33 @@ impl Render for AppearancePage {
                                                     .justify_end()
                                                     .gap(px(6.0))
                                                     .children(panel_behavior_controls),
+                                            ),
+                                    )
+                                    .child(
+                                        widgets::card_row(&theme, true)
+                                            .child(widgets::row_tile(&theme, icons::WIDGET))
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .child(widgets::row_title(
+                                                        &theme,
+                                                        "Reopen hidden panels",
+                                                    ))
+                                                    .child(widgets::meta_line(
+                                                        &theme,
+                                                        vec![div()
+                                                            .child("When you close a panel, reopen panels it hid to make room.")
+                                                            .into_any_element()],
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_none()
+                                                    .ml(px(10.0))
+                                                    .flex()
+                                                    .gap(px(6.0))
+                                                    .children(restore_controls),
                                             ),
                                     ),
                                 ))
