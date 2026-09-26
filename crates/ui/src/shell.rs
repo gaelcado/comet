@@ -2028,6 +2028,7 @@ pub struct Shell {
     debug_upload: Option<String>,
     sidebar_tween: Option<WidthTween>,
     files_tween: Option<WidthTween>,
+    last_horizontal_fit: Option<(String, HorizontalPanelFit)>,
     sidebar_edge_bounce: Option<motion::ResizeEdgeBounce>,
     /// Boundary currently held during a sidebar drag. Cleared on re-entry or
     /// release so the next genuine edge crossing can acknowledge the limit.
@@ -2436,6 +2437,7 @@ impl Shell {
             debug_upload,
             sidebar_tween: None,
             files_tween: None,
+            last_horizontal_fit: None,
             sidebar_edge_bounce: None,
             sidebar_resize_edge: None,
             pane_resize_active: None,
@@ -2882,32 +2884,62 @@ impl Shell {
             self.settings.sidebar_width,
             (
                 !self.settings.sidebar_collapsed || self.tween_active(self.sidebar_tween),
-                if self.settings.sidebar_collapsed {
-                    0
-                } else {
-                    self.sidebar_opened_at
-                },
+                self.sidebar_opened_at,
             ),
             (
                 !self.active_chat.is_empty()
                     && (panels.changes_open || self.tween_active(self.right_tween)),
-                if panels.changes_open {
-                    panels.changes_opened_at
-                } else {
-                    0
-                },
+                panels.changes_opened_at,
             ),
             (
                 !self.active_chat.is_empty()
                     && (panels.files_open || self.tween_active(self.files_tween)),
-                if panels.files_open {
-                    panels.files_opened_at
-                } else {
-                    0
-                },
+                panels.files_opened_at,
             ),
             self.right_pane_expanded,
         )
+    }
+
+    /// Let a column that was hidden by the viewport return from zero width.
+    /// Closing columns keep their own tween and fit slot until their mask is
+    /// gone, so a restored neighbor never jumps into their space mid-close.
+    fn track_horizontal_fit(&mut self, cx: &App) {
+        if !matches!(self.route, Route::Chat) {
+            self.last_horizontal_fit = None;
+            return;
+        }
+        let fit = self.horizontal_fit();
+        let previous = self
+            .last_horizontal_fit
+            .as_ref()
+            .filter(|(key, _)| *key == self.active_chat)
+            .map(|(_, fit)| *fit);
+        if let Some(previous) = previous {
+            let files_target = if fit.files && self.panels.get(&self.active_chat).files_open {
+                self.files_target_for_sidebar(fit.sidebar_limit, cx)
+            } else {
+                0.0
+            };
+            if fit.sidebar && !previous.sidebar && !self.settings.sidebar_collapsed {
+                self.sidebar_tween = Some(WidthTween::new(0.0, fit.sidebar_limit));
+            }
+            if fit.right && !previous.right && self.panels.get(&self.active_chat).changes_open {
+                self.right_tween = Some(WidthTween::new(
+                    0.0,
+                    self.right_target_for_columns(cx, fit.sidebar_limit, files_target),
+                ));
+            }
+            if fit.files && !previous.files && self.panels.get(&self.active_chat).files_open {
+                self.files_tween = Some(WidthTween::new(0.0, files_target));
+            }
+        }
+        if let Some((key, previous)) = &mut self.last_horizontal_fit
+            && *key == self.active_chat
+        {
+            *previous = fit;
+        } else {
+            self.last_horizontal_fit = Some((self.active_chat.clone(), fit));
+        }
     }
 
     fn sidebar_target(&self) -> f32 {
@@ -3133,6 +3165,14 @@ impl Shell {
     }
 
     fn right_target_for_sidebar(&self, cx: &App, sidebar: f32) -> f32 {
+        self.right_target_for_columns(
+            cx,
+            sidebar,
+            self.files_reserved_width_for_sidebar(sidebar, cx),
+        )
+    }
+
+    fn right_target_for_columns(&self, cx: &App, sidebar: f32, files: f32) -> f32 {
         if !self.right_pane_open(cx) || !self.horizontal_fit().right {
             0.0
         } else {
@@ -3140,14 +3180,13 @@ impl Shell {
             // intentionally consumes it completely. Both ride the sidebar
             // tween so toggling it remains seamless.
             if self.right_pane_expanded {
-                right_pane_takeover_width(
-                    self.viewport_width - self.files_reserved_width_for_sidebar(sidebar, cx),
-                    sidebar,
-                )
+                right_pane_takeover_width(self.viewport_width - files, sidebar)
             } else {
-                self.settings
-                    .right_pane_width
-                    .min(self.surface_max_width_for_sidebar(sidebar, cx))
+                self.settings.right_pane_width.min(right_pane_max_width(
+                    self.viewport_width - files,
+                    sidebar,
+                    CHAT_PANEL_MIN,
+                ))
             }
         }
     }
@@ -6810,7 +6849,7 @@ impl Shell {
         // activity/glyph personality independently of the selected variant.
         let inner = self.sidebar_pane.clone().cached(
             gpui::StyleRefinement::default()
-                .w(px(self.settings.sidebar_width))
+                .w(px(self.horizontal_fit().sidebar_limit))
                 .h_full()
                 .flex_none(),
         );
@@ -12182,6 +12221,7 @@ impl Render for Shell {
         // Manual tween drive bookkeeping for this pass (see [`WidthTween`]).
         self.reduced_motion = motion::reduced_motion(cx);
         self.motion_active.set(false);
+        self.track_horizontal_fit(cx);
 
         if self.activation_sub.is_none() {
             self.activation_sub = Some(cx.observe_window_activation(
@@ -12533,7 +12573,7 @@ impl Render for Shell {
                 // never renders it (zeron __root.tsx `!isSettings && activeChat`
                 // around the diff column) — the per-session open flags stay
                 // intact for the return trip.
-                let right_open = on_chat && self.right_pane_open(cx);
+                let right_open = on_chat && self.right_pane_open(cx) && self.horizontal_fit().right;
                 // Takeover mode derives its width from the viewport, so a
                 // manual drag handle would fight the expanded target.
                 let right_handle = (right_open
@@ -16310,10 +16350,55 @@ mod smart_panel_rebase_tests {
                 assert_eq!(shell.right_visible_width(cx), 414.0);
                 assert!(shell.right_pane_open(cx) && shell.files_panel_open(cx));
 
+                shell.settings.sidebar_width = SIDEBAR_MAX;
+                shell.viewport_width = 1150.0;
+                assert_eq!(shell.horizontal_fit().sidebar_limit, 270.0);
+                assert_eq!(shell.sidebar_now(), 270.0);
+
+                shell.settings.sidebar_width = SIDEBAR_DEFAULT;
                 shell.viewport_width = 1600.0;
                 assert_eq!(shell.sidebar_now(), SIDEBAR_DEFAULT);
                 assert_eq!(shell.files_visible_width(cx), settings::FILES_PANEL_DEFAULT);
                 assert_eq!(shell.right_visible_width(cx), RIGHT_PANE_DEFAULT);
+
+                shell.viewport_width = 1000.0;
+                shell.last_horizontal_fit = Some(("chat".into(), shell.horizontal_fit()));
+                shell.close_files_panel(cx);
+                let closing = shell.files_tween.unwrap();
+                let duration = RESIZE.total().mul_f32(motion::speed_scale());
+                shell.render_time = Some(closing.started + duration / 2);
+                assert!(shell.files_visible_width(cx) > 0.0);
+                assert_eq!(shell.sidebar_now(), 0.0);
+
+                shell.files_tween = Some(WidthTween {
+                    started: std::time::Instant::now() - duration,
+                    ..closing
+                });
+                shell.render_time = None;
+                shell.track_horizontal_fit(cx);
+                let returning = shell.sidebar_tween.unwrap();
+                assert_eq!(returning.from, 0.0);
+                shell.render_time = Some(returning.started);
+                assert_eq!(shell.sidebar_now(), 0.0);
+                shell.render_time = Some(returning.started + duration / 2);
+                assert!(shell.sidebar_now() > 0.0);
+                assert!(shell.sidebar_now() < SIDEBAR_DEFAULT);
+
+                shell
+                    .panels
+                    .update("chat", |panels| panels.files_open = true);
+                shell.files_tween = None;
+                shell.sidebar_tween = None;
+                shell.right_tween = None;
+                shell.render_time = None;
+                shell.settings.sidebar_width = SIDEBAR_MAX;
+                shell.viewport_width = 500.0;
+                shell.last_horizontal_fit = Some(("chat".into(), shell.horizontal_fit()));
+                shell.viewport_width = 1150.0;
+                shell.track_horizontal_fit(cx);
+                assert_eq!(shell.sidebar_tween.unwrap().to, 270.0);
+                assert_eq!(shell.files_tween.unwrap().to, FILES_PANEL_MIN);
+                assert_eq!(shell.right_tween.unwrap().to, RIGHT_PANE_MIN);
             })
             .unwrap();
     }

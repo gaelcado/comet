@@ -107,11 +107,6 @@ impl Shell {
             .surface_max
     }
 
-    pub(super) fn surface_max_width_for_sidebar(&self, sidebar: f32, cx: &App) -> f32 {
-        self.files_layout_for_sidebar(self.files_visible_width(cx), sidebar, cx)
-            .surface_max
-    }
-
     pub(super) fn right_visible_width(&self, cx: &App) -> f32 {
         if !self.horizontal_fit().right {
             return 0.0;
