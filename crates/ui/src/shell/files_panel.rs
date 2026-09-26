@@ -5,9 +5,9 @@ use crate::settings::{FILES_PANEL_DEFAULT, FILES_PANEL_MAX, FILES_PANEL_MIN};
 
 pub(super) struct FilesPanelResize;
 
-/// Allocate a real column to Files. Reduce its preferred width before taking
-/// space from the chat/editor minima; below those minima, share the shortage
-/// proportionally so no open panel covers another.
+/// Allocate a real column to Files, reducing its preferred width before the
+/// chat or surface minima. The shell fit policy hides a whole column when its
+/// minimum cannot fit, so no settled column is rendered as a sliver.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct FilesPanelLayout {
     width: f32,
@@ -29,24 +29,15 @@ fn files_panel_layout(
         CHAT_PANEL_MIN
     };
     let surface_min = if surfaces_open { RIGHT_PANE_MIN } else { 0.0 };
-    let scale = if preferred > 0.0 {
-        (available / (chat_min + surface_min + preferred.min(FILES_PANEL_MIN))).min(1.0)
+    let max_width = if preferred > 0.0 {
+        (available - chat_min - surface_min).max(0.0)
     } else {
-        // Preserve the existing chat floor when Files is closed.
-        1.0
+        0.0
     };
-    let max_width = (available - (chat_min + surface_min) * scale).max(0.0);
     let width = visible.max(0.0).min(max_width);
-    // As Files animates closed, return its space to the remaining columns
-    // smoothly instead of changing their minima when the tween finishes.
-    let content_scale = if preferred > 0.0 {
-        ((available - width) / (chat_min + surface_min)).min(1.0)
-    } else {
-        1.0
-    };
     FilesPanelLayout {
         width,
-        surface_max: right_pane_max_width(viewport - width, sidebar, chat_min * content_scale),
+        surface_max: right_pane_max_width(viewport - width, sidebar, chat_min),
     }
 }
 
@@ -62,17 +53,18 @@ impl Shell {
     }
 
     fn files_layout_for_sidebar(&self, visible: f32, sidebar: f32, cx: &App) -> FilesPanelLayout {
+        let fit = self.horizontal_fit();
         files_panel_layout(
             self.viewport_width,
             sidebar,
-            if self.files_panel_open(cx) || self.tween_active(self.files_tween) {
+            if fit.files && (self.files_panel_open(cx) || self.tween_active(self.files_tween)) {
                 self.settings.files_panel_width
             } else {
                 0.0
             },
-            visible,
-            self.right_pane_open(cx),
-            self.right_pane_expanded,
+            if fit.files { visible } else { 0.0 },
+            fit.right,
+            self.right_pane_expanded && fit.right,
         )
     }
 
@@ -121,9 +113,14 @@ impl Shell {
     }
 
     pub(super) fn right_visible_width(&self, cx: &App) -> f32 {
+        if !self.horizontal_fit().right {
+            return 0.0;
+        }
         let available =
             (self.viewport_width - self.sidebar_now() - self.files_visible_width(cx)).max(0.0);
-        self.right_now(cx).min(available)
+        self.right_now(cx)
+            .min(available)
+            .min(self.surface_max_width(cx))
     }
 
     fn clear_surface_transitions(&mut self) {
@@ -287,6 +284,15 @@ impl Shell {
             self.add_files_surface(window, cx);
             return;
         }
+        if !self.horizontal_fit().files {
+            let key = self.panel_key(cx);
+            self.record_panel_open(AuxiliaryPanel::Files, &key);
+            if self.horizontal_fit().files {
+                self.files_tween = Some(WidthTween::new(0.0, self.files_target(cx)));
+                self.add_files_surface(window, cx);
+                return;
+            }
+        }
         self.close_files_panel(cx);
         window.focus(&self.composer.focus_handle(cx), cx);
         if self.right_pane_open(cx) {
@@ -318,7 +324,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let active = self.panel_key(cx);
-        let visible = matches!(self.route, Route::Chat) && self.files_panel_open(cx);
+        let visible = matches!(self.route, Route::Chat)
+            && self.horizontal_fit().files
+            && self.files_panel_open(cx);
         for (key, files) in &self.files {
             if !visible || *key != active {
                 files.update(cx, |files, _| files.release_git_status());
@@ -326,6 +334,7 @@ impl Shell {
         }
         if !matches!(self.route, Route::Chat)
             || self.active_chat.is_empty()
+            || !self.horizontal_fit().files
             || (!self.files_panel_open(cx) && !self.tween_active(self.files_tween))
         {
             return Empty.into_any_element();
@@ -440,23 +449,19 @@ mod tests {
     fn files_layout_returns_space_smoothly_during_close() {
         let mut previous_chat = 0.0;
         for visible in [186.0, 140.0, 84.0, 40.0, 0.0] {
-            let layout = files_panel_layout(1000.0, 256.0, 286.0, visible, true, false);
-            let chat = 744.0 - layout.width - layout.surface_max;
-            assert!(chat >= previous_chat && chat <= CHAT_PANEL_MIN);
+            let layout = files_panel_layout(1200.0, 256.0, 286.0, visible, true, false);
+            let chat = 944.0 - layout.width - layout.surface_max;
+            assert!(chat >= previous_chat && chat >= CHAT_PANEL_MIN);
             previous_chat = chat;
         }
         assert_eq!(
-            files_panel_layout(1000.0, 256.0, 286.0, 0.0, true, false),
-            files_panel_layout(1000.0, 256.0, 0.0, 0.0, true, false),
+            files_panel_layout(1200.0, 256.0, 286.0, 0.0, true, false),
+            files_panel_layout(1200.0, 256.0, 0.0, 0.0, true, false),
         );
     }
 
     #[test]
-    fn files_layout_shares_tight_windows_without_covering_any_column() {
-        let compact = files_panel_layout(1000.0, 256.0, 440.0, 440.0, true, false);
-        let chat = 1000.0 - 256.0 - compact.width - compact.surface_max;
-        assert!((compact.width / FILES_PANEL_MIN - chat / CHAT_PANEL_MIN).abs() < 0.001);
-        assert!((compact.surface_max / RIGHT_PANE_MIN - chat / CHAT_PANEL_MIN).abs() < 0.001);
+    fn files_layout_never_takes_space_reserved_for_the_chat_or_surface() {
         for viewport in [0.0, 120.0, 280.0, 600.0, 1000.0, 1200.0, 1600.0] {
             for sidebar in [0.0, 256.0, 400.0] {
                 for surfaces in [false, true] {
@@ -469,11 +474,13 @@ mod tests {
                             assert!(layout.width >= 0.0 && layout.width <= visible);
                             assert!(layout.surface_max >= 0.0);
                             assert!(layout.width + layout.surface_max <= available + 0.001);
-                            if available > 0.0 && surfaces {
-                                assert!(layout.surface_max > 0.0, "the editor must remain visible");
-                                if visible > 0.0 {
-                                    assert!(layout.width > 0.0, "the tree must remain visible");
-                                }
+                            if available
+                                >= CHAT_PANEL_MIN + if surfaces { RIGHT_PANE_MIN } else { 0.0 }
+                            {
+                                assert!(
+                                    available - layout.width - layout.surface_max >= CHAT_PANEL_MIN
+                                        || surfaces && expanded
+                                );
                             }
                         }
                     }

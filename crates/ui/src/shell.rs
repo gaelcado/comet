@@ -44,9 +44,9 @@ use crate::settings::harnesses::HarnessesPage;
 use crate::settings::notifications::{NotificationsEvent, NotificationsPage};
 use crate::settings::shortcuts::{ShortcutsEvent, ShortcutsPage};
 use crate::settings::{
-    self, CHAT_PANEL_MIN, ComposerSendBehavior, JUMP_SLOTS, KeymapConfig, RIGHT_PANE_DEFAULT,
-    RIGHT_PANE_MIN, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN, SavePolicy, ShortcutId,
-    SidebarOrganization, SidebarSort, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_VH,
+    self, CHAT_PANEL_MIN, ComposerSendBehavior, FILES_PANEL_MIN, JUMP_SLOTS, KeymapConfig,
+    RIGHT_PANE_DEFAULT, RIGHT_PANE_MIN, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN, SavePolicy,
+    ShortcutId, SidebarOrganization, SidebarSort, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_VH,
     TERMINAL_MIN_HEIGHT, UiSettings, badge_combo, jump_hints_visible, modifier_send_hint_visible,
     platform_combo, sidebar_pin_profile_key,
 };
@@ -652,9 +652,8 @@ pub enum Route {
 }
 
 /// Maximum width the right pane may occupy while retaining the conversation
-/// floor. On unusually small windows this deliberately falls below the right
-/// pane's preferred minimum: the chat remains usable and the side surface
-/// yields the scarce space.
+/// floor. The horizontal fit policy hides a lower-priority column before this
+/// budget can fall below the right pane's minimum at rest.
 fn right_pane_max_width(viewport: f32, sidebar: f32, chat_floor: f32) -> f32 {
     (viewport - sidebar - chat_floor).max(0.0)
 }
@@ -748,6 +747,81 @@ fn smart_panel_victim<const N: usize>(
         .filter(|(panel, open, _)| *open && Some(*panel) != keep)
         .min_by_key(|(_, _, opened_at)| *opened_at)
         .map(|(panel, _, _)| panel)
+}
+
+/// Responsive visibility is separate from each panel's open flag. A hidden
+/// panel keeps its tabs and width preference and returns when space permits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct HorizontalPanelFit {
+    sidebar: bool,
+    right: bool,
+    files: bool,
+    sidebar_limit: f32,
+}
+
+fn horizontal_panel_fit(
+    viewport: f32,
+    sidebar_width: f32,
+    sidebar: (bool, u64),
+    right: (bool, u64),
+    files: (bool, u64),
+    expanded: bool,
+) -> HorizontalPanelFit {
+    let mut visible = [
+        (AuxiliaryPanel::Sidebar, sidebar.0, sidebar.1),
+        (AuxiliaryPanel::Right, right.0, right.1),
+        (AuxiliaryPanel::Files, files.0, files.1),
+    ];
+    let viewport = viewport.max(0.0);
+    loop {
+        let sidebar_open = visible[0].1;
+        let right_open = visible[1].1;
+        let files_open = visible[2].1;
+        let chat_floor = if right_open && expanded {
+            0.0
+        } else {
+            CHAT_PANEL_MIN
+        };
+        let minimum = chat_floor
+            + if sidebar_open { SIDEBAR_MIN } else { 0.0 }
+            + if right_open { RIGHT_PANE_MIN } else { 0.0 }
+            + if files_open { FILES_PANEL_MIN } else { 0.0 };
+        if minimum <= viewport {
+            return HorizontalPanelFit {
+                sidebar: sidebar_open,
+                right: right_open,
+                files: files_open,
+                sidebar_limit: if sidebar_open {
+                    (viewport
+                        - chat_floor
+                        - if right_open { RIGHT_PANE_MIN } else { 0.0 }
+                        - if files_open { FILES_PANEL_MIN } else { 0.0 })
+                    .min(sidebar_width)
+                } else {
+                    0.0
+                },
+            };
+        }
+        // Takeover is the user's explicit choice to give the surface the
+        // conversation's space. Evict the other columns before that surface.
+        let victim = visible
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, open, _))| *open)
+            .min_by_key(|(_, (panel, _, opened_at))| {
+                (expanded && *panel == AuxiliaryPanel::Right, *opened_at)
+            })
+            .map(|(index, _)| index);
+        let Some(victim) = victim else {
+            return HorizontalPanelFit {
+                sidebar: false,
+                right: false,
+                files: false,
+                sidebar_limit: 0.0,
+            };
+        };
+        visible[victim].1 = false;
+    }
 }
 
 /// The session-scoped panel map. Keys are chat ids; the new-chat canvas uses
@@ -2793,11 +2867,55 @@ impl Shell {
 
     // ---- layout state ----
 
+    fn horizontal_fit(&self) -> HorizontalPanelFit {
+        if !matches!(self.route, Route::Chat) {
+            return HorizontalPanelFit {
+                sidebar: !self.settings.sidebar_collapsed,
+                right: false,
+                files: false,
+                sidebar_limit: self.settings.sidebar_width,
+            };
+        }
+        let panels = self.panels.get(&self.active_chat);
+        horizontal_panel_fit(
+            self.viewport_width,
+            self.settings.sidebar_width,
+            (
+                !self.settings.sidebar_collapsed || self.tween_active(self.sidebar_tween),
+                if self.settings.sidebar_collapsed {
+                    0
+                } else {
+                    self.sidebar_opened_at
+                },
+            ),
+            (
+                !self.active_chat.is_empty()
+                    && (panels.changes_open || self.tween_active(self.right_tween)),
+                if panels.changes_open {
+                    panels.changes_opened_at
+                } else {
+                    0
+                },
+            ),
+            (
+                !self.active_chat.is_empty()
+                    && (panels.files_open || self.tween_active(self.files_tween)),
+                if panels.files_open {
+                    panels.files_opened_at
+                } else {
+                    0
+                },
+            ),
+            self.right_pane_expanded,
+        )
+    }
+
     fn sidebar_target(&self) -> f32 {
-        if self.settings.sidebar_collapsed {
+        let fit = self.horizontal_fit();
+        if self.settings.sidebar_collapsed || !fit.sidebar {
             0.0
         } else {
-            self.settings.sidebar_width
+            fit.sidebar_limit
         }
     }
 
@@ -3015,7 +3133,7 @@ impl Shell {
     }
 
     fn right_target_for_sidebar(&self, cx: &App, sidebar: f32) -> f32 {
-        if !self.right_pane_open(cx) {
+        if !self.right_pane_open(cx) || !self.horizontal_fit().right {
             0.0
         } else {
             // Manual sizing preserves a usable conversation column. Takeover
@@ -3039,6 +3157,14 @@ impl Shell {
     }
 
     fn toggle_sidebar_visibility(&mut self, remember_choice: bool, cx: &mut Context<Self>) {
+        if remember_choice && !self.settings.sidebar_collapsed && !self.horizontal_fit().sidebar {
+            self.record_panel_open(AuxiliaryPanel::Sidebar, "");
+            if self.horizontal_fit().sidebar {
+                self.sidebar_tween = Some(WidthTween::new(0.0, self.sidebar_target()));
+                cx.notify();
+                return;
+            }
+        }
         let from = self.sidebar_now();
         self.sidebar_edge_bounce = None;
         self.sidebar_resize_edge = None;
@@ -3066,6 +3192,15 @@ impl Shell {
     /// it opens the surface host beside it, and it never hides the explorer —
     /// only the explorer's own toggle undocks that portion.
     fn toggle_right_pane(&mut self, cx: &mut Context<Self>) {
+        if self.right_pane_open(cx) && !self.horizontal_fit().right {
+            let key = self.panel_key(cx);
+            self.record_panel_open(AuxiliaryPanel::Right, &key);
+            if self.horizontal_fit().right {
+                self.right_tween = Some(WidthTween::new(0.0, self.right_target(cx)));
+                cx.notify();
+                return;
+            }
+        }
         self.set_surfaces_open(!self.right_pane_open(cx), cx);
     }
 
@@ -6029,9 +6164,16 @@ impl Shell {
     }
 
     pub(super) fn sidebar_now(&self) -> f32 {
-        self.eval_tween(self.sidebar_tween, self.sidebar_target())
-            + self
-                .eval_resize_edge_bounce(self.sidebar_edge_bounce, !self.settings.sidebar_collapsed)
+        let fit = self.horizontal_fit();
+        if !fit.sidebar {
+            return 0.0;
+        }
+        (self.eval_tween(self.sidebar_tween, self.sidebar_target())
+            + self.eval_resize_edge_bounce(
+                self.sidebar_edge_bounce,
+                !self.settings.sidebar_collapsed,
+            ))
+        .clamp(0.0, fit.sidebar_limit)
     }
 
     fn right_now(&self, cx: &App) -> f32 {
@@ -10282,6 +10424,9 @@ impl Shell {
             // their resources. A quick reversal never unloads the frame.
             self.suspend_file_images(cx);
         }
+        if !self.horizontal_fit().right {
+            return Empty.into_any_element();
+        }
         let theme = Theme::of(cx).clone();
         let content: AnyElement = if self.right_pane_open(cx) || self.tween_active(self.right_tween)
         {
@@ -11975,6 +12120,7 @@ impl Render for Shell {
         let browser_active = matches!(gate, GatePhase::Ready)
             && !restart_required
             && matches!(self.route, Route::Chat)
+            && self.horizontal_fit().right
             && (self.right_pane_open(cx) || self.tween_active(self.right_tween));
         // Native clipping follows the animated GPUI mask. Drags only transfer
         // pointer ownership; the browser continues rendering and reflowing.
@@ -16047,6 +16193,129 @@ mod smart_panel_rebase_tests {
             smart_panel_victim(3, with_files, Some(Sidebar)),
             Some(Terminal)
         );
+    }
+
+    #[test]
+    fn horizontal_fit_rebalances_without_shrinking_open_panels_below_their_minima() {
+        for viewport in [
+            0.0, 120.0, 300.0, 500.0, 660.0, 880.0, 1000.0, 1104.0, 1600.0,
+        ] {
+            for sidebar_width in [SIDEBAR_MIN, SIDEBAR_MAX] {
+                for mask in 0..8 {
+                    for expanded in [false, true] {
+                        for order in [[1, 2, 3], [3, 2, 1]] {
+                            let fit = horizontal_panel_fit(
+                                viewport,
+                                sidebar_width,
+                                (mask & 1 != 0, order[0]),
+                                (mask & 2 != 0, order[1]),
+                                (mask & 4 != 0, order[2]),
+                                expanded,
+                            );
+                            let chat = if fit.right && expanded {
+                                0.0
+                            } else {
+                                CHAT_PANEL_MIN.min(viewport)
+                            };
+                            let required = chat
+                                + fit.sidebar_limit
+                                + if fit.right { RIGHT_PANE_MIN } else { 0.0 }
+                                + if fit.files { FILES_PANEL_MIN } else { 0.0 };
+                            assert!(required <= viewport + 0.001, "{viewport}: {fit:?}");
+                            if fit.sidebar {
+                                assert!(fit.sidebar_limit >= SIDEBAR_MIN);
+                            }
+                            if viewport >= CHAT_PANEL_MIN && !expanded {
+                                assert!(viewport - required >= -0.001);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn horizontal_fit_keeps_recent_panel_and_restores_older_panels_with_space() {
+        let narrow = horizontal_panel_fit(
+            1000.0,
+            SIDEBAR_DEFAULT,
+            (true, 1),
+            (true, 2),
+            (true, 3),
+            false,
+        );
+        assert!(!narrow.sidebar && narrow.right && narrow.files);
+        let sidebar_reopened = horizontal_panel_fit(
+            1000.0,
+            SIDEBAR_DEFAULT,
+            (true, 4),
+            (true, 2),
+            (true, 3),
+            false,
+        );
+        assert!(sidebar_reopened.sidebar && !sidebar_reopened.right && sidebar_reopened.files);
+        let wide = horizontal_panel_fit(
+            1600.0,
+            SIDEBAR_DEFAULT,
+            (true, 4),
+            (true, 2),
+            (true, 3),
+            false,
+        );
+        assert!(wide.sidebar && wide.right && wide.files);
+        assert_eq!(wide.sidebar_limit, SIDEBAR_DEFAULT);
+    }
+
+    #[gpui::test]
+    fn shell_panel_widths_follow_fit_and_restore_without_changing_open_flags(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            Shell::new(
+                state,
+                EngineBootConfig {
+                    data_dir: dir.path().into(),
+                    ipc_port: 0,
+                    edge_url: "http://127.0.0.1:1".into(),
+                    edge_token: None,
+                    org_id: None,
+                    workos_client_id: None,
+                    default_harness: zeron_proto::HarnessId::Mock,
+                },
+                cx,
+            )
+        });
+        window
+            .update(cx, |shell, _, cx| {
+                shell.active_chat = "chat".into();
+                shell.panels.update("chat", |panels| {
+                    panels.changes_open = true;
+                    panels.changes_opened_at = 2;
+                    panels.files_open = true;
+                    panels.files_opened_at = 3;
+                });
+                shell.sidebar_opened_at = 1;
+                shell.viewport_width = 1000.0;
+                assert_eq!(shell.sidebar_now(), 0.0);
+                assert_eq!(shell.files_visible_width(cx), settings::FILES_PANEL_DEFAULT);
+                assert_eq!(shell.right_visible_width(cx), 414.0);
+                assert!(shell.right_pane_open(cx) && shell.files_panel_open(cx));
+
+                shell.viewport_width = 1600.0;
+                assert_eq!(shell.sidebar_now(), SIDEBAR_DEFAULT);
+                assert_eq!(shell.files_visible_width(cx), settings::FILES_PANEL_DEFAULT);
+                assert_eq!(shell.right_visible_width(cx), RIGHT_PANE_DEFAULT);
+            })
+            .unwrap();
     }
 
     #[gpui::test]

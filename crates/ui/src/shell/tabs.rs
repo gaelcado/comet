@@ -265,8 +265,10 @@ impl Shell {
         // the pane itself would sit under the drag region and never see a
         // click. Closed, it is just the stable open/close toggle. Hidden on
         // the new-session canvas (user request) — nothing to diff yet.
-        let right_pane_visible =
-            !on_canvas && (self.right_pane_open(cx) || self.tween_active(self.right_tween));
+        let fit = self.horizontal_fit();
+        let right_pane_visible = !on_canvas
+            && fit.right
+            && (self.right_pane_open(cx) || self.tween_active(self.right_tween));
         let takeover = right_pane_visible
             && (self.right_pane_expanded || self.tween_active(self.main_takeover_tween));
         // In takeover the title hides and the strip owns the whole band, so
@@ -414,12 +416,12 @@ impl Shell {
                                     }),
                                 )
                                 .role(gpui::Role::Button)
-                                .aria_label(if self.files_panel_open(cx) {
+                                .aria_label(if self.files_panel_open(cx) && fit.files {
                                     "Hide files panel"
                                 } else {
                                     "Show files panel"
                                 })
-                                .when(self.files_panel_open(cx), |button| {
+                                .when(self.files_panel_open(cx) && fit.files, |button| {
                                     button.bg(crate::theme::wash(0.09))
                                 }),
                             )
@@ -878,7 +880,8 @@ mod titlebar_geometry_tests {
         assert!(row.left() > px(0.0));
 
         // A recently resized right pane can still be bouncing when the
-        // sidebar changes. The titlebar must follow its visible width.
+        // sidebar changes. The titlebar follows the painted width, including
+        // the responsive cap that preserves the conversation minimum.
         let bounce_started = std::time::Instant::now();
         cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
         shell.update(cx, |shell, _| {
@@ -902,7 +905,7 @@ mod titlebar_geometry_tests {
         let pane_width = shell.read_with(cx, |shell, cx| {
             let bounce = shell.right_now(cx) - shell.right_target(cx);
             assert!(bounce.abs() > 0.5);
-            shell.right_now(cx)
+            shell.right_visible_width(cx)
         });
         assert!((f32::from(row.left()) - (800.0 - pane_width)).abs() < 0.5);
 
