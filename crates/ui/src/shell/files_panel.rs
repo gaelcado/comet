@@ -58,9 +58,13 @@ impl Shell {
     }
 
     fn files_layout(&self, visible: f32, cx: &App) -> FilesPanelLayout {
+        self.files_layout_for_sidebar(visible, self.sidebar_now(), cx)
+    }
+
+    fn files_layout_for_sidebar(&self, visible: f32, sidebar: f32, cx: &App) -> FilesPanelLayout {
         files_panel_layout(
             self.viewport_width,
-            self.sidebar_now(),
+            sidebar,
             if self.files_panel_open(cx) || self.tween_active(self.files_tween) {
                 self.settings.files_panel_width
             } else {
@@ -73,12 +77,17 @@ impl Shell {
     }
 
     pub(super) fn files_target(&self, cx: &App) -> f32 {
-        self.files_layout(
+        self.files_target_for_sidebar(self.sidebar_now(), cx)
+    }
+
+    fn files_target_for_sidebar(&self, sidebar: f32, cx: &App) -> f32 {
+        self.files_layout_for_sidebar(
             if self.files_panel_open(cx) {
                 self.settings.files_panel_width
             } else {
                 0.0
             },
+            sidebar,
             cx,
         )
         .width
@@ -96,8 +105,18 @@ impl Shell {
         self.files_visible_width(cx)
     }
 
+    pub(super) fn files_reserved_width_for_sidebar(&self, sidebar: f32, cx: &App) -> f32 {
+        self.files_layout_for_sidebar(self.files_visible_width(cx), sidebar, cx)
+            .width
+    }
+
     pub(super) fn surface_max_width(&self, cx: &App) -> f32 {
         self.files_layout(self.files_visible_width(cx), cx)
+            .surface_max
+    }
+
+    pub(super) fn surface_max_width_for_sidebar(&self, sidebar: f32, cx: &App) -> f32 {
+        self.files_layout_for_sidebar(self.files_visible_width(cx), sidebar, cx)
             .surface_max
     }
 
@@ -220,10 +239,20 @@ impl Shell {
         }
         let from = self.files_visible_width(cx);
         let was_open = self.files_panel_open(cx);
-        self.panels.update(&key, |p| p.files_open = true);
         if !was_open {
             self.clear_surface_transitions();
-            self.files_tween = Some(WidthTween::new(from, self.files_target(cx)));
+            // Keep the explorer at its current width while smart behavior
+            // closes an older panel, then calculate the final destination.
+            self.files_tween = Some(WidthTween::new(from, from));
+        }
+        self.panels.update(&key, |p| p.files_open = true);
+        if !was_open {
+            self.record_panel_open(AuxiliaryPanel::Files, &key);
+            self.reconcile_smart_panels(Some(AuxiliaryPanel::Files), cx);
+            self.files_tween = Some(WidthTween::new(
+                from,
+                self.files_target_for_sidebar(self.sidebar_target(), cx),
+            ));
         }
         if let Some(files) = self.files.get(&key).cloned() {
             files.update(cx, |files, cx| {
@@ -449,6 +478,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[gpui::test]
+    fn smart_limit_counts_the_explorer_as_a_panel(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            let mut settings = settings::UiSettings::default();
+            settings.panel_behavior = settings::PanelBehavior::Smart2;
+            settings::init(settings, dir.path(), cx);
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            Shell::new(
+                state,
+                EngineBootConfig {
+                    data_dir: dir.path().into(),
+                    ipc_port: 0,
+                    edge_url: "http://127.0.0.1:1".into(),
+                    edge_token: None,
+                    org_id: None,
+                    workos_client_id: None,
+                    default_harness: zeron_proto::HarnessId::Mock,
+                },
+                cx,
+            )
+        });
+        window
+            .update(cx, |shell, window, cx| {
+                shell.active_chat = "chat".into();
+                shell.viewport_width = 1000.0;
+                shell.add_files_surface(window, cx);
+                assert!(shell.files_panel_open(cx));
+                assert!(shell.settings.sidebar_collapsed);
+                assert!(!shell.sidebar_user_collapsed);
+                assert_eq!(
+                    shell.files_tween.unwrap().to,
+                    shell.settings.files_panel_width
+                );
+
+                shell.toggle_right_pane(cx);
+                assert!(shell.right_pane_open(cx));
+                assert!(!shell.files_panel_open(cx));
+                assert!(shell.files.contains_key("chat"));
+
+                shell.toggle_files_panel(window, cx);
+                assert!(shell.files_panel_open(cx));
+                assert!(!shell.right_pane_open(cx));
+            })
+            .unwrap();
     }
 
     #[gpui::test]

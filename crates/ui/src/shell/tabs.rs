@@ -327,6 +327,7 @@ impl Shell {
         } else {
             let mut controls = div()
                 .id("right-titlebar-controls")
+                .debug_selector(|| "right-titlebar-controls".into())
                 .flex_none()
                 .h_full()
                 .flex()
@@ -435,7 +436,19 @@ impl Shell {
         // under this session, fork copies its history into one. Same pair
         // the side-chat header carries, so a family reads the same from
         // either end.
-        let session_controls = (!takeover && !on_canvas).then(|| {
+        let show_actions = !takeover
+            && !on_canvas
+            && available_titlebar_width >= actions_ui::PROJECT_ACTION_CONTROL_MIN_WIDTH;
+        let show_session_controls = !takeover
+            && !on_canvas
+            && available_titlebar_width
+                >= SESSION_CONTROLS_WIDTH
+                    + if show_actions {
+                        actions_ui::PROJECT_ACTION_CONTROL_MIN_WIDTH
+                    } else {
+                        0.0
+                    };
+        let session_controls = show_session_controls.then(|| {
             let busy = self.side_chat_creating;
             div()
                 .flex_none()
@@ -471,7 +484,7 @@ impl Shell {
         } else {
             available_titlebar_width
         };
-        let actions = (!takeover && !on_canvas)
+        let actions = show_actions
             .then(|| {
                 self.render_project_actions_control(available_titlebar_width, viewport_height, cx)
             })
@@ -789,25 +802,49 @@ mod titlebar_geometry_tests {
                     let right = cx.debug_bounds("toggle-changes").unwrap();
                     let expand = cx.debug_bounds("expand-changes");
                     let row = cx.debug_bounds("right-titlebar-controls").unwrap();
-                    let action = cx.debug_bounds("project-actions-control").unwrap();
-                    let (pane_width, right_pad) = shell.read_with(cx, |shell, cx| {
-                        (
-                            shell.right_now(cx),
-                            shell.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET),
-                        )
-                    });
+                    let action = cx.debug_bounds("project-actions-control");
+                    let (pane_width, right_pad, left_clearance) =
+                        shell.read_with(cx, |shell, cx| {
+                            let content_left = (shell.sidebar_now() + Theme::SPACE_LG).max(
+                                shell.title_bar_content_start()
+                                    + TITLEBAR_ACTION_SLOT_WIDTH * shell.titlebar_plus_alpha(cx),
+                            );
+                            (
+                                shell.right_visible_width(cx),
+                                shell.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET),
+                                content_left + 8.0 * 3.0,
+                            )
+                        });
                     let left_x = f32::from(left.left());
                     if let Some(initial) = sidebar_button_left {
                         assert_eq!(left_x, initial, "sidebar trigger shifted");
                     } else {
                         sidebar_button_left = Some(left_x);
                     }
-                    assert!((f32::from(right.left()) - (width - right_pad - 28.0)).abs() < 0.5);
                     assert!(
-                        (f32::from(row.left()) - (width - pane_width)).abs() < 0.5,
-                        "pane header detached from its seam at {width}px, {collapsed:?}, {progress}"
+                        (f32::from(right.left()) - (width - right_pad - 28.0)).abs() < 0.5,
+                        "right trigger at {}, expected {} for {width}px, {collapsed:?}, {progress}; row {}, action right {:?}, pane width {}",
+                        f32::from(right.left()),
+                        width - right_pad - 28.0,
+                        f32::from(row.left()),
+                        action.as_ref().map(|action| f32::from(action.right())),
+                        pane_width,
                     );
-                    assert!((f32::from(action.right()) + 8.0 - f32::from(row.left())).abs() < 0.5);
+                    // At tight widths, the fixed toggles can be wider than
+                    // the pane, or the window-control cluster can constrain
+                    // the reveal. Otherwise the strip follows the seam.
+                    let expected_left = (width - pane_width)
+                        .min(width - right_pad - PANEL_TOGGLE_SLOTS)
+                        .max(left_clearance);
+                    assert!(
+                        (f32::from(row.left()) - expected_left).abs() < 0.5,
+                        "pane header at {}, expected {} at {width}px, {collapsed:?}, {progress}",
+                        f32::from(row.left()),
+                        expected_left,
+                    );
+                    if let Some(action) = action {
+                        assert!(action.right() + px(8.0) <= row.left());
+                    }
                     assert_eq!(
                         expand.is_some(),
                         f32::from(row.size.width)

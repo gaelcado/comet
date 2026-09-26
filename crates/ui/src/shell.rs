@@ -707,6 +707,7 @@ fn workspace_file_title(path: &str) -> SharedString {
 pub struct ChatPanels {
     /// The explorer portion of the right pane is docked.
     pub files_open: bool,
+    files_opened_at: u64,
     pub terminal_open: bool,
     /// The surface host portion of the right pane is visible (historically
     /// the Changes pane). The pane itself shows when either portion does.
@@ -723,13 +724,14 @@ pub struct ChatPanels {
 enum AuxiliaryPanel {
     Sidebar,
     Right,
+    Files,
     Terminal,
 }
 
 /// Choose the oldest visible auxiliary panel, keeping the panel being opened.
-fn smart_panel_victim(
+fn smart_panel_victim<const N: usize>(
     max_panels: usize,
-    visible: [(AuxiliaryPanel, bool, u64); 3],
+    visible: [(AuxiliaryPanel, bool, u64); N],
     keep: Option<AuxiliaryPanel>,
 ) -> Option<AuxiliaryPanel> {
     if 1 + visible.iter().filter(|(_, open, _)| *open).count() <= max_panels {
@@ -2124,7 +2126,7 @@ impl Shell {
             }
         });
         let data_dir = boot.data_dir.clone();
-        let settings = settings::current(cx);
+        let mut settings = settings::current(cx);
         let icon_data_dir = data_dir.clone();
         let icon_references = settings.project_icon_overrides.clone();
         let icon_cleanup_cutoff = std::time::SystemTime::now()
@@ -2830,6 +2832,9 @@ impl Shell {
             AuxiliaryPanel::Right => self
                 .panels
                 .update(key, |panels| panels.changes_opened_at = opened_at),
+            AuxiliaryPanel::Files => self
+                .panels
+                .update(key, |panels| panels.files_opened_at = opened_at),
             AuxiliaryPanel::Terminal => self
                 .panels
                 .update(key, |panels| panels.terminal_opened_at = opened_at),
@@ -2862,6 +2867,11 @@ impl Shell {
                         panels.changes_opened_at,
                     ),
                     (
+                        AuxiliaryPanel::Files,
+                        self.files_panel_open(cx),
+                        panels.files_opened_at,
+                    ),
+                    (
                         AuxiliaryPanel::Terminal,
                         panels.terminal_open,
                         panels.terminal_opened_at,
@@ -2876,6 +2886,13 @@ impl Shell {
                     if let Some(panel) = &self.right_terminal {
                         self.smart_focus_handoff.push(panel.read(cx).focus_handle());
                     }
+                    if keep.is_none() || keep == Some(AuxiliaryPanel::Sidebar) {
+                        self.composer
+                            .update(cx, |composer, _| composer.focus_pending = true);
+                    }
+                }
+                Some(AuxiliaryPanel::Files) => {
+                    self.close_files_panel(cx);
                     if keep.is_none() || keep == Some(AuxiliaryPanel::Sidebar) {
                         self.composer
                             .update(cx, |composer, _| composer.focus_pending = true);
@@ -2909,13 +2926,13 @@ impl Shell {
             // tween so toggling it remains seamless.
             if self.right_pane_expanded {
                 right_pane_takeover_width(
-                    self.viewport_width - self.files_reserved_width(cx),
+                    self.viewport_width - self.files_reserved_width_for_sidebar(sidebar, cx),
                     sidebar,
                 )
             } else {
                 self.settings
                     .right_pane_width
-                    .min(self.surface_max_width(cx))
+                    .min(self.surface_max_width_for_sidebar(sidebar, cx))
             }
         }
     }
@@ -15872,7 +15889,7 @@ mod smart_panel_rebase_tests {
 
     #[test]
     fn smart_panel_victim_respects_count_opening_order_and_requested_panel() {
-        use AuxiliaryPanel::{Right, Sidebar, Terminal};
+        use AuxiliaryPanel::{Files, Right, Sidebar, Terminal};
         let visible = [(Sidebar, true, 1), (Right, true, 3), (Terminal, true, 2)];
         assert_eq!(smart_panel_victim(4, visible, None), None);
         assert_eq!(smart_panel_victim(3, visible, None), Some(Sidebar));
@@ -15891,6 +15908,20 @@ mod smart_panel_rebase_tests {
                 None
             ),
             None
+        );
+        let with_files = [
+            (Sidebar, true, 1),
+            (Right, true, 3),
+            (Files, true, 4),
+            (Terminal, true, 2),
+        ];
+        assert_eq!(
+            smart_panel_victim(4, with_files, Some(Files)),
+            Some(Sidebar)
+        );
+        assert_eq!(
+            smart_panel_victim(3, with_files, Some(Sidebar)),
+            Some(Terminal)
         );
     }
 
@@ -16003,6 +16034,12 @@ mod smart_panel_rebase_tests {
                 shell.close_settings(cx);
                 assert!(shell.panels.get("b").changes_open);
                 assert!(!shell.panels.get("b").terminal_open);
+
+                shell.panels.update("b", |panels| panels.files_open = true);
+                shell.record_panel_open(AuxiliaryPanel::Files, "b");
+                shell.reconcile_smart_panels(Some(AuxiliaryPanel::Files), cx);
+                assert!(shell.files_panel_open(cx));
+                assert!(!shell.right_pane_open(cx));
             })
             .unwrap();
     }
