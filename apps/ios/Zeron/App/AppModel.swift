@@ -28,6 +28,7 @@ final class AppModel {
     private var lastHosts: [HostOption] = []
     private var workspaceRevision: UInt64 = 0
     private var observers: [UUID: () -> Void] = [:]
+    private var updateObservers: [String: [UUID: () -> Void]] = [:]
     private var sessionObservers: [String: [UUID: () -> Void]] = [:]
     private lazy var bridge = ListenerBridge(app: self)
     private var refreshScheduled = false
@@ -271,6 +272,12 @@ final class AppModel {
         return Token { [weak self] in self?.observers[id] = nil }
     }
 
+    func observeAgentUpdates(_ deviceId: String, _ handler: @escaping () -> Void) -> AnyObject {
+        let id = UUID()
+        updateObservers[deviceId, default: [:]][id] = handler
+        return Token { [weak self] in self?.updateObservers[deviceId]?[id] = nil }
+    }
+
     func observeSession(_ chatId: String, _ handler: @escaping () -> Void) -> AnyObject {
         let id = UUID()
         sessionObservers[chatId, default: [:]][id] = handler
@@ -285,8 +292,8 @@ final class AppModel {
 
     fileprivate func handle(_ event: ClientEvent) {
         switch event {
-        case .agentUpdatesChanged:
-            observers.values.forEach { $0() }
+        case let .agentUpdatesChanged(deviceId, _):
+            updateObservers[deviceId]?.values.forEach { $0() }
         case .workspaceChanged:
             scheduleRefresh()
         case let .sessionChanged(chatId, _), let .composerChanged(chatId, _):

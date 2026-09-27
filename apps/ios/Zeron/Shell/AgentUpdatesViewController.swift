@@ -6,6 +6,7 @@ final class AgentUpdatesViewController: UIViewController {
     private let deviceId: String
     private var handle: AgentUpdatesHandle?
     private var observer: AnyObject?
+    private var workspaceObserver: AnyObject?
     private var list: UICollectionView!
     private var dataSource: UICollectionViewDiffableDataSource<String, String>!
     private var current: AgentUpdateSnapshot?
@@ -98,7 +99,8 @@ final class AgentUpdatesViewController: UIViewController {
         super.viewWillAppear(animated)
         do { handle = try app.client?.openAgentUpdates(deviceId: deviceId) }
         catch { showError(error) }
-        observer = app.observe { [weak self] in self?.render() }
+        observer = app.observeAgentUpdates(deviceId) { [weak self] in self?.render() }
+        workspaceObserver = app.observe { [weak self] in self?.render() }
         render()
     }
     override func viewDidDisappear(_ animated: Bool) {
@@ -106,6 +108,7 @@ final class AgentUpdatesViewController: UIViewController {
         handle?.close()
         handle = nil
         observer = nil
+        workspaceObserver = nil
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
