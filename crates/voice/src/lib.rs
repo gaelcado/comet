@@ -119,6 +119,21 @@ struct Audio {
     failed: bool,
     full: bool,
 }
+fn append<T: cpal::Sample>(data: &[T], channels: usize, rate: u32, a: &Mutex<Audio>)
+where
+    f32: cpal::FromSample<T>,
+{
+    if let Ok(mut a) = a.try_lock() {
+        for frame in data.chunks_exact(channels) {
+            if a.samples.len() >= rate as usize * MAX_SECONDS {
+                a.full = true;
+                break;
+            }
+            a.samples
+                .push(frame.iter().map(|s| s.to_sample::<f32>()).sum::<f32>() / channels as f32);
+        }
+    }
+}
 pub struct Capture {
     stream: Option<cpal::Stream>,
     audio: Arc<Mutex<Audio>>,
@@ -139,46 +154,36 @@ impl Capture {
         }));
         let a = audio.clone();
         let e = audio.clone();
-        fn append<T: cpal::Sample>(data: &[T], channels: usize, rate: u32, a: &Mutex<Audio>)
-        where
-            f32: cpal::FromSample<T>,
-        {
-            if let Ok(mut a) = a.try_lock() {
-                for frame in data.chunks_exact(channels) {
-                    if a.samples.len() >= rate as usize * MAX_SECONDS {
-                        a.full = true;
-                        break;
-                    }
-                    a.samples.push(
-                        frame.iter().map(|s| s.to_sample::<f32>()).sum::<f32>() / channels as f32,
-                    );
-                }
-            }
-        }
         let err = move |_| {
             if let Ok(mut a) = e.lock() {
                 a.failed = true;
             }
         };
+        // Preserve the device's native configuration; convert every CPAL
+        // sample representation through the same bounded mono callback.
+        macro_rules! stream {
+            ($sample:ty) => {
+                device.build_input_stream(
+                    &config.into(),
+                    move |d: &[$sample], _| append(d, channels, rate, &a),
+                    err,
+                    None,
+                )?
+            };
+        }
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => device.build_input_stream(
-                &config.into(),
-                move |d: &[f32], _| append(d, channels, rate, &a),
-                err,
-                None,
-            )?,
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                &config.into(),
-                move |d: &[i16], _| append(d, channels, rate, &a),
-                err,
-                None,
-            )?,
-            cpal::SampleFormat::U16 => device.build_input_stream(
-                &config.into(),
-                move |d: &[u16], _| append(d, channels, rate, &a),
-                err,
-                None,
-            )?,
+            cpal::SampleFormat::I8 => stream!(i8),
+            cpal::SampleFormat::I16 => stream!(i16),
+            cpal::SampleFormat::I24 => stream!(cpal::I24),
+            cpal::SampleFormat::I32 => stream!(i32),
+            cpal::SampleFormat::I64 => stream!(i64),
+            cpal::SampleFormat::U8 => stream!(u8),
+            cpal::SampleFormat::U16 => stream!(u16),
+            cpal::SampleFormat::U24 => stream!(cpal::U24),
+            cpal::SampleFormat::U32 => stream!(u32),
+            cpal::SampleFormat::U64 => stream!(u64),
+            cpal::SampleFormat::F32 => stream!(f32),
+            cpal::SampleFormat::F64 => stream!(f64),
             _ => bail!("Unsupported microphone format"),
         };
         stream.play()?;
@@ -342,6 +347,38 @@ pub fn unload() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cpal::Sample;
+    #[test]
+    fn native_sample_formats_preserve_levels_and_downmix_channels() {
+        fn check<T: cpal::Sample + cpal::FromSample<f32>>()
+        where
+            f32: cpal::FromSample<T>,
+        {
+            let audio = Mutex::new(Audio {
+                samples: Vec::new(),
+                failed: false,
+                full: false,
+            });
+            let input: Vec<T> = [-0.5_f32, 0.5, 0.25, 0.75, 0.0, 0.0]
+                .into_iter()
+                .map(|s| s.to_sample::<T>())
+                .collect();
+            append(&input, 2, 16_000, &audio);
+            assert_eq!(audio.lock().unwrap().samples, vec![0.0, 0.5, 0.0]);
+        }
+        check::<i8>();
+        check::<i16>();
+        check::<cpal::I24>();
+        check::<i32>();
+        check::<i64>();
+        check::<u8>();
+        check::<u16>();
+        check::<cpal::U24>();
+        check::<u32>();
+        check::<u64>();
+        check::<f32>();
+        check::<f64>();
+    }
     #[test]
     fn manifest_pins_only_v3_artifacts_and_exact_size() {
         let m = manifest();
