@@ -1118,12 +1118,8 @@
   .agent-directory-link { text-align: center; margin-bottom: 24px; }
 
   @media (max-width: 800px) {
-    :root { --nav-height: 104px; }
-    .nav-inner { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 60px 44px; column-gap: 16px; row-gap: 0; }
-    .site-nav .logo { grid-column: 1; grid-row: 1; }
-    .site-nav .links { grid-column: 2; grid-row: 1; }
-    .nav-center { grid-column: 1 / -1; grid-row: 2; justify-content: center; gap: 32px; }
-    .nav-center a { min-height: 44px; }
+    :root { --nav-height: 0px; }
+    .site-nav { display: none; }
   }
 
   .theme-changing *, .theme-changing *::before, .theme-changing *::after { transition: none !important; }
