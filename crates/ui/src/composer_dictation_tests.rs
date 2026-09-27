@@ -786,3 +786,33 @@ fn dictation_keeps_draft_stable_when_pasted_references_resolve(cx: &mut TestAppC
     }
     assert_eq!(sends, 1);
 }
+
+#[gpui::test]
+fn dictation_escape_from_composer_controls_cancels_pending_send(cx: &mut TestAppContext) {
+    let (_dir, handle) = super::tests::composer_focus_window(cx);
+    let fake = handle
+        .update(cx, |composer, window, cx| {
+            let fake = composer.input.update(cx, |input, cx| {
+                input.set_text("Keep this draft", cx);
+                let fake = start(input, cx);
+                deliver(input, &fake, [Event::Listening], cx);
+                input.finish_dictation(true, cx);
+                fake
+            });
+            window.focus(&composer.dictation_focus, cx);
+            fake
+        })
+        .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.simulate_keystrokes(handle.into(), "escape");
+    cx.run_until_parked();
+    assert_eq!(fake.borrow().drops, 1);
+    handle
+        .read_with(cx, |composer, cx| {
+            assert_eq!(composer.input.read(cx).dictation.phase, Phase::Idle);
+            assert_eq!(composer.input.read(cx).text(), "Keep this draft");
+            assert!(composer.failure.is_none());
+        })
+        .unwrap();
+}

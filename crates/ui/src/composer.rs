@@ -10160,6 +10160,14 @@ impl Render for Composer {
         let container = container.child(
             div()
                 .track_focus(&self.dictation_focus)
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "escape"
+                        && this.input.read(cx).dictation.phase.active()
+                    {
+                        this.dismiss_dictation(cx);
+                        cx.stop_propagation();
+                    }
+                }))
                 .flex()
                 .flex_col()
                 .gap(px(Theme::SPACE_SM))
