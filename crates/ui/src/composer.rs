@@ -2461,12 +2461,7 @@ impl ComposerInput {
                 Event::Partial(text) => self.apply_dictation(&text, cx),
                 Event::Final(text) => {
                     if text.trim().is_empty() && !self.dictation.has_partial {
-                        self.complete_dictation(
-                            Phase::Failed(
-                                "No speech detected. Check your microphone and try again.".into(),
-                            ),
-                            cx,
-                        );
+                        self.complete_dictation(Phase::NoSpeech, cx);
                         return false;
                     }
                     self.apply_dictation(&text, cx);
@@ -9093,7 +9088,7 @@ impl Composer {
         let theme = Theme::of(cx);
         let phase = self.input.read(cx).dictation.phase.clone();
         let active = phase.active();
-        let label = phase.label().to_owned();
+        let label = phase.action_label().to_owned();
         let tooltip = label.clone();
         let composer = cx.entity().downgrade();
         Some(
@@ -9114,13 +9109,21 @@ impl Composer {
                     gpui::Toggled::False
                 })
                 .tab_index(0)
-                .bg(if active {
+                .bg(if phase == crate::dictation::Phase::Listening {
                     theme.accent
+                } else if active {
+                    theme.accent_wash
                 } else {
                     gpui::transparent_black()
                 })
                 .cursor_pointer()
-                .hover(|style| style.opacity(0.8))
+                .hover(|style| {
+                    if active {
+                        style.opacity(0.85)
+                    } else {
+                        style.bg(theme.surface_raised_hover)
+                    }
+                })
                 .focus_visible(|style| style.border_1().border_color(theme.accent))
                 .tooltip(move |_, cx| {
                     cx.new(|_| AppshotActionTooltip(tooltip.clone().into()))
@@ -9146,7 +9149,7 @@ impl Composer {
                         crate::loaders::mini_mono_spinner(
                             "dictation-progress",
                             2.0,
-                            theme.bg,
+                            theme.text_muted,
                             cx.entity_id(),
                             cx,
                         )
@@ -9155,14 +9158,116 @@ impl Composer {
                         div()
                             .size(px(10.0))
                             .rounded(px(2.0))
-                            .bg(theme.bg)
+                            .bg(theme.on_accent)
                             .into_any_element()
                     } else {
                         crate::icons::icon(crate::icons::MICROPHONE)
-                            .size(px(16.0))
+                            .size(px(18.0))
                             .text_color(theme.text_muted)
                             .into_any_element()
                     },
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn dismiss_dictation(&mut self, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| {
+            input.cancel_dictation();
+            cx.emit(DictationInputEvent::Changed);
+            cx.notify();
+        });
+        self.focus_pending = true;
+        cx.notify();
+    }
+
+    fn render_dictation_status(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let phase = &self.input.read(cx).dictation.phase;
+        let (title, detail) = phase.status()?;
+        let (title, detail) = (title.to_owned(), detail.to_owned());
+        let active = phase.active();
+        let listening = *phase == crate::dictation::Phase::Listening;
+        let failed = matches!(
+            phase,
+            crate::dictation::Phase::Denied(_)
+                | crate::dictation::Phase::Unavailable(_)
+                | crate::dictation::Phase::Failed(_)
+        );
+        let theme = Theme::of(cx);
+        let action = if active { "Cancel" } else { "Dismiss" };
+        let action_label = if active {
+            "Cancel dictation"
+        } else {
+            "Dismiss dictation message"
+        };
+        let composer = cx.entity().downgrade();
+        Some(
+            div()
+                .id("dictation-status")
+                .flex()
+                .items_start()
+                .gap(px(8.0))
+                .px(px(12.0))
+                .text_size(px(12.0))
+                .line_height(px(18.0))
+                .child(
+                    div()
+                        .flex_none()
+                        .mt(px(6.0))
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(if listening {
+                            theme.accent
+                        } else if failed {
+                            theme.warning
+                        } else {
+                            theme.text_faint
+                        }),
+                )
+                .child(
+                    div()
+                        .id("dictation-live-status")
+                        .role(Role::Status)
+                        .aria_label(format!("{title}. {detail}"))
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_wrap()
+                        .gap_x(px(8.0))
+                        .child(div().text_color(theme.text).child(title))
+                        .child(div().min_w_0().text_color(theme.text_muted).child(detail)),
+                )
+                .child(
+                    div()
+                        .id("dictation-dismiss")
+                        .debug_selector(|| "dictation-dismiss".into())
+                        .role(Role::Button)
+                        .aria_label(action_label)
+                        .tab_index(0)
+                        .flex_none()
+                        .h(px(24.0))
+                        .mt(px(-3.0))
+                        .px(px(6.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px(4.0))
+                        .text_color(theme.text_muted)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme.surface_raised_hover).text_color(theme.text))
+                        .focus_visible(|s| s.border_1().border_color(theme.accent))
+                        .child(action)
+                        .on_click(cx.listener(|this, _, _, cx| this.dismiss_dictation(cx)))
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                cx.stop_propagation();
+                                this.dismiss_dictation(cx);
+                            }
+                        }))
+                        .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                            composer
+                                .update(cx, |this, cx| this.dismiss_dictation(cx))
+                                .ok();
+                        }),
                 )
                 .into_any_element(),
         )
@@ -9792,7 +9897,6 @@ impl Render for Composer {
         // Compensate for the transcript canvas beneath the frosted surface.
         // Keep the opaque fallback when frost is disabled or unsupported.
         let pill = div()
-            .track_focus(&self.dictation_focus)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
@@ -9848,7 +9952,7 @@ impl Render for Composer {
             |width| (width - 2.0 * Theme::SPACE_LG).max(0.0),
         );
         let dictation_width = if crate::dictation::enabled(cx) {
-            28.0 + ACTION_UTILITY_GAP
+            28.0 + ACTION_PRIMARY_GAP
         } else {
             0.0
         };
@@ -9937,14 +10041,21 @@ impl Render for Composer {
                                 .items_center()
                                 .gap(px(ACTION_UTILITY_GAP))
                                 .child(attach)
-                                .children(microphone)
                                 .child(model_picker),
                         )
-                        .child(send_button),
+                        .child(
+                            div()
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap(px(ACTION_PRIMARY_GAP))
+                                .children(microphone)
+                                .child(send_button),
+                        ),
                 )
         } else {
             // Compact pill: attachment on the left, input in the middle,
-            // then model and Send on the right, all on one 47px line.
+            // then model, microphone and Send on the right, all on one 47px line.
             // The row is BOTTOM-justified: during the collapse morph the pill
             // top sweeps down over a stationary row, the text walks down from
             // its expanded resting place via a decaying relative offset, and
@@ -9981,8 +10092,7 @@ impl Render for Composer {
                                 .flex()
                                 .items_center()
                                 .gap(px(ACTION_UTILITY_GAP))
-                                .child(attach)
-                                .children(microphone),
+                                .child(attach),
                         )
                         .child(
                             div()
@@ -10008,6 +10118,10 @@ impl Render for Composer {
                                 .pr(px(action_inset))
                                 .relative()
                                 .top(px(-cluster_dy))
+                                .flex()
+                                .items_center()
+                                .gap(px(ACTION_PRIMARY_GAP))
+                                .children(microphone)
                                 .child(send_button),
                         ),
                 )
@@ -10090,19 +10204,16 @@ impl Render for Composer {
         } else {
             container
         };
-        let dictation_phase = &self.input.read(cx).dictation.phase;
-        let dictation_status =
-            (!matches!(dictation_phase, crate::dictation::Phase::Idle)).then(|| {
-                div()
-                    .id("dictation-status")
-                    .role(Role::Status)
-                    .aria_label(dictation_phase.label().to_owned())
-                    .text_size(px(12.0))
-                    .text_color(theme.text_muted)
-                    .px(px(12.0))
-                    .child(dictation_phase.label().to_owned())
-            });
-        let container = container.child(pill_surface).children(dictation_status);
+        let dictation_status = self.render_dictation_status(cx);
+        let container = container.child(
+            div()
+                .track_focus(&self.dictation_focus)
+                .flex()
+                .flex_col()
+                .gap(px(Theme::SPACE_SM))
+                .child(pill_surface)
+                .children(dictation_status),
+        );
 
         // The lower slot keeps a stable footprint for Git projects while its
         // old floating checkout/ref controls dissolve into the session footer.

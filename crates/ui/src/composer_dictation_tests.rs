@@ -649,7 +649,7 @@ fn dictation_silence_explains_empty_result_and_never_sends_existing_draft(cx: &m
         input.finish_dictation(true, cx);
         deliver(input, &fake, [Event::Final(String::new())], cx);
         assert_eq!(input.text(), "keep my draft");
-        assert!(matches!(&input.dictation.phase, Phase::Failed(message) if message.contains("No speech detected")));
+        assert_eq!(input.dictation.phase, Phase::NoSpeech);
     });
     while let Ok(event) = events.try_recv() {
         assert!(!matches!(event, DictationInputEvent::Submit(_)));
@@ -723,4 +723,35 @@ fn dictation_focus_within_composer_keeps_capture_but_leaving_cancels(cx: &mut Te
             assert_eq!(composer.input.read(cx).dictation.phase, Phase::Idle)
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn dictation_cancel_control_preserves_draft_and_clears_pending_send(cx: &mut TestAppContext) {
+    let (_dir, handle) = super::tests::composer_focus_window(cx);
+    let (input, fake) = handle
+        .update(cx, |composer, _, cx| {
+            let fake = composer.input.update(cx, |input, cx| {
+                input.set_text("Keep this draft", cx);
+                let fake = start(input, cx);
+                deliver(input, &fake, [Event::Listening], cx);
+                input.finish_dictation(true, cx);
+                fake
+            });
+            (composer.input.clone(), fake)
+        })
+        .unwrap();
+    let mut events = cx.events::<DictationInputEvent, _>(&input);
+    cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    let cancel = visual.debug_bounds("dictation-dismiss").unwrap();
+    visual.simulate_click(cancel.center(), gpui::Modifiers::default());
+    assert_eq!(fake.borrow().drops, 1);
+    input.read_with(cx, |input, _| {
+        assert_eq!(input.text(), "Keep this draft");
+        assert_eq!(input.dictation.phase, Phase::Idle);
+    });
+    while let Ok(event) = events.try_recv() {
+        assert!(!matches!(event, DictationInputEvent::Submit(_)));
+    }
 }
