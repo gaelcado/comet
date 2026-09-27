@@ -2476,7 +2476,7 @@ impl ComposerInput {
         if self.dictation.timed_out(Instant::now()) {
             self.complete_dictation(
                 Phase::Failed(
-                    "Dictation took too long. Your draft is safe; try a shorter recording.".into(),
+                    "Dictation took too long. Your draft is safe. Wait a moment, then try a shorter recording.".into(),
                 ),
                 cx,
             );

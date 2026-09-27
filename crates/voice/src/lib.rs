@@ -237,7 +237,7 @@ impl Session {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .is_err()
         {
-            bail!("Dictation is already active or finishing in another window.")
+            bail!("Dictation is still active or finishing. Wait a moment, then try again.")
         }
         let sender = WORKER.get_or_init(|| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<Command>(1);
