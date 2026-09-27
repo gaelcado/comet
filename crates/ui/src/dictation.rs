@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 mod model;
-pub(crate) use model::{VoiceCard, card, enabled, init};
+pub(crate) use model::{card, enabled, init};
 
 pub(crate) const FINALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 

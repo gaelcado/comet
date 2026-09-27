@@ -527,6 +527,7 @@ pub enum SettingsSection {
     Appearance,
     Files,
     Notifications,
+    Voice,
     Shortcuts,
     /// Composer and conversation behavior plus thread naming.
     #[default]
@@ -537,10 +538,11 @@ pub enum SettingsSection {
 
 impl SettingsSection {
     /// Sections shown in Settings. `Agents` is a legacy Accounts route alias.
-    pub const ALL: [SettingsSection; 9] = [
+    pub const ALL: [SettingsSection; 10] = [
         SettingsSection::General,
         SettingsSection::Appearance,
         SettingsSection::Notifications,
+        SettingsSection::Voice,
         SettingsSection::Shortcuts,
         SettingsSection::Harnesses,
         SettingsSection::Devices,
@@ -560,12 +562,13 @@ impl SettingsSection {
     }
 
     fn visible_in_nav(self) -> bool {
-        self != Self::Agents && (self != Self::Appshots || crate::appshots::is_desktop())
+        self != Self::Agents
+            && (!matches!(self, Self::Appshots | Self::Voice) || crate::appshots::is_desktop())
     }
 
     /// Where a generic "open Settings" lands for a remembered section: legacy
     /// aliases resolve to their page, and a section this build does not show
-    /// (Appshots off-desktop) falls back to General.
+    /// (Appshots or Voice off-desktop) falls back to General.
     pub(crate) fn reopenable(self) -> Self {
         let section = self.canonical();
         if section.visible_in_nav() {
@@ -584,6 +587,7 @@ impl SettingsSection {
             SettingsSection::Appearance => "appearance",
             SettingsSection::Files => "files",
             SettingsSection::Notifications => "notifications",
+            SettingsSection::Voice => "voice",
             SettingsSection::Shortcuts => "shortcuts",
             SettingsSection::General => "general",
             SettingsSection::Appshots => "appshots",
@@ -600,6 +604,7 @@ impl SettingsSection {
             "appearance" => SettingsSection::Appearance,
             "files" => SettingsSection::Files,
             "notifications" => SettingsSection::Notifications,
+            "voice" => SettingsSection::Voice,
             "shortcuts" => SettingsSection::Shortcuts,
             "general" | "conversations" => SettingsSection::General,
             "appshots" => SettingsSection::Appshots,
@@ -624,6 +629,7 @@ impl SettingsSection {
             SettingsSection::Appearance => "Appearance",
             SettingsSection::Files => "Files",
             SettingsSection::Notifications => "Notifications",
+            SettingsSection::Voice => "Voice",
             SettingsSection::Shortcuts => "Shortcuts",
             SettingsSection::General => "General",
             SettingsSection::Appshots => "Appshots",
@@ -4826,9 +4832,8 @@ impl Shell {
                     None => Empty.into_any_element(),
                 }
             }
-            SettingsSection::Shortcuts
-            | SettingsSection::General
-            | SettingsSection::Appshots => {
+            SettingsSection::Voice => crate::dictation::card(cx).into_any_element(),
+            SettingsSection::Shortcuts | SettingsSection::General | SettingsSection::Appshots => {
                 if self.shortcuts_page.is_none() {
                     let state = self.state.clone();
                     let keymap = self.settings.keymap.clone();
@@ -6774,6 +6779,7 @@ impl Shell {
             SettingsSection::Appearance => icons::TUNING,
             SettingsSection::Files => icons::FOLDER,
             SettingsSection::Notifications => icons::BELL,
+            SettingsSection::Voice => icons::MICROPHONE,
             SettingsSection::Shortcuts => icons::KEYBOARD,
             SettingsSection::General => icons::SETTINGS,
             SettingsSection::Appshots => icons::MONITOR,
@@ -16248,6 +16254,7 @@ mod settings_modal_regressions {
             ("settings/agents", SettingsSection::Harnesses),
             ("settings/harnesses", SettingsSection::Harnesses),
             ("settings/general", SettingsSection::General),
+            ("settings/voice", SettingsSection::Voice),
             ("settings/conversations", SettingsSection::General),
             ("settings/files", SettingsSection::Files),
             ("settings/appshots", SettingsSection::Appshots),

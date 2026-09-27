@@ -1,4 +1,5 @@
 use crate::{
+    popover,
     settings::{self, widgets},
     theme::Theme,
 };
@@ -19,6 +20,7 @@ impl Global for VoiceGlobal {}
 pub(crate) fn init(root: PathBuf, cx: &mut App) {
     let directory = root.join("models/parakeet-tdt-0.6b-v3-int8");
     let card = cx.new(|_| VoiceCard {
+        scroll: widgets::PageScroll::default(),
         ready: zeron_voice::installed(&directory),
         directory: directory.clone(),
         cancel: None,
@@ -44,6 +46,7 @@ pub(crate) fn card(cx: &mut App) -> Entity<VoiceCard> {
     cx.global::<VoiceGlobal>().card.clone()
 }
 pub(crate) struct VoiceCard {
+    scroll: widgets::PageScroll,
     directory: PathBuf,
     ready: bool,
     cancel: Option<Arc<AtomicBool>>,
@@ -156,9 +159,17 @@ impl VoiceCard {
         cx.notify();
     }
 }
+impl popover::ScrollRailHost for VoiceCard {
+    fn rail_bar(&mut self) -> &mut popover::MenuScrollbarState {
+        self.scroll.rail_bar()
+    }
+    fn rail_scroll(&self) -> Option<gpui::ScrollHandle> {
+        self.scroll.rail_scroll()
+    }
+}
 impl Render for VoiceCard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx);
+        let theme = Theme::of(cx).clone();
         let enabled = settings::current(cx).dictation_enabled;
         let downloading = self.cancel.is_some();
         let status = if downloading {
@@ -238,21 +249,6 @@ impl Render for VoiceCard {
                         }),
                 )
             });
-        let heading = div()
-            .flex()
-            .items_center()
-            .gap(px(10.0))
-            .child(widgets::row_tile(&theme, crate::icons::MICROPHONE))
-            .child(
-                div()
-                    .child(widgets::row_title(&theme, "Type with your voice"))
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(theme.text_muted)
-                            .child("NVIDIA Parakeet TDT 0.6B v3 · On-device"),
-                    ),
-            );
         let progress = div()
             .w_full()
             .h(px(3.0))
@@ -267,23 +263,87 @@ impl Render for VoiceCard {
                     ))
                     .bg(theme.accent),
             );
-        let content = widgets::card_row(&theme, true).flex_col().items_start().gap(px(12.0))
-            .child(heading)
-            .child(div().text_size(px(13.0)).text_color(theme.text_muted)
-                .child("Dictate into an editable draft. Audio stays on this computer and is discarded after transcription. Nothing is sent until you choose Send."))
-            .child(div().text_size(px(12.0)).text_color(theme.text_muted)
-                .child("25 languages, including English and French. Language is detected automatically. Record up to one minute, then stop to transcribe."))
-            .child(div().id("voice-status").role(gpui::Role::Status)
-                .aria_label(status.clone()).text_size(px(12.0)).text_color(theme.text_muted).child(status))
-            .when(downloading, |d| d.child(progress))
-            .children(self.error.as_ref().map(|e| div().id("voice-error").role(gpui::Role::Status)
-                .aria_label(e.clone()).text_size(px(12.0)).text_color(theme.text_muted).child(e.clone())))
+        let model_row = widgets::card_row(&theme, true)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(180.0))
+                    .child(widgets::row_title(&theme, "Dictation"))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme.text_muted)
+                            .child("Type with your voice on this device."),
+                    ),
+            )
             .child(actions);
-        widgets::section(
-            &theme,
-            "Dictation",
-            widgets::section_card(&theme).child(content),
-        )
+        let model_details = widgets::card_row(&theme, false)
+            .flex_col()
+            .items_start()
+            .gap(px(8.0))
+            .child(widgets::row_title(&theme, "NVIDIA Parakeet TDT 0.6B v3"))
+            .child(
+                div()
+                    .id("voice-status")
+                    .role(gpui::Role::Status)
+                    .aria_label(status.clone())
+                    .text_size(px(12.0))
+                    .text_color(theme.text_muted)
+                    .child(status),
+            )
+            .when(downloading, |d| d.child(progress))
+            .children(self.error.as_ref().map(|e| {
+                div()
+                    .id("voice-error")
+                    .role(gpui::Role::Status)
+                    .aria_label(e.clone())
+                    .text_size(px(12.0))
+                    .text_color(theme.text_muted)
+                    .child(e.clone())
+            }));
+        let details = widgets::section_card(&theme)
+            .child(widgets::card_row(&theme, true).flex_col().items_start().gap(px(4.0))
+                .child(widgets::row_title(&theme, "On-device processing"))
+                .child(div().text_size(px(12.0)).text_color(theme.text_muted)
+                    .child("Audio stays on this computer and is discarded after transcription. Your transcript stays in the draft until you send it.")))
+            .child(widgets::card_row(&theme, false).flex_col().items_start().gap(px(4.0))
+                .child(widgets::row_title(&theme, "Languages and recording"))
+                .child(div().text_size(px(12.0)).text_color(theme.text_muted)
+                    .child("25 languages, including English and French, detected automatically. Record up to one minute, then stop to transcribe.")));
+        let scrollbar = popover::rail(self, "voice-page-scrollbar", &theme, cx);
+        div()
+            .id("voice-page-host")
+            .relative()
+            .size_full()
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if this.scroll.set_list_hovered(*hovered) {
+                    cx.notify();
+                }
+            }))
+            .child(
+                crate::edge_fade::edge_faded(
+                    16.0,
+                    true,
+                    true,
+                    div()
+                        .id("voice-page")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll.scroll)
+                        .child(
+                            widgets::page_column()
+                                .child(widgets::page_header(&theme, "Voice", None))
+                                .child(
+                                    widgets::section_card(&theme)
+                                        .child(model_row)
+                                        .child(model_details),
+                                )
+                                .child(details),
+                        ),
+                )
+                .fade_overflow_y(&self.scroll.scroll),
+            )
+            .children(scrollbar)
     }
 }
 

@@ -1,6 +1,6 @@
 # Desktop dictation
 
-Settings → General → Dictation downloads NVIDIA Parakeet TDT 0.6B v3 for this device and enables the composer microphone. The optional INT8 ONNX download is **670,479,942 bytes**, derived from the pinned manifest, and is independent of the chat's engine host. Turn off hides dictation without deleting the model; Remove model disables it and removes the local cache.
+Settings → Voice downloads NVIDIA Parakeet TDT 0.6B v3 for this device and enables the composer microphone. The optional INT8 ONNX download is **670,479,942 bytes**, derived from the pinned manifest, and is independent of the chat's engine host. Turn off hides dictation without deleting the model; Remove model disables it and removes the local cache.
 
 Start/stop with the microphone or the rebindable **Start / stop dictation** shortcut in Settings → Shortcuts (default Cmd/Ctrl+Shift+D). Recording is limited to one minute. Stop transcribes locally into the selected draft range. It never invokes an agent or submits on its own. Explicit Send waits for finalization, then follows the normal Send/Queue path once. If no speech is recognized, the composer explains this and preserves the draft without sending. Esc cancels; cancelling or a failed/timed-out finalization never sends. Microphone permission is requested on first use; if the permission dialog takes focus, retry after granting permission.
 
