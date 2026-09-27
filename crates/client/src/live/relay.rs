@@ -143,6 +143,51 @@ impl Relay {
         unreachable!("the second attempt always returns")
     }
 
+    /// Mutations are never replayed after an ambiguous transport failure.
+    pub(crate) async fn call_once(
+        &self,
+        device_id: &str,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value> {
+        let result = tokio::time::timeout(timeout, async {
+            let client = self.links.client(device_id).await?;
+            client.call(method, params).await
+        })
+        .await;
+        match result {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => {
+                if matches!(error, RpcError::Closed | RpcError::Transport(_)) {
+                    self.links.invalidate(device_id);
+                }
+                Err(map_rpc(device_id, method, error))
+            }
+            Err(_) => {
+                self.links.invalidate(device_id);
+                Err(ClientError::HostUnavailable(format!(
+                    "{method} timed out; refresh the device status before retrying"
+                )))
+            }
+        }
+    }
+
+    pub(crate) async fn watch_updates(
+        &self,
+        device_id: &str,
+    ) -> Result<zeron_rpc::RpcSubscription> {
+        let client = self
+            .links
+            .client(device_id)
+            .await
+            .map_err(|e| map_rpc(device_id, methods::WATCH_HARNESS_UPDATES, e))?;
+        client
+            .subscribe_checked(methods::WATCH_HARNESS_UPDATES, Value::Null)
+            .await
+            .map_err(|e| map_rpc(device_id, methods::WATCH_HARNESS_UPDATES, e))
+    }
+
     /// Chunked upload (`UploadChunk` ×N with `seq`, then `UploadCommit`).
     /// Returns the durable host path. Idempotent per `upload_id`.
     pub(crate) async fn upload(

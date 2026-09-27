@@ -22,12 +22,24 @@ pub const MIN_INTERVAL: Duration = Duration::from_millis(16);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientEvent {
+    AgentUpdatesChanged {
+        device_id: String,
+        revision: u64,
+    },
     /// [`crate::WorkspaceSnapshot`] advanced to `revision`.
-    WorkspaceChanged { revision: u64 },
+    WorkspaceChanged {
+        revision: u64,
+    },
     /// A session's transcript ([`crate::SessionSnapshot`]) advanced.
-    SessionChanged { chat_id: String, revision: u64 },
+    SessionChanged {
+        chat_id: String,
+        revision: u64,
+    },
     /// A session's [`crate::ComposerState`] advanced.
-    ComposerChanged { chat_id: String, revision: u64 },
+    ComposerChanged {
+        chat_id: String,
+        revision: u64,
+    },
     /// Graced connectivity posture changed.
     ConnectivityChanged(Connectivity),
     /// The WorkOS pair rotated — persist it (Keychain) now; the old refresh
@@ -35,7 +47,9 @@ pub enum ClientEvent {
     AuthRefreshed(AuthTokens),
     /// The session cannot be refreshed any more (refresh token rejected) —
     /// the platform should sign out and show sign-in.
-    AuthExpired { reason: String },
+    AuthExpired {
+        reason: String,
+    },
 }
 
 pub trait ClientListener: Send + Sync + 'static {
@@ -53,6 +67,7 @@ impl ClientListener for NullListener {
 struct Pending {
     ordered: Vec<ClientEvent>,
     workspace: Option<u64>,
+    updates: BTreeMap<String, u64>,
     sessions: BTreeMap<String, u64>,
     composers: BTreeMap<String, u64>,
 }
@@ -61,6 +76,7 @@ impl Pending {
     fn is_empty(&self) -> bool {
         self.ordered.is_empty()
             && self.workspace.is_none()
+            && self.updates.is_empty()
             && self.sessions.is_empty()
             && self.composers.is_empty()
     }
@@ -75,6 +91,12 @@ impl Pending {
         }
         for (chat_id, revision) in std::mem::take(&mut self.composers) {
             out.push(ClientEvent::ComposerChanged { chat_id, revision });
+        }
+        for (device_id, revision) in std::mem::take(&mut self.updates) {
+            out.push(ClientEvent::AgentUpdatesChanged {
+                device_id,
+                revision,
+            });
         }
         out
     }
@@ -142,6 +164,13 @@ impl EventPump {
             let slot = pending.composers.entry(chat_id.to_owned()).or_default();
             *slot = (*slot).max(revision);
         }
+        self.notify.notify_one();
+    }
+
+    pub(crate) fn updates(&self, device_id: &str, revision: u64) {
+        let mut pending = lock(&self.pending);
+        let slot = pending.updates.entry(device_id.to_owned()).or_default();
+        *slot = (*slot).max(revision);
         self.notify.notify_one();
     }
 

@@ -285,6 +285,8 @@ final class AppModel {
 
     fileprivate func handle(_ event: ClientEvent) {
         switch event {
+        case .agentUpdatesChanged:
+            observers.values.forEach { $0() }
         case .workspaceChanged:
             scheduleRefresh()
         case let .sessionChanged(chatId, _), let .composerChanged(chatId, _):

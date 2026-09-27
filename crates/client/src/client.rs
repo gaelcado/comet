@@ -79,6 +79,7 @@ pub(crate) struct ClientInner {
     foreground: AtomicBool,
     synced: AtomicBool,
     harness_catalogs: Mutex<HashMap<String, Vec<HarnessInfo>>>,
+    pub(crate) updates: crate::updates::UpdateStore,
 }
 
 impl Drop for ClientInner {
@@ -119,6 +120,10 @@ impl ClientInner {
         lock(&self.sessions).values().cloned().collect()
     }
 
+    pub(crate) fn updates_foreground(&self) -> bool {
+        self.foreground.load(Ordering::Acquire)
+    }
+
     pub(crate) fn network_online(&self) -> bool {
         self.path_online.load(Ordering::Acquire)
     }
@@ -137,6 +142,7 @@ impl ClientInner {
                 .recompute(&self.config.device_id, &send_states, synced)
         {
             self.events.workspace(revision);
+            self.updates.refresh(false);
             // Host presence / live status feed every open session's snapshot
             // (working flag) and composer; `refresh` is O(1) when no doc
             // event is pending.
@@ -543,7 +549,7 @@ impl ClientInner {
 /// One signed-in account (or Demo mode). Cheap to clone.
 #[derive(Clone)]
 pub struct Client {
-    inner: Arc<ClientInner>,
+    pub(crate) inner: Arc<ClientInner>,
 }
 
 impl std::fmt::Debug for Client {
@@ -597,6 +603,7 @@ impl Client {
             foreground: AtomicBool::new(true),
             synced: AtomicBool::new(false),
             harness_catalogs: Mutex::new(HashMap::new()),
+            updates: Default::default(),
             credentials: credentials.clone(),
             config,
         });
@@ -1357,6 +1364,7 @@ impl Client {
             zeron_sync::wake::set_path_online(online);
         }
         if was != online {
+            self.inner.updates.refresh(true);
             self.inner.recompute_connectivity();
             if online && let Some(live) = self.inner.live() {
                 live.kick();
@@ -1370,6 +1378,7 @@ impl Client {
     /// restart PR watches.
     pub fn on_foreground(&self) {
         self.inner.foreground.store(true, Ordering::Release);
+        self.inner.updates.refresh(true);
         if let Some(live) = self.inner.live() {
             live.kick();
             live.probe_health();
@@ -1384,6 +1393,7 @@ impl Client {
     /// work and PR streams.
     pub fn on_background(&self) {
         self.inner.foreground.store(false, Ordering::Release);
+        self.inner.updates.refresh(true);
         if let Some(live) = self.inner.live() {
             live.relay.stop_watches();
             live.flush_registry(&self.inner);

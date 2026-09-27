@@ -813,3 +813,6 @@ async fn phone_born_sessions_reach_the_host_before_their_first_command() {
     }
     client.shutdown();
 }
+
+#[path = "support/update_relay_tests.rs"]
+mod update_relay_tests;

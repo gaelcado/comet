@@ -1,7 +1,8 @@
 # Agent updates in the rewritten iOS app
 
 Status: approved by the user on 2026-09-27; full implementation requested.
-Branch: `feat/ios-agent-updates`, based on `origin/main` at `433aa148`.
+Branch: `feat/ios-agent-updates`, explicitly based on #389 at `d3a66f32`
+with user approval to implement before the dependency merges.
 Dependency: https://github.com/zeronsh/zeron/pull/389 (open when inspected).
 
 ## Outcome
@@ -18,10 +19,10 @@ cancellation and reconnect behavior.
 
 ## Dependency and scope
 
-Start from current main. Before implementation uses updater types, rebase onto
-main containing #389 and verify its final protocol. Do not copy its engine changes
-or restore the old Swift app. If #389 remains unmerged, implementation against
-those types waits; the approved design and plan can proceed.
+The user approved using #389 as an explicit dependency before its merge.
+Implement and verify against `d3a66f32`; rebase onto main once #389 lands and
+verify the final protocol then. Do not copy its engine changes or restore the
+old Swift app.
 
 Reuse `HarnessUpdateStatus`, `HarnessUpdatePolicy`, and the six existing RPCs:
 `WatchHarnessUpdates`, `CheckHarnessUpdates`, `ApplyHarnessUpdate`,

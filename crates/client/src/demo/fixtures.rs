@@ -283,7 +283,9 @@ pub(crate) fn devices(self_id: &str, self_name: &str, now: i64) -> Vec<Device> {
             capabilities: if caps {
                 capability::ALL_QUEUE
                     .iter()
-                    .map(|c| (*c).to_owned())
+                    .copied()
+                    .chain(["harness-updates-v1"])
+                    .map(str::to_owned)
                     .collect()
             } else {
                 Vec::new()
@@ -312,6 +314,14 @@ pub(crate) fn devices(self_id: &str, self_name: &str, now: i64) -> Vec<Device> {
             "macos",
             "0.2.80",
             false,
+            now - 3 * DAY,
+        ),
+        device(
+            "dev-offline",
+            "Build server",
+            "linux",
+            env!("CARGO_PKG_VERSION"),
+            true,
             now - 3 * DAY,
         ),
         device(

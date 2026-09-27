@@ -5,9 +5,8 @@ Execution: implement sequentially in this worktree, per the user's request to
 implement the approved design entirely. The referenced writing-plans skill is
 not installed; this document records the concrete steps directly.
 
-1. Resolve the backend dependency. Main lacks #389's updater protocol. The
-   approved design waits for merge; using the PR head instead requires the
-   pending user decision. Record the dependency SHA if approved.
+1. Backend dependency resolved with explicit user approval: branch based on
+   #389 at `d3a66f32`. Rebase onto main after the dependency lands.
 2. Add a focused Rust client update handle and snapshots. Reuse host capability
    and connectivity data, relay subscriptions, and the event pump. Preserve
    cached status with explicit freshness. Separate Cancel from pending Apply.

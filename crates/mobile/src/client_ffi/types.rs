@@ -325,6 +325,10 @@ impl From<zc::Connectivity> for Connectivity {
 /// delivered on a client thread — hop to the main thread and return fast.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ClientEvent {
+    AgentUpdatesChanged {
+        device_id: String,
+        revision: u64,
+    },
     /// `workspace()` advanced.
     WorkspaceChanged {
         revision: u64,
@@ -356,6 +360,13 @@ pub enum ClientEvent {
 impl From<zc::ClientEvent> for ClientEvent {
     fn from(e: zc::ClientEvent) -> Self {
         match e {
+            zc::ClientEvent::AgentUpdatesChanged {
+                device_id,
+                revision,
+            } => Self::AgentUpdatesChanged {
+                device_id,
+                revision,
+            },
             zc::ClientEvent::WorkspaceChanged { revision } => {
                 ClientEvent::WorkspaceChanged { revision }
             }

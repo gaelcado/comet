@@ -671,6 +671,233 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 
+public protocol AgentUpdatesHandleProtocol: AnyObject, Sendable {
+    
+    func apply(harness: String) async throws 
+    
+    func cancel(harness: String) async throws 
+    
+    func check() async throws 
+    
+    func close() 
+    
+    func dismiss(harness: String) async throws 
+    
+    func retry() 
+    
+    func setPolicy(harness: String, policy: AgentUpdatePolicy) async throws 
+    
+    func snapshot()  -> AgentUpdateSnapshot
+    
+}
+open class AgentUpdatesHandle: AgentUpdatesHandleProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_zeron_mobile_fn_clone_agentupdateshandle(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_zeron_mobile_fn_free_agentupdateshandle(handle, $0) }
+    }
+
+    
+
+    
+open func apply(harness: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zeron_mobile_fn_method_agentupdateshandle_apply(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(harness)
+                )
+            },
+            pollFunc: ffi_zeron_mobile_rust_future_poll_void,
+            completeFunc: ffi_zeron_mobile_rust_future_complete_void,
+            freeFunc: ffi_zeron_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func cancel(harness: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zeron_mobile_fn_method_agentupdateshandle_cancel(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(harness)
+                )
+            },
+            pollFunc: ffi_zeron_mobile_rust_future_poll_void,
+            completeFunc: ffi_zeron_mobile_rust_future_complete_void,
+            freeFunc: ffi_zeron_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func check()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zeron_mobile_fn_method_agentupdateshandle_check(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_zeron_mobile_rust_future_poll_void,
+            completeFunc: ffi_zeron_mobile_rust_future_complete_void,
+            freeFunc: ffi_zeron_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func close()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_agentupdateshandle_close(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func dismiss(harness: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zeron_mobile_fn_method_agentupdateshandle_dismiss(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(harness)
+                )
+            },
+            pollFunc: ffi_zeron_mobile_rust_future_poll_void,
+            completeFunc: ffi_zeron_mobile_rust_future_complete_void,
+            freeFunc: ffi_zeron_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func retry()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_agentupdateshandle_retry(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func setPolicy(harness: String, policy: AgentUpdatePolicy)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zeron_mobile_fn_method_agentupdateshandle_set_policy(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(harness),FfiConverterTypeAgentUpdatePolicy_lower(policy)
+                )
+            },
+            pollFunc: ffi_zeron_mobile_rust_future_poll_void,
+            completeFunc: ffi_zeron_mobile_rust_future_complete_void,
+            freeFunc: ffi_zeron_mobile_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func snapshot() -> AgentUpdateSnapshot  {
+    return try!  FfiConverterTypeAgentUpdateSnapshot_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_agentupdateshandle_snapshot(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgentUpdatesHandle: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = AgentUpdatesHandle
+
+    public static func lift(_ handle: UInt64) throws -> AgentUpdatesHandle {
+        return AgentUpdatesHandle(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: AgentUpdatesHandle) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgentUpdatesHandle {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: AgentUpdatesHandle, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdatesHandle_lift(_ handle: UInt64) throws -> AgentUpdatesHandle {
+    return try FfiConverterTypeAgentUpdatesHandle.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdatesHandle_lower(_ value: AgentUpdatesHandle) -> UInt64 {
+    return FfiConverterTypeAgentUpdatesHandle.lower(value)
+}
+
+
+
+
+
+
 /**
  * Receives coalesced change events (at most one burst per display frame).
  * Called on a client thread: hop to the main thread and pull there.
@@ -1086,6 +1313,8 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
      * Current workspace revision (cheap; compare before pulling).
      */
     func workspaceRevision()  -> UInt64
+    
+    func openAgentUpdates(deviceId: String) throws  -> AgentUpdatesHandle
     
 }
 /**
@@ -1845,6 +2074,16 @@ open func workspaceRevision() -> UInt64  {
         uniffiCallStatus in
     uniffi_zeron_mobile_fn_method_coreclient_workspace_revision(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func openAgentUpdates(deviceId: String)throws  -> AgentUpdatesHandle  {
+    return try  FfiConverterTypeAgentUpdatesHandle_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_coreclient_open_agent_updates(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(deviceId),uniffiCallStatus
     )
 })
 }
@@ -3675,6 +3914,186 @@ public func FfiConverterTypeUploadProgress_lower(_ value: UploadProgress) -> UIn
 }
 
 
+
+
+public struct AgentUpdateRow: Equatable, Hashable {
+    public var harness: String
+    public var name: String
+    public var installedVersion: String?
+    public var latestVersion: String?
+    public var policy: AgentUpdatePolicy
+    public var phase: AgentUpdatePhase
+    public var progressMessage: String?
+    public var error: String?
+    public var manualCommand: String?
+    public var canApply: Bool
+    public var canCancel: Bool
+    public var canSetPolicy: Bool
+    public var canDismiss: Bool
+    public var pending: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(harness: String, name: String, installedVersion: String?, latestVersion: String?, policy: AgentUpdatePolicy, phase: AgentUpdatePhase, progressMessage: String?, error: String?, manualCommand: String?, canApply: Bool, canCancel: Bool, canSetPolicy: Bool, canDismiss: Bool, pending: Bool) {
+        self.harness = harness
+        self.name = name
+        self.installedVersion = installedVersion
+        self.latestVersion = latestVersion
+        self.policy = policy
+        self.phase = phase
+        self.progressMessage = progressMessage
+        self.error = error
+        self.manualCommand = manualCommand
+        self.canApply = canApply
+        self.canCancel = canCancel
+        self.canSetPolicy = canSetPolicy
+        self.canDismiss = canDismiss
+        self.pending = pending
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AgentUpdateRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgentUpdateRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgentUpdateRow {
+        return
+            try AgentUpdateRow(
+                harness: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                installedVersion: FfiConverterOptionString.read(from: &buf), 
+                latestVersion: FfiConverterOptionString.read(from: &buf), 
+                policy: FfiConverterTypeAgentUpdatePolicy.read(from: &buf), 
+                phase: FfiConverterTypeAgentUpdatePhase.read(from: &buf), 
+                progressMessage: FfiConverterOptionString.read(from: &buf), 
+                error: FfiConverterOptionString.read(from: &buf), 
+                manualCommand: FfiConverterOptionString.read(from: &buf), 
+                canApply: FfiConverterBool.read(from: &buf), 
+                canCancel: FfiConverterBool.read(from: &buf), 
+                canSetPolicy: FfiConverterBool.read(from: &buf), 
+                canDismiss: FfiConverterBool.read(from: &buf), 
+                pending: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AgentUpdateRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.harness, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.installedVersion, into: &buf)
+        FfiConverterOptionString.write(value.latestVersion, into: &buf)
+        FfiConverterTypeAgentUpdatePolicy.write(value.policy, into: &buf)
+        FfiConverterTypeAgentUpdatePhase.write(value.phase, into: &buf)
+        FfiConverterOptionString.write(value.progressMessage, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+        FfiConverterOptionString.write(value.manualCommand, into: &buf)
+        FfiConverterBool.write(value.canApply, into: &buf)
+        FfiConverterBool.write(value.canCancel, into: &buf)
+        FfiConverterBool.write(value.canSetPolicy, into: &buf)
+        FfiConverterBool.write(value.canDismiss, into: &buf)
+        FfiConverterBool.write(value.pending, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdateRow_lift(_ buf: RustBuffer) throws -> AgentUpdateRow {
+    return try FfiConverterTypeAgentUpdateRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdateRow_lower(_ value: AgentUpdateRow) -> RustBuffer {
+    return FfiConverterTypeAgentUpdateRow.lower(value)
+}
+
+
+public struct AgentUpdateSnapshot: Equatable, Hashable {
+    public var deviceId: String
+    public var deviceName: String
+    public var revision: UInt64
+    public var connection: AgentUpdateConnection
+    public var rows: [AgentUpdateRow]
+    public var watchError: String?
+    public var checkPending: Bool
+    public var checkError: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceId: String, deviceName: String, revision: UInt64, connection: AgentUpdateConnection, rows: [AgentUpdateRow], watchError: String?, checkPending: Bool, checkError: String?) {
+        self.deviceId = deviceId
+        self.deviceName = deviceName
+        self.revision = revision
+        self.connection = connection
+        self.rows = rows
+        self.watchError = watchError
+        self.checkPending = checkPending
+        self.checkError = checkError
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AgentUpdateSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgentUpdateSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgentUpdateSnapshot {
+        return
+            try AgentUpdateSnapshot(
+                deviceId: FfiConverterString.read(from: &buf), 
+                deviceName: FfiConverterString.read(from: &buf), 
+                revision: FfiConverterUInt64.read(from: &buf), 
+                connection: FfiConverterTypeAgentUpdateConnection.read(from: &buf), 
+                rows: FfiConverterSequenceTypeAgentUpdateRow.read(from: &buf), 
+                watchError: FfiConverterOptionString.read(from: &buf), 
+                checkPending: FfiConverterBool.read(from: &buf), 
+                checkError: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AgentUpdateSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceId, into: &buf)
+        FfiConverterString.write(value.deviceName, into: &buf)
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterTypeAgentUpdateConnection.write(value.connection, into: &buf)
+        FfiConverterSequenceTypeAgentUpdateRow.write(value.rows, into: &buf)
+        FfiConverterOptionString.write(value.watchError, into: &buf)
+        FfiConverterBool.write(value.checkPending, into: &buf)
+        FfiConverterOptionString.write(value.checkError, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdateSnapshot_lift(_ buf: RustBuffer) throws -> AgentUpdateSnapshot {
+    return try FfiConverterTypeAgentUpdateSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdateSnapshot_lower(_ value: AgentUpdateSnapshot) -> RustBuffer {
+    return FfiConverterTypeAgentUpdateSnapshot.lower(value)
+}
 
 
 public struct AppshotLabel: Equatable, Hashable {
@@ -8118,6 +8537,316 @@ public func FfiConverterTypeWorktreeSpec_lower(_ value: WorktreeSpec) -> RustBuf
 
 
 
+public enum AgentUpdateConnection: Equatable, Hashable {
+    
+    case loading
+    case ready
+    case offline
+    case unsupported
+    case removed
+    case reconnecting
+    case closed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AgentUpdateConnection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgentUpdateConnection: FfiConverterRustBuffer {
+    typealias SwiftType = AgentUpdateConnection
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgentUpdateConnection {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .loading
+        
+        case 2: return .ready
+        
+        case 3: return .offline
+        
+        case 4: return .unsupported
+        
+        case 5: return .removed
+        
+        case 6: return .reconnecting
+        
+        case 7: return .closed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AgentUpdateConnection, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .loading:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .ready:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .offline:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .unsupported:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .removed:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .reconnecting:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .closed:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdateConnection_lift(_ buf: RustBuffer) throws -> AgentUpdateConnection {
+    return try FfiConverterTypeAgentUpdateConnection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdateConnection_lower(_ value: AgentUpdateConnection) -> RustBuffer {
+    return FfiConverterTypeAgentUpdateConnection.lower(value)
+}
+
+
+
+
+public enum AgentUpdatePhase: Equatable, Hashable {
+    
+    case dormant
+    case checking
+    case current
+    case available
+    case waitingForIdle
+    case preparing
+    case downloading
+    case installing
+    case verifying
+    case updated
+    case manualActionRequired
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AgentUpdatePhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgentUpdatePhase: FfiConverterRustBuffer {
+    typealias SwiftType = AgentUpdatePhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgentUpdatePhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .dormant
+        
+        case 2: return .checking
+        
+        case 3: return .current
+        
+        case 4: return .available
+        
+        case 5: return .waitingForIdle
+        
+        case 6: return .preparing
+        
+        case 7: return .downloading
+        
+        case 8: return .installing
+        
+        case 9: return .verifying
+        
+        case 10: return .updated
+        
+        case 11: return .manualActionRequired
+        
+        case 12: return .failed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AgentUpdatePhase, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .dormant:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .checking:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .current:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .available:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .waitingForIdle:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .preparing:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .downloading:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .installing:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .verifying:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .updated:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .manualActionRequired:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(12))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdatePhase_lift(_ buf: RustBuffer) throws -> AgentUpdatePhase {
+    return try FfiConverterTypeAgentUpdatePhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdatePhase_lower(_ value: AgentUpdatePhase) -> RustBuffer {
+    return FfiConverterTypeAgentUpdatePhase.lower(value)
+}
+
+
+
+
+public enum AgentUpdatePolicy: Equatable, Hashable {
+    
+    case notify
+    case autoWhenIdle
+    case off
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AgentUpdatePolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAgentUpdatePolicy: FfiConverterRustBuffer {
+    typealias SwiftType = AgentUpdatePolicy
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AgentUpdatePolicy {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .notify
+        
+        case 2: return .autoWhenIdle
+        
+        case 3: return .off
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AgentUpdatePolicy, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .notify:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .autoWhenIdle:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .off:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdatePolicy_lift(_ buf: RustBuffer) throws -> AgentUpdatePolicy {
+    return try FfiConverterTypeAgentUpdatePolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAgentUpdatePolicy_lower(_ value: AgentUpdatePolicy) -> RustBuffer {
+    return FfiConverterTypeAgentUpdatePolicy.lower(value)
+}
+
+
+
+
 public enum AuthCallback: Equatable, Hashable {
     
     case code(code: String, state: String?
@@ -8429,6 +9158,8 @@ public func FfiConverterTypeChatIndicator_lower(_ value: ChatIndicator) -> RustB
 
 public enum ClientEvent: Equatable, Hashable {
     
+    case agentUpdatesChanged(deviceId: String, revision: UInt64
+    )
     /**
      * `workspace()` advanced.
      */
@@ -8478,22 +9209,25 @@ public struct FfiConverterTypeClientEvent: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .workspaceChanged(revision: try FfiConverterUInt64.read(from: &buf)
+        case 1: return .agentUpdatesChanged(deviceId: try FfiConverterString.read(from: &buf), revision: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 2: return .sessionChanged(chatId: try FfiConverterString.read(from: &buf), revision: try FfiConverterUInt64.read(from: &buf)
+        case 2: return .workspaceChanged(revision: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 3: return .composerChanged(chatId: try FfiConverterString.read(from: &buf), revision: try FfiConverterUInt64.read(from: &buf)
+        case 3: return .sessionChanged(chatId: try FfiConverterString.read(from: &buf), revision: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 4: return .connectivityChanged(connectivity: try FfiConverterTypeConnectivity.read(from: &buf)
+        case 4: return .composerChanged(chatId: try FfiConverterString.read(from: &buf), revision: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 5: return .authRefreshed(tokens: try FfiConverterTypeAuthTokens.read(from: &buf)
+        case 5: return .connectivityChanged(connectivity: try FfiConverterTypeConnectivity.read(from: &buf)
         )
         
-        case 6: return .authExpired(reason: try FfiConverterString.read(from: &buf)
+        case 6: return .authRefreshed(tokens: try FfiConverterTypeAuthTokens.read(from: &buf)
+        )
+        
+        case 7: return .authExpired(reason: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -8504,35 +9238,41 @@ public struct FfiConverterTypeClientEvent: FfiConverterRustBuffer {
         switch value {
         
         
-        case let .workspaceChanged(revision):
+        case let .agentUpdatesChanged(deviceId,revision):
             writeInt(&buf, Int32(1))
+            FfiConverterString.write(deviceId, into: &buf)
+            FfiConverterUInt64.write(revision, into: &buf)
+            
+        
+        case let .workspaceChanged(revision):
+            writeInt(&buf, Int32(2))
             FfiConverterUInt64.write(revision, into: &buf)
             
         
         case let .sessionChanged(chatId,revision):
-            writeInt(&buf, Int32(2))
-            FfiConverterString.write(chatId, into: &buf)
-            FfiConverterUInt64.write(revision, into: &buf)
-            
-        
-        case let .composerChanged(chatId,revision):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(chatId, into: &buf)
             FfiConverterUInt64.write(revision, into: &buf)
             
         
-        case let .connectivityChanged(connectivity):
+        case let .composerChanged(chatId,revision):
             writeInt(&buf, Int32(4))
+            FfiConverterString.write(chatId, into: &buf)
+            FfiConverterUInt64.write(revision, into: &buf)
+            
+        
+        case let .connectivityChanged(connectivity):
+            writeInt(&buf, Int32(5))
             FfiConverterTypeConnectivity.write(connectivity, into: &buf)
             
         
         case let .authRefreshed(tokens):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(6))
             FfiConverterTypeAuthTokens.write(tokens, into: &buf)
             
         
         case let .authExpired(reason):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(7))
             FfiConverterString.write(reason, into: &buf)
             
         }
@@ -11789,6 +12529,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAgentUpdateRow: FfiConverterRustBuffer {
+    typealias SwiftType = [AgentUpdateRow]
+
+    public static func write(_ value: [AgentUpdateRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAgentUpdateRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AgentUpdateRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AgentUpdateRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAgentUpdateRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAuthOrg: FfiConverterRustBuffer {
     typealias SwiftType = [AuthOrg]
 
@@ -13134,6 +13899,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_zeron_mobile_checksum_method_coreclient_workspace_revision() != 48105) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_zeron_mobile_checksum_method_coreclient_open_agent_updates() != 33261) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_zeron_mobile_checksum_method_uploadprogress_on_progress() != 40458) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13192,6 +13960,30 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_sessionhandle_transcript_status() != 12910) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_agentupdateshandle_apply() != 45100) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_agentupdateshandle_cancel() != 57170) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_agentupdateshandle_check() != 10131) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_agentupdateshandle_close() != 39950) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_agentupdateshandle_dismiss() != 48794) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_agentupdateshandle_retry() != 34884) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_agentupdateshandle_set_policy() != 45979) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_agentupdateshandle_snapshot() != 42085) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_layoutframe_build_micros() != 17231) {

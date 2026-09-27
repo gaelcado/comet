@@ -13,6 +13,7 @@
 
 mod session;
 mod types;
+mod updates;
 
 use std::sync::Arc;
 

@@ -180,6 +180,15 @@ impl MockEdge {
             .unwrap_or(0)
     }
 
+    pub fn disconnect_device_clients(&self, device: &str) {
+        let relays = self.shared.relays.lock().unwrap();
+        if let Some(relay) = relays.get(device) {
+            for client in relay.clients.values() {
+                let _ = client.send(Out::Close);
+            }
+        }
+    }
+
     pub fn relay_host_connected(&self, device: &str) -> bool {
         self.shared
             .relays

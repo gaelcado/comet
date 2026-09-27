@@ -54,6 +54,7 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
             c.secondaryTextProperties.color = Palette.secondary
             c.image = UIImage(systemName: row.symbol)
             c.imageProperties.tintColor = row.destructive ? Palette.danger : row.tint
+            cell.accessibilityIdentifier = row.id
             cell.contentConfiguration = c
             var bg = UIBackgroundConfiguration.listGroupedCell()
             bg.backgroundColor = Palette.elevated
@@ -101,7 +102,7 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
             Row(id: "account", title: app.accountName, subtitle: app.accountDetail, symbol: "person.crop.circle", accessory: .none),
         ])
         s.appendSections(["Devices"])
-        s.appendItems(app.hostOptions.map { Row(id: "device:\($0.id)", title: $0.name, subtitle: $0.online ? "Online" : "Offline", symbol: "desktopcomputer", accessory: .dot($0.online)) })
+        s.appendItems(app.hostOptions.map { Row(id: "device:\($0.id)", title: $0.name, subtitle: $0.online ? "Online" : "Offline", symbol: "desktopcomputer", accessory: .disclosure) })
         s.appendSections(["Appearance"])
         let style = UserDefaults.standard.integer(forKey: "appearance")
         s.appendItems([
@@ -128,6 +129,8 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
         collectionView.deselectItem(at: path, animated: true)
         guard let row = dataSource.itemIdentifier(for: path) else { return }
         switch row.id {
+        case let id where id.hasPrefix("device:"):
+            navigationController?.pushViewController(AgentUpdatesViewController(app: app, deviceId: String(id.dropFirst(7))), animated: true)
         case let id where id.hasPrefix("appearance:"):
             let style = Int(id.dropFirst(11)) ?? 0
             UserDefaults.standard.set(style, forKey: "appearance")
