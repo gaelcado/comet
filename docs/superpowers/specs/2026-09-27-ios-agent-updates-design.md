@@ -1,6 +1,6 @@
 # Agent updates in the rewritten iOS app
 
-Status: proposed design, awaiting written-spec review.
+Status: approved by the user on 2026-09-27; full implementation requested.
 Branch: `feat/ios-agent-updates`, based on `origin/main` at `433aa148`.
 Dependency: https://github.com/zeronsh/zeron/pull/389 (open when inspected).
 
