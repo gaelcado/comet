@@ -847,3 +847,31 @@ fn dictation_empty_undo_and_redo_notify_cancellation(cx: &mut TestAppContext) {
         ));
     }
 }
+
+#[gpui::test]
+fn dictation_blank_results_preserve_partial_and_pending_send(cx: &mut TestAppContext) {
+    let input = cx.new(|cx| ComposerInput::new("Draft", cx));
+    let mut events = cx.events::<DictationInputEvent, _>(&input);
+    input.update(cx, |input, cx| {
+        let fake = start(input, cx);
+        deliver(
+            input,
+            &fake,
+            [Event::Partial("Keep these words".into())],
+            cx,
+        );
+        deliver(input, &fake, [Event::Partial("   ".into())], cx);
+        assert_eq!(input.text(), "Keep these words");
+        input.finish_dictation(true, cx);
+        deliver(input, &fake, [Event::Final(" \n\t ".into())], cx);
+        assert_eq!(input.text(), "Keep these words");
+        assert_eq!(input.dictation.phase, Phase::Idle);
+    });
+    let mut sends = 0;
+    while let Ok(event) = events.try_recv() {
+        if matches!(event, DictationInputEvent::Submit(_)) {
+            sends += 1;
+        }
+    }
+    assert_eq!(sends, 1);
+}

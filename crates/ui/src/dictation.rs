@@ -238,7 +238,7 @@ impl Dictation {
             self.cancel();
             return None;
         }
-        if transcript.is_empty() {
+        if transcript.trim().is_empty() {
             return None;
         }
         content.replace_range(self.range.clone(), transcript);
