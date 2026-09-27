@@ -22,6 +22,7 @@ pub(crate) fn init(root: PathBuf, cx: &mut App) {
     let card = cx.new(|_| VoiceCard {
         scroll: widgets::PageScroll::default(),
         ready: zeron_voice::installed(&directory),
+        cache_present: directory.exists(),
         directory: directory.clone(),
         cancel: None,
         task: None,
@@ -49,6 +50,7 @@ pub(crate) struct VoiceCard {
     scroll: widgets::PageScroll,
     directory: PathBuf,
     ready: bool,
+    cache_present: bool,
     cancel: Option<Arc<AtomicBool>>,
     task: Option<Task<()>>,
     progress: u64,
@@ -102,6 +104,9 @@ impl VoiceCard {
                 if this
                     .update(cx, |this, cx| {
                         this.progress = progress.load(Ordering::Relaxed);
+                        if done {
+                            this.cache_present = this.directory.exists();
+                        }
                         match result {
                             Ok(Ok(())) => {
                                 this.ready = true;
@@ -143,10 +148,13 @@ impl VoiceCard {
         zeron_voice::unload();
         match std::fs::remove_dir_all(&self.directory) {
             Ok(()) => {
+                self.cache_present = false;
                 self.ready = false;
+                self.progress = 0;
                 self.error = None
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.cache_present = false;
                 self.ready = false;
                 self.progress = 0;
                 self.error = None;
@@ -228,7 +236,7 @@ impl Render for VoiceCard {
             .items_center()
             .gap(px(8.0))
             .child(button)
-            .when(!downloading && (self.ready || self.progress > 0), |d| {
+            .when(!downloading && self.cache_present, |d| {
                 d.child(
                     widgets::action_button(&theme, widgets::ActionTone::Quiet)
                         .id("voice-remove")
@@ -350,6 +358,24 @@ impl Render for VoiceCard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[gpui::test]
+    fn dictation_partial_cache_is_removable_after_restart(cx: &mut gpui::TestAppContext) {
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join("models/parakeet-tdt-0.6b-v3-int8");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("encoder-model.int8.onnx.part"), b"partial").unwrap();
+        cx.update(|cx| settings::init(settings::UiSettings::default(), root.path(), cx));
+        let card = cx.update(card);
+        card.update(cx, |card, cx| {
+            assert!(!card.ready);
+            assert_eq!(card.progress, 0);
+            assert!(card.cache_present);
+            card.remove(cx);
+            assert!(!card.cache_present);
+            assert!(!card.ready);
+        });
+        assert!(!cache.exists());
+    }
     #[gpui::test]
     fn dictation_is_opt_in_and_disabling_preserves_download(cx: &mut gpui::TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
