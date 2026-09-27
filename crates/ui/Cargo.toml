@@ -42,6 +42,7 @@ name = "sidebar-fixture"
 required-features = ["project-palette-fixture"]
 
 [dependencies]
+zeron-voice = { path = "../voice" }
 url = "2"
 zeron-proto.workspace = true
 similar.workspace = true

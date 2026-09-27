@@ -13176,6 +13176,7 @@ dependencies = [
  "zeron-syntax",
  "zeron-theme",
  "zeron-update",
+ "zeron-voice",
 ]
 
 [[package]]

@@ -81,6 +81,7 @@ pub struct ShortcutsPage {
     capture_access_prompted: bool,
     semantic_access_prompted: bool,
     /// Settings → General's thread naming card (its own title-bound picker).
+    voice: Entity<crate::dictation::VoiceCard>,
     thread_naming: Entity<crate::settings::thread_naming::ThreadNamingCard>,
     _state: Entity<AppState>,
 }
@@ -121,6 +122,7 @@ impl ShortcutsPage {
             destination_select: widgets::SelectState::default(),
             capture_access_prompted: false,
             semantic_access_prompted: false,
+            voice: crate::dictation::card(cx),
             thread_naming: {
                 let state = state.clone();
                 cx.new(|cx| crate::settings::thread_naming::ThreadNamingCard::new(state, cx))
@@ -502,7 +504,8 @@ fn group(id: ShortcutId) -> &'static str {
         | ShortcutId::ToggleFiles
         | ShortcutId::ToggleTerminal => "Panels",
         ShortcutId::NewProject => "Projects",
-        ShortcutId::OpenModelPicker
+        ShortcutId::ToggleDictation
+        | ShortcutId::OpenModelPicker
         | ShortcutId::NewSession
         | ShortcutId::NextSession
         | ShortcutId::PrevSession
@@ -657,7 +660,8 @@ impl Render for ShortcutsPage {
                                             .child(compact_mode_row)
                                             .child(escape_behavior_row),
                                     )
-                                    .child(self.thread_naming.clone()),
+                                    .child(self.thread_naming.clone())
+                                    .child(self.voice.clone()),
                             ),
                     )
                     .fade_overflow_y(&self.scroll.scroll),
