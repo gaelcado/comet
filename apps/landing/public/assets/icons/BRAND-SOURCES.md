@@ -12,3 +12,10 @@ only the requested 90% saturation. Monochrome marks use light/dark contrast.
 - Hermes: https://raw.githubusercontent.com/NousResearch/hermes-agent/main/assets/icon-master.svg and icon-master-dark.svg — official theme variants, unchanged.
 - OpenCode: two-tone symbol extracted from the light/dark inline SVG wordmarks at https://opencode.ai/brand; paths and fills unchanged.
 - Antigravity: full-color symbol extracted from the inline header SVG at https://antigravity.google/press; original masks, filters and colors retained, wordmark removed, viewBox cropped to icon.
+
+## Interface and brand artwork
+
+Interface controls use the native app SVGs in `native/`, synchronized by
+`seo/icons.mjs`. Harness logos use the original brand artwork listed above,
+including full colors and the Hermes/OpenCode theme variants. Do not render
+brand artwork through monochrome CSS masks.
