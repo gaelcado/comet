@@ -755,3 +755,34 @@ fn dictation_cancel_control_preserves_draft_and_clears_pending_send(cx: &mut Tes
         assert!(!matches!(event, DictationInputEvent::Submit(_)));
     }
 }
+
+#[gpui::test]
+fn dictation_keeps_draft_stable_when_pasted_references_resolve(cx: &mut TestAppContext) {
+    let input = cx.new(|cx| ComposerInput::new("Draft", cx));
+    let mut events = cx.events::<DictationInputEvent, _>(&input);
+    input.update(cx, |input, cx| {
+        input.set_text("@README.md ", cx);
+        let original = input.text().to_owned();
+        let revision = input.edit_revision;
+        let fake = start(input, cx);
+        deliver(input, &fake, [Event::Listening], cx);
+        input.finish_dictation(true, cx);
+        input.apply_pasted_references(
+            &original,
+            original.len(),
+            revision,
+            vec![(0..10, local_file_link("README.md", false))],
+            cx,
+        );
+        assert_eq!(input.text(), original);
+        deliver(input, &fake, [Event::Final("explain this".into())], cx);
+        assert_eq!(input.text(), "@README.md explain this");
+    });
+    let mut sends = 0;
+    while let Ok(event) = events.try_recv() {
+        if matches!(event, DictationInputEvent::Submit(_)) {
+            sends += 1;
+        }
+    }
+    assert_eq!(sends, 1);
+}

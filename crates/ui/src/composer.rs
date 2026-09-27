@@ -3058,6 +3058,9 @@ impl ComposerInput {
         cx: &mut Context<Self>,
     ) {
         if self.read_only
+            // A delayed paste lookup must not rewrite the range captured by
+            // dictation and make its final transcript fail the draft guard.
+            || self.dictation.phase.active()
             || self.edit_revision != revision
             || self.text() != original
             || self.marked_range.is_some()
