@@ -610,7 +610,12 @@ fn dictation_pointer_send_waits_for_final_and_submits_once(cx: &mut TestAppConte
         .update(cx, |composer, _, cx| {
             let fake = composer.input.update(cx, |input, cx| {
                 let fake = start(input, cx);
-                deliver(input, &fake, [Event::Listening], cx);
+                deliver(
+                    input,
+                    &fake,
+                    [Event::Listening, Event::Partial("unfinished words".into())],
+                    cx,
+                );
                 fake
             });
             (composer.input.clone(), fake)
@@ -625,6 +630,15 @@ fn dictation_pointer_send_waits_for_final_and_submits_once(cx: &mut TestAppConte
     visual.simulate_click(button.center(), gpui::Modifiers::default());
     assert_eq!(fake.borrow().drops, 0);
     assert_eq!(fake.borrow().finishes, 1);
+    handle
+        .read_with(cx, |composer, cx| {
+            assert!(
+                composer.failure.is_none(),
+                "neither click may attempt an early send"
+            );
+            assert_eq!(composer.input.read(cx).text(), "unfinished words");
+        })
+        .unwrap();
     input.update(cx, |input, cx| {
         assert_eq!(input.dictation.phase, Phase::Finalizing);
         deliver(input, &fake, [Event::Final("send this once".into())], cx);
