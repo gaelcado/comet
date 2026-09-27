@@ -40,7 +40,7 @@ export function mountGlyphField(host, opts = {}) {
     glow: [167, 139, 250], // #a78bfa
     glowAlpha: 0.75,
     // which fraction of cells are kept (lower = more gaps)
-    density: 0.5,
+    density: 0.62,
     parallax: 0.88,
     // light shaft: angle in degrees, width as fraction of the diagonal, sweep seconds (0 = static)
     beam: { angle: -38, width: 0.14, sweep: 26, alpha: 0.22, offset: 0.5 },
@@ -96,20 +96,18 @@ export function mountGlyphField(host, opts = {}) {
 
   // 0..1 visibility of a cell, or -1 if it's a gap
   const field = (r, c) => {
-    const n = Math.sin(c * 0.045 + 0.4) * Math.cos(r * 0.06)
-      + 0.7 * Math.sin((c + r) * 0.023 + 1.1)
-      + 0.5 * Math.sin((c - r) * 0.037 + 2.2)
-      + 0.35 * Math.cos(c * 0.017 - r * 0.02);
-    const hash = ((r * 374761393) ^ (c * 668265263)) >>> 0;
-    let v = (n + 2.55) / 5.1 + ((hash % 100) / 100 - 0.5) * 0.38;
+    // Independent, stable samples avoid large bands of missing glyphs.
+    let hash = Math.imul(r + 1, 374761393) ^ Math.imul(c + 1, 668265263);
+    hash = Math.imul(hash ^ (hash >>> 13), 1274126177);
+    hash = (hash ^ (hash >>> 16)) >>> 0;
+    let v = hash / 4294967296;
     if (o.clear) {
       const x = c / cols, y = (r * o.cellH - extra) / (H - 2 * extra || 1);
       const d = Math.hypot((x - o.clear.x) / o.clear.rx, (y - o.clear.y) / o.clear.ry);
       v -= Math.max(0, 1 - d) * 0.6;
     }
     if (v <= 1 - o.density) return -1;
-    const t = Math.sin(c * 0.02) * Math.cos(r * 0.03) + 0.5 * Math.sin((c + r) * 0.015);
-    return Math.min(1, Math.max(0, (t + 1.5) / 3));
+    return 0.3 + 0.4 * ((hash >>> 8) % 256) / 255;
   };
 
   const rgba = (rgb, a) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a.toFixed(3)})`;
@@ -180,6 +178,7 @@ export function mountGlyphField(host, opts = {}) {
     inner.style.height = `${H}px`;
     cols = Math.ceil(W / o.cellW) + 1;
     rows = Math.ceil(H / o.cellH) + 1;
+    trail.length = 0;
     heat = new Float32Array(cols * rows);
     cache = new Float32Array(cols * rows);
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cache[r * cols + c] = field(r, c);
@@ -226,8 +225,8 @@ export function mountGlyphField(host, opts = {}) {
   };
   const onScroll = () => { sraf ||= requestAnimationFrame(applyScroll); };
 
-  // pointer afterglow (Anara's trail, longer + softer)
-  const LIFE = 900, SPACING = 12;
+  // A restrained pointer afterglow shared by the hero and footer.
+  const LIFE = 650, SPACING = 12;
   let lx0 = -1e9, ly0 = -1e9, traf = 0;
   const loop = () => {
     const now = performance.now();
@@ -237,7 +236,7 @@ export function mountGlyphField(host, opts = {}) {
     for (const p of trail) {
       const life = 1 - (now - p.born) / LIFE;
       if (life <= 0) continue;
-      const rad = 10 + 70 * life, r2 = rad * rad;
+      const rad = 10 + 48 * life, r2 = rad * rad;
       const c0 = Math.max(0, Math.floor((p.x - rad) / o.cellW)), c1 = Math.min(cols - 1, Math.ceil((p.x + rad) / o.cellW));
       const r0 = Math.max(0, Math.floor((p.y - rad) / o.cellH)), r1 = Math.min(rows - 1, Math.ceil((p.y + rad) / o.cellH));
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
@@ -258,7 +257,7 @@ export function mountGlyphField(host, opts = {}) {
   const onMove = (e) => {
     const rect = base.getBoundingClientRect();
     const x = e.clientX - rect.left, y = e.clientY - rect.top, now = performance.now();
-    if (y < -50 || y > H + 50) return;
+    if (x < 0 || x > W || y < 0 || y > H) { lx0 = ly0 = -1e9; return; }
     if (lx0 < -9000) { lx0 = x; ly0 = y; }
     let dx = x - lx0, dy = y - ly0, d = Math.hypot(dx, dy);
     while (d >= SPACING) {
@@ -272,12 +271,17 @@ export function mountGlyphField(host, opts = {}) {
     traf ||= requestAnimationFrame(loop);
   };
 
+  const onLeave = () => { lx0 = ly0 = -1e9; };
+
   let braf = 0;
   const beamLoop = (t) => { applyBeam(t); braf = requestAnimationFrame(beamLoop); };
 
   document.fonts.ready.then(() => { setup(); applyScroll(); });
   setup();
-  if (!coarse && !reduced) o.pointerTarget.addEventListener('pointermove', onMove, { passive: true });
+  if (!coarse && !reduced) {
+    o.pointerTarget.addEventListener('pointermove', onMove, { passive: true });
+    o.pointerTarget.addEventListener('pointerleave', onLeave);
+  }
   if (!reduced && o.parallax !== 1) addEventListener('scroll', onScroll, { passive: true });
   if (o.beam && o.beam.sweep && !reduced) braf = requestAnimationFrame(beamLoop);
   let geometry = '';
@@ -300,6 +304,7 @@ export function mountGlyphField(host, opts = {}) {
     },
     destroy() {
       cancelAnimationFrame(traf); cancelAnimationFrame(sraf); cancelAnimationFrame(braf);
+      o.pointerTarget.removeEventListener('pointerleave', onLeave);
       o.pointerTarget.removeEventListener('pointermove', onMove); removeEventListener('scroll', onScroll);
       ro.disconnect(); wrap.remove();
     },
