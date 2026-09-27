@@ -557,7 +557,7 @@
     font-family: var(--mono);
     font-size: var(--text-label);
   }
-  .panel > .collaboration { margin-top: 24px; }
+  .panel > .collaboration { margin-top: 0; }
 
   /* Both sides converge into Zeron. The stage bleeds to the viewport; copy
      and glass labels retain the page container alignment. */
@@ -1157,8 +1157,8 @@
 .open-source-note a { text-decoration: underline; text-decoration-color: var(--line-soft); text-underline-offset: 3px; }
 .open-source-note a:last-child { display: inline-block; margin-inline-start: 8px; }
 .open-source-note a:is(:hover, :focus-visible) { color: var(--ink); text-decoration-color: currentColor; }
-.open-source-section { padding-block: 16px; }
-.open-source-section .sec-head { margin-block-end: 20px; }
+.open-source-section { padding-block: calc(var(--sec) - var(--block-space)) 0; }
+.open-source-section .sec-head { margin-block-end: 12px; }
 .open-source-section h2 { font-size: var(--text-intro); font-weight: var(--weight-medium); line-height: var(--leading-copy); letter-spacing: var(--tracking-heading); color: var(--dim); text-wrap: pretty; }
 .open-source-section h2 b { color: var(--ink); font-weight: var(--weight-strong); }
 .open-source-links { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px 24px; }
