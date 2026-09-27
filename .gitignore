@@ -11,4 +11,9 @@ node_modules
 build/
 edge/dist/
 apps/landing/dist/
+apps/landing/.vercel/
 .agents
+# Static agent pages are generated from apps/landing/seo at Vite startup.
+apps/landing/agents/
+
+/apps/landing/about/
