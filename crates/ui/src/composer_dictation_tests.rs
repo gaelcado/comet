@@ -816,3 +816,34 @@ fn dictation_escape_from_composer_controls_cancels_pending_send(cx: &mut TestApp
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn dictation_empty_undo_and_redo_notify_cancellation(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_global(Theme::dark()));
+    let window = cx.add_window(|_, cx| ComposerInput::new("Draft", cx));
+    let input = window.update(cx, |_, _, cx| cx.entity()).unwrap();
+    let mut events = cx.events::<DictationInputEvent, _>(&input);
+    for redo in [false, true] {
+        let fake = input.update(cx, |input, cx| {
+            let fake = start(input, cx);
+            deliver(input, &fake, [Event::Listening], cx);
+            fake
+        });
+        while events.try_recv().is_ok() {}
+        window
+            .update(cx, |input, window, cx| {
+                if redo {
+                    input.redo(&Redo, window, cx);
+                } else {
+                    input.undo(&Undo, window, cx);
+                }
+                assert_eq!(input.dictation.phase, Phase::Idle);
+            })
+            .unwrap();
+        assert_eq!(fake.borrow().drops, 1);
+        assert!(matches!(
+            events.try_recv(),
+            Ok(DictationInputEvent::Changed)
+        ));
+    }
+}

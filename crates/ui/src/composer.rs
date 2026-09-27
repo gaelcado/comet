@@ -2575,6 +2575,10 @@ impl ComposerInput {
     }
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.phase.active() {
+            cx.emit(DictationInputEvent::Changed);
+            cx.notify();
+        }
         self.cancel_dictation();
         if self.read_only {
             return;
@@ -2587,6 +2591,10 @@ impl ComposerInput {
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.phase.active() {
+            cx.emit(DictationInputEvent::Changed);
+            cx.notify();
+        }
         self.cancel_dictation();
         if self.read_only {
             return;
