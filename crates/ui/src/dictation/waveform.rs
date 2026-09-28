@@ -121,7 +121,7 @@ pub(crate) fn waveform(
                 window.paint_quad(
                     gpui::fill(
                         Bounds::new(point(px(x), px(mid - h / 2.0)), size(px(BAR_WIDTH), px(h))),
-                        color.opacity(color.a * alpha),
+                        color.opacity(alpha),
                     )
                     .corner_radii(px(BAR_WIDTH / 2.0)),
                 );
