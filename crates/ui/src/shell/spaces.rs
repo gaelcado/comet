@@ -1896,11 +1896,11 @@ mod pinned_session_tests {
 
         let row = cx.debug_bounds("chat-a").unwrap();
         cx.simulate_mouse_move(row.center(), None, gpui::Modifiers::default());
-        let pointer = cx.debug_bounds("chat-a-corner").unwrap().center();
+        let pointer = cx.debug_bounds("chat-a-archive").unwrap().center();
         cx.simulate_mouse_move(pointer, None, gpui::Modifiers::default());
         for (archived, next) in [
-            ("a", Some(("b", "chat-b-corner"))),
-            ("b", Some(("c", "chat-c-corner"))),
+            ("a", Some(("b", "chat-b-archive"))),
+            ("b", Some(("c", "chat-c-archive"))),
             ("c", None),
         ] {
             cx.simulate_click(pointer, gpui::Modifiers::default());

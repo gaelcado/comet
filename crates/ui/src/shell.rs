@@ -7190,7 +7190,10 @@ impl Shell {
         // and repeatedly mount/unmount as the pointer crosses into them.
         let corner = div()
             .id(SharedString::from(format!("{row_id}-corner")))
-            .debug_selector({ let row_id = row_id.clone(); move || format!("{row_id}-corner") })
+            .debug_selector({
+                let row_id = row_id.clone();
+                move || format!("{row_id}-corner")
+            })
             .flex_none()
             .min_w(px(24.0))
             .h(px(14.0))
