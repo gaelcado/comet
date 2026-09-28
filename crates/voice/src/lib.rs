@@ -8,7 +8,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
 };
 
@@ -119,6 +119,28 @@ struct Audio {
     failed: bool,
     full: bool,
 }
+/// Loudest RMS since the UI last read it. Non-negative `f32` bit patterns sort
+/// like their values, so `fetch_max` keeps the peak without a lock.
+fn meter<T: cpal::Sample>(data: &[T], channels: usize, level: &AtomicU32)
+where
+    f32: cpal::FromSample<T>,
+{
+    let frames = data.len() / channels.max(1);
+    if frames == 0 {
+        return;
+    }
+    let energy = data
+        .chunks_exact(channels)
+        .map(|frame| {
+            let s = frame.iter().map(|s| s.to_sample::<f32>()).sum::<f32>() / channels as f32;
+            s * s
+        })
+        .sum::<f32>();
+    let rms = (energy / frames as f32).sqrt();
+    if rms.is_finite() {
+        level.fetch_max(rms.to_bits(), Ordering::Relaxed);
+    }
+}
 fn append<T: cpal::Sample>(data: &[T], channels: usize, rate: u32, a: &Mutex<Audio>)
 where
     f32: cpal::FromSample<T>,
@@ -184,7 +206,7 @@ pub struct Capture {
     rate: u32,
 }
 impl Capture {
-    pub fn start(device: Option<&str>) -> Result<Self> {
+    pub fn start(device: Option<&str>, level: Arc<AtomicU32>) -> Result<Self> {
         let device = input_device(device).context("No microphone available")?;
         let config = device.default_input_config()?;
         let rate = config.sample_rate();
@@ -207,7 +229,10 @@ impl Capture {
             ($sample:ty) => {
                 device.build_input_stream(
                     &config.into(),
-                    move |d: &[$sample], _| append(d, channels, rate, &a),
+                    move |d: &[$sample], _| {
+                        meter(d, channels, &level);
+                        append(d, channels, rate, &a)
+                    },
                     err,
                     None,
                 )?
@@ -259,6 +284,7 @@ struct Job {
     dir: std::path::PathBuf,
     stop: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
+    level: Arc<AtomicU32>,
     device: Option<String>,
     events: std::sync::mpsc::SyncSender<Event>,
 }
@@ -272,6 +298,7 @@ static WORKER: std::sync::OnceLock<std::sync::mpsc::SyncSender<Command>> =
 pub struct Session {
     stop: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
+    level: Arc<AtomicU32>,
     events: std::sync::mpsc::Receiver<Event>,
 }
 impl Session {
@@ -315,7 +342,7 @@ impl Session {
                             let _ = job.events.try_send(Event::Final(String::new()));
                             return Ok(());
                         }
-                        let capture = Capture::start(job.device.as_deref())?;
+                        let capture = Capture::start(job.device.as_deref(), job.level.clone())?;
                         let _ = job.events.try_send(Event::Listening);
                         let start = std::time::Instant::now();
                         while !job.stop.load(Ordering::Acquire)
@@ -347,12 +374,14 @@ impl Session {
         });
         let stop = Arc::new(AtomicBool::new(false));
         let cancel = Arc::new(AtomicBool::new(false));
+        let level = Arc::new(AtomicU32::new(0));
         let (tx, events) = std::sync::mpsc::sync_channel(4);
         if sender
             .try_send(Command::Transcribe(Job {
                 dir,
                 stop: stop.clone(),
                 cancel: cancel.clone(),
+                level: level.clone(),
                 device,
                 events: tx,
             }))
@@ -364,6 +393,7 @@ impl Session {
         Ok(Self {
             stop,
             cancel,
+            level,
             events,
         })
     }
@@ -372,6 +402,11 @@ impl Session {
     }
     pub fn finish(&mut self) {
         self.stop.store(true, Ordering::Release);
+    }
+    /// Peak microphone RMS (0–1) since the previous call. Level only; the
+    /// samples themselves stay on the worker.
+    pub fn take_level(&self) -> f32 {
+        f32::from_bits(self.level.swap(0, Ordering::Relaxed))
     }
 }
 impl Drop for Session {
@@ -411,6 +446,12 @@ mod tests {
                 .collect();
             append(&input, 2, 16_000, &audio);
             assert_eq!(audio.lock().unwrap().samples, vec![0.0, 0.5, 0.0]);
+            let level = AtomicU32::new(0);
+            meter(&input, 2, &level);
+            let rms = f32::from_bits(level.load(Ordering::Relaxed));
+            assert!((rms - (0.25_f32 / 3.0).sqrt()).abs() < 0.01, "{rms}");
+            meter(&input[4..], 2, &level);
+            assert_eq!(f32::from_bits(level.load(Ordering::Relaxed)), rms);
         }
         check::<i8>();
         check::<i16>();

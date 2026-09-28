@@ -3,7 +3,10 @@
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
+mod meter;
 mod model;
+pub(crate) mod waveform;
+pub(crate) use meter::{Bar, FLOOR, Meter};
 pub(crate) use model::{card, enabled, init};
 
 pub(crate) const FINALIZE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -26,6 +29,10 @@ pub(crate) enum Event {
 pub(crate) trait Transcriber {
     fn poll(&mut self) -> Option<Event>;
     fn finish(&mut self);
+    /// Peak input RMS since the previous call, for the live waveform.
+    fn level(&mut self) -> f32 {
+        0.0
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -105,6 +112,9 @@ impl Transcriber for Native {
             zeron_voice::Event::Final(t) => Event::Final(t),
             zeron_voice::Event::Failed(e) => Event::Failed(e),
         })
+    }
+    fn level(&mut self) -> f32 {
+        self.session.as_ref().map_or(0.0, |s| s.take_level())
     }
     fn finish(&mut self) {
         if let Some(s) = &mut self.session {
@@ -194,12 +204,14 @@ pub(crate) struct Dictation {
     pub has_partial: bool,
     pending_send: bool,
     finish_started: Option<Instant>,
+    pub meter: Meter,
 }
 
 impl Dictation {
     pub fn begin(&mut self, content: &str, selection: Range<usize>) {
         self.cancel();
         self.phase = Phase::Requesting;
+        self.meter.open(Instant::now());
         self.range = selection;
         self.expected = content.to_owned();
         self.has_partial = false;
@@ -212,6 +224,7 @@ impl Dictation {
         self.pending_send = false;
         self.finish_started = None;
         self.expected.clear();
+        self.meter.reset();
     }
 
     /// Returns true only on the transition that must finish the audio stream.
@@ -225,6 +238,7 @@ impl Dictation {
         }
         self.phase = Phase::Finalizing;
         self.finish_started = Some(now);
+        self.meter.freeze(now);
         true
     }
 

@@ -1704,6 +1704,27 @@ enum DictationInputEvent {
 }
 impl EventEmitter<DictationInputEvent> for ComposerInput {}
 
+/// Pill entrance, Stop morph, settle-away, and the clock's warning window.
+const VOICE_INTRO: Duration = Duration::from_millis(420);
+const VOICE_MORPH: Duration = Duration::from_millis(220);
+const VOICE_EXIT: Duration = Duration::from_millis(260);
+const VOICE_LIMIT_WARNING: Duration = Duration::from_secs(10);
+/// Aurora lights: seconds per radian, phase, width.
+const VOICE_AURORA: [(f32, f32, f32); 3] = [(1.9, 0.0, 72.0), (2.7, 2.1, 56.0), (3.4, 4.2, 88.0)];
+
+/// Everything the voice pill draws, captured from the dictation meter.
+#[derive(Clone)]
+struct VoiceFrame {
+    label: String,
+    mode: crate::dictation::waveform::Mode,
+    bars: Vec<crate::dictation::Bar>,
+    level: f32,
+    elapsed: Option<Duration>,
+    since_open: Duration,
+    since_start: Duration,
+    since_freeze: Option<Duration>,
+}
+
 /// Shaping inputs excluding mutable viewport and selection geometry.
 #[derive(Clone, PartialEq)]
 struct InputLayoutKey {
@@ -2440,6 +2461,7 @@ impl ComposerInput {
                 Event::Listening => {
                     if self.dictation.phase == Phase::Requesting {
                         self.dictation.phase = Phase::Listening;
+                        self.dictation.meter.start(Instant::now());
                     }
                     cx.emit(DictationInputEvent::Changed);
                     cx.notify();
@@ -2471,6 +2493,16 @@ impl ComposerInput {
             if !self.dictation.phase.active() {
                 self.transcriber = None;
                 return false;
+            }
+        }
+        if self.dictation.phase == Phase::Listening
+            && let Some(service) = self.transcriber.as_mut()
+        {
+            let level = service.level();
+            if self.dictation.meter.record(Instant::now(), level) {
+                // The composer drives smooth frames itself; this keeps the
+                // stepped reduced-motion waveform current.
+                cx.emit(DictationInputEvent::Changed);
             }
         }
         if self.dictation.timed_out(Instant::now()) {
@@ -5589,6 +5621,10 @@ pub struct Composer {
     dictation_activation: Option<Subscription>,
     dictation_blur: Option<Subscription>,
     dictation_focus: FocusHandle,
+    /// The last live frame of the voice pill, kept so it can settle away
+    /// after the transcript lands instead of vanishing.
+    voice_last: Option<VoiceFrame>,
+    voice_exit: Option<(Instant, VoiceFrame)>,
 }
 
 impl EventEmitter<ComposerEvent> for Composer {}
@@ -5826,6 +5862,8 @@ impl Composer {
             dictation_activation: None,
             dictation_blur: None,
             dictation_focus: cx.focus_handle(),
+            voice_last: None,
+            voice_exit: None,
         };
         // Dev knob: pre-stage attachments (drop/paste can't be synthesized on
         // a rig) — `ZERON_ATTACH=/path/a.png[,/path/b.png]`, and
@@ -9085,6 +9123,14 @@ impl Composer {
         let phase = self.input.read(cx).dictation.phase.clone();
         let active = phase.active();
         let label = phase.action_label().to_owned();
+        // A ring that swells with the voice ties the toolbar control to the
+        // live waveform below the composer.
+        let voice = if phase == crate::dictation::Phase::Listening {
+            let level = self.input.read(cx).dictation.meter.level(Instant::now());
+            Some(level * level.sqrt())
+        } else {
+            None
+        };
         let tooltip = label.clone();
         let composer = cx.entity().downgrade();
         Some(
@@ -9121,6 +9167,18 @@ impl Composer {
                     }
                 })
                 .focus_visible(|style| style.border_1().border_color(theme.accent))
+                .relative()
+                .children(voice.map(|glow| {
+                    let reach = 1.0 + 4.0 * glow;
+                    div()
+                        .absolute()
+                        .top(px(-reach))
+                        .left(px(-reach))
+                        .size(px(28.0 + 2.0 * reach))
+                        .rounded_full()
+                        .border(px(1.5))
+                        .border_color(theme.accent.opacity(0.2 + 0.5 * glow))
+                }))
                 .tooltip(move |_, cx| {
                     cx.new(|_| AppshotActionTooltip(tooltip.clone().into()))
                         .into()
@@ -9177,12 +9235,79 @@ impl Composer {
         cx.notify();
     }
 
-    fn render_dictation_status(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let phase = &self.input.read(cx).dictation.phase;
-        let (title, detail) = phase.status()?;
+    fn dictation_action_button(
+        &self,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let theme = Theme::of(cx);
+        let action_label = if active {
+            "Cancel dictation"
+        } else {
+            "Dismiss dictation message"
+        };
+        let composer = cx.entity().downgrade();
+        div()
+            .id("dictation-dismiss")
+            .debug_selector(|| "dictation-dismiss".into())
+            .role(Role::Button)
+            .aria_label(action_label)
+            .tab_index(0)
+            .flex_none()
+            .h(px(24.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .rounded_full()
+            .text_color(theme.text_muted)
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.surface_raised_hover).text_color(theme.text))
+            .focus_visible(|s| s.border_1().border_color(theme.accent))
+            .on_click(cx.listener(|this, _, _, cx| this.dismiss_dictation(cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    cx.stop_propagation();
+                    this.dismiss_dictation(cx);
+                }
+            }))
+            .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                composer
+                    .update(cx, |this, cx| this.dismiss_dictation(cx))
+                    .ok();
+            })
+    }
+
+    fn render_dictation_status(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let phase = self.input.read(cx).dictation.phase.clone();
+        let Some((title, detail)) = phase.status() else {
+            // Finished or cancelled: let the last live frame settle away.
+            if let Some(frame) = self.voice_last.take()
+                && !motion::reduced_motion(cx)
+            {
+                self.voice_exit = Some((Instant::now(), frame));
+            }
+            let (started, frame) = self.voice_exit.clone()?;
+            let t = started.elapsed().as_secs_f32() / VOICE_EXIT.as_secs_f32();
+            if t >= 1.0 {
+                self.voice_exit = None;
+                return None;
+            }
+            window.request_animation_frame();
+            return Some(self.render_voice_bar(frame, Some(t), window, cx));
+        };
         let (title, detail) = (title.to_owned(), detail.to_owned());
-        let active = phase.active();
-        let listening = *phase == crate::dictation::Phase::Listening;
+        self.voice_exit = None;
+        if phase.active() {
+            let frame = self.voice_frame(title, detail, cx);
+            self.voice_last = Some(frame.clone());
+            return Some(self.render_voice_bar(frame, None, window, cx));
+        }
+        self.voice_last = None;
+        let phase = &phase;
         let failed = matches!(
             phase,
             crate::dictation::Phase::Denied(_)
@@ -9190,83 +9315,295 @@ impl Composer {
                 | crate::dictation::Phase::Failed(_)
         );
         let theme = Theme::of(cx);
-        let action = if active { "Cancel" } else { "Dismiss" };
-        let action_label = if active {
-            "Cancel dictation"
-        } else {
-            "Dismiss dictation message"
-        };
-        let composer = cx.entity().downgrade();
         Some(
-            div()
-                .id("dictation-status")
-                .flex()
-                .items_start()
-                .gap(px(8.0))
-                .px(px(12.0))
-                .text_size(px(12.0))
-                .line_height(px(18.0))
-                .child(
-                    div()
-                        .flex_none()
-                        .mt(px(6.0))
-                        .size(px(6.0))
-                        .rounded_full()
-                        .bg(if listening {
-                            theme.accent
-                        } else if failed {
-                            theme.warning
-                        } else {
-                            theme.text_faint
-                        }),
-                )
-                .child(
-                    div()
-                        .id("dictation-live-status")
-                        .role(Role::Status)
-                        .aria_label(format!("{title}. {detail}"))
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_wrap()
-                        .gap_x(px(8.0))
-                        .child(div().text_color(theme.text).child(title))
-                        .child(div().min_w_0().text_color(theme.text_muted).child(detail)),
-                )
-                .child(
-                    div()
-                        .id("dictation-dismiss")
-                        .debug_selector(|| "dictation-dismiss".into())
-                        .role(Role::Button)
-                        .aria_label(action_label)
-                        .tab_index(0)
-                        .flex_none()
-                        .h(px(24.0))
-                        .mt(px(-3.0))
-                        .px(px(6.0))
-                        .flex()
-                        .items_center()
-                        .rounded(px(4.0))
-                        .text_color(theme.text_muted)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme.surface_raised_hover).text_color(theme.text))
-                        .focus_visible(|s| s.border_1().border_color(theme.accent))
-                        .child(action)
-                        .on_click(cx.listener(|this, _, _, cx| this.dismiss_dictation(cx)))
-                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                cx.stop_propagation();
-                                this.dismiss_dictation(cx);
-                            }
-                        }))
-                        .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
-                            composer
-                                .update(cx, |this, cx| this.dismiss_dictation(cx))
-                                .ok();
-                        }),
-                )
-                .into_any_element(),
+            motion::fade_in(
+                "dictation-message-enter",
+                div()
+                    .id("dictation-status")
+                    .flex()
+                    .items_start()
+                    .gap(px(8.0))
+                    .px(px(12.0))
+                    .text_size(px(12.0))
+                    .line_height(px(18.0))
+                    .child(
+                        div()
+                            .flex_none()
+                            .mt(px(6.0))
+                            .size(px(6.0))
+                            .rounded_full()
+                            .bg(if failed {
+                                theme.warning
+                            } else {
+                                theme.text_faint
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id("dictation-live-status")
+                            .role(Role::Status)
+                            .aria_label(format!("{title}. {detail}"))
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_wrap()
+                            .gap_x(px(8.0))
+                            .child(div().text_color(theme.text).child(title))
+                            .child(div().min_w_0().text_color(theme.text_muted).child(detail)),
+                    )
+                    .child(
+                        self.dictation_action_button(false, cx)
+                            .mt(px(-3.0))
+                            .child("Dismiss"),
+                    ),
+            )
+            .into_any_element(),
         )
+    }
+
+    fn voice_frame(&self, title: String, detail: String, cx: &App) -> VoiceFrame {
+        use crate::dictation::{Phase, waveform::Mode};
+        let now = Instant::now();
+        let animate = !motion::reduced_motion(cx);
+        let dictation = &self.input.read(cx).dictation;
+        let meter = &dictation.meter;
+        let mode = match dictation.phase {
+            Phase::Listening => Mode::Live,
+            Phase::Finalizing if meter.since_start(now).is_some() => Mode::Processing,
+            _ => Mode::Waiting,
+        };
+        VoiceFrame {
+            label: format!("{title}. {detail}"),
+            mode,
+            bars: meter.bars(now, animate),
+            level: if mode == Mode::Live {
+                meter.level(now)
+            } else {
+                0.0
+            },
+            elapsed: meter.since_start(now).map(|_| meter.elapsed(now)),
+            since_open: meter.since_open(now).unwrap_or(Duration::MAX),
+            since_start: meter.since_start(now).unwrap_or(Duration::ZERO),
+            since_freeze: meter.since_freeze(now),
+        }
+    }
+
+    /// The dictation pill: Stop control, voice-driven waveform over a dotted
+    /// baseline, recording clock, and Cancel. Text is limited to the clock;
+    /// the control, waveform and assistive label carry the state. `exit`
+    /// is the settle-away progress after dictation ends.
+    fn render_voice_bar(
+        &self,
+        frame: VoiceFrame,
+        exit: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        use crate::dictation::waveform::{self, Mode, ease_out};
+        let theme = Theme::of(cx).clone();
+        let animate = !motion::reduced_motion(cx);
+        if animate {
+            // Bars scroll and the glow follows the voice between meter polls.
+            window.request_animation_frame();
+        }
+        let progress = |since: Duration, over: Duration| {
+            if animate {
+                ease_out(since.as_secs_f32() / over.as_secs_f32())
+            } else {
+                1.0
+            }
+        };
+        let live = frame.mode == Mode::Live && exit.is_none();
+        let glow = frame.level * frame.level.sqrt() * (1.0 - exit.unwrap_or(0.0));
+        // Stop square grows in when the microphone goes live and shrinks away
+        // when capture ends, before the transcribing spinner takes its place.
+        let square = match frame.mode {
+            Mode::Live => progress(frame.since_start, VOICE_MORPH),
+            Mode::Processing => {
+                1.0 - progress(frame.since_freeze.unwrap_or(Duration::MAX), VOICE_MORPH)
+            }
+            Mode::Waiting => 0.0,
+        };
+        let spinning = exit.is_none() && square <= 0.0 && frame.mode != Mode::Live;
+        let control = div()
+            .id("dictation-stop")
+            .debug_selector(|| "dictation-stop".into())
+            .flex_none()
+            .size(px(24.0))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(motion::mix(
+                theme.ink(0.06),
+                theme.accent.opacity(0.9 + 0.1 * glow),
+                square,
+            ))
+            .when(!spinning, |el| {
+                el.child(
+                    div()
+                        .size(px(9.0 * square))
+                        .rounded(px(2.0 * square))
+                        .bg(theme.on_accent),
+                )
+            })
+            .when(spinning, |el| {
+                el.child(crate::loaders::mini_mono_spinner(
+                    "dictation-progress-status",
+                    2.0,
+                    theme.text_muted,
+                    cx.entity_id(),
+                    cx,
+                ))
+            })
+            .when(live, |el| {
+                let composer = cx.entity().downgrade();
+                el.role(Role::Button)
+                    .aria_label("Stop dictation")
+                    .tab_index(0)
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.85))
+                    .focus_visible(|s| s.border_1().border_color(theme.text))
+                    .tooltip(|_, cx| {
+                        cx.new(|_| AppshotActionTooltip("Stop dictation".into()))
+                            .into()
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_dictation(cx)))
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            cx.stop_propagation();
+                            this.toggle_dictation(cx);
+                        }
+                    }))
+                    .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                        composer
+                            .update(cx, |this, cx| this.toggle_dictation(cx))
+                            .ok();
+                    })
+            });
+        let clock = frame.elapsed.map(|elapsed| {
+            let limit = Duration::from_secs(zeron_voice::MAX_SECONDS as u64);
+            div()
+                .flex_none()
+                .font_family(theme.font_mono.clone())
+                .text_size(px(11.0))
+                .text_color(if live && elapsed + VOICE_LIMIT_WARNING >= limit {
+                    theme.warning
+                } else if live {
+                    theme.text
+                } else {
+                    theme.text_muted
+                })
+                .child(waveform::clock(elapsed))
+        });
+        let close = if exit.is_none() {
+            self.dictation_action_button(true, cx)
+                .w(px(24.0))
+                .px_0()
+                .justify_center()
+                .tooltip(|_, cx| {
+                    cx.new(|_| AppshotActionTooltip("Cancel dictation".into()))
+                        .into()
+                })
+                .child(
+                    crate::icons::icon(crate::icons::CLOSE)
+                        .size(px(14.0))
+                        .text_color(theme.text_muted),
+                )
+                .into_any_element()
+        } else {
+            div().flex_none().size(px(24.0)).into_any_element()
+        };
+        // Soft accent light pooled along the lower edge, drifting while the
+        // voice is heard; RareUI's aurora, clipped to the pill.
+        let now = waveform::seconds();
+        let aurora = (glow > 0.01).then(|| {
+            VOICE_AURORA.iter().map(move |&(lap, phase, width)| {
+                let drift = 0.5 + 0.5 * (now / lap + phase).sin();
+                div()
+                    .absolute()
+                    .bottom(px(-12.0))
+                    .left(gpui::relative(0.1 + 0.62 * drift))
+                    .w(px(width))
+                    .h(px(18.0))
+                    .rounded_full()
+                    .bg(theme.accent.opacity(0.18 * glow))
+                    .shadow(vec![gpui::BoxShadow {
+                        color: theme.accent.opacity(0.55 * glow),
+                        offset: gpui::point(px(0.0), px(0.0)),
+                        blur_radius: px(16.0),
+                        spread_radius: px(2.0),
+                        inset: false,
+                    }])
+            })
+        });
+        let shadows = if glow > 0.01 {
+            vec![gpui::BoxShadow {
+                color: theme.accent.opacity(0.28 * glow),
+                offset: gpui::point(px(0.0), px(0.0)),
+                blur_radius: px(4.0 + 14.0 * glow),
+                spread_radius: px(0.0),
+                inset: false,
+            }]
+        } else {
+            Vec::new()
+        };
+        let intro = progress(frame.since_open, VOICE_INTRO);
+        let fade = exit.map_or(1.0, |t| 1.0 - ease_out(t));
+        let pill = div()
+            .id("dictation-status")
+            .relative()
+            .overflow_hidden()
+            .h(px(36.0))
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .px(px(6.0))
+            .rounded_full()
+            .opacity(fade * (0.4 + 0.6 * intro))
+            .top(px(4.0 * (1.0 - intro) + 4.0 * (1.0 - fade)))
+            .bg(motion::mix(
+                theme.composer_surface_bg(),
+                theme.accent_wash,
+                0.3 + 0.7 * glow,
+            ))
+            .border_1()
+            .border_color(motion::mix(
+                theme.composer_surface_border(),
+                theme.accent.opacity(0.4),
+                glow,
+            ))
+            .shadow(shadows)
+            .text_size(px(12.0))
+            .line_height(px(18.0))
+            .children(aurora.into_iter().flatten())
+            .child(control)
+            .child(
+                div()
+                    .id("dictation-live-status")
+                    .role(Role::Status)
+                    .aria_label(frame.label.clone())
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(20.0))
+                    .flex()
+                    .child(waveform::waveform(
+                        frame.bars,
+                        frame.mode,
+                        waveform::Paint {
+                            ink: theme.text.opacity(0.85),
+                            quiet: theme.text_faint.opacity(0.5),
+                        },
+                        waveform::Phase {
+                            intro,
+                            collapse: exit.unwrap_or(0.0),
+                        },
+                        animate,
+                    )),
+            )
+            .children(clock)
+            .child(close);
+        pill.into_any_element()
     }
 
     fn render_send_button(
@@ -10164,7 +10501,7 @@ impl Render for Composer {
         } else {
             container
         };
-        let dictation_status = self.render_dictation_status(cx);
+        let dictation_status = self.render_dictation_status(window, cx);
         let container = container.child(
             div()
                 .track_focus(&self.dictation_focus)
