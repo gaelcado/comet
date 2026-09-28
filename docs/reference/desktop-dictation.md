@@ -20,6 +20,8 @@ Release targets are macOS arm64, Linux x86_64/aarch64 and Windows x86_64. Linux 
 
 On Windows, microphone access for desktop apps must be enabled in the system privacy settings. On Linux, the selected ALSA input must be available to the user and the audio server. Settings → Voice lists available inputs and refreshes while visible; a disconnected selection falls back to the system default. Test built-in, USB and Bluetooth microphones on the target OS: a synthetic WAV test cannot establish permission, device routing or capture behavior.
 
+Linux releases dynamically link the system ALSA runtime (`libasound.so.2`). It is required even with dictation disabled or in headless mode; no audio device or microphone permission is needed to run the engine. Both Linux installers check executable startup before activating an installation. The updater also checks a staged binary before replacing the active version.
+
 ## Verification
 
 Deterministic editor fixtures cover partial replacement, Unicode, undo/redo, failure, stale events, cancellation, Send finalization, queue editing, navigation, focus and input-request takeover. `cargo test -p zeron-voice` covers pinned manifest shape/size, cancellation and corrupt cache rejection. The `verify` example runs explicitly supplied synthetic/public PCM16 WAV files and prints transcripts/timings for development only; production never prints transcripts.

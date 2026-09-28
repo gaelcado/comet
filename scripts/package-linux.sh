@@ -57,6 +57,10 @@ if [ ! -x "$DEST/zeron" ]; then
   rm -rf "$DEST"
   mv "$STAGE" "$DEST"
 fi
+if ! "$DEST/zeron" --version >/dev/null; then
+  echo "Zeron could not start; see the loader error above. Install the missing runtime libraries (including ALSA, libasound.so.2), then retry." >&2
+  exit 1
+fi
 ln -sfn "$DEST" "$APP_ROOT/current"
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$APP_ROOT/current/zeron" "$HOME/.local/bin/zeron"
