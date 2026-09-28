@@ -771,6 +771,45 @@ fn dictation_cancel_control_preserves_draft_and_clears_pending_send(cx: &mut Tes
 }
 
 #[gpui::test]
+fn dictation_cancel_control_is_keyboard_operable(cx: &mut TestAppContext) {
+    let (_dir, handle) = super::tests::composer_focus_window(cx);
+    let fake = handle
+        .update(cx, |composer, window, cx| {
+            let fake = composer.input.update(cx, |input, cx| {
+                input.set_text("Keep this draft", cx);
+                let fake = start(input, cx);
+                deliver(input, &fake, [Event::Listening], cx);
+                fake
+            });
+            window.focus(&composer.input.focus_handle(cx), cx);
+            fake
+        })
+        .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.draw(cx).clear();
+        window.focus_next(cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        fake.borrow().drops,
+        0,
+        "tabbing to Cancel must retain capture"
+    );
+    cx.simulate_keystrokes(handle.into(), "space");
+    cx.run_until_parked();
+    assert_eq!(fake.borrow().drops, 1);
+    assert_eq!(fake.borrow().finishes, 0, "Cancel must not transcribe");
+    handle
+        .read_with(cx, |composer, cx| {
+            assert_eq!(composer.input.read(cx).text(), "Keep this draft");
+            assert_eq!(composer.input.read(cx).dictation.phase, Phase::Idle);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn dictation_keeps_draft_stable_when_pasted_references_resolve(cx: &mut TestAppContext) {
     let input = cx.new(|cx| ComposerInput::new("Draft", cx));
     let mut events = cx.events::<DictationInputEvent, _>(&input);

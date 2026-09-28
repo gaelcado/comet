@@ -33,8 +33,6 @@ jobs:
         os: [macos-latest, windows-2022, ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
-      ZERON_VOICE_TEST_MODEL_DIR: ${{ runner.temp }}/zeron-voice-model
     steps:
       - uses: actions/checkout@v4
       - name: ALSA capture dependencies
@@ -48,9 +46,11 @@ jobs:
       - name: Cache checksummed model
         uses: actions/cache@v4
         with:
-          path: ${{ env.ZERON_VOICE_TEST_MODEL_DIR }}
+          path: ${{ runner.temp }}/zeron-voice-model
           key: voice-model-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/voice/model.json') }}
       - name: Audio conversion and model lifecycle tests
         run: cargo test --release --locked -p zeron-voice
       - name: English and French inference at microphone sample rates
+        env:
+          ZERON_VOICE_TEST_MODEL_DIR: ${{ runner.temp }}/zeron-voice-model
         run: cargo test --release --locked -p zeron-voice --test runtime -- --ignored --nocapture

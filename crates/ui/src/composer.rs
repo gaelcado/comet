@@ -10097,6 +10097,7 @@ impl Render for Composer {
         let (voice_t, voice_frame) = self.update_voice(window, cx);
         let dictating = self.input.read(cx).dictation.phase.active();
         let microphone = self.render_dictation_button(voice_t, voice_frame.as_ref(), cx);
+        let attach_action = cx.entity().downgrade();
         // Attach button — opens the native image picker (the original's hidden
         // `<input type=file accept="image/*" multiple>`); paste/drop also feed
         // the same strip. The leading utility group owns the spacing between
@@ -10127,6 +10128,8 @@ impl Render for Composer {
             } else {
                 "Attach images"
             })
+            .tab_index(0)
+            .focus_visible(|style| style.border_1().border_color(theme.accent))
             .when(dictating, |el| {
                 el.debug_selector(|| "dictation-dismiss".into())
             })
@@ -10142,6 +10145,27 @@ impl Render for Composer {
                     this.open_file_picker(cx);
                 }
             }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    cx.stop_propagation();
+                    if this.input.read(cx).dictation.phase.active() {
+                        this.dismiss_dictation(cx);
+                    } else {
+                        this.open_file_picker(cx);
+                    }
+                }
+            }))
+            .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                attach_action
+                    .update(cx, |this, cx| {
+                        if this.input.read(cx).dictation.phase.active() {
+                            this.dismiss_dictation(cx);
+                        } else {
+                            this.open_file_picker(cx);
+                        }
+                    })
+                    .ok();
+            })
             .when(voice_t < 1.0, |el| {
                 let scale = 1.0 - 0.75 * voice_t;
                 el.child(

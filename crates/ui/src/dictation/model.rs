@@ -212,10 +212,19 @@ impl VoiceCard {
                 this.inputs.devices = devices;
                 this.inputs.default = default;
                 this.inputs.checked = Some(Instant::now());
-                this.inputs.task = None;
                 if changed {
                     cx.notify();
                 }
+            })
+            .ok();
+            // A static settings page otherwise has no reason to render again,
+            // so checking the age only in render misses hot-plugged devices.
+            // Invalidate once when the scan expires. Only a visible card starts
+            // the next scan, so leaving Settings does not keep polling devices.
+            cx.background_executor().timer(INPUT_REFRESH).await;
+            this.update(cx, |this, cx| {
+                this.inputs.task = None;
+                cx.notify();
             })
             .ok();
         }));
