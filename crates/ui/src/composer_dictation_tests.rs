@@ -889,3 +889,19 @@ fn dictation_blank_results_preserve_partial_and_pending_send(cx: &mut TestAppCon
     }
     assert_eq!(sends, 1);
 }
+
+#[test]
+fn voice_morph_reverses_mid_flight_without_jumping() {
+    let start = std::time::Instant::now();
+    let mut tween = super::VoiceTween::default();
+    tween.retarget(1.0, start, false);
+    let mid = start + super::VOICE_MORPH / 3;
+    let at_reverse = tween.value(mid);
+    assert!(at_reverse > 0.0 && at_reverse < 1.0, "{at_reverse}");
+    tween.retarget(0.0, mid, false);
+    assert!((tween.value(mid) - at_reverse).abs() < 1e-6);
+    assert_eq!(tween.value(mid + super::VOICE_MORPH), 0.0);
+    // Reduced motion snaps to the target.
+    tween.retarget(1.0, mid, true);
+    assert_eq!(tween.value(mid), 1.0);
+}

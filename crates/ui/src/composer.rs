@@ -1704,15 +1704,16 @@ enum DictationInputEvent {
 }
 impl EventEmitter<DictationInputEvent> for ComposerInput {}
 
-/// Pill entrance, Stop morph, settle-away, and the clock's warning window.
-const VOICE_INTRO: Duration = Duration::from_millis(420);
-const VOICE_MORPH: Duration = Duration::from_millis(220);
-const VOICE_EXIT: Duration = Duration::from_millis(260);
+/// The composer's morph into and out of dictation, and the clock's warning
+/// window before the recording limit.
+const VOICE_MORPH: Duration = Duration::from_millis(420);
+const VOICE_CURVE: motion::CubicBezier = motion::CubicBezier::new(0.2, 0.0, 0.0, 1.0);
 const VOICE_LIMIT_WARNING: Duration = Duration::from_secs(10);
-/// Aurora lights: seconds per radian, phase, width.
-const VOICE_AURORA: [(f32, f32, f32); 3] = [(1.9, 0.0, 72.0), (2.7, 2.1, 56.0), (3.4, 4.2, 88.0)];
+/// Height of the voice track and its gap to the Stop control.
+const VOICE_TRACK_HEIGHT: f32 = 32.0;
+const VOICE_TRACK_GAP: f32 = 8.0;
 
-/// Everything the voice pill draws, captured from the dictation meter.
+/// Everything the voice track draws, captured from the dictation meter.
 #[derive(Clone)]
 struct VoiceFrame {
     label: String,
@@ -1720,9 +1721,46 @@ struct VoiceFrame {
     bars: Vec<crate::dictation::Bar>,
     level: f32,
     elapsed: Option<Duration>,
-    since_open: Duration,
-    since_start: Duration,
-    since_freeze: Option<Duration>,
+}
+
+/// Interruptible 0↔1 progress of the dictation morph: a retarget starts from
+/// the current value, so toggling mid-flight reverses without a jump.
+#[derive(Clone, Copy)]
+struct VoiceTween {
+    from: f32,
+    to: f32,
+    start: Instant,
+}
+
+impl Default for VoiceTween {
+    fn default() -> Self {
+        Self {
+            from: 0.0,
+            to: 0.0,
+            start: Instant::now(),
+        }
+    }
+}
+
+impl VoiceTween {
+    fn value(&self, now: Instant) -> f32 {
+        let raw = now.saturating_duration_since(self.start).as_secs_f32()
+            / (VOICE_MORPH.as_secs_f32() * motion::speed_scale());
+        motion::lerp(self.from, self.to, VOICE_CURVE.eval(raw))
+    }
+
+    fn retarget(&mut self, to: f32, now: Instant, reduced: bool) {
+        if self.to == to {
+            return;
+        }
+        self.from = if reduced { to } else { self.value(now) };
+        self.to = to;
+        self.start = now;
+    }
+
+    fn settled(&self, now: Instant) -> bool {
+        self.value(now) == self.to
+    }
 }
 
 /// Shaping inputs excluding mutable viewport and selection geometry.
@@ -5624,7 +5662,7 @@ pub struct Composer {
     /// The last live frame of the voice pill, kept so it can settle away
     /// after the transcript lands instead of vanishing.
     voice_last: Option<VoiceFrame>,
-    voice_exit: Option<(Instant, VoiceFrame)>,
+    voice_tween: VoiceTween,
 }
 
 impl EventEmitter<ComposerEvent> for Composer {}
@@ -5863,7 +5901,7 @@ impl Composer {
             dictation_blur: None,
             dictation_focus: cx.focus_handle(),
             voice_last: None,
-            voice_exit: None,
+            voice_tween: VoiceTween::default(),
         };
         // Dev knob: pre-stage attachments (drop/paste can't be synthesized on
         // a rig) — `ZERON_ATTACH=/path/a.png[,/path/b.png]`, and
@@ -9115,114 +9153,117 @@ impl Composer {
         cx.notify();
     }
 
-    fn render_dictation_button(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    /// Microphone at rest; the one Stop control while dictating. `t` morphs
+    /// the mic glyph out and the accent glass plate, stop square or spinner
+    /// in; the glow follows the live voice level.
+    fn render_dictation_button(
+        &self,
+        t: f32,
+        frame: Option<&VoiceFrame>,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        use crate::dictation::{Phase, glass, waveform::Mode};
         if !crate::dictation::enabled(cx) || self.wizard.is_some() {
             return None;
         }
-        let theme = Theme::of(cx);
+        let theme = Theme::of(cx).clone();
         let phase = self.input.read(cx).dictation.phase.clone();
         let active = phase.active();
         let label = phase.action_label().to_owned();
-        // A ring that swells with the voice ties the toolbar control to the
-        // live waveform below the composer.
-        let voice = if phase == crate::dictation::Phase::Listening {
-            let level = self.input.read(cx).dictation.meter.level(Instant::now());
-            Some(level * level.sqrt())
-        } else {
-            None
-        };
+        let live = frame.is_some_and(|f| f.mode == Mode::Live);
+        let glow = frame.map_or(0.0, |f| f.level * f.level.sqrt());
+        // Spinner while the microphone opens or the model transcribes; the
+        // stop square once the voice is live (and while retracting from it).
+        let busy = matches!(phase, Phase::Requesting | Phase::Finalizing)
+            || (!active && frame.is_some_and(|f| f.mode != Mode::Live));
         let tooltip = label.clone();
         let composer = cx.entity().downgrade();
-        Some(
+        let centered = || {
             div()
-                .id("composer-dictation")
-                .debug_selector(|| "composer-dictation".into())
-                .size(px(28.0))
-                .flex_none()
+                .absolute()
+                .inset_0()
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_full()
-                .role(Role::Button)
-                .aria_label(label)
-                .aria_toggled(if active {
-                    gpui::Toggled::True
-                } else {
-                    gpui::Toggled::False
-                })
-                .tab_index(0)
-                .bg(if phase == crate::dictation::Phase::Listening {
-                    theme.accent
-                } else if active {
-                    theme.accent_wash
-                } else {
-                    gpui::transparent_black()
-                })
-                .cursor_pointer()
-                .hover(|style| {
-                    if active {
-                        style.opacity(0.85)
-                    } else {
-                        style.bg(theme.surface_raised_hover)
-                    }
-                })
-                .focus_visible(|style| style.border_1().border_color(theme.accent))
-                .relative()
-                .children(voice.map(|glow| {
-                    let reach = 1.0 + 4.0 * glow;
-                    div()
-                        .absolute()
-                        .top(px(-reach))
-                        .left(px(-reach))
-                        .size(px(28.0 + 2.0 * reach))
-                        .rounded_full()
-                        .border(px(1.5))
-                        .border_color(theme.accent.opacity(0.2 + 0.5 * glow))
-                }))
-                .tooltip(move |_, cx| {
-                    cx.new(|_| AppshotActionTooltip(tooltip.clone().into()))
-                        .into()
-                })
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_dictation(cx)))
-                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        cx.stop_propagation();
-                        this.toggle_dictation(cx);
-                    }
-                }))
-                .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
-                    composer
-                        .update(cx, |this, cx| this.toggle_dictation(cx))
-                        .ok();
-                })
-                .child(
-                    if matches!(
-                        phase,
-                        crate::dictation::Phase::Requesting | crate::dictation::Phase::Finalizing
-                    ) {
-                        crate::loaders::mini_mono_spinner(
-                            "dictation-progress",
-                            2.0,
-                            theme.text_muted,
-                            cx.entity_id(),
-                            cx,
-                        )
-                        .into_any_element()
-                    } else if active {
-                        div()
-                            .size(px(10.0))
-                            .rounded(px(2.0))
-                            .bg(theme.on_accent)
-                            .into_any_element()
-                    } else {
+        };
+        let button = div()
+            .id("composer-dictation")
+            .debug_selector(|| "composer-dictation".into())
+            .relative()
+            .size(px(28.0))
+            .flex_none()
+            .rounded_full()
+            .role(Role::Button)
+            .aria_label(label)
+            .aria_toggled(if active {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .tab_index(0)
+            .cursor_pointer()
+            .when(t <= 0.0, |el| {
+                el.hover(|style| style.bg(theme.surface_raised_hover))
+            })
+            .when(t > 0.0, |el| {
+                glass::accent(el, &theme, t, glow).hover(|style| style.opacity(0.9))
+            })
+            .focus_visible(|style| style.border_1().border_color(theme.text))
+            .tooltip(move |_, cx| {
+                cx.new(|_| AppshotActionTooltip(tooltip.clone().into()))
+                    .into()
+            })
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_dictation(cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    cx.stop_propagation();
+                    this.toggle_dictation(cx);
+                }
+            }))
+            .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                composer
+                    .update(cx, |this, cx| this.toggle_dictation(cx))
+                    .ok();
+            })
+            .when(t < 1.0, |el| {
+                let scale = 1.0 - 0.75 * t;
+                el.child(
+                    centered().child(
                         crate::icons::icon(crate::icons::MICROPHONE)
                             .size(px(18.0))
-                            .text_color(theme.text_muted)
-                            .into_any_element()
-                    },
+                            .text_color(theme.text_muted.opacity(1.0 - t))
+                            .with_transformation(gpui::Transformation::scale(gpui::size(
+                                scale, scale,
+                            ))),
+                    ),
                 )
-                .into_any_element(),
-        )
+            })
+            .when(t > 0.0 && busy, |el| {
+                el.child(
+                    centered()
+                        .opacity(t)
+                        .child(crate::loaders::mini_mono_spinner(
+                            "dictation-progress",
+                            2.0,
+                            theme.on_accent,
+                            cx.entity_id(),
+                            cx,
+                        )),
+                )
+            })
+            .when(t > 0.0 && !busy, |el| {
+                // Square grows from a quarter of its size, as the mic shrinks.
+                let side = 9.0 * (0.25 + 0.75 * t) * if live { 1.0 + 0.08 * glow } else { 1.0 };
+                el.child(
+                    centered().child(
+                        div()
+                            .size(px(side))
+                            .rounded(px(2.5))
+                            .bg(theme.on_accent.opacity(t)),
+                    ),
+                )
+            });
+        Some(button.into_any_element())
     }
 
     fn dismiss_dictation(&mut self, cx: &mut Context<Self>) {
@@ -9277,36 +9318,15 @@ impl Composer {
             })
     }
 
-    fn render_dictation_status(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
+    fn render_dictation_status(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        // Live dictation renders inside the composer; only outcomes that
+        // need reading (no speech, errors) appear below it.
         let phase = self.input.read(cx).dictation.phase.clone();
-        let Some((title, detail)) = phase.status() else {
-            // Finished or cancelled: let the last live frame settle away.
-            if let Some(frame) = self.voice_last.take()
-                && !motion::reduced_motion(cx)
-            {
-                self.voice_exit = Some((Instant::now(), frame));
-            }
-            let (started, frame) = self.voice_exit.clone()?;
-            let t = started.elapsed().as_secs_f32() / VOICE_EXIT.as_secs_f32();
-            if t >= 1.0 {
-                self.voice_exit = None;
-                return None;
-            }
-            window.request_animation_frame();
-            return Some(self.render_voice_bar(frame, Some(t), window, cx));
-        };
-        let (title, detail) = (title.to_owned(), detail.to_owned());
-        self.voice_exit = None;
         if phase.active() {
-            let frame = self.voice_frame(title, detail, cx);
-            self.voice_last = Some(frame.clone());
-            return Some(self.render_voice_bar(frame, None, window, cx));
+            return None;
         }
-        self.voice_last = None;
+        let (title, detail) = phase.status()?;
+        let (title, detail) = (title.to_owned(), detail.to_owned());
         let phase = &phase;
         let failed = matches!(
             phase,
@@ -9361,249 +9381,134 @@ impl Composer {
         )
     }
 
-    fn voice_frame(&self, title: String, detail: String, cx: &App) -> VoiceFrame {
+    /// Advances the dictation morph. Returns its eased progress and the frame
+    /// to draw: live while dictating, the last live frame while retracting.
+    fn update_voice(&mut self, window: &mut Window, cx: &App) -> (f32, Option<VoiceFrame>) {
         use crate::dictation::{Phase, waveform::Mode};
         let now = Instant::now();
-        let animate = !motion::reduced_motion(cx);
+        let reduced = motion::reduced_motion(cx);
         let dictation = &self.input.read(cx).dictation;
-        let meter = &dictation.meter;
-        let mode = match dictation.phase {
-            Phase::Listening => Mode::Live,
-            Phase::Finalizing if meter.since_start(now).is_some() => Mode::Processing,
-            _ => Mode::Waiting,
-        };
-        VoiceFrame {
-            label: format!("{title}. {detail}"),
-            mode,
-            bars: meter.bars(now, animate),
-            level: if mode == Mode::Live {
-                meter.level(now)
-            } else {
-                0.0
-            },
-            elapsed: meter.since_start(now).map(|_| meter.elapsed(now)),
-            since_open: meter.since_open(now).unwrap_or(Duration::MAX),
-            since_start: meter.since_start(now).unwrap_or(Duration::ZERO),
-            since_freeze: meter.since_freeze(now),
+        let active = dictation.phase.active();
+        self.voice_tween
+            .retarget(if active { 1.0 } else { 0.0 }, now, reduced);
+        let t = self.voice_tween.value(now);
+        if active {
+            let meter = &dictation.meter;
+            let mode = match dictation.phase {
+                Phase::Listening => Mode::Live,
+                Phase::Finalizing if meter.since_start(now).is_some() => Mode::Processing,
+                _ => Mode::Waiting,
+            };
+            let label = dictation
+                .phase
+                .status()
+                .map(|(title, detail)| format!("{title}. {detail}"))
+                .unwrap_or_default();
+            self.voice_last = Some(VoiceFrame {
+                label,
+                mode,
+                bars: meter.bars(now, !reduced),
+                level: if mode == Mode::Live {
+                    meter.level(now)
+                } else {
+                    0.0
+                },
+                elapsed: meter.since_start(now).map(|_| meter.elapsed(now)),
+            });
+        } else if t <= 0.0 {
+            self.voice_last = None;
         }
-    }
-
-    /// The dictation pill: Stop control, voice-driven waveform over a dotted
-    /// baseline, recording clock, and Cancel. Text is limited to the clock;
-    /// the control, waveform and assistive label carry the state. `exit`
-    /// is the settle-away progress after dictation ends.
-    fn render_voice_bar(
-        &self,
-        frame: VoiceFrame,
-        exit: Option<f32>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        use crate::dictation::waveform::{self, Mode, ease_out};
-        let theme = Theme::of(cx).clone();
-        let animate = !motion::reduced_motion(cx);
-        if animate {
-            // Bars scroll and the glow follows the voice between meter polls.
+        if !reduced && (active || !self.voice_tween.settled(now)) {
+            // Bars scroll, the glow follows the voice, and the morph advances.
             window.request_animation_frame();
         }
-        let progress = |since: Duration, over: Duration| {
-            if animate {
-                ease_out(since.as_secs_f32() / over.as_secs_f32())
-            } else {
-                1.0
-            }
-        };
-        let live = frame.mode == Mode::Live && exit.is_none();
-        let glow = frame.level * frame.level.sqrt() * (1.0 - exit.unwrap_or(0.0));
-        // Stop square grows in when the microphone goes live and shrinks away
-        // when capture ends, before the transcribing spinner takes its place.
-        let square = match frame.mode {
-            Mode::Live => progress(frame.since_start, VOICE_MORPH),
-            Mode::Processing => {
-                1.0 - progress(frame.since_freeze.unwrap_or(Duration::MAX), VOICE_MORPH)
-            }
-            Mode::Waiting => 0.0,
-        };
-        let spinning = exit.is_none() && square <= 0.0 && frame.mode != Mode::Live;
-        let control = div()
-            .id("dictation-stop")
-            .debug_selector(|| "dictation-stop".into())
-            .flex_none()
-            .size(px(24.0))
-            .rounded_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(motion::mix(
-                theme.ink(0.06),
-                theme.accent.opacity(0.9 + 0.1 * glow),
-                square,
-            ))
-            .when(!spinning, |el| {
-                el.child(
-                    div()
-                        .size(px(9.0 * square))
-                        .rounded(px(2.0 * square))
-                        .bg(theme.on_accent),
-                )
-            })
-            .when(spinning, |el| {
-                el.child(crate::loaders::mini_mono_spinner(
-                    "dictation-progress-status",
-                    2.0,
-                    theme.text_muted,
-                    cx.entity_id(),
-                    cx,
-                ))
-            })
-            .when(live, |el| {
-                let composer = cx.entity().downgrade();
-                el.role(Role::Button)
-                    .aria_label("Stop dictation")
-                    .tab_index(0)
-                    .cursor_pointer()
-                    .hover(|s| s.opacity(0.85))
-                    .focus_visible(|s| s.border_1().border_color(theme.text))
-                    .tooltip(|_, cx| {
-                        cx.new(|_| AppshotActionTooltip("Stop dictation".into()))
-                            .into()
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_dictation(cx)))
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            cx.stop_propagation();
-                            this.toggle_dictation(cx);
-                        }
-                    }))
-                    .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
-                        composer
-                            .update(cx, |this, cx| this.toggle_dictation(cx))
-                            .ok();
-                    })
-            });
+        (t, self.voice_last.clone())
+    }
+
+    /// The waveform track that unrolls from Stop across the action row. `t`
+    /// is the morph progress; the box keeps its final geometry and occludes
+    /// the controls fading out beneath it.
+    fn render_voice_track(
+        &self,
+        t: f32,
+        frame: &VoiceFrame,
+        left: f32,
+        right: f32,
+        top: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        use crate::dictation::{glass, waveform};
+        let theme = Theme::of(cx).clone();
+        let animate = !motion::reduced_motion(cx);
+        let active = self.input.read(cx).dictation.phase.active();
+        let live = frame.mode == waveform::Mode::Live && active;
         let clock = frame.elapsed.map(|elapsed| {
             let limit = Duration::from_secs(zeron_voice::MAX_SECONDS as u64);
             div()
                 .flex_none()
                 .font_family(theme.font_mono.clone())
                 .text_size(px(11.0))
+                .opacity(t)
                 .text_color(if live && elapsed + VOICE_LIMIT_WARNING >= limit {
                     theme.warning
                 } else if live {
-                    theme.text
-                } else {
                     theme.text_muted
+                } else {
+                    theme.text_faint
                 })
                 .child(waveform::clock(elapsed))
         });
-        let close = if exit.is_none() {
-            self.dictation_action_button(true, cx)
-                .w(px(24.0))
-                .px_0()
-                .justify_center()
-                .tooltip(|_, cx| {
-                    cx.new(|_| AppshotActionTooltip("Cancel dictation".into()))
-                        .into()
-                })
-                .child(
-                    crate::icons::icon(crate::icons::CLOSE)
-                        .size(px(14.0))
-                        .text_color(theme.text_muted),
-                )
-                .into_any_element()
-        } else {
-            div().flex_none().size(px(24.0)).into_any_element()
-        };
-        // Soft accent light pooled along the lower edge, drifting while the
-        // voice is heard; RareUI's aurora, clipped to the pill.
-        let now = waveform::seconds();
-        let aurora = (glow > 0.01).then(|| {
-            VOICE_AURORA.iter().map(move |&(lap, phase, width)| {
-                let drift = 0.5 + 0.5 * (now / lap + phase).sin();
-                div()
-                    .absolute()
-                    .bottom(px(-12.0))
-                    .left(gpui::relative(0.1 + 0.62 * drift))
-                    .w(px(width))
-                    .h(px(18.0))
-                    .rounded_full()
-                    .bg(theme.accent.opacity(0.18 * glow))
-                    .shadow(vec![gpui::BoxShadow {
-                        color: theme.accent.opacity(0.55 * glow),
-                        offset: gpui::point(px(0.0), px(0.0)),
-                        blur_radius: px(16.0),
-                        spread_radius: px(2.0),
-                        inset: false,
-                    }])
-            })
-        });
-        let shadows = if glow > 0.01 {
-            vec![gpui::BoxShadow {
-                color: theme.accent.opacity(0.28 * glow),
-                offset: gpui::point(px(0.0), px(0.0)),
-                blur_radius: px(4.0 + 14.0 * glow),
-                spread_radius: px(0.0),
-                inset: false,
-            }]
-        } else {
-            Vec::new()
-        };
-        let intro = progress(frame.since_open, VOICE_INTRO);
-        let fade = exit.map_or(1.0, |t| 1.0 - ease_out(t));
-        let pill = div()
-            .id("dictation-status")
-            .relative()
-            .overflow_hidden()
-            .h(px(36.0))
+        let track = glass::light(
+            div()
+                .id("dictation-live-status")
+                .role(Role::Status)
+                .aria_label(frame.label.clone())
+                .h_full()
+                .w(gpui::relative(t.max(0.0)))
+                .min_w(px(VOICE_TRACK_HEIGHT * t.min(1.0)))
+                .rounded_full()
+                .overflow_hidden()
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .pl(px(12.0))
+                .pr(px(12.0)),
+            &theme,
+            t,
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .h(px(16.0))
+                .flex()
+                .child(waveform::waveform(
+                    frame.bars.clone(),
+                    frame.mode,
+                    waveform::Paint {
+                        ink: theme.text.opacity(0.8),
+                        quiet: theme.text_faint.opacity(0.5),
+                    },
+                    waveform::Phase {
+                        intro: t,
+                        collapse: if active { 0.0 } else { 1.0 - t },
+                    },
+                    animate,
+                )),
+        )
+        .children(clock);
+        div()
+            .id("dictation-track")
+            .absolute()
+            .left(px(left))
+            .right(px(right))
+            .top(px(top))
+            .h(px(VOICE_TRACK_HEIGHT))
             .flex()
-            .items_center()
-            .gap(px(10.0))
-            .px(px(6.0))
-            .rounded_full()
-            .opacity(fade * (0.4 + 0.6 * intro))
-            .top(px(4.0 * (1.0 - intro) + 4.0 * (1.0 - fade)))
-            .bg(motion::mix(
-                theme.composer_surface_bg(),
-                theme.accent_wash,
-                0.3 + 0.7 * glow,
-            ))
-            .border_1()
-            .border_color(motion::mix(
-                theme.composer_surface_border(),
-                theme.accent.opacity(0.4),
-                glow,
-            ))
-            .shadow(shadows)
-            .text_size(px(12.0))
-            .line_height(px(18.0))
-            .children(aurora.into_iter().flatten())
-            .child(control)
-            .child(
-                div()
-                    .id("dictation-live-status")
-                    .role(Role::Status)
-                    .aria_label(frame.label.clone())
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(20.0))
-                    .flex()
-                    .child(waveform::waveform(
-                        frame.bars,
-                        frame.mode,
-                        waveform::Paint {
-                            ink: theme.text.opacity(0.85),
-                            quiet: theme.text_faint.opacity(0.5),
-                        },
-                        waveform::Phase {
-                            intro,
-                            collapse: exit.unwrap_or(0.0),
-                        },
-                        animate,
-                    )),
-            )
-            .children(clock)
-            .child(close);
-        pill.into_any_element()
+            .justify_end()
+            .occlude()
+            .child(track)
+            .into_any_element()
     }
 
     fn render_send_button(
@@ -10189,7 +10094,9 @@ impl Render for Composer {
         });
 
         let send_button = self.render_send_button(mode, cx);
-        let microphone = self.render_dictation_button(cx);
+        let (voice_t, voice_frame) = self.update_voice(window, cx);
+        let dictating = self.input.read(cx).dictation.phase.active();
+        let microphone = self.render_dictation_button(voice_t, voice_frame.as_ref(), cx);
         // Attach button — opens the native image picker (the original's hidden
         // `<input type=file accept="image/*" multiple>`); paste/drop also feed
         // the same strip. The leading utility group owns the spacing between
@@ -10210,16 +10117,72 @@ impl Render for Composer {
                 crate::theme::ink(0.10),
             ))
             .on_hover(motion::hover_listener("composer-attach"))
-            .on_click(cx.listener(|this, _, _, cx| this.open_file_picker(cx)))
-            .tooltip(crate::settings::widgets::text_tooltip("Attach images"))
-            .child(
-                crate::icons::icon(crate::icons::PAPERCLIP)
-                    // Its painted bounds are centered in the 24px viewbox;
-                    // a larger glyph balances the brand icon without moving
-                    // it off-center inside the unchanged 28px hit target.
-                    .size(px(18.0))
-                    .text_color(theme.text_muted),
-            );
+            .relative()
+            // While dictating, the attachment slot becomes Cancel: the
+            // paperclip and the cross swap with a scale and fade. The action
+            // follows the dictation phase, never the animation.
+            .role(Role::Button)
+            .aria_label(if dictating {
+                "Cancel dictation"
+            } else {
+                "Attach images"
+            })
+            .when(dictating, |el| {
+                el.debug_selector(|| "dictation-dismiss".into())
+            })
+            .tooltip(crate::settings::widgets::text_tooltip(if dictating {
+                "Cancel dictation"
+            } else {
+                "Attach images"
+            }))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.input.read(cx).dictation.phase.active() {
+                    this.dismiss_dictation(cx);
+                } else {
+                    this.open_file_picker(cx);
+                }
+            }))
+            .when(voice_t < 1.0, |el| {
+                let scale = 1.0 - 0.75 * voice_t;
+                el.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            crate::icons::icon(crate::icons::PAPERCLIP)
+                                // Its painted bounds are centered in the 24px viewbox;
+                                // a larger glyph balances the brand icon without moving
+                                // it off-center inside the unchanged 28px hit target.
+                                .size(px(18.0))
+                                .text_color(theme.text_muted.opacity(1.0 - voice_t))
+                                .with_transformation(gpui::Transformation::scale(gpui::size(
+                                    scale, scale,
+                                ))),
+                        ),
+                )
+            })
+            .when(voice_t > 0.0, |el| {
+                let scale = 0.25 + 0.75 * voice_t;
+                el.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            crate::icons::icon(crate::icons::CLOSE)
+                                .size(px(16.0))
+                                .text_color(theme.text_muted.opacity(voice_t))
+                                .with_transformation(gpui::Transformation::scale(gpui::size(
+                                    scale, scale,
+                                ))),
+                        ),
+                )
+            });
         // Staged-thumbnail strip (attachment-ui.tsx AttachmentStrip), above
         // the input inside the pill in both modes.
         let strip = self.render_attachment_strip(&theme, cx);
@@ -10287,6 +10250,30 @@ impl Render for Composer {
         } else {
             ACTION_PRIMARY_GAP
         };
+        // The voice track spans from the attachment slot to Stop, over the
+        // model selector (and, compact, the text), which fade beneath it.
+        let voice_track = voice_frame
+            .as_ref()
+            .filter(|_| voice_t > 0.0 && microphone.is_some())
+            .map(|frame| {
+                // Expanded: the row's 2px top pad; compact: centred in the
+                // 47px line, riding the same cluster glide as the buttons.
+                let top = if expanded {
+                    2.0
+                } else {
+                    (COMPACT_TOTAL_HEIGHT - PILL_BORDER_V - VOICE_TRACK_HEIGHT) / 2.0 - cluster_dy
+                };
+                self.render_voice_track(
+                    voice_t,
+                    frame,
+                    action_inset + 28.0 + VOICE_TRACK_GAP,
+                    action_inset + 28.0 + ACTION_PRIMARY_GAP + 28.0 + VOICE_TRACK_GAP,
+                    top,
+                    cx,
+                )
+            });
+        let beneath_voice = 1.0 - voice_t.clamp(0.0, 1.0);
+        let model_picker = model_picker.opacity(beneath_voice);
         let body = if expanded {
             // Expanded: textarea on top (`px-4 pb-1 pt-4`), actions row
             // (8px bottom + 2px top, 32px chips → 42px) ABSOLUTE at the pill's
@@ -10348,7 +10335,8 @@ impl Render for Composer {
                                 .gap(px(ACTION_PRIMARY_GAP))
                                 .children(microphone)
                                 .child(send_button),
-                        ),
+                        )
+                        .children(voice_track),
                 )
         } else {
             // Compact pill: attachment on the left, input in the middle,
@@ -10377,6 +10365,7 @@ impl Render for Composer {
                 .child(
                     div()
                         .h(px(COMPACT_TOTAL_HEIGHT - PILL_BORDER_V))
+                        .relative()
                         .flex()
                         .flex_row()
                         .items_center()
@@ -10398,6 +10387,9 @@ impl Render for Composer {
                                 .px(px(8.0))
                                 .relative()
                                 .top(px(-text_glide))
+                                // The draft waits under the voice track and
+                                // fades back as the transcript lands in it.
+                                .opacity(beneath_voice)
                                 .child(self.render_input_with_completion()),
                         )
                         .child(
@@ -10420,7 +10412,8 @@ impl Render for Composer {
                                 .gap(px(ACTION_PRIMARY_GAP))
                                 .children(microphone)
                                 .child(send_button),
-                        ),
+                        )
+                        .children(voice_track),
                 )
         };
         let new_thread_target_selectors = (new_thread_chrome_opacity > 0.0).then(|| {
@@ -10501,7 +10494,7 @@ impl Render for Composer {
         } else {
             container
         };
-        let dictation_status = self.render_dictation_status(window, cx);
+        let dictation_status = self.render_dictation_status(cx);
         let container = container.child(
             div()
                 .track_focus(&self.dictation_focus)

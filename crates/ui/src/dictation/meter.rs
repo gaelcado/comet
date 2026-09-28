@@ -21,7 +21,6 @@ pub(crate) const FLOOR: f32 = 0.08;
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Meter {
-    opened: Option<Instant>,
     started: Option<Instant>,
     frozen: Option<Instant>,
     slots: VecDeque<f32>,
@@ -47,34 +46,16 @@ pub(crate) fn normalize(rms: f32) -> f32 {
 }
 
 impl Meter {
-    /// Dictation was requested; the microphone is not live yet.
-    pub fn open(&mut self, now: Instant) {
-        *self = Self {
-            opened: Some(now),
-            ..Self::default()
-        };
-    }
-
     pub fn start(&mut self, now: Instant) {
         *self = Self {
-            opened: self.opened.or(Some(now)),
             started: Some(now),
             ..Self::default()
         };
     }
 
-    /// Time since dictation was requested, capture began, and capture ended,
-    /// for entrance and state-change motion.
-    pub fn since_open(&self, now: Instant) -> Option<Duration> {
-        self.opened.map(|at| now.saturating_duration_since(at))
-    }
-
+    /// Time since capture began; `None` until the microphone is live.
     pub fn since_start(&self, now: Instant) -> Option<Duration> {
         self.started.map(|at| now.saturating_duration_since(at))
-    }
-
-    pub fn since_freeze(&self, now: Instant) -> Option<Duration> {
-        self.frozen.map(|at| now.saturating_duration_since(at))
     }
 
     pub fn reset(&mut self) {

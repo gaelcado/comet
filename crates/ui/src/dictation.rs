@@ -3,6 +3,7 @@
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
+pub(crate) mod glass;
 mod meter;
 mod model;
 pub(crate) mod waveform;
@@ -211,7 +212,6 @@ impl Dictation {
     pub fn begin(&mut self, content: &str, selection: Range<usize>) {
         self.cancel();
         self.phase = Phase::Requesting;
-        self.meter.open(Instant::now());
         self.range = selection;
         self.expected = content.to_owned();
         self.has_partial = false;
