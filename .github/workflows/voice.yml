@@ -7,6 +7,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'crates/voice/**'
+      - 'scripts/package-linux.sh'
       - '.github/workflows/voice.yml'
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'crates/voice/**'
+      - 'scripts/package-linux.sh'
       - '.github/workflows/voice.yml'
   workflow_dispatch:
 
@@ -54,3 +56,32 @@ jobs:
         env:
           ZERON_VOICE_TEST_MODEL_DIR: ${{ runner.temp }}/zeron-voice-model
         run: cargo test --release --locked -p zeron-voice --test runtime -- --ignored --nocapture
+
+  linux-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Desktop system dependencies
+        run: |
+          sudo apt-get update -qq -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" -o Dir::Etc::sourceparts="-"
+          sudo apt-get install -y -qq \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-dev libxcb1-dev libx11-xcb-dev \
+            libfontconfig1-dev libfreetype-dev libasound2-dev \
+            libvulkan-dev pkg-config cmake libwebkit2gtk-4.1-dev libjson-glib-dev
+      - name: Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Package and launch the release executable
+        run: |
+          scripts/package-linux.sh
+          mkdir -p "$RUNNER_TEMP/voice-package"
+          tar -xzf target/package/zeron-*-linux-*.tar.gz -C "$RUNNER_TEMP/voice-package" --strip-components=1
+          test -s "$RUNNER_TEMP/voice-package/licenses/parakeet-v3.txt"
+          "$RUNNER_TEMP/voice-package/zeron" --version
+          git diff --exit-code -- Cargo.lock
