@@ -2402,7 +2402,7 @@ impl ComposerInput {
 
     pub(crate) fn cancel_dictation(&mut self) {
         self.dictation.cancel();
-        self.transcriber = None; // Drop synchronously stops audio and invalidates native callbacks.
+        self.transcriber = None; // Drop signals capture cancellation and invalidates pending results.
         self.dictation_task = None;
     }
 
@@ -2419,13 +2419,27 @@ impl ComposerInput {
         self.transcriber = Some(transcriber);
         self.last_edit = None;
         let generation = self.dictation.generation;
+        let started = Instant::now();
         self.dictation_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(40))
                     .await;
                 if !this
-                    .update(cx, |input, cx| input.poll_dictation(generation, cx))
+                    .update(cx, |input, cx| {
+                        let requesting =
+                            input.dictation.phase == crate::dictation::Phase::Requesting;
+                        let active = input.poll_dictation(generation, cx);
+                        if requesting && input.dictation.phase == crate::dictation::Phase::Listening
+                        {
+                            tracing::debug!(
+                                target: "zeron_ui::dictation",
+                                activation_to_listening_ms = started.elapsed().as_millis(),
+                                "Dictation capture ready"
+                            );
+                        }
+                        active
+                    })
                     .unwrap_or(false)
                 {
                     break;

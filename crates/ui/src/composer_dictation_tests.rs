@@ -944,3 +944,84 @@ fn voice_morph_reverses_mid_flight_without_jumping() {
     tween.retarget(1.0, mid, true);
     assert_eq!(tween.value(mid), 1.0);
 }
+
+#[gpui::test]
+fn dictation_stop_while_loading_keeps_selection_until_final_and_sends_once(
+    cx: &mut TestAppContext,
+) {
+    let input = cx.new(|cx| ComposerInput::new("Draft", cx));
+    let mut events = cx.events::<DictationInputEvent, _>(&input);
+    input.update(cx, |input, cx| {
+        input.set_text("keep selected suffix", cx);
+        input.selected_range = 5..13;
+        let fake = start(input, cx);
+        assert_eq!(input.dictation.phase, Phase::Requesting);
+        deliver(input, &fake, [Event::Listening], cx);
+        input.finish_dictation(false, cx);
+        input.finish_dictation(true, cx);
+        // A queued readiness event cannot put a stopped session back in Listening.
+        deliver(input, &fake, [Event::Listening, Event::Finalizing], cx);
+        assert_eq!(input.dictation.phase, Phase::Finalizing);
+        assert_eq!(input.content, "keep selected suffix");
+        assert_eq!(input.selected_range, 5..13);
+        assert_eq!(fake.borrow().finishes, 1);
+        deliver(
+            input,
+            &fake,
+            [Event::Final("speech".into()), Event::Final("late".into())],
+            cx,
+        );
+        assert_eq!(input.content, "keep speech suffix");
+        assert_eq!(input.dictation.phase, Phase::Idle);
+        assert_eq!(fake.borrow().drops, 1);
+    });
+    let mut sends = 0;
+    while let Ok(event) = events.try_recv() {
+        sends += usize::from(matches!(event, DictationInputEvent::Submit(_)));
+    }
+    assert_eq!(sends, 1);
+}
+
+#[gpui::test]
+fn dictation_load_failure_or_timeout_preserves_selected_draft_and_rejects_late_final(
+    cx: &mut TestAppContext,
+) {
+    let input = cx.new(|cx| ComposerInput::new("Draft", cx));
+    let mut events = cx.events::<DictationInputEvent, _>(&input);
+    input.update(cx, |input, cx| {
+        for timeout in [false, true] {
+            input.set_text("keep my draft", cx);
+            input.selected_range = 0..13;
+            let fake = start(input, cx);
+            let generation = input.dictation.generation;
+            deliver(input, &fake, [Event::Listening], cx);
+            if timeout {
+                input
+                    .dictation
+                    .finish(true, Instant::now() - crate::dictation::FINALIZE_TIMEOUT);
+                fake.borrow_mut().events.push_back(Event::Finalizing);
+                input.poll_dictation(generation, cx);
+            } else {
+                input.finish_dictation(true, cx);
+                deliver(
+                    input,
+                    &fake,
+                    [Event::Failed("Could not load the model".into())],
+                    cx,
+                );
+            }
+            assert!(matches!(input.dictation.phase, Phase::Failed(_)));
+            fake.borrow_mut()
+                .events
+                .push_back(Event::Final("late speech".into()));
+            assert!(!input.poll_dictation(generation, cx));
+            assert_eq!(input.content, "keep my draft");
+            assert_eq!(input.selected_range, 0..13);
+            assert!(input.undo_stack.is_empty());
+            assert_eq!(fake.borrow().drops, 1);
+        }
+    });
+    while let Ok(event) = events.try_recv() {
+        assert!(!matches!(event, DictationInputEvent::Submit(_)));
+    }
+}
