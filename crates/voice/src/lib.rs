@@ -288,9 +288,120 @@ struct Job {
     device: Option<String>,
     events: std::sync::mpsc::SyncSender<Event>,
 }
+// Capture owns its stream on a separate thread. Model loading and inference
+// remain serialized on WORKER, including after the user cancels native work.
+trait Recording {
+    fn ended(&self) -> bool;
+    fn finish(self) -> Result<(Vec<f32>, u32)>;
+}
+impl Recording for Capture {
+    fn ended(&self) -> bool {
+        self.ended()
+    }
+    fn finish(self) -> Result<(Vec<f32>, u32)> {
+        self.finish()
+    }
+}
+
+fn record<C: Recording>(
+    job: &Job,
+    start: impl FnOnce() -> Result<C>,
+) -> Result<Option<(Vec<f32>, u32)>> {
+    if job.cancel.load(Ordering::Acquire) || job.stop.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    let capture = start()?;
+    // Stop/cancel may arrive while the audio device is opening.
+    if job.cancel.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    if !job.stop.load(Ordering::Acquire) {
+        let _ = job.events.try_send(Event::Listening);
+    }
+    let started = std::time::Instant::now();
+    while !job.stop.load(Ordering::Acquire)
+        && !job.cancel.load(Ordering::Acquire)
+        && !capture.ended()
+        && started.elapsed().as_secs() < MAX_SECONDS as u64
+    {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    if job.cancel.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    let audio = capture.finish()?; // Close the microphone before waiting for the model.
+    let _ = job.events.try_send(Event::Finalizing);
+    Ok(Some(audio))
+}
+
+fn run_job<C, F>(
+    job: &Job,
+    start: impl FnOnce() -> Result<C> + Send,
+    load: impl FnOnce() -> Result<F>,
+) -> Result<Option<String>>
+where
+    C: Recording,
+    F: FnOnce(Vec<f32>, u32) -> Result<String>,
+{
+    if job.cancel.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    std::thread::scope(|scope| {
+        let capture = std::thread::Builder::new()
+            .name("dictation-capture".into())
+            .spawn_scoped(scope, || record(job, start))?;
+        // If native loading unwinds, scope teardown still has to close capture
+        // before joining it. Normal cancellation uses the same signal.
+        struct CancelOnDrop<'a>(&'a AtomicBool);
+        impl Drop for CancelOnDrop<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let _close_capture = CancelOnDrop(&job.cancel);
+        let model = load();
+        // A load failure must stop capture even if the user has not pressed Stop.
+        // Keep the admission guard until the stream has actually been dropped.
+        if model.is_err() {
+            job.cancel.store(true, Ordering::Release);
+        }
+        let audio = capture
+            .join()
+            .map_err(|_| anyhow::anyhow!("Microphone worker failed"))?;
+        let transcribe = model?;
+        if job.cancel.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let Some((samples, rate)) = audio? else {
+            return Ok(Some(String::new()));
+        };
+        let text = transcribe(samples, rate)?;
+        Ok((!job.cancel.load(Ordering::Acquire)).then_some(text))
+    })
+}
+
 static BUSY: AtomicBool = AtomicBool::new(false);
+// The command owns admission through capture teardown and uninterruptible
+// native work. Queue failure also releases it, so rapid retries cannot wedge it.
+struct BusyGuard;
+impl BusyGuard {
+    fn acquire() -> Result<Self> {
+        if BUSY
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            bail!("Dictation is still active or finishing. Wait a moment, then try again.")
+        }
+        Ok(Self)
+    }
+}
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        BUSY.store(false, Ordering::Release);
+    }
+}
 enum Command {
-    Transcribe(Job),
+    Transcribe(Job, BusyGuard),
     Unload,
 }
 static WORKER: std::sync::OnceLock<std::sync::mpsc::SyncSender<Command>> =
@@ -305,19 +416,14 @@ impl Session {
     /// `device` is an [`InputDevice::id`]; `None` or a disconnected device
     /// records from the system default.
     pub fn start(dir: std::path::PathBuf, device: Option<String>) -> Result<Self> {
-        if BUSY
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-            .is_err()
-        {
-            bail!("Dictation is still active or finishing. Wait a moment, then try again.")
-        }
+        let admission = BusyGuard::acquire()?;
         let sender = WORKER.get_or_init(|| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<Command>(1);
             std::thread::spawn(move || {
                 let mut cached: Option<(std::path::PathBuf, Recognizer)> = None;
                 loop {
-                    let job = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
-                        Ok(Command::Transcribe(j)) => j,
+                    let (job, _admission) = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                        Ok(Command::Transcribe(j, admission)) => (j, admission),
                         Ok(Command::Unload) => {
                             cached = None;
                             continue;
@@ -328,46 +434,30 @@ impl Session {
                         }
                         Err(_) => break,
                     };
-                    let result = (|| -> Result<()> {
-                        if job.cancel.load(Ordering::Acquire) {
-                            return Ok(());
-                        }
-                        if cached.as_ref().is_none_or(|(path, _)| *path != job.dir) {
-                            cached = Some((job.dir.clone(), Recognizer::load(&job.dir).context("Could not load the model. Remove it in Settings and download again.")?));
-                        }
-                        if job.cancel.load(Ordering::Acquire) {
-                            return Ok(());
-                        }
-                        if job.stop.load(Ordering::Acquire) {
-                            let _ = job.events.try_send(Event::Final(String::new()));
-                            return Ok(());
-                        }
-                        let capture = Capture::start(job.device.as_deref(), job.level.clone())?;
-                        let _ = job.events.try_send(Event::Listening);
-                        let start = std::time::Instant::now();
-                        while !job.stop.load(Ordering::Acquire)
-                            && !job.cancel.load(Ordering::Acquire)
-                            && !capture.ended()
-                            && start.elapsed().as_secs() < MAX_SECONDS as u64
-                        {
-                            std::thread::sleep(std::time::Duration::from_millis(10));
-                        }
-                        if job.cancel.load(Ordering::Acquire) {
-                            return Ok(());
-                        }
-                        let (samples, rate) = capture.finish()?;
-                        let _ = job.events.try_send(Event::Finalizing);
-                        let text = cached.as_mut().unwrap().1.transcribe(samples, rate)?;
-                        if !job.cancel.load(Ordering::Acquire) {
+                    let result = run_job(
+                        &job,
+                        || Capture::start(job.device.as_deref(), job.level.clone()),
+                        || {
+                            if cached.as_ref().is_none_or(|(path, _)| *path != job.dir) {
+                                let model = Recognizer::load(&job.dir).context(
+                                    "Could not load the model. Remove it in Settings and download again.",
+                                )?;
+                                cached = Some((job.dir.clone(), model));
+                            }
+                            let model = &mut cached.as_mut().unwrap().1;
+                            Ok(move |samples, rate| model.transcribe(samples, rate))
+                        },
+                    );
+                    match result {
+                        Ok(Some(text)) => {
                             let _ = job.events.try_send(Event::Final(text));
                         }
-                        Ok(())
-                    })();
-                    if let Err(e) = result {
-                        cached = None;
-                        let _ = job.events.try_send(Event::Failed(e.to_string()));
+                        Ok(None) => {}
+                        Err(e) => {
+                            cached = None;
+                            let _ = job.events.try_send(Event::Failed(e.to_string()));
+                        }
                     }
-                    BUSY.store(false, Ordering::Release);
                 }
             });
             tx
@@ -377,17 +467,19 @@ impl Session {
         let level = Arc::new(AtomicU32::new(0));
         let (tx, events) = std::sync::mpsc::sync_channel(4);
         if sender
-            .try_send(Command::Transcribe(Job {
-                dir,
-                stop: stop.clone(),
-                cancel: cancel.clone(),
-                level: level.clone(),
-                device,
-                events: tx,
-            }))
+            .try_send(Command::Transcribe(
+                Job {
+                    dir,
+                    stop: stop.clone(),
+                    cancel: cancel.clone(),
+                    level: level.clone(),
+                    device,
+                    events: tx,
+                },
+                admission,
+            ))
             .is_err()
         {
-            BUSY.store(false, Ordering::Release);
             bail!("Dictation worker unavailable")
         }
         Ok(Self {
@@ -499,3 +591,6 @@ mod tests {
         assert!(Recognizer::load(dir.path()).is_err());
     }
 }
+
+#[cfg(test)]
+mod session_tests;
