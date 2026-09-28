@@ -35,6 +35,7 @@ install -m 644 "$ROOT/dist/zeron.desktop" "$STAGE/zeron.desktop"
 install -m 644 "$ROOT/dist/zeron.png" "$STAGE/zeron.png"
 mkdir -p "$STAGE/licenses/fonts"
 cp "$ROOT/crates/ui/assets/fonts/licenses/"* "$STAGE/licenses/fonts/"
+cp "$ROOT/crates/voice/NOTICE.md" "$STAGE/licenses/parakeet-v3.txt"
 
 cat >"$STAGE/install.sh" <<'INSTALL'
 #!/usr/bin/env bash

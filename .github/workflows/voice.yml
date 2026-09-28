@@ -1,0 +1,56 @@
+name: Voice runtime
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/voice/**'
+      - '.github/workflows/voice.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/voice/**'
+      - '.github/workflows/voice.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voice-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-2022, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      ZERON_VOICE_TEST_MODEL_DIR: ${{ runner.temp }}/zeron-voice-model
+    steps:
+      - uses: actions/checkout@v4
+      - name: ALSA capture dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" -o Dir::Etc::sourceparts="-"
+          sudo apt-get install -y -qq libasound2-dev pkg-config
+      - name: Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache checksummed model
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ZERON_VOICE_TEST_MODEL_DIR }}
+          key: voice-model-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/voice/model.json') }}
+      - name: Audio conversion and model lifecycle tests
+        run: cargo test --release --locked -p zeron-voice
+      - name: English and French inference at microphone sample rates
+        run: cargo test --release --locked -p zeron-voice --test runtime -- --ignored --nocapture
