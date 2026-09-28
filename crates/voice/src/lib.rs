@@ -134,16 +134,58 @@ where
         }
     }
 }
+/// A microphone the user can choose: a stable identifier and a display name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputDevice {
+    pub id: String,
+    pub name: String,
+}
+
+/// Every input device the default host reports. Enumeration can block on the
+/// audio server, so call it off the UI thread.
+pub fn input_devices() -> Vec<InputDevice> {
+    let Ok(devices) = cpal::default_host().input_devices() else {
+        return Vec::new();
+    };
+    let mut devices: Vec<_> = devices
+        .filter_map(|device| {
+            Some(InputDevice {
+                id: device.id().ok()?.to_string(),
+                name: device.description().ok()?.name().to_owned(),
+            })
+        })
+        .collect();
+    devices.dedup_by(|a, b| a.id == b.id);
+    devices
+}
+
+/// The id of the device the system currently records from by default.
+pub fn default_input_device() -> Option<String> {
+    Some(
+        cpal::default_host()
+            .default_input_device()?
+            .id()
+            .ok()?
+            .to_string(),
+    )
+}
+
+/// The chosen device when it is connected, the system default otherwise.
+fn input_device(id: Option<&str>) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+    id.and_then(|id| id.parse::<cpal::DeviceId>().ok())
+        .and_then(|id| host.device_by_id(&id))
+        .or_else(|| host.default_input_device())
+}
+
 pub struct Capture {
     stream: Option<cpal::Stream>,
     audio: Arc<Mutex<Audio>>,
     rate: u32,
 }
 impl Capture {
-    pub fn start() -> Result<Self> {
-        let device = cpal::default_host()
-            .default_input_device()
-            .context("No microphone available")?;
+    pub fn start(device: Option<&str>) -> Result<Self> {
+        let device = input_device(device).context("No microphone available")?;
         let config = device.default_input_config()?;
         let rate = config.sample_rate();
         let channels = config.channels() as usize;
@@ -217,6 +259,7 @@ struct Job {
     dir: std::path::PathBuf,
     stop: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
+    device: Option<String>,
     events: std::sync::mpsc::SyncSender<Event>,
 }
 static BUSY: AtomicBool = AtomicBool::new(false);
@@ -232,7 +275,9 @@ pub struct Session {
     events: std::sync::mpsc::Receiver<Event>,
 }
 impl Session {
-    pub fn start(dir: std::path::PathBuf) -> Result<Self> {
+    /// `device` is an [`InputDevice::id`]; `None` or a disconnected device
+    /// records from the system default.
+    pub fn start(dir: std::path::PathBuf, device: Option<String>) -> Result<Self> {
         if BUSY
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .is_err()
@@ -270,7 +315,7 @@ impl Session {
                             let _ = job.events.try_send(Event::Final(String::new()));
                             return Ok(());
                         }
-                        let capture = Capture::start()?;
+                        let capture = Capture::start(job.device.as_deref())?;
                         let _ = job.events.try_send(Event::Listening);
                         let start = std::time::Instant::now();
                         while !job.stop.load(Ordering::Acquire)
@@ -308,6 +353,7 @@ impl Session {
                 dir,
                 stop: stop.clone(),
                 cancel: cancel.clone(),
+                device,
                 events: tx,
             }))
             .is_err()

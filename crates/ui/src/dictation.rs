@@ -61,6 +61,7 @@ struct Native {
     pending: Option<Event>,
     origin_window: usize,
     dir: std::path::PathBuf,
+    device: Option<String>,
     session: Option<zeron_voice::Session>,
     finished: bool,
 }
@@ -89,7 +90,7 @@ impl Transcriber for Native {
                     self.finished = true;
                     return Some(Event::Cancelled);
                 }
-                _ => match zeron_voice::Session::start(self.dir.clone()) {
+                _ => match zeron_voice::Session::start(self.dir.clone(), self.device.clone()) {
                     Ok(s) => self.session = Some(s),
                     Err(e) => {
                         self.finished = true;
@@ -129,6 +130,7 @@ pub(crate) fn start(cx: &gpui::App) -> Option<Box<dyn Transcriber>> {
         pending: None,
         origin_window,
         dir: model::directory(cx),
+        device: crate::settings::current(cx).dictation_input.clone(),
         session: None,
         finished: false,
     }))
@@ -266,6 +268,7 @@ mod tests {
             pending: None,
             origin_window: 0,
             dir: std::path::PathBuf::new(),
+            device: None,
             session: None,
             finished: false,
         };

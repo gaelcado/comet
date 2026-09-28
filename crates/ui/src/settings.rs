@@ -731,6 +731,10 @@ pub const SKILL_COMPLETION_HARNESSES: [(zeron_proto::HarnessId, &str); 9] = [
 #[serde(default, rename_all = "camelCase")]
 pub struct UiSettings {
     pub dictation_enabled: bool,
+    /// Dictation microphone as a `zeron_voice::InputDevice` id; `None`
+    /// follows the system default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dictation_input: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_geometry: Option<WindowGeometry>,
     /// Submit using Enter or the platform modifier plus Enter.
@@ -912,6 +916,7 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             dictation_enabled: false,
+            dictation_input: None,
             window_geometry: None,
             sidebar_width: SIDEBAR_DEFAULT,
             sidebar_collapsed: false,
@@ -2321,6 +2326,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let settings = UiSettings {
             dictation_enabled: false,
+            dictation_input: Some("coreaudio:usb-mic".into()),
             window_geometry: None,
             sidebar_width: 300.0,
             sidebar_collapsed: true,
