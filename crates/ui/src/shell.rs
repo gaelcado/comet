@@ -1823,7 +1823,8 @@ pub struct Shell {
     pull_requests_page: Option<Entity<PullRequestsPage>>,
     pull_request_detail: Option<Entity<crate::pull_request_detail::PullRequestDetailPage>>,
     pull_request_detail_subscription: Option<Subscription>,
-    pull_request_cache: std::rc::Rc<std::cell::RefCell<crate::pull_request_detail::PullRequestCache>>,
+    pull_request_cache:
+        std::rc::Rc<std::cell::RefCell<crate::pull_request_detail::PullRequestCache>>,
     devices_page: Option<Entity<DevicesPage>>,
     archived_page: Option<Entity<ArchivedPage>>,
     appearance_page: Option<Entity<AppearancePage>>,
@@ -4018,7 +4019,8 @@ impl Shell {
     ) {
         let was_active = self.resolved_right_active(cx) == surface;
         let restore_focus = was_active && self.navigation_focus.in_right(window, cx);
-        self.navigation_focus.remember(&self.shortcut_focus, window, cx);
+        self.navigation_focus
+            .remember(&self.shortcut_focus, window, cx);
         let key = self.panel_key(cx);
         let files = match surface {
             RightSurface::File(id) => self.file_surfaces.get(&id).cloned(),
@@ -4931,9 +4933,7 @@ impl Shell {
                     None => Empty.into_any_element(),
                 }
             }
-            SettingsSection::Shortcuts
-            | SettingsSection::General
-            | SettingsSection::Appshots => {
+            SettingsSection::Shortcuts | SettingsSection::General | SettingsSection::Appshots => {
                 if self.shortcuts_page.is_none() {
                     let state = self.state.clone();
                     let keymap = self.settings.keymap.clone();
@@ -6389,10 +6389,7 @@ impl Shell {
     /// The titlebar owns new-session creation regardless of sidebar state. It
     /// remains available on PR screens, even without a selected session.
     pub(super) fn titlebar_plus_alpha(&self, cx: &App) -> f32 {
-        titlebar_new_session_alpha(
-            &self.route,
-            self.state.read(cx).selected_chat.is_some(),
-        )
+        titlebar_new_session_alpha(&self.route, self.state.read(cx).selected_chat.is_some())
     }
 
     /// Native Windows caption controls integrated into Zeron's unified
@@ -7766,13 +7763,19 @@ impl Shell {
         use zeron_proto::ConnectivityState as S;
         let conn = self.state.read(cx).connectivity.clone();
         let selected = self.state.read(cx).selected_chat.as_deref();
-        let chat = conn.chats.iter()
+        let chat = conn
+            .chats
+            .iter()
             .find(|c| Some(c.chat_id.as_str()) == selected);
         let chat_state = chat.map(|c| c.sync_state);
         let (label, glyph): (SharedString, AnyElement) = match conn.state {
             _ if chat_state == Some(zeron_proto::ChatSyncState::StorageError) => (
                 "Changes could not be saved".into(),
-                div().size(px(5.0)).rounded_full().bg(theme.warning).into_any_element(),
+                div()
+                    .size(px(5.0))
+                    .rounded_full()
+                    .bg(theme.warning)
+                    .into_any_element(),
             ),
             S::Disabled => return None,
             S::Connected => {
@@ -7780,9 +7783,13 @@ impl Shell {
                 (
                     caption.into(),
                     loaders::mini_mono_spinner(
-                        "chat-sync-spinner", 2.0, theme.text_muted,
-                        self.sidebar_pane.entity_id(), cx,
-                    ).into_any_element(),
+                        "chat-sync-spinner",
+                        2.0,
+                        theme.text_muted,
+                        self.sidebar_pane.entity_id(),
+                        cx,
+                    )
+                    .into_any_element(),
                 )
             }
             S::Offline => (
@@ -8610,7 +8617,12 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(SIDEBAR_FOOTER_ACTION_GAP))
-            .child(div().flex_1().min_w_0().child(self.render_sidebar_footer(theme, cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.render_sidebar_footer(theme, cx)),
+            )
             .child(self.render_pull_requests_button(theme, cx))
             .into_any_element()
     }
@@ -8665,7 +8677,7 @@ impl Shell {
                     motion::hover_blend("open-pull-requests", theme.text_muted, theme.text)
                 },
             ))
-        .into_any_element()
+            .into_any_element()
     }
 
     fn render_sidebar_footer(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -11308,22 +11320,20 @@ impl Shell {
                 // up the carve-out. The bubble dispatch reaches the chip
                 // before the strip, and the handler consumes the drag, so
                 // the two never double-apply.
-                .on_drop::<RightTabDrag>(cx.listener(
-                    move |this, payload: &RightTabDrag, _, cx| {
-                        if payload.panel_key != this.panel_key(cx) {
-                            this.right_tab_drag = None;
-                            cx.notify();
-                            return;
-                        }
-                        let to = this
-                            .right_tab_drag
-                            .as_ref()
-                            .map(|d| d.over)
-                            .unwrap_or(payload.from);
+                .on_drop::<RightTabDrag>(cx.listener(move |this, payload: &RightTabDrag, _, cx| {
+                    if payload.panel_key != this.panel_key(cx) {
                         this.right_tab_drag = None;
-                        this.reorder_right_tabs(payload.from, to, cx);
-                    },
-                ))
+                        cx.notify();
+                        return;
+                    }
+                    let to = this
+                        .right_tab_drag
+                        .as_ref()
+                        .map(|d| d.over)
+                        .unwrap_or(payload.from);
+                    this.right_tab_drag = None;
+                    this.reorder_right_tabs(payload.from, to, cx);
+                }))
                 .child(
                     // Leading slot: the surface's icon.
                     div()
@@ -13304,17 +13314,26 @@ mod tests {
 
         chat.sync_state = S::Waiting;
         chat.connected = false;
-        assert_eq!(chat_sync_pill_caption(&chat), Some("Sync queued — changes are saved"));
+        assert_eq!(
+            chat_sync_pill_caption(&chat),
+            Some("Sync queued — changes are saved")
+        );
         chat.sync_state = S::Connecting;
         assert_eq!(chat_sync_pill_caption(&chat), Some("Syncing…"));
         chat.sync_state = S::Offline;
-        assert_eq!(chat_sync_pill_caption(&chat), Some("Offline — changes are saved"));
+        assert_eq!(
+            chat_sync_pill_caption(&chat),
+            Some("Offline — changes are saved")
+        );
 
         // Real pending pushes remain visible even with a live room.
         chat.connected = true;
         chat.pending_pushes = 1;
         chat.sync_state = S::Waiting;
-        assert_eq!(chat_sync_pill_caption(&chat), Some("Sync queued — changes are saved"));
+        assert_eq!(
+            chat_sync_pill_caption(&chat),
+            Some("Sync queued — changes are saved")
+        );
         chat.sync_state = S::Connecting;
         assert_eq!(chat_sync_pill_caption(&chat), Some("Syncing…"));
     }
@@ -13606,8 +13625,14 @@ mod tests {
         assert_eq!(titlebar_new_session_alpha(&Route::Chat, false), 0.0);
         assert_eq!(titlebar_new_session_alpha(&Route::PullRequests, false), 1.0);
         assert_eq!(titlebar_new_session_alpha(&Route::PullRequests, true), 1.0);
-        assert_eq!(titlebar_new_session_alpha(&Route::Settings(SettingsSection::Devices), true), 0.0);
-        assert_eq!(titlebar_new_session_alpha(&Route::Settings(SettingsSection::Devices), false), 0.0);
+        assert_eq!(
+            titlebar_new_session_alpha(&Route::Settings(SettingsSection::Devices), true),
+            0.0
+        );
+        assert_eq!(
+            titlebar_new_session_alpha(&Route::Settings(SettingsSection::Devices), false),
+            0.0
+        );
     }
 
     #[test]
@@ -14835,7 +14860,8 @@ mod exit_regressions {
                     settings::update(settings::SavePolicy::Immediate, cx, |settings| {
                         settings.wallpaper_folder = Some(dir.path().join("wallpapers"));
                         settings.wallpaper_source = Some(dir.path().join("wallpapers/current.png"));
-                        settings.wallpaper_history = vec![dir.path().join("wallpapers/current.png")];
+                        settings.wallpaper_history =
+                            vec![dir.path().join("wallpapers/current.png")];
                         settings.window_geometry = geometry;
                         settings.open_web_links_in_zeron = open_links_in_zeron;
                         settings.pull_request_destination =
@@ -14861,8 +14887,14 @@ mod exit_regressions {
                         shell.settings.terminal_height = 300.0 + step as f32;
                         shell.schedule_save(cx);
                         let current = settings::current(cx);
-                        assert_eq!(current.wallpaper_history, vec![dir.path().join("wallpapers/current.png")]);
-                        assert_eq!(current.wallpaper_folder, Some(dir.path().join("wallpapers")));
+                        assert_eq!(
+                            current.wallpaper_history,
+                            vec![dir.path().join("wallpapers/current.png")]
+                        );
+                        assert_eq!(
+                            current.wallpaper_folder,
+                            Some(dir.path().join("wallpapers"))
+                        );
                         assert_eq!(
                             current.wallpaper_source,
                             Some(dir.path().join("wallpapers/current.png"))
@@ -14910,7 +14942,10 @@ mod exit_regressions {
                         Some("remote-pr-device")
                     );
                     assert_eq!(loaded.window_geometry, geometry);
-                    assert_eq!(loaded.wallpaper_history, vec![dir.path().join("wallpapers/current.png")]);
+                    assert_eq!(
+                        loaded.wallpaper_history,
+                        vec![dir.path().join("wallpapers/current.png")]
+                    );
                     assert_eq!(loaded.wallpaper_folder, Some(dir.path().join("wallpapers")));
                     assert_eq!(
                         loaded.wallpaper_source,
@@ -15159,7 +15194,9 @@ mod exit_regressions {
             }))
         });
         let shell = host.read_with(cx, |host, _| host.0.clone());
-        shell.update(cx, |shell, cx| shell.open_settings(SettingsSection::General, cx));
+        shell.update(cx, |shell, cx| {
+            shell.open_settings(SettingsSection::General, cx)
+        });
         cx.update(|window, cx| window.draw(cx).clear());
         let row = cx.debug_bounds("sidebar-footer-row").unwrap();
         let entry = cx

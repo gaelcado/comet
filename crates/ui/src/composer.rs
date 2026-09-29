@@ -8872,7 +8872,9 @@ pub(crate) fn send_circle(
         .items_center()
         .justify_center()
         .when(blocked, |el| el.opacity(0.35))
-        .when(!blocked, |el| el.cursor_pointer().hover(|s| s.opacity(0.85)))
+        .when(!blocked, |el| {
+            el.cursor_pointer().hover(|s| s.opacity(0.85))
+        })
         .child(
             crate::icons::icon(crate::icons::ARROW_UP)
                 .size(px(14.0))
