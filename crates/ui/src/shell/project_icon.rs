@@ -88,11 +88,11 @@ fn import_project_icon(
     Ok(name)
 }
 
-/// Only files created by the project-icon importer are safe to retire.
-fn remove_managed_project_icon(directory: &std::path::Path, name: &str) {
+/// A file name the project-icon importer creates: a UUID with its format's
+/// extension, directly inside the icon folder.
+fn is_managed_project_icon(name: &str) -> bool {
     let path = std::path::Path::new(name);
-    let managed_name = path
-        .parent()
+    path.parent()
         .is_none_or(|parent| parent.as_os_str().is_empty())
         && path
             .file_stem()
@@ -101,14 +101,19 @@ fn remove_managed_project_icon(directory: &std::path::Path, name: &str) {
         && matches!(
             path.extension().and_then(|ext| ext.to_str()),
             Some("svg" | "image")
-        );
-    if managed_name {
+        )
+}
+
+/// Only files created by the project-icon importer are safe to retire.
+fn remove_managed_project_icon(directory: &std::path::Path, name: &str) {
+    if is_managed_project_icon(name) {
         let _ = std::fs::remove_file(directory.join(name));
     }
 }
 
-/// Reclaim files left by older picker implementations without touching
-/// artwork still referenced by any project or unrelated files in this folder.
+/// Reclaim icon files no project references: a replaced or reset icon whose
+/// removal was interrupted, or a pick abandoned mid-import. Unrelated files
+/// in the folder and anything still referenced are left alone.
 pub(super) fn cleanup_orphaned_project_icons(
     data_dir: &std::path::Path,
     references: &std::collections::HashMap<String, String>,
@@ -429,7 +434,8 @@ impl Shell {
                 }
             }
             self.schedule_save(cx);
-            return Err(format!("Could not save project icon: {error}"));
+            tracing::warn!(%error, "project icon settings save failed");
+            return Err("Could not save the project icon.".into());
         }
         if let Some(previous) = previous
             && !self
@@ -450,11 +456,10 @@ impl Shell {
             .spaces
             .iter()
             .find(|space| space.id == space_id)?;
-        Some(format!(
-            "{:?}:{}:{}",
-            self.active_sidebar_pin_profile_key(cx),
-            space.device_id,
-            space.id
+        Some(settings::project_icon_override_key(
+            self.active_sidebar_pin_profile_key(cx).as_deref(),
+            &space.device_id,
+            &space.id,
         ))
     }
 
@@ -514,17 +519,18 @@ impl Shell {
                             }
                         }
                         Err(error) => {
-                            this.sidebar_notice =
-                                Some(format!("Could not use this image: {error}").into())
+                            tracing::warn!(%error, "project icon import failed");
+                            this.sidebar_notice = Some(
+                                "Could not use this image. Choose an image file up to 8 MB.".into(),
+                            )
                         }
                     }
                     cx.notify();
                 })
                 .is_err()
+                && let Some(name) = imported_name
             {
-                if let Some(name) = imported_name {
-                    remove_managed_project_icon(&cleanup_directory, &name);
-                }
+                remove_managed_project_icon(&cleanup_directory, &name);
             }
         })
         .detach();
@@ -601,9 +607,7 @@ impl Shell {
             .and_then(|space| self.project_icon_key(&space.id, cx))
             .and_then(|key| self.settings.project_icon_overrides.get(&key))
             // Settings contain a managed filename, never an arbitrary path.
-            .filter(|name| {
-                std::path::Path::new(name).components().count() == 1 && !name.contains(['/', '\\'])
-            })
+            .filter(|name| is_managed_project_icon(name))
             .map(|name| self.boot.data_dir.join("project-icons").join(name));
         let context = space.map(|space| FilesRequestContext {
             target: zeron_proto::WorkspaceTarget {
@@ -635,8 +639,12 @@ impl Shell {
             uploaded,
         );
         let engine = state.engine().cloned();
-        // Don't cache a remote miss before a connection exists.
-        if uploaded.is_none() && context.target_device_id.is_some() && engine.is_none() {
+        // Don't cache a remote miss before a connection exists, including when
+        // an uploaded file has gone missing and the remote icon is the fallback.
+        if context.target_device_id.is_some()
+            && engine.is_none()
+            && uploaded.as_ref().is_none_or(|path| !path.exists())
+        {
             return project_icon_frame(
                 chat_id,
                 &name,
@@ -920,6 +928,48 @@ mod tests {
         assert!(icons.join(current).exists());
         assert!(!icons.join(orphan).exists());
         assert!(icons.join("manual.image").exists());
+
+        // A pick that has copied its file but not yet saved settings is newer
+        // than the cutoff and survives the scan.
+        let fresh = format!("{}.image", uuid::Uuid::new_v4());
+        std::fs::write(icons.join(&fresh), b"image").unwrap();
+        cleanup_orphaned_project_icons(
+            dir.path(),
+            &std::collections::HashMap::new(),
+            std::time::SystemTime::now() - std::time::Duration::from_secs(60),
+        );
+        assert!(icons.join(fresh).exists());
+    }
+
+    #[test]
+    fn only_importer_file_names_are_loaded_or_removed() {
+        let managed = format!("{}.image", uuid::Uuid::new_v4());
+        assert!(is_managed_project_icon(&managed));
+        assert!(is_managed_project_icon(&format!(
+            "{}.svg",
+            uuid::Uuid::new_v4()
+        )));
+        for name in [
+            "",
+            ".",
+            "..",
+            "icon.image",
+            "a/b.image",
+            "../x.svg",
+            "x.png",
+        ] {
+            assert!(!is_managed_project_icon(name), "{name}");
+        }
+        assert!(!is_managed_project_icon(&format!("dir/{managed}")));
+    }
+
+    #[test]
+    fn icon_override_keys_have_a_stable_explicit_format() {
+        assert_eq!(
+            settings::project_icon_override_key(Some("local"), "device", "space"),
+            "local/device/space"
+        );
+        assert_eq!(settings::project_icon_override_key(None, "d", "s"), "-/d/s");
     }
 
     #[test]

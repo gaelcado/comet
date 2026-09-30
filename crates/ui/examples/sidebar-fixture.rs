@@ -31,10 +31,12 @@ fn main() -> anyhow::Result<()> {
         if let Some(icon) = std::env::var_os("ZERON_SIDEBAR_PROJECT_ICON") {
             let directory = data.join("project-icons");
             std::fs::create_dir_all(&directory).unwrap();
-            std::fs::copy(icon, directory.join("fixture.png")).unwrap();
+            // A managed name, as the importer would write it.
+            let name = "00000000-0000-4000-8000-000000000001.image";
+            std::fs::copy(icon, directory.join(name)).unwrap();
             settings.project_icon_overrides.insert(
-                format!("{:?}:local:project", Some("local")),
-                "fixture.png".into(),
+                settings::project_icon_override_key(Some("local"), "local", "project"),
+                name.into(),
             );
         }
         settings.save(&data).unwrap();

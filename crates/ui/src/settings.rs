@@ -30,6 +30,13 @@ pub mod wallpaper;
 pub mod wallpaper_colors;
 pub mod widgets;
 
+/// The persisted key of a project's uploaded icon: sidebar profile, host
+/// device and project, with `-` for "no profile". Persisted, so never change
+/// its format; add a new key instead.
+pub fn project_icon_override_key(profile: Option<&str>, device_id: &str, space_id: &str) -> String {
+    format!("{}/{device_id}/{space_id}", profile.unwrap_or("-"))
+}
+
 /// Sidebar drag-resize bounds (px).
 pub const SIDEBAR_MIN: f32 = 224.0;
 pub const SIDEBAR_MAX: f32 = 400.0;
@@ -750,7 +757,7 @@ pub struct UiSettings {
     pub sidebar_show_project_label: bool,
     pub sidebar_compact: bool,
     pub sidebar_show_project_icon: bool,
-    /// Device-local uploaded artwork, keyed by profile and project identity.
+    /// Device-local uploaded artwork, keyed by [`project_icon_override_key`].
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub project_icon_overrides: HashMap<String, String>,
     pub sidebar_show_harness: bool,
@@ -2320,7 +2327,7 @@ mod tests {
             sidebar_compact: true,
             sidebar_show_project_icon: false,
             project_icon_overrides: HashMap::from([(
-                "local:device:space".into(),
+                project_icon_override_key(Some("local"), "device", "space"),
                 "custom.image".into(),
             )]),
             sidebar_show_project_label: false,
