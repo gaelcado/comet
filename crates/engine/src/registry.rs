@@ -756,6 +756,30 @@ pub fn default_registry() -> HarnessRegistry {
         Box::new(|| zeron_harness::AcpHarness::antigravity().installed()),
         Box::new(|| Ok(Arc::new(zeron_harness::AcpHarness::antigravity()) as Arc<dyn Harness>)),
     );
+    // Zimmer over ACP (`zimmer acp`), same lazy pattern: the static descriptor
+    // mirrors AcpHarness::zimmer() exactly. Zimmer advertises the
+    // `_session/steering` extension, so steers inject mid-turn; its effort
+    // ladder applies per session via the `thought_level` config option.
+    registry.register_lazy(
+        HarnessDescriptor {
+            id: HarnessId::Zimmer,
+            name: "Zimmer".into(),
+            supports_steering: true,
+            steering_mode: SteeringMode::StepBoundary,
+            reasoning_levels: vec![
+                ReasoningLevel::Low,
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+                ReasoningLevel::XHigh,
+                ReasoningLevel::Max,
+            ],
+            installed: true,
+            can_install: false,
+            enabled: None,
+        },
+        Box::new(|| zeron_harness::AcpHarness::zimmer().installed()),
+        Box::new(|| Ok(Arc::new(zeron_harness::AcpHarness::zimmer()) as Arc<dyn Harness>)),
+    );
     registry
 }
 
@@ -838,7 +862,8 @@ mod tests {
                 HarnessId::Hermes,
                 HarnessId::Pi,
                 HarnessId::Opencode,
-                HarnessId::Antigravity
+                HarnessId::Antigravity,
+                HarnessId::Zimmer
             ]
         );
         assert!(registry.resolve(HarnessId::Mock).is_ok());
@@ -901,6 +926,17 @@ mod tests {
         assert_eq!(pi.display_name(), "Pi");
         assert_eq!(pi.steering_mode(), SteeringMode::StepBoundary);
         assert!(pi.reasoning_levels().is_empty());
+        let zimmer = registry.resolve(HarnessId::Zimmer).unwrap();
+        assert_eq!(zimmer.id(), HarnessId::Zimmer);
+        assert_eq!(zimmer.display_name(), "Zimmer");
+        assert_eq!(zimmer.steering_mode(), SteeringMode::StepBoundary);
+        let descriptor = registry
+            .descriptors()
+            .into_iter()
+            .find(|d| d.id == HarnessId::Zimmer)
+            .unwrap();
+        assert_eq!(zimmer.reasoning_levels(), descriptor.reasoning_levels);
+        assert_eq!(zimmer.steering_mode(), descriptor.steering_mode);
     }
 
     /// Catalogs serialized by engines that predate the `installed`/`enabled`

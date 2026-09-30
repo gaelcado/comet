@@ -52,7 +52,8 @@ fn methods(id: HarnessId, platform: Platform) -> Vec<Method> {
     use Method::*;
     let windows = platform == Platform::Windows;
     match id {
-        Mock => vec![],
+        // Zimmer has no public installer: it is built from source.
+        Mock | Zimmer => vec![],
         Antigravity => vec![Archive],
         ClaudeCode if windows => vec![PowerShell("irm https://claude.ai/install.ps1 | iex")],
         ClaudeCode => vec![Shell(
@@ -158,7 +159,7 @@ pub fn manual_command(id: HarnessId) -> Option<&'static str> {
         Grok => "npm install -g @xai-official/grok",
         Hermes => "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
         Devin => "curl -fsSL https://cli.devin.ai/install.sh | bash",
-        Antigravity | Mock => return None,
+        Antigravity | Zimmer | Mock => return None,
     })
 }
 
@@ -174,6 +175,7 @@ fn cli_and_dir(id: HarnessId) -> (&'static str, &'static str) {
         Hermes => ("hermes", "~/.local/bin or ~/.hermes/bin"),
         Devin => ("devin", "~/.local/bin"),
         Antigravity => ("agy_acp_server", "~/.zeron/adapters"),
+        Zimmer => ("zimmer", "PATH"),
         Mock => ("mock", "PATH"),
     }
 }
@@ -190,6 +192,7 @@ pub fn installed(id: HarnessId) -> bool {
         Hermes => crate::AcpHarness::hermes().installed(),
         Devin => crate::AcpHarness::devin().installed(),
         Antigravity => crate::AcpHarness::antigravity().installed(),
+        Zimmer => crate::AcpHarness::zimmer().installed(),
         Mock => false,
     }
 }
@@ -391,7 +394,7 @@ async fn run(
 mod tests {
     use super::*;
 
-    const IDS: [HarnessId; 10] = [
+    const IDS: [HarnessId; 11] = [
         HarnessId::ClaudeCode,
         HarnessId::Codex,
         HarnessId::Cursor,
@@ -401,6 +404,7 @@ mod tests {
         HarnessId::Hermes,
         HarnessId::Devin,
         HarnessId::Antigravity,
+        HarnessId::Zimmer,
         HarnessId::Mock,
     ];
 
@@ -409,7 +413,11 @@ mod tests {
         for platform in [Platform::Unix, Platform::Mac, Platform::Windows] {
             for id in IDS {
                 let list = methods(id, platform);
-                assert_eq!(list.is_empty(), id == HarnessId::Mock);
+                // Zimmer has no public installer, so it never offers one.
+                assert_eq!(
+                    list.is_empty(),
+                    matches!(id, HarnessId::Mock | HarnessId::Zimmer)
+                );
                 for method in list {
                     assert!(available(method, platform, &|_| true, true));
                     assert!(!available(method, platform, &|_| false, false));
@@ -543,7 +551,10 @@ mod tests {
         for id in IDS {
             assert_eq!(
                 manual_command(id).is_some(),
-                !matches!(id, HarnessId::Mock | HarnessId::Antigravity)
+                !matches!(
+                    id,
+                    HarnessId::Mock | HarnessId::Antigravity | HarnessId::Zimmer
+                )
             );
             let (cli, dir) = cli_and_dir(id);
             assert!(!cli.is_empty() && !dir.is_empty());

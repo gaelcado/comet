@@ -226,5 +226,6 @@ mod tests {
             "codex://threads/thread%2Fone"
         );
         assert!(harness_conversation_link(&harness_chat(HarnessId::Hermes)).is_none());
+        assert!(harness_conversation_link(&harness_chat(HarnessId::Zimmer)).is_none());
     }
 }

@@ -66,6 +66,24 @@
   `-32015 "already open in another process"` while a previous `devin acp`
   still holds the session — the shared driver's fresh-session fallback covers
   that, at the cost of Devin-side context.
+- **Zimmer registered** (2026-09-30): `AcpHarness::zimmer()` runs Zimmer's
+  native ACP server (`zimmer acp`, official `agent-client-protocol` SDK).
+  Zimmer is not publicly distributed, so there is no installer:
+  resolution is PATH/login-shell PATH/`~/.cargo/bin`/`~/.local/bin`, and
+  `ZIMMER_ACP_EXECUTABLE` overrides. It advertises
+  `initialize._meta.steering.supported` and implements `_session/steering`
+  (`injected`/`promptRequired`), so steers inject mid-turn
+  (`StepBoundary`). `configOptions` carry `model` (`provider/model` ids
+  from Zimmer's own config) and `thought_level` (`default` until set, then
+  `off`/`low`/`medium`/`high`/`xhigh`/`max`) → Zeron ladder
+  Low/Medium/High/XHigh/Max through the generic effort values; `off` is
+  never requested. Models are discovered from the probe session; the static
+  fallback is a pass-through `default` row that keeps Zimmer's configured
+  model. `crates/harness/tests/zimmer_live.rs` drives the real binary with
+  its scripted mock provider when `ZIMMER_ACP_EXECUTABLE` is set, and skips
+  otherwise. Known gaps on Zimmer 0.1.0: it ignores `session/new`
+  `mcpServers` (Zeron's injected MCP server is unavailable in its chats),
+  and each model-discovery probe leaves an empty thread in Zimmer's store.
 - **ACP is the source of truth for model lists** (2026-08-08; preference
   order inverted 2026-08-09): `models()` runs a short-lived probe
   (initialize → `session/new`, the `discover_commands` pattern) and reads

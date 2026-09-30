@@ -76,6 +76,18 @@ pub(crate) fn context(
             }
             files
         }
+        // Zimmer's model list is its config (`model` + `models`) plus the
+        // providers whose API keys are set in the environment.
+        HarnessId::Zimmer => match std::env::var_os("ZIMMER_CONFIG").filter(|v| !v.is_empty()) {
+            Some(path) => vec![PathBuf::from(path)],
+            None if cfg!(target_os = "macos") => {
+                vec![home.join("Library/Application Support/zimmer/config.toml")]
+            }
+            None if cfg!(windows) => {
+                vec![root("APPDATA", home.join("AppData/Roaming")).join("zimmer/config.toml")]
+            }
+            None => vec![root("XDG_CONFIG_HOME", home.join(".config")).join("zimmer/config.toml")],
+        },
         _ => vec![],
     };
     let binary = binary
@@ -106,6 +118,7 @@ pub(crate) fn context(
         HarnessId::Devin => &["DEVIN_"],
         HarnessId::Antigravity => &["GEMINI_", "GOOGLE_"],
         HarnessId::Cursor => &["CURSOR_"],
+        HarnessId::Zimmer => &["ZIMMER_", "ANTHROPIC_", "OPENAI_", "OPENROUTER_"],
         _ => &[],
     };
     let mut env: Vec<_> = std::env::vars_os()

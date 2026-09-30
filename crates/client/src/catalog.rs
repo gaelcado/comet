@@ -166,6 +166,7 @@ pub fn harness_label(id: &str) -> String {
         "cursor" => "Cursor",
         "opencode" => "OpenCode",
         "antigravity" => "Antigravity",
+        "zimmer" => "Zimmer",
         "mock" => "Mock",
         other => return other.to_owned(),
     }
@@ -234,6 +235,13 @@ pub fn fallback_models(harness: &str) -> Vec<ModelInfo> {
             "pi default",
             "Runs the model configured in pi (`pi` settings)",
             &["minimal", "low", "medium", "high", "xhigh", "max"],
+            vec![],
+        )],
+        "zimmer" => vec![model(
+            "default",
+            "Zimmer default",
+            "Runs the model set in Zimmer's config",
+            &["low", "medium", "high", "xhigh", "max"],
             vec![],
         )],
         "opencode" => vec![

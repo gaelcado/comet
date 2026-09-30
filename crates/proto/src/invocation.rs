@@ -290,7 +290,7 @@ mod tests {
         }
     }
 
-    const HARNESSES: [crate::HarnessId; 9] = [
+    const HARNESSES: [crate::HarnessId; 10] = [
         crate::HarnessId::ClaudeCode,
         crate::HarnessId::Codex,
         crate::HarnessId::Cursor,
@@ -300,6 +300,7 @@ mod tests {
         crate::HarnessId::Pi,
         crate::HarnessId::Antigravity,
         crate::HarnessId::Opencode,
+        crate::HarnessId::Zimmer,
     ];
 
     #[test]
@@ -407,6 +408,7 @@ mod tests {
             crate::HarnessId::Grok,
             crate::HarnessId::Hermes,
             crate::HarnessId::Pi,
+            crate::HarnessId::Zimmer,
         ] {
             let skill = skill("review", "/repo/SKILL.md");
             assert_eq!(

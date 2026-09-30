@@ -65,7 +65,8 @@ const UPDATE_POLICIES: [(HarnessUpdatePolicy, &str, &str); 3] = [
 ];
 
 fn offers_install(harness: HarnessId, installed: bool, can_install: bool) -> bool {
-    harness != HarnessId::Mock && !installed && can_install
+    // Zimmer has no public installer; it is only ever built from source.
+    !matches!(harness, HarnessId::Mock | HarnessId::Zimmer) && !installed && can_install
 }
 
 fn install_hint(harness: HarnessId, enabled: bool, can_install: bool) -> String {
@@ -76,6 +77,11 @@ fn install_hint(harness: HarnessId, enabled: bool, can_install: bool) -> String 
             "Set ANTIGRAVITY_ACP_EXECUTABLE to enable Antigravity"
         }
         .into();
+    }
+    if harness == HarnessId::Zimmer {
+        return "Build zimmer from source and put it on PATH, or set ZIMMER_ACP_EXECUTABLE, \
+                to enable Zimmer"
+            .into();
     }
     let hint = if enabled {
         format!(
@@ -112,6 +118,7 @@ pub fn cli_name(harness: HarnessId) -> &'static str {
         HarnessId::Pi => "pi",
         HarnessId::Opencode => "opencode",
         HarnessId::Antigravity => "Antigravity",
+        HarnessId::Zimmer => "zimmer",
         HarnessId::Mock => "mock",
     }
 }
@@ -1339,13 +1346,14 @@ fn install_visibility_and_hint_follow_target_capabilities() {
         HarnessId::Grok,
         HarnessId::Hermes,
         HarnessId::Devin,
+        HarnessId::Zimmer,
         HarnessId::Mock,
     ] {
         for installed in [false, true] {
             for available in [false, true] {
                 assert_eq!(
                     offers_install(id, installed, available),
-                    id != HarnessId::Mock && !installed && available
+                    !matches!(id, HarnessId::Mock | HarnessId::Zimmer) && !installed && available
                 );
             }
         }
@@ -1358,6 +1366,10 @@ fn install_visibility_and_hint_follow_target_capabilities() {
     assert!(
         install_hint(HarnessId::Antigravity, false, false).contains("ANTIGRAVITY_ACP_EXECUTABLE")
     );
+    for (enabled, can_install) in [(false, false), (true, false), (false, true)] {
+        let hint = install_hint(HarnessId::Zimmer, enabled, can_install);
+        assert!(hint.contains("ZIMMER_ACP_EXECUTABLE") && !hint.contains("Install with"));
+    }
 }
 
 #[cfg(test)]

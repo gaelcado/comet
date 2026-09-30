@@ -23,6 +23,10 @@ pub enum HarnessId {
     /// google's antigravity agent over acp (`agy_acp_server`, installed from
     /// its pinned release archive).
     Antigravity,
+    /// The Zimmer agent harness, driven over its native ACP server
+    /// (`zimmer acp`). Not publicly distributed: built from source and found
+    /// on PATH or through `ZIMMER_ACP_EXECUTABLE`.
+    Zimmer,
     /// Test harness; never shown in production pickers.
     Mock,
 }
@@ -614,6 +618,20 @@ mod tests {
         };
         let json = serde_json::to_string(&ev).unwrap();
         assert_eq!(serde_json::from_str::<AgentEvent>(&json).unwrap(), ev);
+    }
+
+    /// The wire id is the stored/relayed form; renaming it would orphan
+    /// every chat config that picked Zimmer.
+    #[test]
+    fn zimmer_harness_id_round_trips_as_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&HarnessId::Zimmer).unwrap(),
+            "\"zimmer\""
+        );
+        assert_eq!(
+            serde_json::from_str::<HarnessId>("\"zimmer\"").unwrap(),
+            HarnessId::Zimmer
+        );
     }
 
     /// Drivers spell the key differently; the chip must not care which one

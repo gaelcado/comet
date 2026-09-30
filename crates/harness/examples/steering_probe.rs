@@ -25,6 +25,7 @@ async fn main() -> anyhow::Result<()> {
         "hermes" => Arc::new(AcpHarness::hermes()),
         "pi" => Arc::new(zeron_harness::PiHarness::new()),
         "antigravity" => Arc::new(AcpHarness::antigravity()),
+        "zimmer" => Arc::new(AcpHarness::zimmer()),
         _ => anyhow::bail!("unknown harness"),
     };
     if model.as_deref() == Some("--models") {

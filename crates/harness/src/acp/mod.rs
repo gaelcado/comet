@@ -2,10 +2,11 @@
 //! stdio, protocol v1) and maps its session updates onto [`AgentEvent`]s.
 //!
 //! KEPT ONLY for agents built ground-up on ACP: Grok ([`AcpHarness::grok`],
-//! `grok agent stdio`), Devin ([`AcpHarness::devin`], `devin acp`) and Hermes
-//! ([`AcpHarness::hermes`], `hermes acp`) and Antigravity
-//! ([`AcpHarness::antigravity`], Google's `agy_acp_server`, installed from its
-//! pinned release archive). Pi, Claude, Codex and Cursor use native drivers
+//! `grok agent stdio`), Devin ([`AcpHarness::devin`], `devin acp`), Hermes
+//! ([`AcpHarness::hermes`], `hermes acp`), Zimmer ([`AcpHarness::zimmer`],
+//! `zimmer acp`) and Antigravity ([`AcpHarness::antigravity`], Google's
+//! `agy_acp_server`, installed from its pinned release archive). Pi, Claude,
+//! Codex and Cursor use native drivers
 //! ([`crate::ClaudeHarness`], [`crate::CodexHarness`], [`crate::CursorHarness`])
 //! after adapter-mediated ACP kept manufacturing done-status bugs the native
 //! wires don't have (turn-hold bookkeeping vs the CLI's own eager result).
@@ -414,6 +415,80 @@ fn hermes_spec() -> AcpAgentSpec {
         drops_unstarted_cancelled_prompt: false,
     }
 }
+
+fn zimmer_install_paths() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = crate::executable::home_dir() {
+        // `cargo install --path crates/zimmer-cli` and hand-copied builds.
+        dirs.push(home.join(".cargo").join("bin").join("zimmer"));
+        dirs.push(home.join(".local").join("bin").join("zimmer"));
+    }
+    dirs
+}
+
+fn zimmer_spec() -> AcpAgentSpec {
+    AcpAgentSpec {
+        id: HarnessId::Zimmer,
+        display_name: "Zimmer",
+        executable: "zimmer",
+        env_override: "ZIMMER_ACP_EXECUTABLE",
+        args: &["acp"],
+        // Native ACP server, and not publicly distributed: no npm package or
+        // release archive to install from.
+        npm_package: None,
+        archive: None,
+        extra_paths: zimmer_install_paths,
+        cli_executable: "zimmer",
+        cli_extra_paths: zimmer_install_paths,
+        install_hint: "zimmer (searched PATH, the login shell's PATH, ~/.cargo/bin, and \
+             ~/.local/bin; Zimmer is not publicly distributed: build it from source with \
+             `cargo build --release -p zimmer-cli` and put the `zimmer` binary on PATH, or \
+             set ZIMMER_ACP_EXECUTABLE to its path)",
+        // Zimmer's models are the providers configured in its own config
+        // (`~/.config/zimmer/config.toml`), discovered over ACP from the
+        // session's `model` config option. This pass-through row only names
+        // the pick when discovery fails: `default` matches no advertised id,
+        // so the run keeps Zimmer's configured model.
+        models: || {
+            vec![Model {
+                id: "default".into(),
+                label: "Zimmer default".into(),
+                description: Some("Runs the model set in Zimmer's config".into()),
+                reasoning_levels: ZIMMER_REASONING.to_vec(),
+                options: Vec::new(),
+            }]
+        },
+        // `_session/steering` is detected from `initialize._meta` at run
+        // time; Zimmer advertises it, so steers inject mid-turn.
+        steering_mode: SteeringMode::StepBoundary,
+        reasoning_levels: ZIMMER_REASONING,
+        prompt_transform: identity_transform,
+        // Zimmer's `thought_level` values are `off`, `low`, `medium`, `high`,
+        // `xhigh` and `max` (plus `default` until one is chosen), so the
+        // generic ladder maps 1:1; Minimal degrades to `low`, and `off`
+        // (reasoning disabled) is never requested.
+        effort_values: default_effort_values,
+        ladder_extras: &[],
+        prompt_complete_extension: false,
+        prompt_stall: None,
+        stall_hint: "The agent process is likely wedged.",
+        effort_in_model_id: false,
+        auth_method: None,
+        skill_dirs: Vec::new,
+        hidden_commands: &[],
+        drops_unstarted_cancelled_prompt: false,
+    }
+}
+
+/// Zimmer's `thought_level` ladder as Zeron levels (`off` has no Zeron
+/// counterpart and `default` is the unset state).
+const ZIMMER_REASONING: &[ReasoningLevel] = &[
+    ReasoningLevel::Low,
+    ReasoningLevel::Medium,
+    ReasoningLevel::High,
+    ReasoningLevel::XHigh,
+    ReasoningLevel::Max,
+];
 
 /// google's builds as the acp registry lists them (`antigravity-acp`); `None`
 /// on platforms without one, where only an explicit override can launch.
@@ -1282,6 +1357,11 @@ impl AcpHarness {
     /// Hermes Agent (`hermes acp`) — Nous Research's native ACP server.
     pub fn hermes() -> Self {
         Self::with_spec(hermes_spec())
+    }
+
+    /// Zimmer (`zimmer acp`) — a native ACP agent harness built from source.
+    pub fn zimmer() -> Self {
+        Self::with_spec(zimmer_spec())
     }
 
     /// google antigravity over its acp server (`agy_acp_server`).
@@ -5902,6 +5982,82 @@ mod tests {
             effort_variant_id(&live, "gemini-3.8-flash", Some(ReasoningLevel::Medium)),
             "gemini-3.8-flash-medium"
         );
+    }
+
+    /// Zimmer's `session/new` shape (captured from `zimmer acp`, 0.1.0):
+    /// models come off the `model` option, the ladder off `thought_level`
+    /// (`default`/`off` have no Zeron level), every Zeron level lands on an
+    /// advertised value, and the pass-through `default` row never switches
+    /// the model, so Zimmer's configured one runs.
+    #[test]
+    fn zimmer_maps_its_config_options_and_passes_the_default_model_through() {
+        let session = json!({
+            "sessionId": "s-1",
+            "configOptions": [
+                {
+                    "id": "model", "name": "Model", "category": "model", "type": "select",
+                    "currentValue": "anthropic/claude-opus-5-5",
+                    "options": [
+                        { "value": "anthropic/claude-opus-5-5", "name": "anthropic/claude-opus-5-5" },
+                        { "value": "openai/gpt-5.5", "name": "openai/gpt-5.5" },
+                    ],
+                },
+                {
+                    "id": "thought_level", "name": "Reasoning", "category": "thought_level",
+                    "type": "select", "currentValue": "default",
+                    "options": [
+                        { "value": "default", "name": "Model default" },
+                        { "value": "off", "name": "Off" },
+                        { "value": "low", "name": "Low" },
+                        { "value": "medium", "name": "Medium" },
+                        { "value": "high", "name": "High" },
+                        { "value": "xhigh", "name": "Xhigh" },
+                        { "value": "max", "name": "Max" },
+                    ],
+                },
+            ],
+        });
+        let spec = zimmer_spec();
+        assert_eq!(
+            (spec.executable, spec.args, spec.env_override),
+            ("zimmer", &["acp"][..], "ZIMMER_ACP_EXECUTABLE")
+        );
+        assert!(spec.npm_package.is_none() && spec.archive.is_none());
+        assert!(spec.install_hint.contains("ZIMMER_ACP_EXECUTABLE"));
+        let models = models_from_session(&session, &(spec.models)());
+        let rows: Vec<(&str, &[ReasoningLevel])> = models
+            .iter()
+            .map(|m| (m.id.as_str(), m.reasoning_levels.as_slice()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("anthropic/claude-opus-5-5", ZIMMER_REASONING),
+                ("openai/gpt-5.5", ZIMMER_REASONING),
+            ]
+        );
+        let no_opts = serde_json::Map::new();
+        for (level, value) in [
+            (ReasoningLevel::Minimal, "low"),
+            (ReasoningLevel::Low, "low"),
+            (ReasoningLevel::Medium, "medium"),
+            (ReasoningLevel::High, "high"),
+            (ReasoningLevel::XHigh, "xhigh"),
+            (ReasoningLevel::Max, "max"),
+            (ReasoningLevel::Ultra, "max"),
+        ] {
+            let efforts = (spec.effort_values)(Some(level), None);
+            assert_eq!(
+                config_option_sets(&session, Some("default"), &efforts, &no_opts),
+                vec![("thought_level".to_owned(), json!({ "value": value }))],
+                "{level:?}"
+            );
+        }
+        assert_eq!(
+            config_option_sets(&session, Some("openai/gpt-5.5"), &[], &no_opts),
+            vec![("model".to_owned(), json!({ "value": "openai/gpt-5.5" }))]
+        );
+        assert_eq!((spec.models)()[0].reasoning_levels, ZIMMER_REASONING);
     }
 
     /// the offline list is what an unreachable or signed-out server falls back
