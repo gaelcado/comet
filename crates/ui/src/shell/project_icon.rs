@@ -88,6 +88,61 @@ fn import_project_icon(
     Ok(name)
 }
 
+/// Only files created by the project-icon importer are safe to retire.
+fn remove_managed_project_icon(directory: &std::path::Path, name: &str) {
+    let path = std::path::Path::new(name);
+    let managed_name = path
+        .parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty())
+        && path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| uuid::Uuid::parse_str(stem).is_ok())
+        && matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("svg" | "image")
+        );
+    if managed_name {
+        let _ = std::fs::remove_file(directory.join(name));
+    }
+}
+
+/// Reclaim files left by older picker implementations without touching
+/// artwork still referenced by any project or unrelated files in this folder.
+pub(super) fn cleanup_orphaned_project_icons(
+    data_dir: &std::path::Path,
+    references: &std::collections::HashMap<String, String>,
+    older_than: std::time::SystemTime,
+) {
+    let directory = data_dir.join("project-icons");
+    let saved = settings::UiSettings::load(data_dir);
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        // A picker running as this scan starts may have copied a file that
+        // has not yet been installed in settings. Leave recent files alone.
+        if !entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .is_ok_and(|modified| modified < older_than)
+        {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !references.values().any(|referenced| referenced == &name)
+            && !saved
+                .project_icon_overrides
+                .values()
+                .any(|referenced| referenced == &name)
+        {
+            remove_managed_project_icon(&directory, &name);
+        }
+    }
+}
+
 fn load_uploaded_icon(path: &std::path::Path) -> Option<MediaImage> {
     use std::io::Read;
     let mut bytes = Vec::new();
@@ -341,6 +396,53 @@ fn project_icon_frame(
 }
 
 impl Shell {
+    /// Save the new pointer before deleting the old image. A failed settings
+    /// write leaves the previous icon and its file intact.
+    fn set_project_icon_override(
+        &mut self,
+        key: String,
+        replacement: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let previous = self.settings.project_icon_overrides.get(&key).cloned();
+        if previous == replacement {
+            return Ok(());
+        }
+        match &replacement {
+            Some(name) => {
+                self.settings
+                    .project_icon_overrides
+                    .insert(key.clone(), name.clone());
+            }
+            None => {
+                self.settings.project_icon_overrides.remove(&key);
+            }
+        }
+        self.schedule_save(cx);
+        if let Err(error) = settings::current(cx).save(&self.boot.data_dir) {
+            match previous {
+                Some(name) => {
+                    self.settings.project_icon_overrides.insert(key, name);
+                }
+                None => {
+                    self.settings.project_icon_overrides.remove(&key);
+                }
+            }
+            self.schedule_save(cx);
+            return Err(format!("Could not save project icon: {error}"));
+        }
+        if let Some(previous) = previous
+            && !self
+                .settings
+                .project_icon_overrides
+                .values()
+                .any(|name| name == &previous)
+        {
+            remove_managed_project_icon(&self.boot.data_dir.join("project-icons"), &previous);
+        }
+        Ok(())
+    }
+
     pub(super) fn project_icon_key(&self, space_id: &str, cx: &App) -> Option<String> {
         let space = self
             .state
@@ -378,30 +480,52 @@ impl Shell {
             let Some(path) = path else {
                 return;
             };
+            let cleanup_directory = directory.clone();
             let result = cx
                 .background_executor()
                 .spawn(async move { import_project_icon(&path, &directory) })
                 .await;
-            let _ = this.update(cx, |this, cx| {
-                // Don't apply an old picker result to another workspace/profile.
-                if this.project_icon_key(&space_id, cx).as_ref() != Some(&key)
-                    || this.settings.project_icon_overrides.get(&key) != previous.as_ref()
-                {
-                    return;
-                }
-                match result {
-                    Ok(name) => {
-                        this.settings.project_icon_overrides.insert(key, name);
-                        this.schedule_save(cx);
-                        this.sidebar_notice = Some("Project icon updated".into());
+            let imported_name = result.as_ref().ok().cloned();
+            if this
+                .update(cx, |this, cx| {
+                    // Don't apply an old picker result to another workspace/profile.
+                    if this.project_icon_key(&space_id, cx).as_ref() != Some(&key)
+                        || this.settings.project_icon_overrides.get(&key) != previous.as_ref()
+                    {
+                        if let Ok(name) = result {
+                            remove_managed_project_icon(
+                                &this.boot.data_dir.join("project-icons"),
+                                &name,
+                            );
+                        }
+                        return;
                     }
-                    Err(error) => {
-                        this.sidebar_notice =
-                            Some(format!("Could not use this image: {error}").into())
+                    match result {
+                        Ok(name) => {
+                            match this.set_project_icon_override(key, Some(name.clone()), cx) {
+                                Ok(()) => this.sidebar_notice = Some("Project icon updated".into()),
+                                Err(error) => {
+                                    remove_managed_project_icon(
+                                        &this.boot.data_dir.join("project-icons"),
+                                        &name,
+                                    );
+                                    this.sidebar_notice = Some(error.into());
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            this.sidebar_notice =
+                                Some(format!("Could not use this image: {error}").into())
+                        }
                     }
+                    cx.notify();
+                })
+                .is_err()
+            {
+                if let Some(name) = imported_name {
+                    remove_managed_project_icon(&cleanup_directory, &name);
                 }
-                cx.notify();
-            });
+            }
         })
         .detach();
     }
@@ -409,8 +533,9 @@ impl Shell {
     pub(super) fn reset_project_icon(&mut self, space_id: &str, cx: &mut Context<Self>) {
         self.close_space_menu(cx);
         if let Some(key) = self.project_icon_key(space_id, cx) {
-            self.settings.project_icon_overrides.remove(&key);
-            self.schedule_save(cx);
+            if let Err(error) = self.set_project_icon_override(key, None, cx) {
+                self.sidebar_notice = Some(error.into());
+            }
             cx.notify();
         }
     }
@@ -669,6 +794,7 @@ mod tests {
             gpui_base::init(cx);
             cx.set_global(Theme::default());
             crate::app_menus::init(cx);
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
             crate::history::init(
                 Default::default(),
                 Default::default(),
@@ -712,6 +838,37 @@ mod tests {
                 })
                 .unwrap();
         }
+        let previous = window
+            .read_with(cx, |shell, cx| {
+                let key = shell.project_icon_key("project", cx).unwrap();
+                shell.settings.project_icon_overrides[&key].clone()
+            })
+            .unwrap();
+        png(&source, 32);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.choose_project_icon("project".into(), cx)
+            })
+            .unwrap();
+        assert!(cx.did_prompt_for_paths());
+        let replacement = source.clone();
+        cx.simulate_path_prompt_response(move |_| Some(vec![replacement]));
+        cx.run_until_parked();
+        assert!(!dir.path().join("project-icons").join(&previous).exists());
+        let current = window
+            .read_with(cx, |shell, cx| {
+                let key = shell.project_icon_key("project", cx).unwrap();
+                shell.settings.project_icon_overrides[&key].clone()
+            })
+            .unwrap();
+        assert_ne!(previous, current);
+        assert_eq!(
+            settings::UiSettings::load(dir.path())
+                .project_icon_overrides
+                .values()
+                .next(),
+            Some(&current)
+        );
         std::fs::remove_file(&source).unwrap();
         window
             .update(cx, |shell, _, cx| {
@@ -724,6 +881,12 @@ mod tests {
                 assert!(!shell.settings.project_icon_overrides.contains_key(&key));
             })
             .unwrap();
+        assert!(!dir.path().join("project-icons").join(current).exists());
+        assert!(
+            settings::UiSettings::load(dir.path())
+                .project_icon_overrides
+                .is_empty()
+        );
     }
 
     #[test]
@@ -742,6 +905,27 @@ mod tests {
         assert!(import_project_icon(&source, &managed).is_err());
         assert_eq!(std::fs::read_dir(&managed).unwrap().count(), 1);
         assert!(load_uploaded_icon(&managed.join(name)).is_some());
+    }
+
+    #[test]
+    fn startup_cleanup_keeps_referenced_and_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let icons = dir.path().join("project-icons");
+        std::fs::create_dir(&icons).unwrap();
+        let current = format!("{}.image", uuid::Uuid::new_v4());
+        let orphan = format!("{}.svg", uuid::Uuid::new_v4());
+        for name in [&current, &orphan] {
+            std::fs::write(icons.join(name), b"image").unwrap();
+        }
+        std::fs::write(icons.join("manual.image"), b"keep").unwrap();
+        cleanup_orphaned_project_icons(
+            dir.path(),
+            &std::collections::HashMap::from([("project".into(), current.clone())]),
+            std::time::SystemTime::now() + std::time::Duration::from_secs(1),
+        );
+        assert!(icons.join(current).exists());
+        assert!(!icons.join(orphan).exists());
+        assert!(icons.join("manual.image").exists());
     }
 
     #[test]

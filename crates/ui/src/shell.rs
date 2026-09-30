@@ -1897,6 +1897,8 @@ pub struct Shell {
     /// under a still pointer would otherwise never show its archive pill;
     /// while set, rows adopt the hover from a paint-time hit test instead.
     chat_hover_resync: bool,
+    /// A keyboard-opened action corner stays mounted while its buttons have focus.
+    chat_status_keyboard: Option<String>,
     /// Scroll position of the sidebar lists region (drives its edge fades).
     sidebar_scroll: gpui::ScrollHandle,
     /// In-flight reorder for the pinned section only.
@@ -2160,6 +2162,20 @@ impl Shell {
         });
         let data_dir = boot.data_dir.clone();
         let mut settings = settings::current(cx);
+        let icon_data_dir = data_dir.clone();
+        let icon_references = settings.project_icon_overrides.clone();
+        let icon_cleanup_cutoff = std::time::SystemTime::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        cx.background_executor()
+            .spawn(async move {
+                project_icon::cleanup_orphaned_project_icons(
+                    &icon_data_dir,
+                    &icon_references,
+                    icon_cleanup_cutoff,
+                );
+            })
+            .detach();
         state.update(cx, |state, cx| {
             state.set_change_requests_visible(settings.sidebar_show_pull_request, cx)
         });
@@ -2323,6 +2339,7 @@ impl Shell {
             project_icons: Default::default(),
             chat_status_hover: None,
             chat_hover_resync: false,
+            chat_status_keyboard: None,
             sidebar_scroll: gpui::ScrollHandle::new(),
             pinned_session_drag: None,
             pinned_session_drag_generation: 0,
@@ -6930,7 +6947,9 @@ impl Shell {
             && self.settings.sidebar_show_project_icon
             && self.settings.space_filter.is_none())
         .then(|| self.render_project_icon(&id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, selected, cx));
-        let corner_hovered = !preview && self.chat_status_hover.as_deref() == Some(row_id.as_str());
+        let corner_hovered = !preview
+            && (self.chat_status_hover.as_deref() == Some(row_id.as_str())
+                || self.chat_status_keyboard.as_deref() == Some(row_id.as_str()));
         let archived_muted = archived && search_query.is_none() && !selected && !corner_hovered;
         let show_actions = corner_hovered && jump_label.is_none();
         let project_icon = project_icon.map(|icon| {
@@ -7005,7 +7024,9 @@ impl Shell {
         } else if show_actions {
             let pinned = self.active_sidebar_pins(cx).contains(&id);
             let pin_id = id.clone();
+            let pin_key_id = id.clone();
             let archive_id = id.clone();
+            let archive_key_id = id.clone();
             let action = |name: &str, label: &'static str, glyph, tone| {
                 let group = SharedString::from(format!("{row_id}-{name}-hover"));
                 div()
@@ -7017,6 +7038,8 @@ impl Shell {
                     })
                     .role(gpui::Role::Button)
                     .aria_label(label)
+                    .tab_index(0)
+                    .focus_visible(|s| s.border_2().border_color(theme.accent))
                     .size(px(24.0))
                     .flex_none()
                     .flex()
@@ -7061,7 +7084,15 @@ impl Shell {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.set_chat_pinned(pin_id.clone(), !pinned, cx);
-                    })),
+                    }))
+                    .on_key_down(cx.listener(
+                        move |this, event: &gpui::KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                cx.stop_propagation();
+                                this.set_chat_pinned(pin_key_id.clone(), !pinned, cx);
+                            }
+                        },
+                    )),
                 )
                 .child(
                     action(
@@ -7078,7 +7109,15 @@ impl Shell {
                         cx.stop_propagation();
                         this.chat_hover_resync = true;
                         this.set_chat_archived(archive_id.clone(), !archived, cx);
-                    })),
+                    }))
+                    .on_key_down(cx.listener(
+                        move |this, event: &gpui::KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                cx.stop_propagation();
+                                this.set_chat_archived(archive_key_id.clone(), !archived, cx);
+                            }
+                        },
+                    )),
                 )
                 .into_any_element()
         } else {
@@ -7169,6 +7208,10 @@ impl Shell {
             theme.text_muted.opacity(0.5)
         };
         let select_id = id.clone();
+        let keyboard_select_id = id.clone();
+        let keyboard_row_id = row_id.clone();
+        let keyboard_hint =
+            format!("Session {title}. Enter to open. Space for Pin and Archive actions.");
         let menu_id = id.clone();
         // Hover fades over transition-colors (zeron session-row.tsx) — both
         // the wash and the title brighten ride the same 150ms blend.
@@ -7221,39 +7264,65 @@ impl Shell {
             // metadata→actions swap (one listener — gpui allows a single
             // hover listener per element).
             .when(!preview, |el| {
-                el.on_hover({
-                    let fade_hover = motion::hover_listener(fade_key.clone());
-                    let hover_id = row_id.clone();
-                    cx.listener(move |this, hovered: &bool, window, cx| {
-                        fade_hover(hovered, window, cx);
-                        this.chat_hover_resync = false;
-                        if *hovered {
-                            if this.chat_status_hover.as_deref() != Some(hover_id.as_str()) {
-                                this.chat_status_hover = Some(hover_id.clone());
+                el.role(gpui::Role::ListItem)
+                    .aria_label(keyboard_hint)
+                    .tab_index(0)
+                    .focus_visible(|s| s.border_2().border_color(theme.accent))
+                    .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                        match event.keystroke.key.as_str() {
+                            "enter" => {
+                                cx.stop_propagation();
+                                this.open_chat(keyboard_select_id.clone(), cx);
+                            }
+                            "space" => {
+                                cx.stop_propagation();
+                                this.chat_status_keyboard = Some(keyboard_row_id.clone());
                                 cx.notify();
                             }
-                        } else if this.chat_status_hover.as_deref() == Some(hover_id.as_str()) {
-                            this.chat_status_hover = None;
-                            cx.notify();
+                            "escape"
+                                if this.chat_status_keyboard.as_deref()
+                                    == Some(keyboard_row_id.as_str()) =>
+                            {
+                                cx.stop_propagation();
+                                this.chat_status_keyboard = None;
+                                cx.notify();
+                            }
+                            _ => {}
                         }
+                    }))
+                    .on_hover({
+                        let fade_hover = motion::hover_listener(fade_key.clone());
+                        let hover_id = row_id.clone();
+                        cx.listener(move |this, hovered: &bool, window, cx| {
+                            fade_hover(hovered, window, cx);
+                            this.chat_hover_resync = false;
+                            if *hovered {
+                                if this.chat_status_hover.as_deref() != Some(hover_id.as_str()) {
+                                    this.chat_status_hover = Some(hover_id.clone());
+                                    cx.notify();
+                                }
+                            } else if this.chat_status_hover.as_deref() == Some(hover_id.as_str()) {
+                                this.chat_status_hover = None;
+                                cx.notify();
+                            }
+                        })
                     })
-                })
-                .cursor_pointer()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.open_chat(select_id.clone(), cx);
-                }))
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                        this.chat_menu.open(ChatMenuState {
-                            tab: None,
-                            chat_id: menu_id.clone(),
-                            position: event.position,
-                            page: ChatMenuPage::Root,
-                        });
-                        cx.notify();
-                    }),
-                )
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_chat(select_id.clone(), cx);
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            this.chat_menu.open(ChatMenuState {
+                                tab: None,
+                                chat_id: menu_id.clone(),
+                                position: event.position,
+                                page: ChatMenuPage::Root,
+                            });
+                            cx.notify();
+                        }),
+                    )
             })
             .when_some(drag, |el, payload| {
                 let shell = cx.entity();
@@ -16432,5 +16501,100 @@ impl Shell {
         self.sidebar_resort.clear();
         self.sidebar_new_keys.clear();
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod sidebar_row_keyboard_tests {
+    use super::*;
+    use gpui::{AppContext, TestAppContext};
+
+    #[gpui::test]
+    fn session_row_keyboard_reveals_and_activates_pin(cx: &mut TestAppContext) {
+        struct RowHost(Entity<Shell>);
+        impl Render for RowHost {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                self.0.update(cx, |shell, cx| {
+                    shell.render_chat_row(
+                        "keyboard".into(),
+                        "Keyboard session".into(),
+                        "now".into(),
+                        "Project".into(),
+                        None,
+                        None,
+                        None,
+                        zeron_proto::ChatIndicator::Idle,
+                        false,
+                        false,
+                        false,
+                        None,
+                        None,
+                        None,
+                        &Theme::default(),
+                        cx,
+                    )
+                })
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            crate::history::init(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                cx,
+            );
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            RowHost(cx.new(|cx| {
+                let state = cx.new(|_| {
+                    let mut state = AppState::new();
+                    state.workspace_scope = Some(zeron_proto::WorkspaceScope::Local);
+                    state.local_device_id = Some("local".into());
+                    state.chats = vec![
+                        serde_json::from_value(serde_json::json!({
+                        "id": "keyboard", "title": "Keyboard session", "deviceId": "local", "archived": false,
+                            "createdAt": Utc::now(),
+                        }))
+                        .unwrap(),
+                    ];
+                    state
+                });
+                let mut shell = Shell::new(
+                    state,
+                    EngineBootConfig {
+                        data_dir: dir.path().into(),
+                        ipc_port: 0,
+                        edge_url: String::new(),
+                        edge_token: None,
+                        org_id: None,
+                        workos_client_id: None,
+                        default_harness: zeron_proto::HarnessId::Mock,
+                    },
+                    cx,
+                );
+                shell.settings.sidebar_show_project_icon = false;
+                shell
+            }))
+        });
+        let shell = host.read_with(cx, |host, _| host.0.clone());
+        assert!(cx.debug_bounds("chat-keyboard-pin").is_none());
+        cx.update(|window, cx| window.focus_next(cx));
+        cx.simulate_keystrokes("space");
+        assert!(cx.debug_bounds("chat-keyboard-pin").is_some());
+        cx.update(|window, cx| window.focus_next(cx));
+        cx.simulate_keystrokes("enter");
+        shell.read_with(cx, |shell, cx| {
+            assert!(
+                shell
+                    .active_sidebar_pins(cx)
+                    .contains(&"keyboard".to_string())
+            );
+        });
     }
 }
