@@ -19,7 +19,7 @@ use gpui::{
     Action, AnyElement, App, ClipboardItem, Context, Empty, Entity, FocusHandle, Focusable as _,
     IntoElement, KeyBinding, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseUpEvent, Pixels, Point, Render, SharedString, Subscription, Task, Window,
-    WindowControlArea, actions, div, img, prelude::*, px,
+    WindowControlArea, actions, div, prelude::*, px,
 };
 
 use gpui_tokio::Tokio;
@@ -6791,31 +6791,11 @@ impl Shell {
         cluster + CLUSTER_BUTTONS_WIDTH + TITLEBAR_IDENTITY_GAP
     }
 
-    /// Compact onboarding titlebar: preserve the native traffic-light safe
-    /// area and window drag/double-click behavior while keeping a centered app
-    /// identity. Journey navigation lives with the onboarding content.
+    /// Compact onboarding titlebar: only the native traffic-light safe area,
+    /// window drag/double-click behavior, and Skip. Journey navigation lives
+    /// with the onboarding content.
     fn render_onboarding_title_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let identity = div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .h(px(Theme::TITLEBAR_HEIGHT))
-            .pt(px(Theme::TITLEBAR_TOP_PAD))
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(7.0))
-            .text_size(crate::typography::ui_rems(12.0))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(theme.text_muted)
-            .child(
-                img(self.onboarding.brand_mark.clone())
-                    .size(px(18.0))
-                    .rounded(px(4.0)),
-            )
-            .child("Zeron");
         let skip = crate::onboarding::render_skip(&self.onboarding, &theme, cx);
         self.titlebar_drag_region(
             "onboarding-titlebar-drag",
@@ -6825,7 +6805,6 @@ impl Shell {
                 .left_0()
                 .right_0()
                 .h(px(Theme::TITLEBAR_HEIGHT))
-                .child(identity)
                 .child(
                     div()
                         .absolute()

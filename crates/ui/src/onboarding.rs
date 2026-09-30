@@ -2,13 +2,11 @@
 //! to live in their authoritative stores; this module only persists
 //! navigation/lifecycle state in `UiSettings`.
 
-use std::sync::Arc;
-
 pub(crate) mod window;
 
 use gpui::{
-    AnyElement, Context, Empty, Entity, FocusHandle, Image, ImageFormat, IntoElement, KeyDownEvent,
-    Pixels, ScrollHandle, SharedString, Task, div, prelude::*, px,
+    AnyElement, Context, Empty, Entity, FocusHandle, IntoElement, KeyDownEvent, Pixels,
+    ScrollHandle, SharedString, Task, div, prelude::*, px,
 };
 use serde::{Deserialize, Serialize};
 use zeron_engine::registry::{HarnessDescriptor, TitleSettings, descriptor_enabled};
@@ -202,7 +200,6 @@ pub struct OnboardingUi {
     pub agent_settings_open: bool,
     pub focus: FocusHandle,
     pub controls: Vec<FocusHandle>,
-    pub brand_mark: Arc<Image>,
     pub theme_menu: Popup<usize>,
     pub theme_scroll: ScrollHandle,
     pub harness_scroll: ScrollHandle,
@@ -252,10 +249,6 @@ impl OnboardingUi {
             agent_settings_open: false,
             focus: cx.focus_handle(),
             controls,
-            brand_mark: Arc::new(Image::from_bytes(
-                ImageFormat::Png,
-                include_bytes!("../../../apps/landing/public/assets/zeron-app-icon.png").to_vec(),
-            )),
             theme_menu: Popup::default(),
             theme_scroll: ScrollHandle::new(),
             harness_scroll: ScrollHandle::new(),
@@ -503,14 +496,27 @@ fn heading(theme: &Theme, id: &'static str, text: &'static str) -> gpui::Statefu
 
 fn body(theme: &Theme, text: impl Into<SharedString>) -> gpui::Div {
     div()
-        .mt(px(Theme::SPACE_SM))
+        .mt(px(Theme::SPACE_XS + 2.0))
         .w_full()
-        .max_w(px(CONTENT_MAX_WIDTH))
-        .text_center()
-        .text_size(crate::typography::ui_rems(14.0))
-        .line_height(px(21.0))
+        .text_size(crate::typography::ui_rems(13.5))
+        .line_height(px(20.0))
         .text_color(theme.text_muted)
         .child(text.into())
+}
+
+/// Every step opens the same way: what is being decided, then why.
+fn step_header(
+    theme: &Theme,
+    id: &'static str,
+    title: &'static str,
+    description: &'static str,
+) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .child(heading(theme, id, title))
+        .child(body(theme, description))
 }
 
 fn choice_card(
@@ -652,7 +658,6 @@ fn footer_primary_button(
     theme: &Theme,
     id: &'static str,
     label: &'static str,
-    compact: bool,
 ) -> gpui::Stateful<gpui::Div> {
     popover::btn_primary(theme, label)
         .id(id)
@@ -664,13 +669,6 @@ fn footer_primary_button(
         .justify_center()
         .gap(px(Theme::SPACE_XS))
         .focus_visible(|style| style.border_2().border_color(theme.bg))
-        .when(!compact, |button| {
-            button.child(
-                icon(crate::icons::ALT_ARROW_RIGHT)
-                    .size(px(Theme::SPACE_MD))
-                    .text_color(theme.on_solid),
-            )
-        })
 }
 
 pub(crate) fn activates(event: &KeyDownEvent) -> bool {
@@ -826,7 +824,12 @@ fn render_workspace_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shel
         .min_h_0()
         .flex()
         .flex_col()
-        .child(heading(theme, "onboarding-heading-workspace", "Workspace"))
+        .child(step_header(
+            theme,
+            "onboarding-heading-workspace",
+            "Workspace",
+            "Choose where your sessions are stored.",
+        ))
         .child(
             div().mt(px(STEP_GROUP_GAP)).flex_1().min_h_0().child(
                 div()
@@ -1207,10 +1210,11 @@ fn render_appearance_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<She
         .min_h_0()
         .flex()
         .flex_col()
-        .child(heading(
+        .child(step_header(
             theme,
             "onboarding-heading-appearance",
             "Appearance",
+            "Pick a look. You can change it any time in Settings.",
         ))
         .child(
             div()
@@ -1378,10 +1382,11 @@ fn render_harness_step(
         .min_h_0()
         .flex()
         .flex_col()
-        .child(heading(
+        .child(step_header(
             theme,
             "onboarding-heading-harnesses",
             "Coding agents",
+            "Turn on the agents you want to use on this device.",
         ))
         .child(
             div()
@@ -1686,10 +1691,11 @@ fn render_defaults_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell
         .min_h_0()
         .flex()
         .flex_col()
-        .child(heading(
+        .child(step_header(
             theme,
             "onboarding-heading-defaults",
             "Session defaults",
+            "New sessions start with these choices.",
         ))
         .child(
             div()
@@ -1714,11 +1720,12 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .child(heading(
-                    theme,
-                    "onboarding-heading-titles",
-                    "Session titles",
-                ))
+                .child(step_header(
+            theme,
+            "onboarding-heading-titles",
+            "Session titles",
+            "Choose who names your sessions. Automatic uses an available agent, or the first seven words.",
+        ))
                 .child(
                     div()
                         .id("onboarding-title-settings-loading")
@@ -1737,11 +1744,12 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .child(heading(
-                    theme,
-                    "onboarding-heading-titles",
-                    "Session titles",
-                ))
+                .child(step_header(
+            theme,
+            "onboarding-heading-titles",
+            "Session titles",
+            "Choose who names your sessions. Automatic uses an available agent, or the first seven words.",
+        ))
                 .child(
                     div()
                         .id("onboarding-title-settings-error")
@@ -1862,8 +1870,7 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
         .min_h_full()
         .flex()
         .flex_col()
-        .child(body(theme, "Choose an agent to name your sessions. Automatic uses an available agent, or the first seven words."))
-        .child(div().mt(px(16.0)).child(choices))
+        .child(choices)
         .child(title_models)
         .when_some(ui.error.clone(), |column, error| {
             column.child(
@@ -1882,10 +1889,11 @@ fn render_titles_step(ui: &OnboardingUi, theme: &Theme, cx: &mut Context<Shell>)
         .min_h_0()
         .flex()
         .flex_col()
-        .child(heading(
+        .child(step_header(
             theme,
             "onboarding-heading-titles",
             "Session titles",
+            "Choose who names your sessions. Automatic uses an available agent, or the first seven words.",
         ))
         .child(
             div()
@@ -2001,7 +2009,12 @@ fn render_project_step(
         .min_h_0()
         .flex()
         .flex_col()
-        .child(heading(theme, "onboarding-heading-project", "Project"))
+        .child(step_header(
+            theme,
+            "onboarding-heading-project",
+            "Project",
+            "Pick a folder to work in, or start without one.",
+        ))
         .child(
             div()
                 .mt(px(STEP_GROUP_GAP))
@@ -2083,7 +2096,6 @@ fn render_footer_actions(
     ui: &OnboardingUi,
     step: OnboardingStep,
     theme: &Theme,
-    compact: bool,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let enabled = can_continue(ui, step);
@@ -2092,7 +2104,6 @@ fn render_footer_actions(
         theme,
         continue_id(step),
         if finishes { "Finish setup" } else { "Continue" },
-        compact,
     )
     .flex_1()
     .role(gpui::Role::Button)
@@ -2113,21 +2124,14 @@ fn render_footer_actions(
                 }
             }))
     });
-    let actions = div()
+    div()
         .w_full()
         .flex()
-        .flex_col()
+        .items_center()
         .gap(px(Theme::SPACE_SM))
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .items_center()
-                .gap(px(Theme::SPACE_SM))
-                .child(render_previous(ui, step, theme, cx))
-                .child(continue_button),
-        );
-    actions.into_any_element()
+        .child(render_previous(ui, step, theme, cx))
+        .child(continue_button)
+        .into_any_element()
 }
 
 fn render_previous(
@@ -2142,7 +2146,7 @@ fn render_previous(
         footer_secondary_button(
             theme,
             "onboarding-back",
-            "Previous",
+            "Back",
             Some(crate::icons::ALT_ARROW_LEFT),
         )
         .border_1()
@@ -2150,7 +2154,7 @@ fn render_previous(
         .flex_none()
         .text_color(theme.text)
         .role(gpui::Role::Button)
-        .aria_label("Previous setup step")
+        .aria_label("Previous step")
         .cursor_pointer()
         .on_hover(crate::motion::hover_listener("onboarding-back"))
         .track_focus(ui.control(28))
@@ -2237,13 +2241,7 @@ pub fn render(
             div()
                 .mt(px(Theme::SPACE_MD))
                 .flex_none()
-                .child(render_footer_actions(
-                    ui,
-                    step,
-                    &theme,
-                    compact_navigation,
-                    cx,
-                )),
+                .child(render_footer_actions(ui, step, &theme, cx)),
         )
         .child(div().mt(px(20.0)).flex_none().child(render_progress(
             step,
@@ -2294,7 +2292,7 @@ pub fn render(
                     )
                     .child(body(
                         &theme,
-                        "Your choices are saved. Zeron will return to this step the next time you open the app.",
+                        "Your choices are saved. Setup resumes here the next time you open the app.",
                     ))
                     .child(
                         div()
@@ -2330,10 +2328,7 @@ pub fn render(
     div()
         .id("onboarding-root")
         .role(gpui::Role::Main)
-        .aria_label(format!(
-            "Zeron setup, step {} of {STEP_COUNT}",
-            step.index() + 1
-        ))
+        .aria_label(format!("Setup, step {} of {STEP_COUNT}", step.index() + 1))
         .size_full()
         .relative()
         .track_focus(&ui.focus)
