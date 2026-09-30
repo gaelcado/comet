@@ -1897,8 +1897,15 @@ pub struct Shell {
     /// under a still pointer would otherwise never show its archive pill;
     /// while set, rows adopt the hover from a paint-time hit test instead.
     chat_hover_resync: bool,
-    /// A keyboard-opened action corner stays mounted while its buttons have focus.
-    chat_status_keyboard: Option<String>,
+    /// A row whose Pin/Archive corner Space opened, with the subscription
+    /// that closes it again once focus leaves the row and its buttons.
+    chat_status_keyboard: Option<(String, gpui::Subscription)>,
+    /// One focus handle per session row, so a row can own its tab stop and
+    /// notice focus leaving it.
+    row_focus: std::cell::RefCell<std::collections::HashMap<String, FocusHandle>>,
+    /// Whether the rows about to render are reachable with Tab. Sections set
+    /// it: rows inside a collapsed section render at zero height.
+    pub(super) next_rows_tab_stop: bool,
     /// Scroll position of the sidebar lists region (drives its edge fades).
     sidebar_scroll: gpui::ScrollHandle,
     /// In-flight reorder for the pinned section only.
@@ -2340,6 +2347,8 @@ impl Shell {
             chat_status_hover: None,
             chat_hover_resync: false,
             chat_status_keyboard: None,
+            row_focus: Default::default(),
+            next_rows_tab_stop: true,
             sidebar_scroll: gpui::ScrollHandle::new(),
             pinned_session_drag: None,
             pinned_session_drag_generation: 0,
@@ -6949,7 +6958,10 @@ impl Shell {
         .then(|| self.render_project_icon(&id, SIDEBAR_ACTIVE_HARNESS_ICON_SIZE, selected, cx));
         let corner_hovered = !preview
             && (self.chat_status_hover.as_deref() == Some(row_id.as_str())
-                || self.chat_status_keyboard.as_deref() == Some(row_id.as_str()));
+                || self
+                    .chat_status_keyboard
+                    .as_ref()
+                    .is_some_and(|(keyboard, _)| *keyboard == row_id));
         let archived_muted = archived && search_query.is_none() && !selected && !corner_hovered;
         let show_actions = corner_hovered && jump_label.is_none();
         let project_icon = project_icon.map(|icon| {
@@ -7024,9 +7036,7 @@ impl Shell {
         } else if show_actions {
             let pinned = self.active_sidebar_pins(cx).contains(&id);
             let pin_id = id.clone();
-            let pin_key_id = id.clone();
             let archive_id = id.clone();
-            let archive_key_id = id.clone();
             let action = |name: &str, label: &'static str, glyph, tone| {
                 let group = SharedString::from(format!("{row_id}-{name}-hover"));
                 div()
@@ -7046,7 +7056,12 @@ impl Shell {
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    // A pointer press keeps focus where it was; Tab still
+                    // reaches the button, and Enter/Space click it.
+                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    })
                     // Paint within the hit target so a compact row retains
                     // breathing room around the button on every side.
                     .child(
@@ -7074,26 +7089,25 @@ impl Shell {
                 .flex()
                 .items_center()
                 .gap(px(2.0))
-                .child(
-                    action(
-                        "pin",
-                        if pinned { "Unpin" } else { "Pin" },
-                        icons::PIN,
-                        if pinned { theme.text } else { theme.text_muted },
+                // The palette keeps upstream's single Archive action.
+                .when(search_query.is_none(), |actions| {
+                    actions.child(
+                        action(
+                            "pin",
+                            if pinned { "Unpin" } else { "Pin" },
+                            icons::PIN,
+                            if pinned { theme.text } else { theme.text_muted },
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            // Pinning moves the row to another section under a
+                            // still pointer, exactly like archiving.
+                            this.chat_hover_resync = true;
+                            this.chat_status_keyboard = None;
+                            this.set_chat_pinned(pin_id.clone(), !pinned, cx);
+                        })),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.set_chat_pinned(pin_id.clone(), !pinned, cx);
-                    }))
-                    .on_key_down(cx.listener(
-                        move |this, event: &gpui::KeyDownEvent, _, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                cx.stop_propagation();
-                                this.set_chat_pinned(pin_key_id.clone(), !pinned, cx);
-                            }
-                        },
-                    )),
-                )
+                })
                 .child(
                     action(
                         "archive",
@@ -7108,16 +7122,9 @@ impl Shell {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.chat_hover_resync = true;
+                        this.chat_status_keyboard = None;
                         this.set_chat_archived(archive_id.clone(), !archived, cx);
-                    }))
-                    .on_key_down(cx.listener(
-                        move |this, event: &gpui::KeyDownEvent, _, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                cx.stop_propagation();
-                                this.set_chat_archived(archive_key_id.clone(), !archived, cx);
-                            }
-                        },
-                    )),
+                    })),
                 )
                 .into_any_element()
         } else {
@@ -7211,10 +7218,18 @@ impl Shell {
             theme.text_muted.opacity(0.5)
         };
         let select_id = id.clone();
-        let keyboard_select_id = id.clone();
         let keyboard_row_id = row_id.clone();
-        let keyboard_hint =
-            format!("Session {title}. Enter to open. Space for Pin and Archive actions.");
+        // Sidebar rows take keyboard focus (Enter opens, Space reveals Pin and
+        // Archive); palette rows keep the palette's own navigation.
+        let row_focus = (!preview && search_query.is_none()).then(|| {
+            self.row_focus
+                .borrow_mut()
+                .entry(row_id.clone())
+                .or_insert_with(|| cx.focus_handle())
+                .clone()
+                .tab_index(0)
+                .tab_stop(self.next_rows_tab_stop)
+        });
         let menu_id = id.clone();
         // Hover fades over transition-colors (zeron session-row.tsx) — both
         // the wash and the title brighten ride the same 150ms blend.
@@ -7266,66 +7281,97 @@ impl Shell {
             // Row hover drives BOTH the wash blend and the corner's
             // metadata→actions swap (one listener — gpui allows a single
             // hover listener per element).
-            .when(!preview, |el| {
+            .when_some(row_focus, |el, focus| {
+                let space_focus = focus.clone();
                 el.role(gpui::Role::ListItem)
-                    .aria_label(keyboard_hint)
-                    .tab_index(0)
+                    .aria_label(SharedString::from(format!("Session {title}")))
+                    .track_focus(&focus)
                     .focus_visible(|s| s.border_2().border_color(theme.accent))
-                    .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
-                        match event.keystroke.key.as_str() {
-                            "enter" => {
-                                cx.stop_propagation();
-                                this.open_chat(keyboard_select_id.clone(), cx);
-                            }
-                            "space" => {
-                                cx.stop_propagation();
-                                this.chat_status_keyboard = Some(keyboard_row_id.clone());
-                                cx.notify();
-                            }
-                            "escape"
-                                if this.chat_status_keyboard.as_deref()
-                                    == Some(keyboard_row_id.as_str()) =>
-                            {
-                                cx.stop_propagation();
-                                this.chat_status_keyboard = None;
-                                cx.notify();
-                            }
-                            _ => {}
-                        }
-                    }))
-                    .on_hover({
-                        let fade_hover = motion::hover_listener(fade_key.clone());
-                        let hover_id = row_id.clone();
-                        cx.listener(move |this, hovered: &bool, window, cx| {
-                            fade_hover(hovered, window, cx);
-                            this.chat_hover_resync = false;
-                            if *hovered {
-                                if this.chat_status_hover.as_deref() != Some(hover_id.as_str()) {
-                                    this.chat_status_hover = Some(hover_id.clone());
+                    .on_key_down(cx.listener(
+                        move |this, event: &gpui::KeyDownEvent, window, cx| {
+                            let open = this
+                                .chat_status_keyboard
+                                .as_ref()
+                                .is_some_and(|(row, _)| *row == keyboard_row_id);
+                            match event.keystroke.key.as_str() {
+                                "space" if !event.is_held => {
+                                    cx.stop_propagation();
+                                    let row = keyboard_row_id.clone();
+                                    // Focus leaving the row and its buttons
+                                    // closes the corner again.
+                                    let closes = cx.on_focus_out(
+                                        &space_focus,
+                                        window,
+                                        move |this, _, _, cx| {
+                                            if this
+                                                .chat_status_keyboard
+                                                .as_ref()
+                                                .is_some_and(|(open, _)| *open == row)
+                                            {
+                                                this.chat_status_keyboard = None;
+                                                cx.notify();
+                                            }
+                                        },
+                                    );
+                                    this.chat_status_keyboard =
+                                        Some((keyboard_row_id.clone(), closes));
                                     cx.notify();
                                 }
-                            } else if this.chat_status_hover.as_deref() == Some(hover_id.as_str()) {
-                                this.chat_status_hover = None;
+                                "escape" if open => {
+                                    cx.stop_propagation();
+                                    this.chat_status_keyboard = None;
+                                    cx.notify();
+                                }
+                                _ => {}
+                            }
+                        },
+                    ))
+            })
+            .when(!preview, |el| {
+                el.on_hover({
+                    let fade_hover = motion::hover_listener(fade_key.clone());
+                    let hover_id = row_id.clone();
+                    cx.listener(move |this, hovered: &bool, window, cx| {
+                        fade_hover(hovered, window, cx);
+                        this.chat_hover_resync = false;
+                        if *hovered {
+                            if this.chat_status_hover.as_deref() != Some(hover_id.as_str()) {
+                                this.chat_status_hover = Some(hover_id.clone());
                                 cx.notify();
                             }
-                        })
-                    })
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_chat(select_id.clone(), cx);
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                            this.chat_menu.open(ChatMenuState {
-                                tab: None,
-                                chat_id: menu_id.clone(),
-                                position: event.position,
-                                page: ChatMenuPage::Root,
-                            });
+                        } else if this.chat_status_hover.as_deref() == Some(hover_id.as_str()) {
+                            this.chat_status_hover = None;
                             cx.notify();
-                        }),
-                    )
+                        }
+                    })
+                })
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                    // Space reveals the row's actions; only Enter or a
+                    // pointer click opens the session.
+                    if let gpui::ClickEvent::Keyboard(key) = event
+                        && key.button == gpui::KeyboardButton::Space
+                    {
+                        return;
+                    }
+                    this.open_chat(select_id.clone(), cx);
+                }))
+                // Pointer presses keep focus where it was (the composer):
+                // a drag or context menu must not strand typing on a row.
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        window.prevent_default();
+                        this.chat_menu.open(ChatMenuState {
+                            tab: None,
+                            chat_id: menu_id.clone(),
+                            position: event.position,
+                            page: ChatMenuPage::Root,
+                        });
+                        cx.notify();
+                    }),
+                )
             })
             .when_some(drag, |el, payload| {
                 let shell = cx.entity();
@@ -16586,18 +16632,69 @@ mod sidebar_row_keyboard_tests {
             }))
         });
         let shell = host.read_with(cx, |host, _| host.0.clone());
+        // Test windows only dispatch key downs; gpui clicks a focused
+        // element on the key up that follows.
+        let press = |cx: &mut gpui::VisualTestContext, key: &str| {
+            cx.simulate_keystrokes(key);
+            cx.simulate_event(gpui::KeyUpEvent {
+                keystroke: gpui::Keystroke::parse(key).unwrap(),
+            });
+        };
+        // Focus events carry the previous path only for an active window.
+        cx.update(|window, _| window.activate_window());
+        // A right-click opens the row's menu without taking focus from
+        // wherever typing was going (the composer, in the app).
+        let typing = cx.update(|_, cx| cx.focus_handle());
+        cx.update(|window, cx| window.focus(&typing, cx));
+        let row = cx.debug_bounds("chat-keyboard").unwrap();
+        cx.simulate_mouse_down(row.center(), MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_mouse_up(row.center(), MouseButton::Right, gpui::Modifiers::default());
+        assert!(cx.update(|window, _| typing.is_focused(window)));
+        shell.update(cx, |shell, cx| {
+            shell.chat_menu.begin_close();
+            cx.notify();
+        });
+        cx.update(|window, _| window.blur());
         assert!(cx.debug_bounds("chat-keyboard-pin").is_none());
         cx.update(|window, cx| window.focus_next(cx));
-        cx.simulate_keystrokes("space");
+        // Space reveals the actions without opening the session.
+        press(cx, "space");
         assert!(cx.debug_bounds("chat-keyboard-pin").is_some());
+        shell.read_with(cx, |shell, cx| {
+            assert!(shell.state.read(cx).selected_chat.is_none());
+        });
+        // Escape hides them again.
+        press(cx, "escape");
+        assert!(cx.debug_bounds("chat-keyboard-pin").is_none());
+        // Focus leaving the row (for the composer, say) hides them too.
+        press(cx, "space");
+        assert!(cx.debug_bounds("chat-keyboard-pin").is_some());
+        let elsewhere = cx.update(|_, cx| cx.focus_handle());
+        cx.update(|window, cx| window.focus(&elsewhere, cx));
+        // Focus events reach listeners on the next drawn frame.
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("chat-keyboard-pin").is_none());
+        // Enter on Pin pins the session and closes the corner.
+        cx.update(|window, cx| {
+            let row = shell
+                .read(cx)
+                .row_focus
+                .borrow()
+                .get("chat-keyboard")
+                .cloned();
+            window.focus(&row.unwrap(), cx);
+        });
+        press(cx, "space");
         cx.update(|window, cx| window.focus_next(cx));
-        cx.simulate_keystrokes("enter");
+        press(cx, "enter");
         shell.read_with(cx, |shell, cx| {
             assert!(
                 shell
                     .active_sidebar_pins(cx)
                     .contains(&"keyboard".to_string())
             );
+            assert!(shell.chat_status_keyboard.is_none());
         });
     }
 }

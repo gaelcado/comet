@@ -4908,6 +4908,18 @@ impl Shell {
                     .filter(|drag| drag.payload.chat_id == chat.id)
                     .map_or(0.0, |drag| drag.collapsed_height);
                 let slot_height = height - removed;
+                // Rows in a collapsed section or group render at zero height;
+                // keep them out of the Tab order.
+                let group_collapsed = group.as_ref().is_some_and(|(key, _)| {
+                    let organization = match self.settings.sidebar_organization {
+                        SidebarOrganization::ByDevice => "device",
+                        SidebarOrganization::ByProject => "project",
+                        SidebarOrganization::InOneList => "list",
+                    };
+                    self.sidebar_collapsed_groups
+                        .contains(&format!("{organization}:{key}"))
+                });
+                self.next_rows_tab_stop = jump_slot.is_some() && !group_collapsed;
                 let element = self.render_chat_row(
                     chat.id.clone(),
                     transcript::single_line(
@@ -4929,6 +4941,7 @@ impl Shell {
                     theme,
                     cx,
                 );
+                self.next_rows_tab_stop = true;
                 // The source slot shrinks when its vacancy moves across sections.
                 // Its zero-height anchor still tracks the live activity position.
                 let element = if let Some(origin) = origin {
@@ -5373,6 +5386,7 @@ impl Shell {
                 .flex_col()
                 .pt(px(SIDEBAR_DISCLOSURE_BODY_INSET))
                 .gap(px(SIDEBAR_LIST_GAP));
+            self.next_rows_tab_stop = self.archived_open;
             for row in rows.into_iter().take(shown) {
                 let chat = row.chat;
                 let is_selected = selected.as_deref() == Some(chat.id.as_str());
@@ -5406,6 +5420,7 @@ impl Shell {
                     ),
                 );
             }
+            self.next_rows_tab_stop = true;
             let mut body = div().w_full().flex().flex_col().child(list);
             if has_more {
                 let remaining = (total - shown).min(PAGE);
