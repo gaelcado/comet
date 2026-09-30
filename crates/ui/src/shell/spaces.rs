@@ -4025,35 +4025,18 @@ impl Shell {
         let open = self.spaces_menu.is_open();
 
         let selected_project = filter.filter(|id| self.state.read(cx).space_row(id).is_some());
+        // The selected project's icon is part of the trigger: clicking it
+        // opens the dropdown like the rest of the row. Choosing, changing or
+        // resetting the image lives in the project's context menu.
         let project_icon = if let Some(space_id) = selected_project.clone() {
-            let keyboard_space_id = space_id.clone();
             div()
-                .id("selected-project-icon")
                 .debug_selector(|| "selected-project-icon".into())
-                .role(gpui::Role::Button)
-                .aria_label("Change project icon")
-                .tab_index(0)
-                .size(px(24.0))
-                .mx(px(-4.0))
+                .size(px(16.0))
                 .flex_none()
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(6.0))
-                .focus_visible(|style| style.bg(theme.glass_hover()))
-                .hover(|style| style.bg(theme.glass_hover()))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(self.render_space_icon(&space_id, 16.0, cx))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.choose_project_icon(space_id.clone(), cx);
-                }))
-                .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
-                    if !event.is_held && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        cx.stop_propagation();
-                        this.choose_project_icon(keyboard_space_id.clone(), cx);
-                    }
-                }))
                 .into_any_element()
         } else {
             icon(icons::FOLDER)

@@ -692,7 +692,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn selected_project_header_opens_icon_picker_without_changing_filter(
+    fn selected_project_icon_opens_the_dropdown_and_the_menu_edits_it(
         cx: &mut gpui::TestAppContext,
     ) {
         let dir = tempfile::tempdir().unwrap();
@@ -736,23 +736,8 @@ mod tests {
         });
         let shell = host.read_with(cx, |host, _| host.0.clone());
         cx.update(|window, cx| window.draw(cx).clear());
-        let icon_bounds = cx.debug_bounds("selected-project-icon").unwrap();
-        cx.simulate_click(icon_bounds.center(), gpui::Modifiers::default());
-        assert!(cx.did_prompt_for_paths());
-        shell.read_with(cx, |shell, _| {
-            assert_eq!(shell.settings.space_filter.as_deref(), Some("project"));
-            assert!(!shell.spaces_menu.is_open());
-        });
-        cx.simulate_path_prompt_response(|_| None);
-        cx.run_until_parked();
-        cx.update(|window, cx| {
-            window.blur();
-            window.focus_next(cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert!(cx.did_prompt_for_paths());
-        cx.simulate_path_prompt_response(|_| None);
-        cx.run_until_parked();
+        // Right-clicking the header opens the project's menu, where its icon
+        // is chosen, changed or reset.
         let header = cx.debug_bounds("spaces-filter").unwrap();
         cx.simulate_mouse_down(
             header.center(),
@@ -770,16 +755,25 @@ mod tests {
                 Some("project")
             );
         });
+        shell.update(cx, |shell, cx| shell.close_space_menu(cx));
+        cx.update(|window, cx| window.draw(cx).clear());
+        // The icon belongs to the trigger: a click opens the dropdown, never
+        // a file dialog, and leaves the filter alone.
+        let icon_bounds = cx.debug_bounds("selected-project-icon").unwrap();
+        cx.simulate_click(icon_bounds.center(), gpui::Modifiers::default());
+        assert!(!cx.did_prompt_for_paths());
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(shell.settings.space_filter.as_deref(), Some("project"));
+            assert!(shell.spaces_menu.is_open());
+        });
+        // Without a selected project the header shows no project icon.
         shell.update(cx, |shell, cx| {
-            shell.close_space_menu(cx);
+            shell.close_spaces_menu(cx);
             shell.settings.space_filter = None;
         });
         host.update(cx, |_, cx| cx.notify());
         cx.update(|window, cx| window.draw(cx).clear());
         assert!(cx.debug_bounds("selected-project-icon").is_none());
-        let header = cx.debug_bounds("spaces-filter").unwrap();
-        cx.simulate_click(header.center(), gpui::Modifiers::default());
-        assert!(shell.read_with(cx, |shell, _| shell.spaces_menu.is_open()));
     }
 
     fn png(path: &std::path::Path, width: u32) {
