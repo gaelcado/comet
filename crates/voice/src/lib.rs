@@ -53,7 +53,7 @@ pub fn download(dir: &Path, cancel: &AtomicBool, mut progress: impl FnMut(u64)) 
             let result=async {
                 let mut response=tokio::select! {
                     _=cancelled(cancel)=>bail!("Download cancelled"),
-                    response=client.get(format!("https://huggingface.co/{}/resolve/{}/{}",m.repository,m.revision,file.name)).send()=>response?.error_for_status()?,
+                    response=tokio::time::timeout(std::time::Duration::from_secs(30),client.get(format!("https://huggingface.co/{}/resolve/{}/{}",m.repository,m.revision,file.name)).send())=>response??.error_for_status()?,
                 };
                 let mut out=std::fs::File::create(&staging)?;let mut hash=Sha256::new();let mut size=0;
                 loop {
@@ -115,9 +115,21 @@ impl Recognizer {
 }
 
 struct Audio {
-    samples: Vec<f32>,
-    failed: bool,
-    full: bool,
+    /// Only the audio callback touches this until the stream is dropped.
+    samples: Mutex<Vec<f32>>,
+    // Outside the lock: the capture loop polls these every 10 ms and must
+    // never make the real-time callback's `try_lock` drop a buffer.
+    failed: AtomicBool,
+    full: AtomicBool,
+}
+impl Audio {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            samples: Mutex::new(Vec::with_capacity(capacity)),
+            failed: AtomicBool::new(false),
+            full: AtomicBool::new(false),
+        }
+    }
 }
 /// Loudest RMS since the UI last read it. Non-negative `f32` bit patterns sort
 /// like their values, so `fetch_max` keeps the peak without a lock.
@@ -141,18 +153,17 @@ where
         level.fetch_max(rms.to_bits(), Ordering::Relaxed);
     }
 }
-fn append<T: cpal::Sample>(data: &[T], channels: usize, rate: u32, a: &Mutex<Audio>)
+fn append<T: cpal::Sample>(data: &[T], channels: usize, rate: u32, a: &Audio)
 where
     f32: cpal::FromSample<T>,
 {
-    if let Ok(mut a) = a.try_lock() {
+    if let Ok(mut samples) = a.samples.try_lock() {
         for frame in data.chunks_exact(channels) {
-            if a.samples.len() >= rate as usize * MAX_SECONDS {
-                a.full = true;
+            if samples.len() >= rate as usize * MAX_SECONDS {
+                a.full.store(true, Ordering::Release);
                 break;
             }
-            a.samples
-                .push(frame.iter().map(|s| s.to_sample::<f32>()).sum::<f32>() / channels as f32);
+            samples.push(frame.iter().map(|s| s.to_sample::<f32>()).sum::<f32>() / channels as f32);
         }
     }
 }
@@ -202,7 +213,7 @@ fn input_device(id: Option<&str>) -> Option<cpal::Device> {
 
 pub struct Capture {
     stream: Option<cpal::Stream>,
-    audio: Arc<Mutex<Audio>>,
+    audio: Arc<Audio>,
     rate: u32,
 }
 impl Capture {
@@ -211,18 +222,10 @@ impl Capture {
         let config = device.default_input_config()?;
         let rate = config.sample_rate();
         let channels = config.channels() as usize;
-        let audio = Arc::new(Mutex::new(Audio {
-            samples: Vec::with_capacity(rate as usize * MAX_SECONDS),
-            failed: false,
-            full: false,
-        }));
+        let audio = Arc::new(Audio::with_capacity(rate as usize * MAX_SECONDS));
         let a = audio.clone();
         let e = audio.clone();
-        let err = move |_| {
-            if let Ok(mut a) = e.lock() {
-                a.failed = true;
-            }
-        };
+        let err = move |_| e.failed.store(true, Ordering::Release);
         // Preserve the device's native configuration; convert every CPAL
         // sample representation through the same bounded mono callback.
         macro_rules! stream {
@@ -261,15 +264,15 @@ impl Capture {
         })
     }
     pub fn ended(&self) -> bool {
-        self.audio.lock().map_or(true, |a| a.full || a.failed)
+        self.audio.full.load(Ordering::Acquire) || self.audio.failed.load(Ordering::Acquire)
     }
     pub fn finish(mut self) -> Result<(Vec<f32>, u32)> {
         self.stream.take();
-        let mut audio = self.audio.lock().unwrap();
-        if audio.failed {
+        if self.audio.failed.load(Ordering::Acquire) {
             bail!("Microphone disconnected. Your draft is safe.")
         }
-        Ok((std::mem::take(&mut audio.samples), self.rate))
+        let mut samples = self.audio.samples.lock().unwrap_or_else(|e| e.into_inner());
+        Ok((std::mem::take(&mut *samples), self.rate))
     }
 }
 
@@ -434,7 +437,9 @@ impl Session {
                         }
                         Err(_) => break,
                     };
-                    let result = run_job(
+                    // A native panic must not take down the worker, and with
+                        // it every later session, until the app restarts.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_job(
                         &job,
                         || Capture::start(job.device.as_deref(), job.level.clone()),
                         || {
@@ -447,14 +452,19 @@ impl Session {
                             let model = &mut cached.as_mut().unwrap().1;
                             Ok(move |samples, rate| model.transcribe(samples, rate))
                         },
-                    );
+                    )))
+                    .unwrap_or_else(|_| {
+                        cached = None;
+                        Err(anyhow::anyhow!("Dictation stopped unexpectedly. Your draft is safe."))
+                    });
                     match result {
                         Ok(Some(text)) => {
                             let _ = job.events.try_send(Event::Final(text));
                         }
                         Ok(None) => {}
+                        // Keep loaded weights: a microphone or recording error says
+                        // nothing about the model, and reloading takes seconds.
                         Err(e) => {
-                            cached = None;
                             let _ = job.events.try_send(Event::Failed(e.to_string()));
                         }
                     }
@@ -527,17 +537,13 @@ mod tests {
         where
             f32: cpal::FromSample<T>,
         {
-            let audio = Mutex::new(Audio {
-                samples: Vec::new(),
-                failed: false,
-                full: false,
-            });
+            let audio = Audio::with_capacity(0);
             let input: Vec<T> = [-0.5_f32, 0.5, 0.25, 0.75, 0.0, 0.0]
                 .into_iter()
                 .map(|s| s.to_sample::<T>())
                 .collect();
             append(&input, 2, 16_000, &audio);
-            assert_eq!(audio.lock().unwrap().samples, vec![0.0, 0.5, 0.0]);
+            assert_eq!(*audio.samples.lock().unwrap(), vec![0.0, 0.5, 0.0]);
             let level = AtomicU32::new(0);
             meter(&input, 2, &level);
             let rms = f32::from_bits(level.load(Ordering::Relaxed));

@@ -285,11 +285,7 @@ fn ready_model_waits_for_stop_and_transcribes_only_once() {
 
 #[test]
 fn audio_buffer_still_caps_recording_at_sixty_seconds() {
-    let audio = Mutex::new(Audio {
-        samples: vec![],
-        failed: false,
-        full: false,
-    });
+    let audio = Audio::with_capacity(0);
     let rate = 8_000;
     append(
         &vec![0.25_f32; rate as usize * MAX_SECONDS + 1],
@@ -297,7 +293,6 @@ fn audio_buffer_still_caps_recording_at_sixty_seconds() {
         rate,
         &audio,
     );
-    let audio = audio.lock().unwrap();
-    assert_eq!(audio.samples.len(), rate as usize * 60);
-    assert!(audio.full);
+    assert_eq!(audio.samples.lock().unwrap().len(), rate as usize * 60);
+    assert!(audio.full.load(Ordering::Acquire));
 }
