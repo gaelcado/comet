@@ -34,6 +34,11 @@ pub(super) async fn run(
     events: mpsc::Sender<VoiceEvent>,
     mut controls: mpsc::Receiver<super::VoiceControl>,
 ) -> Result<(), VoiceRejection> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Ok(()),
+        result = super::permissions::microphone() => result?,
+    }
     let owner_client = engine
         .media_client()
         .await

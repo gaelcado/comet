@@ -138,6 +138,33 @@ async fn native_core(temp: &tempfile::TempDir) -> EngineCore {
 }
 #[cfg(unix)]
 #[tokio::test]
+async fn initial_account_snapshot_does_not_invalidate_voice_eligibility() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = native_core(&temp).await;
+    let client = zeron_rpc::memory_client(core.rpc_service());
+    for _ in 0..2 {
+        let eligible: VoiceEligibility = client
+            .call_as(
+                methods::VOICE_ELIGIBILITY,
+                json!({"chatId":"native-voice","hostDeviceId":core.device_id}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            eligible.available,
+            "initial account snapshot rejected: {:?}",
+            eligible.reason
+        );
+    }
+    let package = temp.path().join("codex-package");
+    let wire = std::fs::read_to_string(package.join("voice-wire.jsonl")).unwrap();
+    assert!(!wire.contains("thread/realtime/start"));
+    assert!(!package.join("helper-wire.jsonl").exists());
+    core.sessions.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn native_voice_signals_audio_owner_transcripts_stop_and_restart_on_same_runtime() {
     use zeron_proto::voice::{MuteVoice, VoiceEvent, VoiceLease, VoicePhase};
     let temp = tempfile::tempdir().unwrap();

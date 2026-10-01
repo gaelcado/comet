@@ -3,6 +3,7 @@
 import json, pathlib, sys, threading, time
 root=pathlib.Path(__file__).resolve().parents[1]
 session=None
+account_initialized=False
 thread='idle-thread'
 wire_lock=threading.Lock()
 def send(v):
@@ -29,10 +30,15 @@ for line in sys.stdin:
     if method=='config/read':
         result={'config':json.loads((root/'project-config').read_text()) if frame.get('params',{}).get('cwd') and (root/'project-config').exists() else {}}
     elif method=='account/read':
-        if (root/'probe-delay').exists():
+        if account_initialized and (root/'probe-delay').exists():
             (root/'probing').write_text('true')
             while not (root/'probe-release').exists():time.sleep(0.01)
         result={'account':{'type':(root/'account-mode').read_text().strip() if (root/'account-mode').exists() else 'chatgpt'}}
+        if not account_initialized:
+            # Native Codex announces its initial account before answering the
+            # first account/read, even when no login or account switch occurred.
+            send({'method':'account/updated','params':{'authMode':'chatgpt' if result['account']['type']=='chatgpt' else 'apikey','planType':None}})
+            account_initialized=True
     elif method=='account/rateLimits/read':result=json.loads((root/'rate-limits').read_text()) if (root/'rate-limits').exists() else {'ordinaryUsageAllowed':True}
     elif method=='thread/realtime/listVoices':result={'voices':{'v1':['juniper','ember'],'v2':['alloy'],'defaultV1':'juniper','defaultV2':'alloy'}}
     elif method in ('thread/start','thread/resume'):result={'thread':{'id':thread,'turns':[]},'cwd':frame['params'].get('cwd',str(root)),'modelProvider':(root/'thread-provider').read_text().strip() if (root/'thread-provider').exists() else 'openai'}

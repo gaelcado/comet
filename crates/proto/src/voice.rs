@@ -22,6 +22,8 @@ pub enum VoiceRejection {
     StaleGeneration,
     Overflow,
     DeviceUnavailable,
+    MicrophonePermissionDenied,
+    MicrophoneMetadataMissing,
     Protocol,
     NativeRuntimeUnavailable,
 }

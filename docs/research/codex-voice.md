@@ -23,6 +23,9 @@ this integration. Native subscription voice uses **WebRTC V3** instead:
 
 1. Prepare or reuse an idle native thread with the normal Zeron MCP server.
    No initial `turn/start`, empty user message, title request, or submitted draft.
+   Load the initial `account/read` snapshot before attaching the voice router:
+   Codex announces initial authentication with `account/updated`, which must not
+   be mistaken for a later identity change. Subsequent updates still retire voice.
 2. Check `account/read` on that same process for `chatgpt` authentication, reject
    custom providers and realtime backend overrides in the effective project
    configuration (`config/read` with the resolved thread cwd), validate the
@@ -111,7 +114,15 @@ system defaults. Codex's current helper protocol does not expose device selectio
 The native helper/runtime is supplied by the standalone Codex installation,
 not redistributed by Zeron. npm/CLI-only installations without those resources
 report `nativeRuntimeUnavailable`. macOS production/dev bundles declare microphone
-usage and audio-input entitlements. No new DSP DLLs or C++ build dependency are
+usage and audio-input entitlements. The viewport verifies microphone authorization
+and requests it when voice is explicitly started, before creating a provider
+session or opening devices. Denied access shows a settings hint. Cargo builds
+embed the microphone purpose string in the executable's `__TEXT,__info_plist`
+section, so direct development launches can also request access. Missing
+metadata shows a rebuild hint instead of requesting permission and being
+terminated by macOS. `scripts/run-macos-dev.sh` builds the
+signed development bundle; `ZERON_DEV_BUILD_ONLY=1` prepares it without launching.
+No new DSP DLLs or C++ build dependency are
 added to the production UI. Apache-2.0 attribution for the adapted native helper
 protocol is included in `THIRD_PARTY_NOTICES.md`.
 

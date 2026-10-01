@@ -3,6 +3,7 @@ use crate::state::EngineHandle;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use zeron_proto::voice::*;
+mod permissions;
 mod session;
 
 pub enum VoiceControl {
@@ -218,6 +219,12 @@ impl VoiceController {
             }
             Some(VoiceRejection::DeviceUnavailable) => {
                 "Check microphone permission and your audio devices."
+            }
+            Some(VoiceRejection::MicrophonePermissionDenied) => {
+                "Allow Zeron to use the microphone in System Settings → Privacy & Security → Microphone."
+            }
+            Some(VoiceRejection::MicrophoneMetadataMissing) => {
+                "Microphone setup is missing. Rebuild or reinstall Zeron, then restart it."
             }
             Some(VoiceRejection::Busy) => "Another window already owns the voice session.",
             Some(_) => "Voice could not connect. You can continue typing.",

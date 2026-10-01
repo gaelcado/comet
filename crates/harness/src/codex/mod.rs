@@ -1074,6 +1074,16 @@ async fn run_session(session: Session) {
             .await?;
         client.notify("initialized", None);
 
+        if realtime.is_some() {
+            // Codex's first account/read announces the initial auth snapshot
+            // via account/updated. Load it before attaching the voice router,
+            // which must keep aborting media on subsequent identity updates.
+            // A failed warmup must not block text; voice probes still verify auth.
+            let _ = client
+                .request("account/read", json!({"refreshToken": false}))
+                .await;
+        }
+
         let mut start_params = start_params.clone();
         if title_only {
             // Disable each configured MCP server explicitly: an empty table
