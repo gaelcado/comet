@@ -1584,29 +1584,65 @@ async fn ordinary_followup_cannot_overtake_a_queued_native_command() {
 #[tokio::test]
 async fn idle_voice_runtime_has_no_initial_turn_and_preserves_mcp() {
     let dir = tempfile::tempdir().unwrap();
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-codex-voice.py");
-    let driver = CodexHarness::new().with_executable(fixture).with_graces(Duration::from_millis(10), Duration::from_millis(100));
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-codex-voice.py");
+    let driver = CodexHarness::new()
+        .with_executable(fixture)
+        .with_graces(Duration::from_millis(10), Duration::from_millis(100));
     let mut req = request("must never be submitted");
     req.cwd = dir.path().display().to_string();
-    req.mcp = Some(zeron_proto::McpServer { name: "zeron".into(), command: "zeron".into(), args: vec!["mcp".into()], env: Default::default() });
+    req.mcp = Some(zeron_proto::McpServer {
+        name: "zeron".into(),
+        command: "zeron".into(),
+        args: vec!["mcp".into()],
+        env: Default::default(),
+    });
     let (mut controls, steer, token) = controls("Yes");
     let (voice, bridge, _events) = zeron_harness::codex::realtime::channel();
     controls.realtime = Some(bridge);
     let mut stream = driver.start_idle(req, controls).await.unwrap();
-    assert!(matches!(tokio::time::timeout(Duration::from_secs(3), stream.next()).await.unwrap().unwrap().unwrap(), AgentEvent::SessionStarted { .. }));
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(3), stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        AgentEvent::SessionStarted { .. }
+    ));
     let (reply, receive) = oneshot::channel();
-    voice.commands.send(zeron_harness::codex::realtime::VoiceCommand::Start { voice: None, generation: 1, reply }).await.unwrap();
-    assert_eq!(receive.await.unwrap(), Err(zeron_proto::voice::VoiceRejection::CreditExclusionUnverified));
+    voice
+        .commands
+        .send(zeron_harness::codex::realtime::VoiceCommand::Start {
+            voice: None,
+            generation: 1,
+            reply,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        receive.await.unwrap(),
+        Err(zeron_proto::voice::VoiceRejection::CreditExclusionUnverified)
+    );
     let calls = std::fs::read_to_string(dir.path().join("voice-wire.jsonl")).unwrap();
     assert!(!calls.contains("turn/start"));
     assert!(!calls.contains("thread/realtime/start"));
     assert!(calls.contains("mcp_servers"));
-    steer.send(SteerMessage { prompt: "text remains usable".into(), message_id: None }).await.unwrap();
+    steer
+        .send(SteerMessage {
+            prompt: "text remains usable".into(),
+            message_id: None,
+        })
+        .await
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(3), async {
         while let Some(event) = stream.next().await {
-            if matches!(event.unwrap(), AgentEvent::Done { .. }) { break; }
+            if matches!(event.unwrap(), AgentEvent::Done { .. }) {
+                break;
+            }
         }
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     token.cancel();
     drop(stream);
 }

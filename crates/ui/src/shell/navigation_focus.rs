@@ -96,7 +96,10 @@ impl Shell {
                 self.navigation_focus.right.clone(),
             )
         } else if self.voice.read(cx).phase.replaces_composer() {
-            (self.voice_surface.read(cx).focus_handle(), self.unfocused.clone())
+            (
+                self.voice_surface.read(cx).focus_handle(),
+                self.unfocused.clone(),
+            )
         } else {
             (self.composer.focus_handle(cx), self.unfocused.clone())
         }

@@ -35,6 +35,7 @@ jobs:
           cargo test --locked -p zeron-harness --test codex --test acp
           cargo test --locked -p zeron-doc voice --lib
           cargo test --locked -p zeron-engine --lib voice
+          cargo test --locked -p zeron-engine --test voice_runtime
           cargo test --locked -p zeron-mcp --lib
       - name: Native audio and WebRTC AEC3
         run: cargo test --locked -p zeron-audio --features aec --lib

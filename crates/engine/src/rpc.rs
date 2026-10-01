@@ -654,7 +654,7 @@ impl EngineRpc {
             capabilities: zeron_proto::capabilities::current(),
         };
         Self {
-            voice: crate::voice::VoiceManager::default(),
+            voice: sessions.voice_manager(),
             sessions,
             doc_host,
             workspace,
@@ -1195,7 +1195,9 @@ impl EngineRpc {
                 .map_err(failed)
                 .map(drop),
             MutateParams::DeleteChat { chat_id } => {
-                if self.voice.restricts_origin(&chat_id) { self.voice.retire(); }
+                if self.voice.restricts_origin(&chat_id) {
+                    self.voice.retire();
+                }
                 self.workspace.delete_chat(&chat_id).map_err(failed)?;
                 self.doc_host.purge_chat(&chat_id);
                 Ok(())
@@ -1705,18 +1707,42 @@ impl RpcService for EngineRpc {
             }
             return self.forward(&target, method, params).await;
         }
-        if matches!(method, methods::VOICE_ELIGIBILITY | methods::START_VOICE | methods::OWN_VOICE | methods::APPEND_VOICE | methods::MUTE_VOICE | methods::STOP_VOICE)
-            && params.get("targetDeviceId").and_then(|v| v.as_str()).is_some_and(|v| v != self.engine_info.device_id) {
+        if matches!(
+            method,
+            methods::VOICE_ELIGIBILITY
+                | methods::START_VOICE
+                | methods::OWN_VOICE
+                | methods::APPEND_VOICE
+                | methods::MUTE_VOICE
+                | methods::STOP_VOICE
+        ) && params
+            .get("targetDeviceId")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v != self.engine_info.device_id)
+        {
             return Err(RpcError::Failed("voice unavailable: remoteHost".into()));
         }
         // Origin comes from the engine-injected MCP server, not tool arguments.
         // The manager is authority on whether that runtime owns voice. Until
         // G1 is proven, no voice-origin command may start a paid delegation.
-        if matches!(method, methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE)
-            && params.get("originChatId").and_then(|v|v.as_str()).is_some_and(|origin|self.voice.restricts_origin(origin)) {
-            return Err(RpcError::Failed("voice delegation unavailable: creditExclusionUnverified".into()));
+        if matches!(
+            method,
+            methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE
+        ) && params
+            .get("originChatId")
+            .and_then(|v| v.as_str())
+            .is_some_and(|origin| self.voice.restricts_origin(origin))
+        {
+            return Err(RpcError::Failed(
+                "voice delegation unavailable: creditExclusionUnverified".into(),
+            ));
         }
-        if matches!(method, methods::SIGN_OUT | methods::SELECT_ORG | methods::COMPLETE_AGENT_LOGIN) { self.voice.retire(); }
+        if matches!(
+            method,
+            methods::SIGN_OUT | methods::SELECT_ORG | methods::COMPLETE_AGENT_LOGIN
+        ) {
+            self.voice.retire();
+        }
         if AuthRpc::handles(method) {
             return AuthRpc::new(self.auth()?.clone())
                 .handle(method, params)
@@ -1724,41 +1750,75 @@ impl RpcService for EngineRpc {
         }
         match method {
             methods::VOICE_TASK_POLICY => {
-                let p:ChatParams=parse_params(params)?;
-                RpcReply::value(&serde_json::json!({"includedOnly":self.voice.restricts_origin(&p.chat_id),"deviceId":self.engine_info.device_id}))
+                let p: ChatParams = parse_params(params)?;
+                RpcReply::value(
+                    &serde_json::json!({"includedOnly":self.voice.restricts_origin(&p.chat_id),"deviceId":self.engine_info.device_id}),
+                )
             }
             methods::VOICE_ELIGIBILITY | methods::START_VOICE => {
                 let p: zeron_proto::voice::StartVoice = parse_params(params)?;
-                let chat = self.workspace.chat(&p.chat_id).map_err(|e| RpcError::Failed(e.to_string()))?;
+                let chat = self
+                    .workspace
+                    .chat(&p.chat_id)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
                 let mut eligibility = self.voice.eligibility();
-                if p.host_device_id != self.engine_info.device_id || chat.as_ref().is_some_and(|c| c.device_id != self.engine_info.device_id) {
+                if p.host_device_id != self.engine_info.device_id
+                    || chat
+                        .as_ref()
+                        .is_some_and(|c| c.device_id != self.engine_info.device_id)
+                {
                     eligibility.reason = Some(zeron_proto::voice::VoiceRejection::RemoteHost);
                 } else if chat.is_none() {
                     eligibility.reason = Some(zeron_proto::voice::VoiceRejection::Unsupported);
-                } else if chat.as_ref().and_then(|c| c.config.as_ref()).map(|c| c.harness) != Some(HarnessId::Codex) {
+                } else if chat
+                    .as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .map(|c| c.harness)
+                    != Some(HarnessId::Codex)
+                {
                     eligibility.reason = Some(zeron_proto::voice::VoiceRejection::WrongHarness);
                 }
-                if method == methods::START_VOICE { return Err(RpcError::Failed(format!("voice unavailable: {:?}", eligibility.reason.unwrap()))); }
+                if method == methods::START_VOICE {
+                    return Err(RpcError::Failed(format!(
+                        "voice unavailable: {:?}",
+                        eligibility.reason.unwrap()
+                    )));
+                }
                 RpcReply::value(&eligibility)
             }
             methods::OWN_VOICE => {
                 let lease: zeron_proto::voice::VoiceLease = parse_params(params)?;
-                let owner = self.voice.own(lease).map_err(|reason| RpcError::Failed(format!("{reason:?}")))?;
-                Ok(RpcReply::Stream(futures::stream::unfold(owner, |mut owner| async move {
-                    owner.next().await.map(|event| (serde_json::to_value(event).unwrap(), owner))
-                }).boxed()))
+                let owner = self
+                    .voice
+                    .own(lease)
+                    .map_err(|reason| RpcError::Failed(format!("{reason:?}")))?;
+                Ok(RpcReply::Stream(
+                    futures::stream::unfold(owner, |mut owner| async move {
+                        owner
+                            .next()
+                            .await
+                            .map(|event| (serde_json::to_value(event).unwrap(), owner))
+                    })
+                    .boxed(),
+                ))
             }
             methods::MUTE_VOICE => {
                 let p: zeron_proto::voice::MuteVoice = parse_params(params)?;
-                self.voice.mute(&p.lease, p.muted).map_err(|r| RpcError::Failed(format!("{r:?}")))?;
+                self.voice
+                    .mute(&p.lease, p.muted)
+                    .map_err(|r| RpcError::Failed(format!("{r:?}")))?;
                 RpcReply::value(&serde_json::json!({"ok":true}))
             }
             methods::STOP_VOICE => {
                 let lease: zeron_proto::voice::VoiceLease = parse_params(params)?;
-                self.voice.stop(&lease).map_err(|r| RpcError::Failed(format!("{r:?}")))?;
+                self.voice
+                    .stop(&lease)
+                    .map_err(|r| RpcError::Failed(format!("{r:?}")))?;
                 RpcReply::value(&serde_json::json!({"ok":true}))
             }
-            methods::APPEND_VOICE => Err(RpcError::Failed("voice unavailable: creditExclusionUnverified".into())),
+            methods::APPEND_VOICE => Err(RpcError::Failed(
+                "voice unavailable: creditExclusionUnverified".into(),
+            )),
             methods::ENGINE_INFO => RpcReply::value(&self.engine_info),
             methods::ENGINE_READY => RpcReply::value(&serde_json::json!({ "ready": true })),
             methods::LIST_HARNESSES => RpcReply::value(&self.registry.descriptors()),
@@ -1934,7 +1994,11 @@ impl RpcService for EngineRpc {
                         "Fork must be created on the source device".into(),
                     ));
                 }
-                if let Some(existing) = self.workspace.chat(&p.chat_id).map_err(|e| RpcError::Failed(e.to_string()))? {
+                if let Some(existing) = self
+                    .workspace
+                    .chat(&p.chat_id)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?
+                {
                     if existing.parent_chat_id.as_deref() == Some(parent_chat_id.as_str()) {
                         return RpcReply::value(&existing);
                     }
@@ -3455,6 +3519,30 @@ impl RpcService for EngineRpc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn voice_owner_is_shared_across_services_and_shutdown_retires_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let core = crate::EngineCore::assemble_with_profile(
+            crate::EngineProfile::local(temp.path()).unwrap(),
+            std::sync::Arc::new(HarnessRegistry::new()),
+            HarnessId::Codex,
+            None,
+        )
+        .unwrap();
+        let first = core.rpc_service();
+        let second = core.rpc_service();
+        let lease = first.voice.reserve("chat").unwrap();
+        assert!(second.voice.restricts_origin("chat"));
+        assert_eq!(
+            second.voice.reserve("other").unwrap_err(),
+            zeron_proto::voice::VoiceRejection::Busy
+        );
+        let owner = second.voice.own(lease).unwrap();
+        core.sessions.shutdown().await;
+        assert!(!first.voice.restricts_origin("chat"));
+        drop(owner);
+    }
 
     // Each subprocess has private HOME/PATH/overrides, avoiding process-global test races.
     #[cfg(unix)]

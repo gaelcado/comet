@@ -31,7 +31,11 @@ pub enum HarnessError {
     #[error("harness protocol error: {0}")]
     Protocol(String),
     #[error("JSON-RPC rejection {code}: {message}")]
-    Rpc { code: i64, message: String, data: Option<serde_json::Value> },
+    Rpc {
+        code: i64,
+        message: String,
+        data: Option<serde_json::Value>,
+    },
     /// A managed adapter install (npm) failed; carries npm's own output so
     /// the cause is diagnosable from the chat error alone.
     #[error("adapter install failed: {0}")]
@@ -163,8 +167,11 @@ pub trait Harness: Send + Sync {
     }
 
     /// Bootstrap without a synthetic user prompt; providers opt in explicitly.
-    async fn start_idle(&self, _request: RunRequest, _controls: RunControls)
-        -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
+    async fn start_idle(
+        &self,
+        _request: RunRequest,
+        _controls: RunControls,
+    ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
         Err(HarnessError::Protocol("idle runtime unsupported".into()))
     }
 

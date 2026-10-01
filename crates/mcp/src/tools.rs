@@ -604,7 +604,7 @@ impl Tools {
             );
         }
         let harnesses = self.zeron.harnesses().await?;
-        let included_only=self.zeron.voice_included_only().await?;
+        let included_only = self.zeron.voice_included_only().await?;
         let harness = match args.harness.as_deref() {
             Some(raw) => {
                 let id: HarnessId = parse_enum("harness", raw).map_err(anyhow::Error::msg)?;
@@ -620,7 +620,10 @@ impl Tools {
             None if included_only => HarnessId::Codex,
             None => default_harness(&harnesses)?,
         };
-        anyhow::ensure!(!included_only || harness==HarnessId::Codex,"Voice-created chats require Codex with ChatGPT subscription authentication");
+        anyhow::ensure!(
+            !included_only || harness == HarnessId::Codex,
+            "Voice-created chats require Codex with ChatGPT subscription authentication"
+        );
         if let Some(model) = args.model.as_deref()
             && let Ok(models) = self.zeron.models(harness).await
             && !models.is_empty()

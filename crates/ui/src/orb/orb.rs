@@ -490,7 +490,7 @@ fn sanitize_speed(speed: f32) -> f32 {
 
 fn sanitize_fps(fps: f32) -> f32 {
     if fps.is_finite() {
-        fps.clamp(1.0, 240.0)
+        fps.clamp(1.0, 30.0)
     } else {
         DEFAULT_TARGET_FPS
     }

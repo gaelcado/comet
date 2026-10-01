@@ -656,8 +656,11 @@ impl Harness for CodexHarness {
         self.run_with_mode(request, controls, false, false).await
     }
 
-    async fn start_idle(&self, request: RunRequest, controls: RunControls)
-        -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
+    async fn start_idle(
+        &self,
+        request: RunRequest,
+        controls: RunControls,
+    ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
         self.run_with_mode(request, controls, false, true).await
     }
 
@@ -1184,24 +1187,24 @@ async fn run_session(session: Session) {
     }
 
     let mut router = TurnRouter::default();
-    let _voice_bridge = realtime.map(|controls| realtime::attach(client.clone(), thread_id.clone(), controls));
+    let _voice_bridge =
+        realtime.map(|controls| realtime::attach(client.clone(), thread_id.clone(), controls));
     if !idle {
-    match start_turn(&client, turn_params(&request.prompt)).await {
-        Ok(id) => router.adopt_started(id),
-        Err(e) => {
-            let _ = event_tx
-                .send(Ok(AgentEvent::Done {
-                    status: DoneStatus::Errored,
-                    result: None,
-                    error: Some(e.to_string()),
-                    session_id: Some(thread_id.clone()),
-                }))
-                .await;
-            shutdown_child(&mut child, kill_grace).await;
-            return;
+        match start_turn(&client, turn_params(&request.prompt)).await {
+            Ok(id) => router.adopt_started(id),
+            Err(e) => {
+                let _ = event_tx
+                    .send(Ok(AgentEvent::Done {
+                        status: DoneStatus::Errored,
+                        result: None,
+                        error: Some(e.to_string()),
+                        session_id: Some(thread_id.clone()),
+                    }))
+                    .await;
+                shutdown_child(&mut child, kill_grace).await;
+                return;
+            }
         }
-    }
-
     }
 
     // ---- main loop --------------------------------------------------------

@@ -2102,12 +2102,14 @@ impl Shell {
         let transcript = cx.new(|cx| Transcript::new(state.clone(), cx));
         transcript.update(cx, |transcript, _| transcript.retain_for_route_exit());
         let composer = cx.new(|cx| Composer::new(state.clone(), cx));
-        composer.update(cx,|composer,_|composer.voice_supported=true);
-        let voice=cx.new(|_|crate::voice::VoiceController::default());
-        let voice_surface=cx.new(|cx|crate::voice_surface::VoiceSurface::new(voice.clone(),composer.clone(),cx));
-        let voice_observation=cx.observe(&voice,|this:&mut Shell,voice,cx| {
-            let hidden=voice.read(cx).phase.replaces_composer();
-            this.composer.update(cx,|composer,_|composer.suspend_for_voice(hidden));
+        composer.update(cx, |composer, _| composer.voice_supported = true);
+        let voice = cx.new(|_| crate::voice::VoiceController::default());
+        let voice_surface = cx
+            .new(|cx| crate::voice_surface::VoiceSurface::new(voice.clone(), composer.clone(), cx));
+        let voice_observation = cx.observe(&voice, |this: &mut Shell, voice, cx| {
+            let hidden = voice.read(cx).phase.replaces_composer();
+            this.composer
+                .update(cx, |composer, _| composer.suspend_for_voice(hidden));
             cx.notify();
         });
         let links = Self::session_links(None, cx);
@@ -2120,9 +2122,13 @@ impl Shell {
             let transcript = transcript.clone();
             move |this: &mut Shell, _, event: &ComposerEvent, cx| match event {
                 ComposerEvent::StartVoice => {
-                    let state=this.state.read(cx);
-                    if let (Some(engine),Some(chat))=(state.engine().cloned(),state.selected_chat_row().cloned()) {
-                        this.voice.update(cx,|voice,cx|voice.begin(engine,chat.id,chat.device_id,cx));
+                    let state = this.state.read(cx);
+                    if let (Some(engine), Some(chat)) =
+                        (state.engine().cloned(), state.selected_chat_row().cloned())
+                    {
+                        this.voice.update(cx, |voice, cx| {
+                            voice.begin(engine, chat.id, chat.device_id, cx)
+                        });
                     }
                 }
                 ComposerEvent::WorkspaceCommand(command) => {
@@ -2273,7 +2279,10 @@ impl Shell {
             sidebar_pane,
             transcript,
             composer,
-            voice, voice_surface, voice_was_visible:false, _voice_observation:voice_observation,
+            voice,
+            voice_surface,
+            voice_was_visible: false,
+            _voice_observation: voice_observation,
             // Seed with the compact composer stack's rough height so the
             // first frame's clearance isn't zero (the measure corrects it).
             bottom_stack: std::rc::Rc::new(std::cell::Cell::new(120.0)),
@@ -2509,8 +2518,11 @@ impl Shell {
     // ---- splash ----
 
     fn on_state_changed(&mut self, state: &Entity<AppState>, cx: &mut Context<Self>) {
-        if self.voice.read(cx).chat_id.is_some() && (self.voice.read(cx).chat_id != state.read(cx).selected_chat || state.read(cx).engine().is_none()) {
-            self.voice.update(cx,|voice,cx|voice.cancel(cx));
+        if self.voice.read(cx).chat_id.is_some()
+            && (self.voice.read(cx).chat_id != state.read(cx).selected_chat
+                || state.read(cx).engine().is_none())
+        {
+            self.voice.update(cx, |voice, cx| voice.cancel(cx));
         }
         self.prune_file_explorers(cx);
         self.refresh_harness_update_watch(cx);
@@ -4072,7 +4084,8 @@ impl Shell {
     ) {
         let was_active = self.resolved_right_active(cx) == surface;
         let restore_focus = was_active && self.navigation_focus.in_right(window, cx);
-        self.navigation_focus.remember(&self.shortcut_focus, window, cx);
+        self.navigation_focus
+            .remember(&self.shortcut_focus, window, cx);
         let key = self.panel_key(cx);
         let files = match surface {
             RightSurface::File(id) => self.file_surfaces.get(&id).cloned(),
@@ -7717,13 +7730,19 @@ impl Shell {
         use zeron_proto::ConnectivityState as S;
         let conn = self.state.read(cx).connectivity.clone();
         let selected = self.state.read(cx).selected_chat.as_deref();
-        let chat = conn.chats.iter()
+        let chat = conn
+            .chats
+            .iter()
             .find(|c| Some(c.chat_id.as_str()) == selected);
         let chat_state = chat.map(|c| c.sync_state);
         let (label, glyph): (SharedString, AnyElement) = match conn.state {
             _ if chat_state == Some(zeron_proto::ChatSyncState::StorageError) => (
                 "Changes could not be saved".into(),
-                div().size(px(5.0)).rounded_full().bg(theme.warning).into_any_element(),
+                div()
+                    .size(px(5.0))
+                    .rounded_full()
+                    .bg(theme.warning)
+                    .into_any_element(),
             ),
             S::Disabled => return None,
             S::Connected => {
@@ -7731,9 +7750,13 @@ impl Shell {
                 (
                     caption.into(),
                     loaders::mini_mono_spinner(
-                        "chat-sync-spinner", 2.0, theme.text_muted,
-                        self.sidebar_pane.entity_id(), cx,
-                    ).into_any_element(),
+                        "chat-sync-spinner",
+                        2.0,
+                        theme.text_muted,
+                        self.sidebar_pane.entity_id(),
+                        cx,
+                    )
+                    .into_any_element(),
                 )
             }
             S::Offline => (
@@ -7985,7 +8008,6 @@ impl Shell {
 
         // t3code's archived accordion, below the active list.
         let archived_section = self.render_archived_section(theme, cx);
-
 
         // The space filter lives ABOVE the scroll region (fixed) so its
         // dropdown can float without being clipped by the list's overflow.
@@ -10214,12 +10236,19 @@ impl Shell {
                 let measured_has_composer = self.bottom_stack_has_composer.clone();
                 let contains_composer = (has_spaces || no_project || has_appshots) && has_selection;
                 let composer = self.composer.clone();
-                let voice_visible=self.voice.read(cx).phase.replaces_composer();
-                self.voice_surface.update(cx,|surface,cx|surface.set_visible(voice_visible,cx));
-                if voice_visible!=self.voice_was_visible {
-                    self.voice_was_visible=voice_visible;
-                    let focus=if voice_visible { self.voice_surface.read(cx).focus_handle() } else { self.composer.focus_handle(cx) };
-                    if window.is_window_active() { window.focus(&focus,cx); }
+                let voice_visible = self.voice.read(cx).phase.replaces_composer();
+                self.voice_surface
+                    .update(cx, |surface, cx| surface.set_visible(voice_visible, cx));
+                if voice_visible != self.voice_was_visible {
+                    self.voice_was_visible = voice_visible;
+                    let focus = if voice_visible {
+                        self.voice_surface.read(cx).focus_handle()
+                    } else {
+                        self.composer.focus_handle(cx)
+                    };
+                    if window.is_window_active() {
+                        window.focus(&focus, cx);
+                    }
                 }
                 div()
                     .flex_none()
@@ -10231,7 +10260,11 @@ impl Shell {
                             move |bounds, window, cx| {
                                 // Reserve the destination footprint, never the animated height.
                                 let next_height = f32::from(bounds.size.height)
-                                    + if voice_visible { 0.0 } else { composer.read(cx).dock_clearance_correction() };
+                                    + if voice_visible {
+                                        0.0
+                                    } else {
+                                        composer.read(cx).dock_clearance_correction()
+                                    };
                                 let changed = (measured.get() - next_height).abs() > 0.5
                                     || measured_has_composer.get() != contains_composer;
                                 measured.set(next_height);
@@ -10249,31 +10282,49 @@ impl Shell {
                     .when(has_spaces || no_project || has_appshots, |el| {
                         let composer_opacity = self.composer_dock.borrow().opacity();
                         if voice_visible {
-                            el.child(div().id("persistent-voice").relative().w(px(composer_width)).mx_auto()
-                                .child(self.voice_surface.clone()).children(self.render_jump_to_bottom(cx)))
-                        } else {
-                        el.child(
-                            crate::composer_dock::docked_composer(
+                            el.child(
                                 div()
-                                    .id("persistent-composer")
+                                    .id("persistent-voice")
                                     .relative()
                                     .w(px(composer_width))
-                                    .opacity(composer_opacity)
                                     .mx_auto()
-                                    .child(self.composer.clone())
-                                    .children(if has_selection {
-                                        self.render_jump_to_bottom(cx)
-                                    } else {
-                                        None
-                                    }),
-                                self.composer_dock.clone(),
-                                self.viewport_height,
-                                self.reduced_motion,
-                                frame_time,
+                                    .child(self.voice_surface.clone())
+                                    .children(self.render_jump_to_bottom(cx)),
                             )
-                            .reserve_terminal(terminal_geometry.clone()),
-                        )
-                        .when(self.voice.read(cx).reason.is_some(),|el|el.child(div().text_xs().text_color(theme.text).mx_auto().child(self.voice.read(cx).reason_text())))
+                        } else {
+                            el.child(
+                                crate::composer_dock::docked_composer(
+                                    div()
+                                        .id("persistent-composer")
+                                        .relative()
+                                        .w(px(composer_width))
+                                        .opacity(composer_opacity)
+                                        .mx_auto()
+                                        .child(self.composer.clone())
+                                        .children(if has_selection {
+                                            self.render_jump_to_bottom(cx)
+                                        } else {
+                                            None
+                                        }),
+                                    self.composer_dock.clone(),
+                                    self.viewport_height,
+                                    self.reduced_motion,
+                                    frame_time,
+                                )
+                                .reserve_terminal(terminal_geometry.clone()),
+                            )
+                            .when(
+                                self.voice.read(cx).reason.is_some(),
+                                |el| {
+                                    el.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.text)
+                                            .mx_auto()
+                                            .child(self.voice.read(cx).reason_text()),
+                                    )
+                                },
+                            )
                         }
                     })
                     .child(self.render_terminal_container(terminal_geometry, window, cx))
@@ -11157,22 +11208,20 @@ impl Shell {
                 // up the carve-out. The bubble dispatch reaches the chip
                 // before the strip, and the handler consumes the drag, so
                 // the two never double-apply.
-                .on_drop::<RightTabDrag>(cx.listener(
-                    move |this, payload: &RightTabDrag, _, cx| {
-                        if payload.panel_key != this.panel_key(cx) {
-                            this.right_tab_drag = None;
-                            cx.notify();
-                            return;
-                        }
-                        let to = this
-                            .right_tab_drag
-                            .as_ref()
-                            .map(|d| d.over)
-                            .unwrap_or(payload.from);
+                .on_drop::<RightTabDrag>(cx.listener(move |this, payload: &RightTabDrag, _, cx| {
+                    if payload.panel_key != this.panel_key(cx) {
                         this.right_tab_drag = None;
-                        this.reorder_right_tabs(payload.from, to, cx);
-                    },
-                ))
+                        cx.notify();
+                        return;
+                    }
+                    let to = this
+                        .right_tab_drag
+                        .as_ref()
+                        .map(|d| d.over)
+                        .unwrap_or(payload.from);
+                    this.right_tab_drag = None;
+                    this.reorder_right_tabs(payload.from, to, cx);
+                }))
                 .child(
                     // Leading slot: the surface's icon.
                     div()
@@ -13038,17 +13087,26 @@ mod tests {
 
         chat.sync_state = S::Waiting;
         chat.connected = false;
-        assert_eq!(chat_sync_pill_caption(&chat), Some("Sync queued — changes are saved"));
+        assert_eq!(
+            chat_sync_pill_caption(&chat),
+            Some("Sync queued — changes are saved")
+        );
         chat.sync_state = S::Connecting;
         assert_eq!(chat_sync_pill_caption(&chat), Some("Syncing…"));
         chat.sync_state = S::Offline;
-        assert_eq!(chat_sync_pill_caption(&chat), Some("Offline — changes are saved"));
+        assert_eq!(
+            chat_sync_pill_caption(&chat),
+            Some("Offline — changes are saved")
+        );
 
         // Real pending pushes remain visible even with a live room.
         chat.connected = true;
         chat.pending_pushes = 1;
         chat.sync_state = S::Waiting;
-        assert_eq!(chat_sync_pill_caption(&chat), Some("Sync queued — changes are saved"));
+        assert_eq!(
+            chat_sync_pill_caption(&chat),
+            Some("Sync queued — changes are saved")
+        );
         chat.sync_state = S::Connecting;
         assert_eq!(chat_sync_pill_caption(&chat), Some("Syncing…"));
     }
@@ -14546,7 +14604,8 @@ mod exit_regressions {
                     settings::update(settings::SavePolicy::Immediate, cx, |settings| {
                         settings.wallpaper_folder = Some(dir.path().join("wallpapers"));
                         settings.wallpaper_source = Some(dir.path().join("wallpapers/current.png"));
-                        settings.wallpaper_history = vec![dir.path().join("wallpapers/current.png")];
+                        settings.wallpaper_history =
+                            vec![dir.path().join("wallpapers/current.png")];
                         settings.window_geometry = geometry;
                         settings.open_web_links_in_zeron = open_links_in_zeron;
                         settings.terminal_font_family = terminal_family.clone();
@@ -14568,8 +14627,14 @@ mod exit_regressions {
                         shell.settings.terminal_height = 300.0 + step as f32;
                         shell.schedule_save(cx);
                         let current = settings::current(cx);
-                        assert_eq!(current.wallpaper_history, vec![dir.path().join("wallpapers/current.png")]);
-                        assert_eq!(current.wallpaper_folder, Some(dir.path().join("wallpapers")));
+                        assert_eq!(
+                            current.wallpaper_history,
+                            vec![dir.path().join("wallpapers/current.png")]
+                        );
+                        assert_eq!(
+                            current.wallpaper_folder,
+                            Some(dir.path().join("wallpapers"))
+                        );
                         assert_eq!(
                             current.wallpaper_source,
                             Some(dir.path().join("wallpapers/current.png"))
@@ -14597,7 +14662,10 @@ mod exit_regressions {
                     settings::flush(cx);
                     let loaded = settings::UiSettings::load(dir.path());
                     assert_eq!(loaded.window_geometry, geometry);
-                    assert_eq!(loaded.wallpaper_history, vec![dir.path().join("wallpapers/current.png")]);
+                    assert_eq!(
+                        loaded.wallpaper_history,
+                        vec![dir.path().join("wallpapers/current.png")]
+                    );
                     assert_eq!(loaded.wallpaper_folder, Some(dir.path().join("wallpapers")));
                     assert_eq!(
                         loaded.wallpaper_source,

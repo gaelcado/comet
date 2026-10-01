@@ -15,9 +15,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use futures::StreamExt;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::codec::{FramedRead, LinesCodec};
 
 use crate::HarnessError;
 use crate::process::{ChildStdin, ChildStdout};
@@ -198,13 +200,22 @@ impl RpcClient {
             Some(params) => json!({ "jsonrpc": "2.0", "method": method, "params": params }),
             None => json!({ "jsonrpc": "2.0", "method": method }),
         };
-        let _ = self.writer.try_send(line.to_string());
+        self.send_control(line.to_string());
+    }
+
+    fn send_control(&self, line: String) {
+        if self.writer.try_send(line).is_err() {
+            // Never silently lose approvals or cancellation. Retire the peer
+            // on control overflow; both I/O loops observe this terminal flag.
+            self.closed.store(true, Ordering::Release);
+            self.pending.lock().expect("pending lock").clear();
+        }
     }
 
     /// Answer a server→client request.
     pub fn respond(&self, id: &Value, result: Value) {
         let line = json!({ "jsonrpc": "2.0", "id": id, "result": result });
-        let _ = self.writer.try_send(line.to_string());
+        self.send_control(line.to_string());
     }
 
     /// Reject a server→client request (e.g. unknown method).
@@ -214,7 +225,7 @@ impl RpcClient {
             "id": id,
             "error": { "code": code, "message": message },
         });
-        let _ = self.writer.try_send(line.to_string());
+        self.send_control(line.to_string());
     }
 }
 
@@ -237,9 +248,14 @@ async fn write_loop(
     pending: Pending,
     closed: Arc<AtomicBool>,
 ) {
+    let mut health = tokio::time::interval(std::time::Duration::from_millis(100));
     loop {
+        if closed.load(Ordering::Acquire) {
+            break;
+        }
         let line = tokio::select! {
             biased;
+            _ = health.tick() => continue,
             line = control.recv(), if !control.is_closed() || !control.is_empty() => line,
             line = media.recv(), if !media.is_closed() || !media.is_empty() => line,
             else => break,
@@ -250,7 +266,10 @@ async fn write_loop(
             stdin.write_all(b"\n").await?;
             stdin.flush().await
         };
-        if write.await.is_err() {
+        if tokio::time::timeout(std::time::Duration::from_secs(10), write)
+            .await
+            .map_or(true, |result| result.is_err())
+        {
             closed.store(true, Ordering::Release);
             pending.lock().expect("pending lock").clear();
             break;
@@ -320,10 +339,23 @@ async fn read_loop(
         pending: pending.clone(),
         closed: closed.clone(),
     };
-    let mut lines = BufReader::new(stdout).lines();
+    // Bound allocation before parsing, including a peer without a newline.
+    let mut lines = FramedRead::new(stdout, LinesCodec::new_with_max_length(8 * 1024 * 1024));
     // A read error ends the loop like EOF: either way the child's stdout is
     // unusable, pending requests must fail, and the session loop must know.
-    while let Ok(Some(line)) = lines.next_line().await {
+    let mut health = tokio::time::interval(std::time::Duration::from_millis(100));
+    loop {
+        if closed.load(Ordering::Acquire) {
+            break;
+        }
+        let result = tokio::select! {
+            biased;
+            _ = health.tick() => continue,
+            result = lines.next() => result,
+        };
+        let Some(Ok(line)) = result else {
+            break;
+        };
         let line = line.trim();
         if let Some(url) =
             line.strip_prefix("Open the following link to authenticate the ACP server: ")
@@ -378,8 +410,8 @@ async fn read_loop(
                         .map(Value::take)
                         .unwrap_or(Value::Null),
                 };
-                if tx.send(incoming).await.is_err() {
-                    return;
+                if tx.try_send(incoming).is_err() {
+                    break;
                 }
             }
             // Notification.
@@ -402,8 +434,8 @@ async fn read_loop(
                         continue;
                     }
                 }
-                if tx.send(incoming).await.is_err() {
-                    return;
+                if tx.try_send(incoming).is_err() {
+                    break;
                 }
             }
             (None, None) => {}
@@ -481,14 +513,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn control_overflow_retires_peer_and_fails_pending() {
+        let (writer, _control) = mpsc::channel(1);
+        let client = RpcClient {
+            next_id: Arc::new(AtomicI64::new(0)),
+            pending: Arc::default(),
+            writer,
+            media_writer: mpsc::channel(8).0,
+            closed: Arc::new(AtomicBool::new(false)),
+            voice_router: Arc::default(),
+        };
+        let pending = client.request_now("pending", json!({}));
+        client.respond(&json!(7), json!({"approved":true}));
+        assert!(client.is_closed());
+        assert!(pending.await.is_err());
+        assert!(client.pending.lock().unwrap().is_empty());
+        assert!(client.request("next", json!({})).await.is_err());
+    }
+
+    #[tokio::test]
     async fn media_flood_is_bounded_and_stop_has_separate_capacity() {
         let (writer, mut control) = mpsc::channel(256);
         let (media_writer, media) = mpsc::channel(8);
-        let client = RpcClient { next_id: Arc::new(AtomicI64::new(0)),
-            pending: Arc::default(), writer, media_writer,
-            closed: Arc::new(AtomicBool::new(false)), voice_router: Arc::default() };
+        let client = RpcClient {
+            next_id: Arc::new(AtomicI64::new(0)),
+            pending: Arc::default(),
+            writer,
+            media_writer,
+            closed: Arc::new(AtomicBool::new(false)),
+            voice_router: Arc::default(),
+        };
         let mut requests = Vec::new();
-        for _ in 0..8 { requests.push(client.request_media("append", json!({}))); }
+        for _ in 0..8 {
+            requests.push(client.request_media("append", json!({})));
+        }
         assert_eq!(media.len(), 8);
         assert!(client.request_media("append", json!({})).await.is_err());
         let stop = client.request_now("stop", json!({}));

@@ -160,19 +160,38 @@ impl Zeron {
     /// Unary call with one reconnect on a closed socket (the engine
     /// restarted underneath a long-lived agent session).
     pub async fn voice_included_only(&self) -> anyhow::Result<bool> {
-        let Some(origin)=&self.origin.chat_id else { return Ok(false); };
-        match self.call(methods::VOICE_TASK_POLICY,json!({"chatId":origin})).await {
-            Ok(policy)=>Ok(policy.get("includedOnly").and_then(Value::as_bool).unwrap_or(false)),
+        let Some(origin) = &self.origin.chat_id else {
+            return Ok(false);
+        };
+        match self
+            .call(methods::VOICE_TASK_POLICY, json!({"chatId":origin}))
+            .await
+        {
+            Ok(policy) => Ok(policy
+                .get("includedOnly")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)),
             // Older engines cannot create voice sessions, so normal MCP
             // retains its prior defaults on an unknown method.
-            Err(error) if error.downcast_ref::<zeron_rpc::RpcError>().is_some_and(|e|matches!(e,zeron_rpc::RpcError::UnknownMethod(_)))=>Ok(false),
-            Err(error)=>Err(error),
+            Err(error)
+                if error
+                    .downcast_ref::<zeron_rpc::RpcError>()
+                    .is_some_and(|e| matches!(e, zeron_rpc::RpcError::UnknownMethod(_))) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
         }
     }
 
     pub async fn call(&self, method: &str, mut params: Value) -> anyhow::Result<Value> {
-        if matches!(method, methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE) {
-            if let Some(origin)=&self.origin.chat_id { params["originChatId"]=json!(origin); }
+        if matches!(
+            method,
+            methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE
+        ) {
+            if let Some(origin) = &self.origin.chat_id {
+                params["originChatId"] = json!(origin);
+            }
         }
 
         let client = self.client().await?;

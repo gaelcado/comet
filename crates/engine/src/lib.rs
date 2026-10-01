@@ -15,7 +15,6 @@ use zeron_rpc::{RpcError, RpcReply, RpcService, methods};
 
 use zeron_sync::DocsStore;
 
-pub mod voice;
 pub mod agent_accounts;
 pub mod auth;
 pub mod change_requests;
@@ -41,6 +40,7 @@ pub mod terminals;
 pub mod titles;
 mod transcript_history;
 pub mod uploads;
+pub mod voice;
 pub mod workspace_files;
 pub mod workspace_host;
 

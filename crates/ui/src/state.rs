@@ -123,7 +123,9 @@ pub enum EngineMode {
 trait EngineBackend: Send + Sync {
     fn client(&self) -> &RpcClient;
     fn mode(&self) -> EngineMode;
-    async fn media_client(&self) -> Result<RpcClient, RpcError> { Err(RpcError::Failed("voice media unavailable".into())) }
+    async fn media_client(&self) -> Result<RpcClient, RpcError> {
+        Err(RpcError::Failed("voice media unavailable".into()))
+    }
     /// Graceful teardown (drains runs / flushes docs for the in-process engine).
     async fn shutdown(&self);
 }
@@ -142,7 +144,9 @@ struct InProcessEngine {
 
 #[async_trait]
 impl EngineBackend for InProcessEngine {
-    async fn media_client(&self) -> Result<RpcClient, RpcError> { Ok(memory_client(self.service.clone())) }
+    async fn media_client(&self) -> Result<RpcClient, RpcError> {
+        Ok(memory_client(self.service.clone()))
+    }
     fn client(&self) -> &RpcClient {
         &self.client
     }
@@ -247,7 +251,9 @@ struct RemoteEngine {
 
 #[async_trait]
 impl EngineBackend for RemoteEngine {
-    async fn media_client(&self) -> Result<RpcClient, RpcError> { connect_ws(&self.url).await }
+    async fn media_client(&self) -> Result<RpcClient, RpcError> {
+        connect_ws(&self.url).await
+    }
     fn client(&self) -> &RpcClient {
         &self.client
     }
@@ -349,7 +355,8 @@ impl EngineHandle {
         //
         // Best-effort — losing the bind race with another engine costs other
         // viewports, not this one.
-        let ipc_task = match zeron_engine::serve_ipc(engine_config.ipc_port, service.clone()).await {
+        let ipc_task = match zeron_engine::serve_ipc(engine_config.ipc_port, service.clone()).await
+        {
             Ok(task) => Some(task),
             Err(err) => {
                 tracing::warn!(
@@ -535,7 +542,9 @@ impl EngineHandle {
         self.inner.mode()
     }
 
-    pub async fn media_client(&self) -> Result<RpcClient, RpcError> { self.inner.media_client().await }
+    pub async fn media_client(&self) -> Result<RpcClient, RpcError> {
+        self.inner.media_client().await
+    }
 
     pub fn engine_info(&self) -> &EngineInfo {
         &self.engine_info
@@ -1262,8 +1271,7 @@ impl AppState {
         if Some(chat.device_id.as_str()) == self.local_device_id.as_deref() {
             return false;
         }
-        if self.connectivity.state == S::Offline
-            || !self.device_online(&chat.device_id, Utc::now())
+        if self.connectivity.state == S::Offline || !self.device_online(&chat.device_id, Utc::now())
         {
             return true;
         }
@@ -2629,7 +2637,10 @@ impl AppState {
         cx.spawn(async move |_, _| {
             if let Err(error) = handle
                 .client()
-                .call(methods::FOCUS_CHAT, serde_json::json!({ "chatId": chat_id }))
+                .call(
+                    methods::FOCUS_CHAT,
+                    serde_json::json!({ "chatId": chat_id }),
+                )
                 .await
             {
                 tracing::debug!(%chat_id, %error, "chat focus sync hint unavailable");

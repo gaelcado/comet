@@ -7887,7 +7887,9 @@ impl Composer {
     /// New chats need a runnable agent, but may target the device's home
     /// directory without a project. Existing chats carry their own run config.
     fn send_blocked(&self, cx: &App) -> bool {
-        if self.voice_suspended { return true; }
+        if self.voice_suspended {
+            return true;
+        }
         if self.queue_edit_finishing {
             return true;
         }
@@ -7935,10 +7937,14 @@ impl Composer {
         cx.notify();
     }
 
-    pub(crate) fn suspend_for_voice(&mut self,suspended:bool) { self.voice_suspended=suspended; }
+    pub(crate) fn suspend_for_voice(&mut self, suspended: bool) {
+        self.voice_suspended = suspended;
+    }
 
     fn on_submit(&mut self, cx: &mut Context<Self>) {
-        if self.voice_suspended { return; }
+        if self.voice_suspended {
+            return;
+        }
         if self
             .input
             .update(cx, |input, cx| input.finish_dictation(true, cx))
@@ -8018,7 +8024,9 @@ impl Composer {
     /// is on), `Mutate createChat` with the `ChatConfig` + cwd, and the model /
     /// reasoning / options on the Run request itself (§1.7).
     fn send(&mut self, text: String, queue: bool, cx: &mut Context<Self>) {
-        if self.voice_suspended { return; }
+        if self.voice_suspended {
+            return;
+        }
         if !self.check_reference_delivery(&text, cx) {
             return;
         }
@@ -10323,12 +10331,20 @@ impl Render for Composer {
             }
         });
 
-        let voice_button=(cfg!(feature="voice-experimental") && self.voice_supported).then(|| {
-            div().id("composer-voice").cursor_pointer().text_xs().px(px(6.0))
-                .tooltip(crate::settings::widgets::text_tooltip("Voice (experimental; included quota only)"))
-                .on_click(cx.listener(|_,_,_,cx|cx.emit(ComposerEvent::StartVoice)))
-                .child("Voice").into_any_element()
-        });
+        let voice_button =
+            (cfg!(feature = "voice-experimental") && self.voice_supported).then(|| {
+                div()
+                    .id("composer-voice")
+                    .cursor_pointer()
+                    .text_xs()
+                    .px(px(6.0))
+                    .tooltip(crate::settings::widgets::text_tooltip(
+                        "Voice (experimental; included quota only)",
+                    ))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ComposerEvent::StartVoice)))
+                    .child("Voice")
+                    .into_any_element()
+            });
         let send_button = self.render_send_button(mode, cx);
         let (voice_t, voice_frame) = self.update_voice(window, cx);
         let dictating = self.input.read(cx).dictation.phase.active();
@@ -11715,6 +11731,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[gpui::test]
+    fn voice_suspension_preserves_draft_and_prevents_submission(cx: &mut gpui::TestAppContext) {
+        let state = cx.new(|_| AppState::new());
+        let composer = cx.new(|cx| Composer::new(state, cx));
+        composer.update(cx, |composer, cx| {
+            composer
+                .input
+                .update(cx, |input, cx| input.set_text("unsent voice draft", cx));
+            composer.suspend_for_voice(true);
+            composer.on_submit(cx);
+            composer.send("must not reach RPC".into(), false, cx);
+            assert_eq!(composer.input.read(cx).text(), "unsent voice draft");
+            assert!(composer.failure.is_none());
+            assert!(composer.send_blocked(cx));
+            composer.suspend_for_voice(false);
+            assert_eq!(composer.input.read(cx).text(), "unsent voice draft");
+        });
     }
 
     /// Issue #406: Enter submits — it must never stop a run. Stop mode only
