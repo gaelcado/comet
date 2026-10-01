@@ -147,3 +147,35 @@ Attribution is retained in the pinned Zui dependency’s `NOTICE`.
 Parakeet TDT 0.6B v3 model weights are by NVIDIA under CC BY 4.0. The optional download uses Ivan Stupakov's INT8 ONNX conversion, pinned to revision `8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce`, with per-file SHA-256 verification. Original: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3. Conversion: https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx. License: https://creativecommons.org/licenses/by/4.0/.
 
 Native runtime dependencies: parakeet-rs 0.3.8 (MIT OR Apache-2.0), ort/ort-sys 2.0.0-rc.13 (MIT OR Apache-2.0), ONNX Runtime 1.28.0 (MIT), cpal 0.17.3 (Apache-2.0), and rubato 0.16.2 (MIT). See `crates/voice/NOTICE.md` for exact conversion provenance, changes, runtime/platform limitations and supported languages. Models are not included in the application bundle.
+
+## Bezel thinking orbs
+
+`crates/ui/src/orb/` was extracted from Bezel
+(https://github.com/clearloop/bezel), revision
+`6141af9c16f7353cdf36003f7404e0a94566a163`, `crates/agent/src/orbs/`.
+This code is compiled as part of Zeron; Bezel is not a dependency.
+The upstream module credits the MIT gpui-thinking-orbs port of Jakub
+Antalik's thinking-orbs. Original attribution comments are retained.
+
+MIT License
+
+Copyright (c) 2026 clearloop
+Copyright (c) 2026 Wing (portions extracted from zeronsh/comet)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
