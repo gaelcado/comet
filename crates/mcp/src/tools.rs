@@ -604,7 +604,7 @@ impl Tools {
             );
         }
         let harnesses = self.zeron.harnesses().await?;
-        let included_only = self.zeron.voice_included_only().await?;
+        let subscription_backed = self.zeron.voice_subscription_backed().await?;
         let harness = match args.harness.as_deref() {
             Some(raw) => {
                 let id: HarnessId = parse_enum("harness", raw).map_err(anyhow::Error::msg)?;
@@ -617,11 +617,11 @@ impl Tools {
                 }
                 id
             }
-            None if included_only => HarnessId::Codex,
+            None if subscription_backed => HarnessId::Codex,
             None => default_harness(&harnesses)?,
         };
         anyhow::ensure!(
-            !included_only || harness == HarnessId::Codex,
+            !subscription_backed || harness == HarnessId::Codex,
             "Voice-created chats require Codex with ChatGPT subscription authentication"
         );
         if let Some(model) = args.model.as_deref()
@@ -1108,6 +1108,7 @@ mod tests {
         writes: Mutex<Vec<(String, Value)>>,
         dispatch_barrier: Option<tokio::sync::Barrier>,
         beta_parent: Option<String>,
+        voice_subscription: bool,
     }
 
     fn stream(item: Value) -> RpcReply {
@@ -1118,6 +1119,9 @@ mod tests {
     impl RpcService for World {
         async fn handle(&self, method: &str, params: Value) -> Result<RpcReply, RpcError> {
             Ok(match method {
+                methods::VOICE_TASK_POLICY if self.voice_subscription => {
+                    RpcReply::Value(json!({"subscriptionBacked": true}))
+                }
                 methods::LOCAL_DEVICE => RpcReply::Value(json!({ "deviceId": "dev-local" })),
                 methods::ENGINE_INFO => RpcReply::Value(json!({
                     "deviceId": "dev-local", "workspaceScope": "local"
@@ -1149,7 +1153,7 @@ mod tests {
                     { "id": "claude-code", "name": "Claude Code", "supportsSteering": true,
                       "steeringMode": "step-boundary", "reasoningLevels": [], "installed": true, "enabled": true },
                     { "id": "codex", "name": "Codex", "supportsSteering": true,
-                      "steeringMode": "turn-boundary", "reasoningLevels": [], "installed": false, "enabled": true }
+                      "steeringMode": "turn-boundary", "reasoningLevels": [], "installed": self.voice_subscription, "enabled": true }
                 ])),
                 methods::LIST_MODELS => RpcReply::Value(json!([
                     { "id": "opus", "label": "Opus" }, { "id": "sonnet", "label": "Sonnet" }
@@ -1332,6 +1336,44 @@ mod tests {
         assert_eq!(writes[1].1["op"], "renameChat");
         assert_eq!(writes[2].0, methods::QUEUE_COMMAND);
         assert_eq!(writes[2].1["command"]["request"]["prompt"], "go");
+    }
+
+    #[tokio::test]
+    async fn voice_delegation_defaults_every_batch_child_to_codex_and_rejects_claude() {
+        let world = Arc::new(World {
+            voice_subscription: true,
+            ..World::default()
+        });
+        let tools = tools(
+            world.clone(),
+            Origin {
+                chat_id: Some("chat-beta-2".into()),
+                device_id: Some("dev-local".into()),
+            },
+        );
+        tools
+            .call(
+                "create_chats",
+                json!({"requests":[{"project":"comet"},{"project":"comet"}]}),
+            )
+            .await
+            .unwrap();
+        let error = tools
+            .call(
+                "create_chat",
+                json!({"project":"comet","harness":"claude-code"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("require Codex"), "{error}");
+        let writes = world.writes.lock().unwrap();
+        assert_eq!(writes.len(), 2);
+        assert!(
+            writes
+                .iter()
+                .all(|(_, p)| p["config"]["harness"] == "codex"
+                    && p["originChatId"] == "chat-beta-2")
+        );
     }
 
     #[tokio::test]

@@ -159,7 +159,7 @@ impl Zeron {
 
     /// Unary call with one reconnect on a closed socket (the engine
     /// restarted underneath a long-lived agent session).
-    pub async fn voice_included_only(&self) -> anyhow::Result<bool> {
+    pub async fn voice_subscription_backed(&self) -> anyhow::Result<bool> {
         let Some(origin) = &self.origin.chat_id else {
             return Ok(false);
         };
@@ -168,7 +168,7 @@ impl Zeron {
             .await
         {
             Ok(policy) => Ok(policy
-                .get("includedOnly")
+                .get("subscriptionBacked")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)),
             // Older engines cannot create voice sessions, so normal MCP
