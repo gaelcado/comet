@@ -38,6 +38,7 @@
 
 pub(crate) mod catalog;
 mod normalize;
+pub mod realtime;
 mod subagents;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -652,7 +653,12 @@ impl Harness for CodexHarness {
         request: RunRequest,
         controls: RunControls,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
-        self.run_with_mode(request, controls, false).await
+        self.run_with_mode(request, controls, false, false).await
+    }
+
+    async fn start_idle(&self, request: RunRequest, controls: RunControls)
+        -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
+        self.run_with_mode(request, controls, false, true).await
     }
 
     async fn run_title(
@@ -666,7 +672,7 @@ impl Harness for CodexHarness {
         request.mcp = None;
         request.model_options.clear();
         request.auto_approve = false;
-        self.run_with_mode(request, controls, true).await
+        self.run_with_mode(request, controls, true, false).await
     }
 }
 
@@ -676,6 +682,7 @@ impl CodexHarness {
         mut request: RunRequest,
         controls: RunControls,
         title_only: bool,
+        idle: bool,
     ) -> Result<BoxStream<'static, Result<AgentEvent, HarnessError>>, HarnessError> {
         let native = command_request(&request.prompt, "")?;
         if native
@@ -747,6 +754,7 @@ impl CodexHarness {
         let (event_tx, event_rx) = mpsc::channel::<Result<AgentEvent, HarnessError>>(256);
         tokio::spawn(run_session(Session {
             title_only,
+            idle,
             child,
             client,
             incoming,
@@ -771,6 +779,7 @@ impl CodexHarness {
 
 struct Session {
     title_only: bool,
+    idle: bool,
     child: Child,
     client: RpcClient,
     incoming: mpsc::Receiver<Incoming>,
@@ -947,6 +956,7 @@ async fn start_turn(client: &RpcClient, params: Value) -> Result<String, Harness
 async fn run_session(session: Session) {
     let Session {
         title_only,
+        idle,
         mut child,
         client,
         mut incoming,
@@ -958,6 +968,7 @@ async fn run_session(session: Session) {
         stderr_tail,
     } = session;
     let RunControls {
+        realtime,
         execution_lease: _execution_lease,
         request_input,
         mut steering,
@@ -1173,6 +1184,8 @@ async fn run_session(session: Session) {
     }
 
     let mut router = TurnRouter::default();
+    let _voice_bridge = realtime.map(|controls| realtime::attach(client.clone(), thread_id.clone(), controls));
+    if !idle {
     match start_turn(&client, turn_params(&request.prompt)).await {
         Ok(id) => router.adopt_started(id),
         Err(e) => {
@@ -1189,6 +1202,8 @@ async fn run_session(session: Session) {
         }
     }
 
+    }
+
     // ---- main loop --------------------------------------------------------
     // Deltas seen per agent-message item, so a model that never streams
     // (item/completed only) still emits its text exactly once.
@@ -1203,7 +1218,7 @@ async fn run_session(session: Session) {
     let mut interrupted = false;
     let mut interrupt_sent = false;
     // A Done has been emitted for the turn currently/last in flight.
-    let mut done_current = false;
+    let mut done_current = idle;
     let mut current_native = command_request(&request.prompt, &thread_id)
         .ok()
         .flatten()

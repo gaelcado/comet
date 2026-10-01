@@ -105,6 +105,9 @@ impl RuntimeConfig {
 }
 
 struct RunHandle {
+    voice: Option<zeron_harness::codex::realtime::RealtimeHandle>,
+    voice_events: Option<mpsc::Receiver<zeron_proto::voice::VoiceEvent>>,
+    voice_active: Arc<std::sync::atomic::AtomicBool>,
     run_id: String,
     steerable: bool,
     runtime_config: RuntimeConfig,
@@ -378,6 +381,21 @@ impl SessionsEngine {
         Ok((replay, rx))
     }
 
+    /// Local experimental bootstrap. No Submit, empty user entry or title request.
+    pub async fn start_idle(&self, chat_id: &str, request: RunRequest) -> Result<String, EngineError> {
+        self.dispatch_inner(chat_id, HarnessId::Codex, request, None, false, true).await
+    }
+
+    pub(crate) fn take_voice_bridge(&self, chat_id: &str) -> Option<(
+        zeron_harness::codex::realtime::RealtimeHandle,
+        mpsc::Receiver<zeron_proto::voice::VoiceEvent>,
+        Arc<std::sync::atomic::AtomicBool>,
+    )> {
+        let mut runs = lock(&self.inner.runs);
+        let run = runs.get_mut(chat_id)?;
+        Some((run.voice.clone()?, run.voice_events.take()?, run.voice_active.clone()))
+    }
+
     /// Start (or route) a run for `chat_id`.
     ///
     /// - The user message entry is written to the doc immediately (id = `message_id`).
@@ -408,7 +426,7 @@ impl SessionsEngine {
         message_id: Option<String>,
         startup_retry: bool,
     ) -> futures::future::BoxFuture<'a, Result<String, EngineError>> {
-        Box::pin(self.dispatch_inner(chat_id, harness_id, request, message_id, startup_retry))
+        Box::pin(self.dispatch_inner(chat_id, harness_id, request, message_id, startup_retry, false))
     }
 
     async fn dispatch_inner(
@@ -418,6 +436,7 @@ impl SessionsEngine {
         mut request: RunRequest,
         mut message_id: Option<String>,
         startup_retry: bool,
+        idle: bool,
     ) -> Result<String, EngineError> {
         // Project-less chats store cwd `~` (the creating device can't know the
         // host's home); expand it here, on the host, where the run spawns.
@@ -438,6 +457,9 @@ impl SessionsEngine {
             )
         });
         if let Some((run_id, steerable, same_runtime, steer_tx, ledger, history_sent)) = routed {
+            if idle {
+                return if same_runtime && harness_id == HarnessId::Codex { Ok(run_id) } else { Err(EngineError::Other("incompatible live runtime".into())) };
+            }
             let user_id = message_id.clone().unwrap_or_else(new_id);
             let mut bootstrap = None;
             let accepted = if steerable && same_runtime {
@@ -528,7 +550,7 @@ impl SessionsEngine {
         let harness = self.inner.registry.resolve(harness_id)?;
         let handle = self.doc_handle(chat_id)?;
         let user_id = message_id.unwrap_or_else(new_id);
-        handle.write_user_message(&user_id, &request.prompt, now_ms())?;
+        if !idle { handle.write_user_message(&user_id, &request.prompt, now_ms())?; }
 
         // Engine-owned resume (zeron sessions.ts:736 — every dispatch read the
         // chat's stored harness session): callers always send `resume: None`;
@@ -581,7 +603,10 @@ impl SessionsEngine {
         };
         let interrupt_token = CancellationToken::new();
         let fork_history_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (voice_handle, realtime, voice_events) = zeron_harness::codex::realtime::channel();
+        let voice_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let controls = RunControls {
+            realtime: (harness_id == HarnessId::Codex).then_some(realtime),
             execution_lease: None,
             request_input,
             steering: steer_rx,
@@ -591,6 +616,9 @@ impl SessionsEngine {
         lock(&self.inner.runs).insert(
             chat_id.to_string(),
             RunHandle {
+                voice: (harness_id == HarnessId::Codex).then_some(voice_handle),
+                voice_events: (harness_id == HarnessId::Codex).then_some(voice_events),
+                voice_active: voice_active.clone(),
                 run_id: run_id.clone(),
                 steerable: harness.supports_steering(),
                 runtime_config: RuntimeConfig::from_request(harness_id, &request),
@@ -603,17 +631,17 @@ impl SessionsEngine {
                 fork_history_sent: fork_history_sent.clone(),
             },
         );
-        self.set_status(chat_id, SessionStatus::Working, true);
+        self.set_status(chat_id, if idle { SessionStatus::Idle } else { SessionStatus::Working }, true);
         // AFTER Working (same causal-order guarantee as the steer path): the
         // lastMessageAt bump must never be observable ahead of the live run.
-        self.inner.note_message(chat_id, &request.prompt);
+        if !idle { self.inner.note_message(chat_id, &request.prompt); }
 
         // Name the chat NOW, off the first prompt — not after the first
         // exchange completes ("called New session for a long time for no
         // reason"; the titler only needs the prompt and skips titled chats;
         // the Done-time call below stays as the retry for a failed
         // generation).
-        if let Some(titles) = self.inner.titles.get() {
+        if !idle && let Some(titles) = self.inner.titles.get() {
             titles.maybe_generate(chat_id, harness_id, &request.prompt, &request.cwd);
         }
 
@@ -628,6 +656,8 @@ impl SessionsEngine {
             engine_rx,
             cancel_rx,
             RunResumeState {
+                idle,
+                voice_active,
                 user_message_id: user_id,
                 resume_injected,
                 startup_retry,
@@ -1714,6 +1744,8 @@ fn finish_segment<'a>(
 /// engine-injected resumes retry — a caller-specified resume fails loudly),
 /// and whether this run already IS the retry (one attempt only).
 struct RunResumeState {
+    idle: bool,
+    voice_active: Arc<std::sync::atomic::AtomicBool>,
     user_message_id: String,
     resume_injected: bool,
     startup_retry: bool,
@@ -1822,7 +1854,7 @@ async fn drive_run(
         None => ProviderSession::Fresh,
         resumed => ProviderSession::Continued(resumed),
     };
-    if let Some(prompt) = inner.fork_history_prompt(
+    if !resume_state.idle && let Some(prompt) = inner.fork_history_prompt(
         &chat_id,
         &doc,
         harness_id,
@@ -1873,7 +1905,7 @@ async fn drive_run(
                     wire_request.prompt =
                         zeron_proto::invocation::harness_prompt(&wire_request.prompt, harness_id);
                 }
-                harness.run(wire_request, controls).await
+                if resume_state.idle { harness.start_idle(wire_request, controls).await } else { harness.run(wire_request, controls).await }
             } else {
                 Ok(futures::stream::once(async {
                     Ok(AgentEvent::Done {
@@ -1995,7 +2027,7 @@ async fn drive_run(
     // silent this long (4h by default) is presumed lost; the reap stamps its
     // chip failed.
     let subagent_silence = session_idle * 8;
-    let mut idle_since: Option<tokio::time::Instant> = None;
+    let mut idle_since: Option<tokio::time::Instant> = resume_state.idle.then(tokio::time::Instant::now);
     let steerable = harness.supports_steering();
     // TURN-QUIESCE WATCHDOG (2026-08-12 stuck-Working incident): a harness
     // that loses a turn's Done — the adapter never settles `session/prompt`
