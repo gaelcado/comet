@@ -1614,6 +1614,7 @@ async fn idle_voice_runtime_has_no_initial_turn_and_preserves_mcp() {
         .commands
         .send(zeron_harness::codex::realtime::VoiceCommand::Start {
             voice: None,
+            session_id: "fixture-voice".into(),
             generation: 1,
             reply,
         })
@@ -1621,7 +1622,7 @@ async fn idle_voice_runtime_has_no_initial_turn_and_preserves_mcp() {
         .unwrap();
     assert_eq!(
         receive.await.unwrap(),
-        Err(zeron_proto::voice::VoiceRejection::CreditExclusionUnverified)
+        Err(zeron_proto::voice::VoiceRejection::NativeRuntimeUnavailable)
     );
     let calls = std::fs::read_to_string(dir.path().join("voice-wire.jsonl")).unwrap();
     assert!(!calls.contains("turn/start"));

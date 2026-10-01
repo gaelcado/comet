@@ -702,7 +702,12 @@ impl CodexHarness {
                 "Codex commands cannot include attachments; send them in a separate prompt".into(),
             ));
         }
-        let exe = self.resolve_executable()?;
+        // Pin the physical release for this process and its voice helper: an
+        // installer may move the current symlink while this runtime stays warm.
+        let exe = self
+            .resolve_executable()?
+            .canonicalize()
+            .map_err(HarnessError::Io)?;
         // Yolo mode: danger-full-access + approvalPolicy "never" (set below) —
         // codex's --dangerously-bypass-approvals-and-sandbox equivalent.
         // Parity with the Claude adapter, which auto-approves every
@@ -758,6 +763,7 @@ impl CodexHarness {
         tokio::spawn(run_session(Session {
             title_only,
             idle,
+            executable: exe,
             child,
             client,
             incoming,
@@ -781,6 +787,7 @@ impl CodexHarness {
 // ---------------------------------------------------------------------------
 
 struct Session {
+    executable: PathBuf,
     title_only: bool,
     idle: bool,
     child: Child,
@@ -958,6 +965,7 @@ async fn start_turn(client: &RpcClient, params: Value) -> Result<String, Harness
 /// steering mailbox, the interrupt token, and consumer liveness.
 async fn run_session(session: Session) {
     let Session {
+        executable,
         title_only,
         idle,
         mut child,
@@ -1187,8 +1195,8 @@ async fn run_session(session: Session) {
     }
 
     let mut router = TurnRouter::default();
-    let _voice_bridge =
-        realtime.map(|controls| realtime::attach(client.clone(), thread_id.clone(), controls));
+    let _voice_bridge = realtime
+        .map(|controls| realtime::attach(client.clone(), thread_id.clone(), executable, controls));
     if !idle {
         match start_turn(&client, turn_params(&request.prompt)).await {
             Ok(id) => router.adopt_started(id),
@@ -1258,7 +1266,17 @@ async fn run_session(session: Session) {
                     }
                 }
                 match method.as_str() {
-                    "turn/started" => router.note_started(turn_id(&params)),
+                    "turn/started" => {
+                        let id=turn_id(&params);
+                        // Native voice handoffs start a turn without going through turn/start.
+                        // Publish the boundary before its text/tool deltas reach the parked engine.
+                        if done_current && !id.is_empty() && !router.is_completed(&id) {
+                            done_current=false;
+                            let (prev,next)=rotate(&mut assistant_message_id);
+                            if !send(&event_tx,AgentEvent::Steered{assistant_message_id:Some(prev),next_assistant_message_id:Some(next)}).await {break 'main;}
+                        }
+                        router.note_started(id);
+                    },
 
                     "item/agentMessage/delta" => {
                         streamed_text.insert(item_id(&params));

@@ -23,6 +23,7 @@ pub enum VoiceRejection {
     Overflow,
     DeviceUnavailable,
     Protocol,
+    NativeRuntimeUnavailable,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,6 +40,11 @@ pub struct VoiceEligibility {
     pub format: Option<VoiceFormat>,
     #[serde(default)]
     pub duplex_verified: bool,
+    /// Native subscription WebRTC transport; PCM never leaves the voice helper.
+    #[serde(default)]
+    pub native_webrtc: bool,
+    #[serde(default)]
+    pub voices: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +85,10 @@ pub struct VoiceSnapshot {
     pub work: VoiceWork,
     #[serde(default)]
     pub reason: Option<VoiceRejection>,
+    #[serde(default)]
+    pub voice: Option<String>,
+    #[serde(default)]
+    pub voices: Vec<String>,
 }
 
 /// Debug deliberately omits the bearer secret. Not a durable preference.
@@ -160,6 +170,8 @@ pub enum VoiceEvent {
     },
     Partial {
         generation: u64,
+        #[serde(default)]
+        item_id: Option<String>,
         text: String,
     },
     Final {
@@ -168,6 +180,11 @@ pub enum VoiceEvent {
     InvalidatePlayout {
         generation: u64,
         item_id: String,
+    },
+    Levels {
+        generation: u64,
+        microphone: u16,
+        speaker: u16,
     },
     Closed {
         generation: u64,
@@ -182,6 +199,8 @@ pub struct StartVoice {
     pub host_device_id: String,
     #[serde(default)]
     pub voice: Option<String>,
+    #[serde(default)]
+    pub worktree: Option<crate::WorktreeSpec>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -1,17 +1,29 @@
-//! Ephemeral voice bridge for the *same* app-server process as text/MCP.
-//! Start is fail-closed until provider-enforced included-only usage is verified.
+//! Ephemeral native subscription voice in the same app-server process as text/MCP.
+//! WebSocket appendAudio is deliberately unavailable: in Codex 0.159 it needs an API key.
+#[path = "realtime_host.rs"]
+mod host;
 use crate::jsonrpc::{Incoming, RpcClient};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
-use std::sync::atomic::Ordering;
-use std::time::Duration;
-use tokio::sync::{mpsc, oneshot};
+use std::sync::{Arc, Mutex};
+use std::{path::PathBuf, sync::atomic::Ordering, time::Duration};
+use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
+type AudioAbort = Arc<Mutex<Option<(u64, CancellationToken)>>>;
 use zeron_proto::voice::*;
 
 pub enum VoiceCommand {
+    Probe {
+        reply: oneshot::Sender<Result<VoiceEligibility, VoiceRejection>>,
+    },
     Start {
         voice: Option<String>,
+        session_id: String,
         generation: u64,
+        reply: oneshot::Sender<Result<(), VoiceRejection>>,
+    },
+    Mute {
+        muted: bool,
         reply: oneshot::Sender<Result<(), VoiceRejection>>,
     },
     Append {
@@ -23,28 +35,86 @@ pub enum VoiceCommand {
     },
 }
 pub struct RealtimeControls {
+    audio_abort: AudioAbort,
     pub commands: mpsc::Receiver<VoiceCommand>,
-    pub events: mpsc::Sender<VoiceEvent>,
+    pub events: broadcast::Sender<VoiceEvent>,
 }
 #[derive(Clone)]
 pub struct RealtimeHandle {
+    audio_abort: AudioAbort,
     pub commands: mpsc::Sender<VoiceCommand>,
+    pub events: broadcast::Sender<VoiceEvent>,
 }
-pub fn channel() -> (RealtimeHandle, RealtimeControls, mpsc::Receiver<VoiceEvent>) {
-    let (commands, command_rx) = mpsc::channel(MEDIA_QUEUE_FRAMES);
-    let (events, event_rx) = mpsc::channel(32);
+impl RealtimeHandle {
+    /// Immediately closes native capture even if the control actor is waiting on I/O.
+    pub fn abort_voice(&self, generation: u64) {
+        if let Some((current, cancel)) = self.audio_abort.lock().unwrap().as_ref() {
+            if *current == generation {
+                cancel.cancel();
+            }
+        }
+    }
+
+    pub async fn probe(&self) -> Result<VoiceEligibility, VoiceRejection> {
+        let (reply, rx) = oneshot::channel();
+        tokio::time::timeout(Duration::from_secs(15), async {
+            self.commands
+                .send(VoiceCommand::Probe { reply })
+                .await
+                .map_err(|_| VoiceRejection::Protocol)?;
+            rx.await.map_err(|_| VoiceRejection::Protocol)?
+        })
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?
+    }
+
+    pub async fn stop(&self) -> Result<(), VoiceRejection> {
+        let (reply, rx) = oneshot::channel();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            self.commands
+                .send(VoiceCommand::Stop { reply })
+                .await
+                .map_err(|_| VoiceRejection::Protocol)?;
+            rx.await.map_err(|_| VoiceRejection::Protocol)?
+        })
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?
+    }
+    pub async fn mute(&self, muted: bool) -> Result<(), VoiceRejection> {
+        let (reply, rx) = oneshot::channel();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            self.commands
+                .send(VoiceCommand::Mute { muted, reply })
+                .await
+                .map_err(|_| VoiceRejection::Protocol)?;
+            rx.await.map_err(|_| VoiceRejection::Protocol)?
+        })
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?
+    }
+}
+pub fn channel() -> (
+    RealtimeHandle,
+    RealtimeControls,
+    broadcast::Receiver<VoiceEvent>,
+) {
+    let audio_abort = Arc::default();
+    let (commands, rx) = mpsc::channel(8);
+    let (events, receiver) = broadcast::channel(32);
     (
-        RealtimeHandle { commands },
+        RealtimeHandle {
+            audio_abort: Arc::clone(&audio_abort),
+            commands,
+            events: events.clone(),
+        },
         RealtimeControls {
-            commands: command_rx,
+            audio_abort,
+            commands: rx,
             events,
         },
-        event_rx,
+        receiver,
     )
 }
-
-/// Drop cancels the bridge, while the session task remains responsible for
-/// reaping its subprocess. Voice stop never cancels a delegated text turn.
 pub(crate) struct BridgeTask(tokio::task::JoinHandle<()>);
 impl Drop for BridgeTask {
     fn drop(&mut self) {
@@ -52,92 +122,258 @@ impl Drop for BridgeTask {
     }
 }
 
-pub(crate) fn attach(client: RpcClient, thread: String, controls: RealtimeControls) -> BridgeTask {
-    let (mut wire, overflow) = client.subscribe_voice();
+pub(crate) fn attach(
+    client: RpcClient,
+    thread: String,
+    executable: PathBuf,
+    controls: RealtimeControls,
+) -> BridgeTask {
+    let abort = controls.audio_abort.clone();
+    let (mut wire, overflow) = client.subscribe_voice(move || {
+        if let Some((_, cancel)) = abort.lock().unwrap().as_ref() {
+            cancel.cancel();
+        }
+    });
     BridgeTask(tokio::spawn(async move {
         let RealtimeControls {
+            audio_abort,
             mut commands,
             events,
         } = controls;
-        // No runtime-config switch can authorize credit spending.
-        let mut active = false;
-        let generation = 0;
+        let mut native: Option<host::NativeHost> = None;
+        let mut starting: Option<
+            futures::future::BoxFuture<'static, Result<host::NativeHost, VoiceRejection>>,
+        > = None;
+        let mut start_reply: Option<oneshot::Sender<Result<(), VoiceRejection>>> = None;
+        let mut answer_tx: Option<oneshot::Sender<String>> = None;
+        let mut accepted_tx: Option<oneshot::Sender<()>> = None;
+        let mut expected_session = String::new();
+        let server_live = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut generation = 0;
         let mut sequence = 0;
         let mut timer = tokio::time::interval(Duration::from_millis(100));
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            tokio::select! {
-                _ = events.closed() => break,
-                _ = timer.tick() => {
-                    if overflow.load(Ordering::Acquire) || client.is_closed() { break; }
-                }
-                command = commands.recv() => match command {
-                    Some(VoiceCommand::Start { reply, .. }) => {
-                        let _ = reply.send(Err(VoiceRejection::CreditExclusionUnverified));
-                    }
-                    Some(VoiceCommand::Append { frame, reply }) => {
-                        let result = if active && frame.generation == generation {
-                            append(&client, &thread, frame).await
-                        } else { Err(VoiceRejection::StaleGeneration) };
-                        let _ = reply.send(result);
-                    }
-                    Some(VoiceCommand::Stop { reply }) => {
-                        let result = if active { stop(&client, &thread).await } else { Ok(()) };
-                        active = false;
-                        let _ = reply.send(result);
-                    }
-                    None => break,
+            tokio::select! { biased;
+                command=commands.recv()=>match command {
+                    Some(VoiceCommand::Probe{reply})=>{let _=reply.send(probe(&client,&executable).await);},
+                    Some(VoiceCommand::Start{voice,session_id,generation:next,reply})=>{
+                        if native.is_some() || starting.is_some() {let _=reply.send(Err(VoiceRejection::Busy));continue;}
+                        generation=next;sequence=0;
+                        let abort=CancellationToken::new();*audio_abort.lock().unwrap()=Some((next,abort.clone()));
+                        let (answer,answer_rx)=oneshot::channel();let (accepted,accepted_rx)=oneshot::channel();
+                        answer_tx=Some(answer);accepted_tx=Some(accepted);expected_session=session_id.clone();
+                        starting=Some(Box::pin(start(client.clone(),thread.clone(),executable.clone(),voice,session_id,accepted_rx,answer_rx,abort,server_live.clone())));
+                        start_reply=Some(reply);
+                    },
+                    Some(VoiceCommand::Mute{muted,reply})=>{
+                        let result=if let Some(host)=native.as_mut(){host.controls(muted).await}else{Err(VoiceRejection::Busy)};
+                        let failed=result.is_err();let _=reply.send(result);
+                        if failed {native=None;let _=stop(&client,&thread).await;let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::Protocol)});}
+                    },
+                    Some(VoiceCommand::Append{reply,..})=>{let _=reply.send(Err(VoiceRejection::Unsupported));},
+                    Some(VoiceCommand::Stop{reply})=>{
+                        let had_session=server_live.load(Ordering::Acquire);starting=None;native=None;
+                        if let Some(pending)=start_reply.take(){let _=pending.send(Err(VoiceRejection::InvalidLease));}
+                        let result=if had_session{
+                            let result=stop(&client,&thread).await;
+                            // Native stop acknowledges submission first. Drain its terminal event
+                            // before a successor can relabel old notifications with a new generation.
+                            let closed=tokio::time::timeout(Duration::from_secs(3),async {
+                                while let Some(notification)=wire.recv().await {
+                                    if let Incoming::Notification{method,params}=notification {
+                                        if params["threadId"]!=thread{continue;}
+                                        if method=="thread/realtime/closed"{server_live.store(false,Ordering::Release);return;}
+                                        if let Some(event)=normalize(&thread,generation,&mut sequence,&method,&params){let _=events.send(event);}
+                                    }
+                                }
+                            }).await;
+                            if result.is_err()||closed.is_err(){let _=reply.send(Err(VoiceRejection::Protocol));break;}
+                            result
+                        }else{Ok(())};
+                        let _=events.send(VoiceEvent::Closed{generation,reason:None});let _=reply.send(result);
+                    },
+                    None=>break,
                 },
-                notification = wire.recv() => match notification {
-                    Some(Incoming::Notification { method, params }) if active => {
-                        if let Some(event) = normalize(&thread, generation, &mut sequence, &method, &params) {
-                            if events.try_send(event).is_err() { break; }
+                result=async{starting.as_mut().unwrap().await},if starting.is_some()=>{
+                    starting=None;
+                    match result {Ok(host)=>{native=Some(host);if let Some(reply)=start_reply.take(){let _=reply.send(Ok(()));}},Err(reason)=>{
+                        let _=stop(&client,&thread).await;
+                        if let Some(reply)=start_reply.take(){let _=reply.send(Err(reason));}
+                        let _=events.send(VoiceEvent::Closed{generation,reason:Some(reason)});
+                    }}
+                },
+                notification=wire.recv()=>match notification {
+                    Some(Incoming::Notification{method,params})=>{
+                        if method=="thread/realtime/closed" && params["threadId"]==thread {server_live.store(false,Ordering::Release);}
+                        if method=="account/updated" {native=None;starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::ChatgptRequired));}let _=stop(&client,&thread).await;let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::ChatgptRequired)});continue;}
+                        if params["threadId"]==thread && starting.is_some() {
+                            if method=="thread/realtime/started" {
+                                if params["version"]=="v3" && params["realtimeSessionId"]==expected_session {if let Some(tx)=accepted_tx.take(){let _=tx.send(());}}
+                                else {starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::Unsupported));}let _=stop(&client,&thread).await;}
+                                continue;
+                            }
+                            if method=="thread/realtime/sdp" {
+                                if let Some(sdp)=params["sdp"].as_str().filter(|s|!s.is_empty()&&s.len()<=64*1024) {if let Some(tx)=answer_tx.take(){let _=tx.send(sdp.to_owned());}}
+                                continue;
+                            }
                         }
-                        if method == "thread/realtime/closed" { active = false; }
-                    }
-                    Some(_) => {},
-                    None => break,
+                        if native.is_some() || starting.is_some() {
+                            if let Some(event)=normalize(&thread,generation,&mut sequence,&method,&params) {
+                                let terminal=matches!(event,VoiceEvent::Closed{..}); let _=events.send(event);
+                                if terminal {native=None;starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::Protocol));}}
+                            }
+                        }
+                    },Some(_)=>{},None=>break,
+                },
+                _=timer.tick()=>{
+                    if overflow.load(Ordering::Acquire)||client.is_closed(){break;}
+                    if let Some(host)=native.as_mut(){ match host.levels().await {
+                        Ok((microphone,speaker))=>{let _=events.send(VoiceEvent::Levels{generation,microphone,speaker});},
+                        Err(reason)=>{native=None;let _=stop(&client,&thread).await;let _=events.send(VoiceEvent::Closed{generation,reason:Some(reason)});}
+                    }}
                 }
             }
         }
-        if active {
+        let had_session = starting.take().is_some() || native.is_some();
+        drop(native);
+        if had_session {
             let _ = stop(&client, &thread).await;
         }
-        let _ = events.try_send(VoiceEvent::Closed {
+        let _ = events.send(VoiceEvent::Closed {
             generation,
             reason: Some(VoiceRejection::Protocol),
         });
     }))
 }
-
-async fn stop(client: &RpcClient, thread: &str) -> Result<(), VoiceRejection> {
+async fn probe(
+    client: &RpcClient,
+    executable: &std::path::Path,
+) -> Result<VoiceEligibility, VoiceRejection> {
+    tokio::time::timeout(Duration::from_secs(15), probe_details(client, executable))
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?
+}
+async fn probe_details(
+    client: &RpcClient,
+    executable: &std::path::Path,
+) -> Result<VoiceEligibility, VoiceRejection> {
+    host::helper_path(executable)?;
+    let account = client
+        .request("account/read", json!({"refreshToken":false}))
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?;
+    if account["account"]["type"] != "chatgpt" {
+        return Err(VoiceRejection::ChatgptRequired);
+    }
+    let config = client
+        .request("config/read", json!({"includeLayers":false}))
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?;
+    let config = &config["config"];
+    if config["model_provider"]
+        .as_str()
+        .is_some_and(|p| p != "openai")
+        || config["model_providers"]["openai"].is_object()
+        || [
+            "experimental_realtime_ws_base_url",
+            "experimental_realtime_webrtc_call_base_url",
+            "experimental_realtime_ws_model",
+        ]
+        .iter()
+        .any(|k| !config[*k].is_null())
+    {
+        return Err(VoiceRejection::ChatgptRequired);
+    }
+    let limits = client
+        .request("account/rateLimits/read", json!({}))
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?;
+    let ordinary = limits["ordinaryUsageAllowed"].as_bool();
+    if ordinary == Some(false) {
+        return Err(VoiceRejection::IncludedUsageUnavailable);
+    }
+    let v = client
+        .request("thread/realtime/listVoices", json!({}))
+        .await
+        .map_err(|_| VoiceRejection::Unsupported)?;
+    let voices = v["voices"]["v1"]
+        .as_array()
+        .ok_or(VoiceRejection::Unsupported)?
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_owned))
+        .collect();
+    Ok(VoiceEligibility {
+        available: true,
+        reason: None,
+        ordinary_usage_allowed: ordinary,
+        credits_excluded: false,
+        format: None,
+        duplex_verified: true,
+        native_webrtc: true,
+        voices,
+    })
+}
+async fn start(
+    client: RpcClient,
+    thread: String,
+    executable: PathBuf,
+    voice: Option<String>,
+    session_id: String,
+    accepted: oneshot::Receiver<()>,
+    answer: oneshot::Receiver<String>,
+    abort: CancellationToken,
+    server_live: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<host::NativeHost, VoiceRejection> {
+    let eligible = probe(&client, &executable).await?;
+    if voice.as_ref().is_some_and(|v| !eligible.voices.contains(v)) {
+        return Err(VoiceRejection::Unsupported);
+    }
+    let mut host = host::NativeHost::open(&host::helper_path(&executable)?, abort).await?;
+    let offer = host.exchange(json!({"type":"startTransport"}), 20).await?;
+    let sdp = offer["sdp"]
+        .as_str()
+        .filter(|s| !s.is_empty() && s.len() <= 64 * 1024)
+        .ok_or(VoiceRejection::Protocol)?;
+    if offer["type"] != "offer" {
+        return Err(VoiceRejection::Protocol);
+    }
+    let mut params = json!({"threadId":thread,"transport":{"type":"webrtc","sdp":sdp},"version":"v3","outputModality":"audio","realtimeSessionId":session_id,"clientManagedHandoffs":false,"includeStartupContext":true});
+    if let Some(voice) = voice {
+        params["voice"] = json!(voice);
+    }
+    server_live.store(true, Ordering::Release);
     tokio::time::timeout(
-        Duration::from_secs(2),
-        client.request("thread/realtime/stop", json!({"threadId":thread})),
+        Duration::from_secs(30),
+        client.request("thread/realtime/start", params),
     )
     .await
     .map_err(|_| VoiceRejection::Protocol)?
     .map_err(|_| VoiceRejection::Protocol)?;
-    Ok(())
-}
-async fn append(client: &RpcClient, thread: &str, frame: VoiceFrame) -> Result<(), VoiceRejection> {
-    if frame.data.len() > MAX_AUDIO_BYTES.div_ceil(3) * 4 {
-        return Err(VoiceRejection::Overflow);
-    }
-    let bytes = STANDARD
-        .decode(&frame.data)
+    tokio::time::timeout(Duration::from_secs(30), accepted)
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?
         .map_err(|_| VoiceRejection::Protocol)?;
-    if !frame.format.validate(bytes.len()) {
-        return Err(VoiceRejection::Protocol);
-    }
+    let answer = tokio::time::timeout(Duration::from_secs(30), answer)
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?
+        .map_err(|_| VoiceRejection::Protocol)?;
+    host.expect(
+        json!({"type":"applyAnswer","sdp":answer}),
+        "transportReady",
+        20,
+    )
+    .await?;
+    host.expect(json!({"type":"openDevices"}), "devicesOpened", 5)
+        .await
+        .map_err(|_| VoiceRejection::DeviceUnavailable)?;
+    // Keep devices muted/suppressed until the engine confirms the owner stream.
+    Ok(host)
+}
+async fn stop(client: &RpcClient, thread: &str) -> Result<(), VoiceRejection> {
     tokio::time::timeout(
         Duration::from_secs(2),
-        client.request_media(
-            "thread/realtime/appendAudio",
-            json!({
-                "threadId":thread, "audio":{"data":frame.data,"sampleRate":frame.format.sample_rate,
-                "numChannels":frame.format.channels,"samplesPerChannel":bytes.len()/2}
-            }),
-        ),
+        client.request("thread/realtime/stop", json!({"threadId":thread})),
     )
     .await
     .map_err(|_| VoiceRejection::Protocol)?
@@ -207,11 +443,23 @@ pub(crate) fn normalize(
                 },
             })
         }
-        "thread/realtime/transcript/delta" | "thread/realtime/item/transcript/delta" => {
+        "thread/realtime/item/transcript/delta" => {
             let text = p.get("delta")?.as_str()?;
             (text.len() <= MAX_TRANSCRIPT_BYTES).then(|| VoiceEvent::Partial {
                 generation,
+                item_id: p.get("itemId").and_then(Value::as_str).map(str::to_owned),
                 text: text.to_owned(),
+            })
+        }
+        "thread/realtime/itemAdded"
+            if matches!(
+                p["item"]["type"].as_str(),
+                Some("input_audio_buffer.speech_started" | "response.cancelled")
+            ) =>
+        {
+            Some(VoiceEvent::InvalidatePlayout {
+                generation,
+                item_id: p["item"]["item_id"].as_str().unwrap_or_default().to_owned(),
             })
         }
         "thread/realtime/closed" | "thread/realtime/error" => Some(VoiceEvent::Closed {

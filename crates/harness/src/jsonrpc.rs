@@ -46,6 +46,12 @@ type StdoutObserver = Box<dyn Fn(&str) + Send>;
 
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, HarnessError>>>>>;
 
+struct VoiceRouter {
+    sender: mpsc::Sender<Incoming>,
+    overflow: Arc<AtomicBool>,
+    abort_media: Box<dyn Fn() + Send + Sync>,
+}
+
 #[derive(Clone)]
 pub(crate) struct RpcClient {
     next_id: Arc<AtomicI64>,
@@ -53,7 +59,7 @@ pub(crate) struct RpcClient {
     writer: mpsc::Sender<String>,
     media_writer: mpsc::Sender<String>,
     closed: Arc<AtomicBool>,
-    voice_router: Arc<Mutex<Option<(mpsc::Sender<Incoming>, Arc<AtomicBool>)>>>,
+    voice_router: Arc<Mutex<Option<VoiceRouter>>>,
 }
 
 impl RpcClient {
@@ -104,10 +110,17 @@ impl RpcClient {
 
     /// Ephemeral realtime notifications bypass the durable/control channel.
     /// Overflow is terminal and observable; stdout never waits for playout.
-    pub fn subscribe_voice(&self) -> (mpsc::Receiver<Incoming>, Arc<AtomicBool>) {
+    pub fn subscribe_voice(
+        &self,
+        abort_media: impl Fn() + Send + Sync + 'static,
+    ) -> (mpsc::Receiver<Incoming>, Arc<AtomicBool>) {
         let (tx, rx) = mpsc::channel(32);
         let overflow = Arc::new(AtomicBool::new(false));
-        *self.voice_router.lock().expect("voice router") = Some((tx, overflow.clone()));
+        *self.voice_router.lock().expect("voice router") = Some(VoiceRouter {
+            sender: tx,
+            overflow: overflow.clone(),
+            abort_media: Box::new(abort_media),
+        });
         (rx, overflow)
     }
 
@@ -335,7 +348,7 @@ async fn read_loop(
     tx: mpsc::Sender<Incoming>,
     closed: Arc<AtomicBool>,
     observer: Option<StdoutObserver>,
-    voice_router: Arc<Mutex<Option<(mpsc::Sender<Incoming>, Arc<AtomicBool>)>>>,
+    voice_router: Arc<Mutex<Option<VoiceRouter>>>,
 ) {
     let _cleanup = ReaderGuard {
         pending: pending.clone(),
@@ -419,6 +432,7 @@ async fn read_loop(
             // Notification.
             (Some(method), None) => {
                 let realtime = method.starts_with("thread/realtime/");
+                let account_updated = method == "account/updated";
                 let incoming = Incoming::Notification {
                     method: method.to_owned(),
                     params: msg
@@ -426,12 +440,30 @@ async fn read_loop(
                         .map(Value::take)
                         .unwrap_or(Value::Null),
                 };
+                if account_updated {
+                    if let Some(router) = voice_router.lock().expect("voice router").as_ref() {
+                        (router.abort_media)();
+                        if router
+                            .sender
+                            .try_send(Incoming::Notification {
+                                method: "account/updated".to_owned(),
+                                params: match &incoming {
+                                    Incoming::Notification { params, .. } => params.clone(),
+                                    _ => Value::Null,
+                                },
+                            })
+                            .is_err()
+                        {
+                            router.overflow.store(true, Ordering::Release);
+                            (router.abort_media)();
+                        }
+                    }
+                }
                 if realtime {
-                    if let Some((voice_tx, overflow)) =
-                        voice_router.lock().expect("voice router").as_ref()
-                    {
-                        if voice_tx.try_send(incoming).is_err() {
-                            overflow.store(true, Ordering::Release);
+                    if let Some(router) = voice_router.lock().expect("voice router").as_ref() {
+                        if router.sender.try_send(incoming).is_err() {
+                            router.overflow.store(true, Ordering::Release);
+                            (router.abort_media)();
                         }
                         continue;
                     }
@@ -446,6 +478,9 @@ async fn read_loop(
     // EOF/read error: fail every awaiting request, then signal the loop.
     closed.store(true, Ordering::Release);
     pending.lock().expect("pending lock").clear();
+    if let Some(router) = voice_router.lock().expect("voice router").as_ref() {
+        (router.abort_media)();
+    }
     let _ = tx.send(Incoming::Eof).await;
 }
 
