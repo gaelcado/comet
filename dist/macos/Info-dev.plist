@@ -36,6 +36,8 @@
         <key>ZERON_IPC_PORT</key>
         <string>__IPC_PORT__</string>
     </dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Zeron uses your microphone only when you start a voice session.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
