@@ -1969,6 +1969,9 @@ pub struct Shell {
     boot: EngineBootConfig,
     data_dir: PathBuf,
     settings: UiSettings,
+    /// The store's settings when `settings` last synced with it. Fields that
+    /// differ from this are the Shell's edits; all others follow the store.
+    settings_base: UiSettings,
     /// Session-scoped panel open flags (terminal / changes per chat; §1.10-1.11
     /// parity — heights stay in [`UiSettings`]).
     panels: SessionPanels,
@@ -2374,6 +2377,7 @@ impl Shell {
             import_current: None,
             boot,
             data_dir,
+            settings_base: settings::current(cx),
             settings,
             panels: SessionPanels::default(),
             active_chat: String::new(),
@@ -4471,38 +4475,20 @@ impl Shell {
         self.settings.theme_selection = crate::appearance::themes(cx);
         self.settings.accent = crate::appearance::accent(cx);
         self.settings.surface = crate::appearance::surface(cx);
-        self.sync_independent_settings(cx);
+        self.pull_settings(cx);
         settings::replace(self.settings.clone(), SavePolicy::Debounced, cx);
+        self.settings_base = settings::current(cx);
     }
 
-    /// Controls outside the Shell mutate these choices directly. A geometry
-    /// save must never publish the Shell's older values over those selections.
-    /// The typography globals own the font choices but persist every change
-    /// immediately, so the central store is an equally canonical read and
-    /// keeps this block on a single source.
-    fn sync_independent_settings(&mut self, cx: &App) {
+    /// Controls outside the Shell (Voice, typography, diff and transcript
+    /// toggles, …) save to the central store directly. Fold those into the
+    /// working copy while keeping the Shell's own edits, so a geometry save
+    /// can never publish an older value over another surface's choice.
+    fn pull_settings(&mut self, cx: &App) {
         let current = settings::current(cx);
-        self.settings.window_geometry = current.window_geometry;
-        self.settings.new_thread_composer_background = current.new_thread_composer_background;
-        self.settings.new_thread_background_effect = current.new_thread_background_effect;
-        self.settings.wallpaper_folder = current.wallpaper_folder;
-        self.settings.wallpaper_source = current.wallpaper_source;
-        self.settings.wallpaper_history = current.wallpaper_history;
-        self.settings.wallpaper_theme_colors = current.wallpaper_theme_colors;
-        self.settings.wallpaper_color = current.wallpaper_color;
-        self.settings.open_web_links_in_zeron = current.open_web_links_in_zeron;
-        self.settings.ui_font_family = current.ui_font_family;
-        self.settings.ui_font_size = current.ui_font_size;
-        self.settings.terminal_font_family = current.terminal_font_family;
-        self.settings.terminal_font_size = current.terminal_font_size;
-        self.settings.code_font_family = current.code_font_family;
-        self.settings.code_font_size = current.code_font_size;
-        self.settings.transcript_width = current.transcript_width;
-        self.settings.skill_completion_by_harness = current.skill_completion_by_harness;
-        self.settings.skills_in_slash_menu = current.skills_in_slash_menu;
-        self.settings.reduce_motion = current.reduce_motion;
-        self.settings.pause_animations_in_background = current.pause_animations_in_background;
-        self.settings.compact_model_picker = current.compact_model_picker;
+        self.settings =
+            UiSettings::merge_changes(&self.settings_base, &self.settings, current.clone());
+        self.settings_base = current;
     }
 
     fn retry_engine(&mut self, cx: &mut Context<Self>) {
@@ -12250,7 +12236,7 @@ impl Render for Shell {
         self.settings.theme_selection = crate::appearance::themes(cx);
         self.settings.accent = crate::appearance::accent(cx);
         self.settings.surface = crate::appearance::surface(cx);
-        self.sync_independent_settings(cx);
+        self.pull_settings(cx);
         let theme = Theme::of(cx);
         // The shell frost sits over native desktop blur on macOS and Windows.
         // Content surfaces add their own backgrounds over this shared tint.
@@ -14716,6 +14702,78 @@ mod exit_regressions {
                 let saved = settings::current(cx);
                 assert_eq!(saved.reduce_motion, crate::motion::ReduceMotion::On);
                 assert!(saved.pause_animations_in_background);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn shell_saves_keep_every_setting_chosen_outside_the_shell(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+            crate::history::init(
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                cx,
+            );
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+        });
+        let window = cx.add_window(|_, cx| {
+            let state = cx.new(|_| AppState::new());
+            Shell::new(
+                state,
+                EngineBootConfig {
+                    data_dir: dir.path().into(),
+                    ipc_port: 0,
+                    edge_url: "http://127.0.0.1:1".into(),
+                    edge_token: None,
+                    org_id: None,
+                    workos_client_id: None,
+                    default_harness: zeron_proto::HarnessId::Mock,
+                },
+                cx,
+            )
+        });
+        window
+            .update(cx, |shell, _, cx| {
+                // Voice, transcript and diff controls save straight to the
+                // store. None of them is known to the Shell.
+                settings::update(SavePolicy::Immediate, cx, |settings| {
+                    settings.dictation_enabled = true;
+                    settings.dictation_input = Some("coreaudio:usb".into());
+                    settings.transcript_compact_mode = true;
+                    settings.code_fences_fit_content = true;
+                    settings.diff_split = true;
+                    settings.diff_wrap = true;
+                });
+                // Leaving Settings and resizing both republish the Shell's copy.
+                shell.settings.settings_section = SettingsSection::Appearance;
+                shell.settings.sidebar_width = 300.0;
+                shell.schedule_save(cx);
+                let saved = settings::current(cx);
+                assert!(saved.dictation_enabled);
+                assert_eq!(saved.dictation_input.as_deref(), Some("coreaudio:usb"));
+                assert!(saved.transcript_compact_mode);
+                assert!(saved.code_fences_fit_content);
+                assert!(saved.diff_split);
+                assert!(saved.diff_wrap);
+                assert_eq!(saved.settings_section, SettingsSection::Appearance);
+                assert_eq!(saved.sidebar_width, 300.0);
+                // An outside change to a field the Shell also holds still wins
+                // once the Shell has nothing newer of its own.
+                settings::update(SavePolicy::Immediate, cx, |settings| {
+                    settings.dictation_enabled = false;
+                    settings.sidebar_width = 320.0;
+                });
+                shell.schedule_save(cx);
+                let saved = settings::current(cx);
+                assert!(!saved.dictation_enabled);
+                assert_eq!(saved.sidebar_width, 320.0);
+                assert_eq!(shell.settings.sidebar_width, 320.0);
             })
             .unwrap();
     }
