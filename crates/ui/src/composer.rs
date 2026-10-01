@@ -16,11 +16,11 @@ use std::time::{Duration, Instant};
 use gpui::{
     AnyTooltip, App, BorderStyle, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle,
     DispatchPhase, ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, GlobalElementId, KeyBinding, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ObjectFit, PaintQuad, PathPromptOptions, Pixels, Point, Role,
-    ScrollWheelEvent, SharedString, Style, StyledImage as _, Subscription, Task, TextRun,
-    TextStyle, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, img, point,
-    prelude::*, px, quad, relative, size,
+    Focusable, GlobalElementId, KeyBinding, KeyDownEvent, KeyUpEvent, Keystroke, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
+    PaintQuad, PathPromptOptions, Pixels, Point, Role, ScrollWheelEvent, SharedString, Style,
+    StyledImage as _, Subscription, Task, TextRun, TextStyle, UTF16Selection, UnderlineStyle,
+    Window, WrappedLine, actions, div, fill, img, point, prelude::*, px, quad, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -1698,10 +1698,41 @@ pub enum ComposerInputEvent {
 
 #[derive(Clone)]
 enum DictationInputEvent {
-    Toggle,
+    /// The dictation shortcut went down (auto-repeat is ignored)…
+    Press,
+    /// …and came back up, or focus left the editor while it was held.
+    Release,
     Changed,
     Submit(u64),
 }
+
+/// A held dictation shortcut. `keystroke` is the binding, used to recognise
+/// its release: the key coming up, or any of its modifiers being let go
+/// (macOS does not deliver key-up for Command chords).
+struct DictationKey {
+    keystroke: Option<Keystroke>,
+    _blur: Subscription,
+}
+
+/// Dictation is hold to talk, from the microphone (pointer or Enter/Space
+/// while it is focused) and from the shortcut. Each releases only its own hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldSource {
+    Pointer,
+    Button,
+    Key,
+}
+
+struct DictationHold {
+    source: HoldSource,
+    /// When this hold started dictation; `None` when it took over a session
+    /// started another way (assistive Click), which it then only finishes.
+    started: Option<Instant>,
+}
+
+/// A release sooner than this is a click, not speech: explain hold to talk
+/// instead of transcribing a fraction of a second of audio.
+const DICTATION_TAP: Duration = Duration::from_millis(300);
 impl EventEmitter<DictationInputEvent> for ComposerInput {}
 
 /// The composer's morph into and out of dictation, and the clock's warning
@@ -1873,6 +1904,8 @@ pub struct ComposerInput {
     dictation: crate::dictation::Dictation,
     transcriber: Option<Box<dyn crate::dictation::Transcriber>>,
     dictation_task: Option<Task<()>>,
+    /// The dictation shortcut while it is held down.
+    dictation_key: Option<DictationKey>,
     // -- undo history --
     undo_stack: Vec<EditSnapshot>,
     redo_stack: Vec<EditSnapshot>,
@@ -1964,6 +1997,7 @@ impl ComposerInput {
             dictation: Default::default(),
             transcriber: None,
             dictation_task: None,
+            dictation_key: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_edit: None,
@@ -2572,10 +2606,61 @@ impl ComposerInput {
     fn toggle_dictation_action(
         &mut self,
         _: &ToggleDictation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dictation_key.is_some() {
+            return; // Auto-repeat while held.
+        }
+        let combo = crate::settings::current(cx).keymap.toggle_dictation;
+        let keystroke = Keystroke::parse(&crate::settings::platform_combo(&combo)).ok();
+        let blur = cx.on_blur(&self.focus_handle, window, |input, _, cx| {
+            input.release_dictation_key(cx);
+        });
+        self.dictation_key = Some(DictationKey {
+            keystroke,
+            _blur: blur,
+        });
+        cx.emit(DictationInputEvent::Press);
+    }
+
+    fn release_dictation_key(&mut self, cx: &mut Context<Self>) {
+        if self.dictation_key.take().is_some() {
+            cx.emit(DictationInputEvent::Release);
+        }
+    }
+
+    fn on_dictation_key_up(&mut self, event: &KeyUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let released = self.dictation_key.as_ref().is_some_and(|held| {
+            held.keystroke
+                .as_ref()
+                .is_none_or(|binding| binding.key.eq_ignore_ascii_case(&event.keystroke.key))
+        });
+        if released {
+            self.release_dictation_key(cx);
+        }
+    }
+
+    fn on_dictation_modifiers(
+        &mut self,
+        event: &ModifiersChangedEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(DictationInputEvent::Toggle);
+        let released = self
+            .dictation_key
+            .as_ref()
+            .and_then(|held| held.keystroke.as_ref())
+            .is_some_and(|binding| {
+                let (bound, now) = (&binding.modifiers, &event.modifiers);
+                (bound.platform && !now.platform)
+                    || (bound.control && !now.control)
+                    || (bound.alt && !now.alt)
+                    || (bound.shift && !now.shift)
+            });
+        if released {
+            self.release_dictation_key(cx);
+        }
     }
 
     // ---- undo history ----
@@ -4836,6 +4921,8 @@ impl Render for ComposerInput {
             .on_action(cx.listener(Self::modified_submit))
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::toggle_dictation_action))
+            .on_key_up(cx.listener(Self::on_dictation_key_up))
+            .on_modifiers_changed(cx.listener(Self::on_dictation_modifiers))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::redo))
             .on_key_down(cx.listener(Self::on_key_down))
@@ -5596,6 +5683,7 @@ pub struct Composer {
     pub(crate) queue_edit_renew_task: Option<Task<()>>,
     /// Focus once on mount, navigation, or after opening/closing a queue edit.
     pub(crate) focus_pending: bool,
+    dictation_hold: Option<DictationHold>,
     /// Live drag over the queue panel: which row, and where it would land.
     pub(crate) queue_drag: Option<crate::queue::QueueDragState>,
     pub(crate) queue_scroll: gpui::ScrollHandle,
@@ -5817,7 +5905,8 @@ impl Composer {
         })
         .detach();
         let dictation_events = cx.subscribe(&input, |this: &mut Self, _, event, cx| match event {
-            DictationInputEvent::Toggle => this.toggle_dictation(cx),
+            DictationInputEvent::Press => this.press_dictation(HoldSource::Key, cx),
+            DictationInputEvent::Release => this.release_dictation(HoldSource::Key, cx),
             DictationInputEvent::Changed => cx.notify(),
             DictationInputEvent::Submit(generation) => {
                 if this.input.read(cx).dictation.generation == *generation
@@ -5877,6 +5966,7 @@ impl Composer {
             queue_edit_task: None,
             queue_edit_renew_task: None,
             focus_pending: true,
+            dictation_hold: None,
             queue_drag: None,
             queue_scroll: gpui::ScrollHandle::new(),
             queue_full_preview: None,
@@ -9150,11 +9240,8 @@ impl Composer {
                 Phase::Listening => {
                     input.finish_dictation(false, cx);
                 }
-                Phase::Finalizing => {
-                    input.cancel_dictation();
-                    cx.emit(DictationInputEvent::Changed);
-                    cx.notify();
-                }
+                // The voice track's Cancel stops transcription.
+                Phase::Finalizing => {}
                 _ if input.marked_range.is_some() => {
                     input.dictation.phase = Phase::Unavailable(
                         "Finish composing the current character before starting dictation.".into(),
@@ -9166,6 +9253,74 @@ impl Composer {
                         input.begin_dictation(service, cx);
                     }
                 }
+            });
+        self.focus_pending = true;
+        cx.notify();
+    }
+
+    /// Hold to talk: the microphone or the shortcut going down starts
+    /// dictation. Pressing during a session started by assistive Click takes
+    /// it over, so releasing finishes it.
+    fn press_dictation(&mut self, source: HoldSource, cx: &mut Context<Self>) {
+        use crate::dictation::Phase;
+        let phase = self.input.read(cx).dictation.phase.clone();
+        if self.dictation_hold.is_some() && phase.active() {
+            return;
+        }
+        self.dictation_hold = None;
+        match phase {
+            Phase::Finalizing => {}
+            Phase::Requesting | Phase::Listening => {
+                self.dictation_hold = Some(DictationHold {
+                    source,
+                    started: None,
+                });
+            }
+            _ => {
+                self.toggle_dictation(cx);
+                if self.input.read(cx).dictation.phase.active() {
+                    self.dictation_hold = Some(DictationHold {
+                        source,
+                        started: Some(Instant::now()),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Letting go transcribes what was said. A tap explains hold to talk,
+    /// and a release that only answered the permission prompt records nothing.
+    fn release_dictation(&mut self, source: HoldSource, cx: &mut Context<Self>) {
+        use crate::dictation::Phase;
+        if self
+            .dictation_hold
+            .as_ref()
+            .is_none_or(|hold| hold.source != source)
+        {
+            return;
+        }
+        let tapped = self
+            .dictation_hold
+            .take()
+            .and_then(|hold| hold.started)
+            .is_some_and(|started| started.elapsed() < DICTATION_TAP);
+        self.input
+            .update(cx, |input, cx| match input.dictation.phase {
+                Phase::Requesting if crate::dictation::permission_pending() => {
+                    input.cancel_dictation();
+                    cx.emit(DictationInputEvent::Changed);
+                    cx.notify();
+                }
+                Phase::Requesting | Phase::Listening if tapped => {
+                    input.cancel_dictation();
+                    input.dictation.phase = Phase::Tapped;
+                    cx.emit(DictationInputEvent::Changed);
+                    cx.notify();
+                }
+                Phase::Requesting | Phase::Listening => {
+                    input.finish_dictation(false, cx);
+                }
+                _ => {}
             });
         self.focus_pending = true;
         cx.notify();
@@ -9231,13 +9386,33 @@ impl Composer {
                 cx.new(|_| AppshotActionTooltip(tooltip.clone().into()))
                     .into()
             })
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_dictation(cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.press_dictation(HoldSource::Pointer, cx)),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.release_dictation(HoldSource::Pointer, cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.release_dictation(HoldSource::Pointer, cx)),
+            )
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     cx.stop_propagation();
-                    this.toggle_dictation(cx);
+                    if !event.is_held {
+                        this.press_dictation(HoldSource::Button, cx);
+                    }
                 }
             }))
+            .on_key_up(cx.listener(|this, event: &KeyUpEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    cx.stop_propagation();
+                    this.release_dictation(HoldSource::Button, cx);
+                }
+            }))
+            // Assistive technology cannot hold: Click starts, then finishes.
             .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
                 composer
                     .update(cx, |this, cx| this.toggle_dictation(cx))

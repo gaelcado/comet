@@ -439,7 +439,7 @@ fn dictation_completed_send_event_cannot_send_a_replacement_draft(cx: &mut TestA
 
 #[cfg(target_os = "macos")]
 #[gpui::test]
-fn dictation_keyboard_stop_restores_editor_focus(cx: &mut TestAppContext) {
+fn dictation_shortcut_holds_until_its_modifier_is_released(cx: &mut TestAppContext) {
     let (_dir, handle) = super::tests::composer_focus_window(cx);
     cx.update(|cx| {
         crate::shell::apply_keymap(
@@ -464,8 +464,19 @@ fn dictation_keyboard_stop_restores_editor_focus(cx: &mut TestAppContext) {
         .unwrap();
     cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    cx.simulate_keystrokes(handle.into(), "cmd-shift-d");
+    // Key down and its auto-repeat hold the recording open.
+    cx.simulate_keystrokes(handle.into(), "cmd-d cmd-d");
     cx.run_until_parked();
+    assert_eq!(fake.borrow().finishes, 0);
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    visual.simulate_modifiers_change(gpui::Modifiers::command());
+    assert_eq!(
+        fake.borrow().finishes,
+        0,
+        "D up alone never arrives on macOS"
+    );
+    // Letting go of Command ends the hold.
+    visual.simulate_modifiers_change(gpui::Modifiers::none());
     assert_eq!(fake.borrow().finishes, 1);
     handle
         .update(cx, |composer, window, cx| {
@@ -474,6 +485,90 @@ fn dictation_keyboard_stop_restores_editor_focus(cx: &mut TestAppContext) {
             composer.input.update(cx, |input, cx| {
                 deliver(input, &fake, [Event::Final("keyboard".into())], cx)
             });
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn dictation_pointer_hold_finishes_on_release_even_outside_the_button(cx: &mut TestAppContext) {
+    let (dir, handle) = super::tests::composer_focus_window(cx);
+    enable_dictation(dir.path(), cx);
+    for release_outside in [false, true] {
+        let fake = handle
+            .update(cx, |composer, _, cx| {
+                composer.input.update(cx, |input, cx| {
+                    let fake = start(input, cx);
+                    deliver(input, &fake, [Event::Listening], cx);
+                    fake
+                })
+            })
+            .unwrap();
+        cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+        let button = visual.debug_bounds("composer-dictation").unwrap();
+        visual.simulate_mouse_down(
+            button.center(),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        assert_eq!(fake.borrow().finishes, 0, "holding keeps recording");
+        let up = if release_outside {
+            button.origin - point(px(40.0), px(40.0))
+        } else {
+            button.center()
+        };
+        visual.simulate_mouse_up(up, MouseButton::Left, gpui::Modifiers::default());
+        assert_eq!(fake.borrow().drops, 0, "release must finish, not cancel");
+        assert_eq!(fake.borrow().finishes, 1, "outside={release_outside}");
+        handle
+            .update(cx, |composer, _, cx| {
+                composer.input.update(cx, |input, cx| {
+                    assert_eq!(input.dictation.phase, Phase::Finalizing);
+                    deliver(input, &fake, [Event::Final("Bonjour".into())], cx);
+                });
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+fn dictation_tap_explains_hold_to_talk_without_transcribing(cx: &mut TestAppContext) {
+    let (dir, handle) = super::tests::composer_focus_window(cx);
+    enable_dictation(dir.path(), cx);
+    let fake = handle
+        .update(cx, |composer, _, cx| {
+            let fake = composer.input.update(cx, |input, cx| {
+                input.set_text("keep", cx);
+                let fake = start(input, cx);
+                deliver(input, &fake, [Event::Listening], cx);
+                fake
+            });
+            // As if this press had just started the session.
+            composer.dictation_hold = Some(DictationHold {
+                source: HoldSource::Pointer,
+                started: Some(Instant::now()),
+            });
+            fake
+        })
+        .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), cx);
+    let button = visual.debug_bounds("composer-dictation").unwrap();
+    visual.simulate_mouse_up(
+        button.center(),
+        MouseButton::Left,
+        gpui::Modifiers::default(),
+    );
+    assert_eq!(fake.borrow().finishes, 0);
+    assert_eq!(fake.borrow().drops, 1, "a tap releases the microphone");
+    handle
+        .read_with(cx, |composer, cx| {
+            let input = composer.input.read(cx);
+            assert_eq!(input.dictation.phase, Phase::Tapped);
+            assert_eq!(input.text(), "keep");
+            assert!(composer.dictation_hold.is_none());
         })
         .unwrap();
 }

@@ -155,6 +155,8 @@ pub(crate) enum Phase {
     Listening,
     Finalizing,
     NoSpeech,
+    /// Released almost immediately: dictation is hold to talk.
+    Tapped,
     Denied(String),
     Unavailable(String),
     Failed(String),
@@ -168,12 +170,11 @@ impl Phase {
     /// Button names describe the action, independently of the live status.
     pub fn action_label(&self) -> &'static str {
         match self {
-            Self::Idle => "Start dictation",
-            Self::Requesting => "Cancel dictation setup",
-            Self::Listening => "Stop dictation",
-            Self::Finalizing => "Cancel transcription",
+            Self::Idle | Self::Tapped => "Hold to dictate",
+            Self::Requesting | Self::Listening => "Release to transcribe",
+            Self::Finalizing => "Transcribing",
             Self::NoSpeech | Self::Denied(_) | Self::Unavailable(_) | Self::Failed(_) => {
-                "Retry dictation"
+                "Hold to retry dictation"
             }
         }
     }
@@ -182,11 +183,15 @@ impl Phase {
         Some(match self {
             Self::Idle => return None,
             Self::Requesting => ("Getting ready…", "Wait for Listening before speaking."),
-            Self::Listening => ("Listening", "Stop when you’re done · Up to 1 minute"),
+            Self::Listening => ("Listening", "Release when you’re done · Up to 1 minute"),
             Self::Finalizing => ("Transcribing…", "Processing on this device."),
             Self::NoSpeech => (
                 "No speech detected",
                 "Check your microphone, then try again.",
+            ),
+            Self::Tapped => (
+                "Hold to dictate",
+                "Keep holding the microphone or the shortcut while you speak.",
             ),
             Self::Denied(message) | Self::Unavailable(message) => {
                 ("Dictation unavailable", message)

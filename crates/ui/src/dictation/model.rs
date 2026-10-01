@@ -30,6 +30,7 @@ pub(crate) fn init(root: PathBuf, cx: &mut App) {
         error: None,
         inputs: Inputs::default(),
         input_select: widgets::SelectState::default(),
+        shortcut: None,
     });
     cx.set_global(VoiceGlobal { card, directory });
 }
@@ -59,6 +60,8 @@ pub(crate) struct VoiceCard {
     error: Option<String>,
     inputs: Inputs,
     input_select: widgets::SelectState,
+    /// Created on first render (it needs this card's context).
+    shortcut: Option<Entity<settings::shortcuts::ShortcutField>>,
 }
 /// Microphones as last enumerated, refreshed off the UI thread while the page
 /// is visible so newly connected devices appear.
@@ -373,6 +376,33 @@ impl Render for VoiceCard {
                 )
                 .child(control)
         });
+        let shortcut_row = (enabled && self.ready).then(|| {
+            let field = self
+                .shortcut
+                .get_or_insert_with(|| {
+                    cx.new(|cx| {
+                        settings::shortcuts::ShortcutField::new(
+                            settings::ShortcutId::ToggleDictation,
+                            cx,
+                        )
+                    })
+                })
+                .clone();
+            widgets::card_row(&theme, false)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(160.0))
+                        .flex()
+                        .flex_col()
+                        .child(widgets::row_title(&theme, "Shortcut"))
+                        .child(widgets::meta_line(
+                            &theme,
+                            vec!["Hold to talk, release to transcribe".into_any_element()],
+                        )),
+                )
+                .child(field)
+        });
         let model_card = (self.cache_present && !downloading).then(|| {
             let remove_weak = cx.entity().downgrade();
             widgets::section_card(&theme).child(
@@ -450,7 +480,8 @@ impl Render for VoiceCard {
                                 .child(
                                     widgets::section_card(&theme)
                                         .child(dictation_row)
-                                        .children(microphone_row),
+                                        .children(microphone_row)
+                                        .children(shortcut_row),
                                 )
                                 .children(error)
                                 .children(model_card),
