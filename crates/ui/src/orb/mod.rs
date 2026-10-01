@@ -15,6 +15,7 @@
 //! The engine is the public `engine` module below — the "advanced" tier for
 //! custom paint loops.
 
+mod motion;
 mod orb;
 mod paint;
 mod presets;

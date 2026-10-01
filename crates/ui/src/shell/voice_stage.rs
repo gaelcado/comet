@@ -120,12 +120,16 @@ impl Shell {
         let failure = (voice.phase == VoicePhase::Failed)
             .then(|| voice.reason_text())
             .filter(|text| !text.is_empty());
-        let (orb_state, level) = (voice.orb_state(), voice.level());
+        let (orb_state, microphone, speaker) = (
+            voice.orb_state(),
+            voice.microphone_level(),
+            voice.speaker_level(),
+        );
         let reduced = self.reduced_motion;
         self.voice_footer_orb.update(cx, |orb, cx| {
             orb.set_visible(live, cx);
             orb.set_state(orb_state, cx);
-            orb.set_speed(1.0 + level * 1.5, cx);
+            orb.set_audio_levels(microphone, speaker, cx);
             orb.set_reduced_motion(reduced, cx);
         });
 
@@ -266,7 +270,11 @@ impl Shell {
             self.motion_active.set(true);
         }
         let voice = self.voice.read(cx);
-        let (orb_state, level) = (voice.orb_state(), voice.level());
+        let (orb_state, microphone, speaker) = (
+            voice.orb_state(),
+            voice.microphone_level(),
+            voice.speaker_level(),
+        );
         let caption = caption_tail(&voice.partial, STAGE_CAPTION_CHARS);
         let snapshot = voice.snapshot.clone();
         let chat_id = voice.chat_id.clone();
@@ -277,7 +285,7 @@ impl Shell {
         self.voice_stage_orb.update(cx, |orb, cx| {
             orb.set_visible(open, cx);
             orb.set_state(orb_state, cx);
-            orb.set_speed(1.0 + level * 1.5, cx);
+            orb.set_audio_levels(microphone, speaker, cx);
             orb.set_reduced_motion(reduced, cx);
             // The orb blooms out of the footer as the stage arrives.
             orb.set_scale(VOICE_STAGE_ORB_SCALE * (0.82 + 0.18 * reveal), cx);

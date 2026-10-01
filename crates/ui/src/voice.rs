@@ -213,9 +213,9 @@ impl VoiceController {
         f32::from(self.microphone_level) / f32::from(u16::MAX)
     }
 
-    /// Normalized 0…1 loudness of whichever side is talking.
-    pub fn level(&self) -> f32 {
-        f32::from(self.microphone_level.max(self.speaker_level)) / f32::from(u16::MAX)
+    /// Normalized 0…1 speaker peak; the orb smooths each channel separately.
+    pub fn speaker_level(&self) -> f32 {
+        f32::from(self.speaker_level) / f32::from(u16::MAX)
     }
 
     pub fn reduce(&mut self, event: VoiceEvent, cx: &mut Context<Self>) {

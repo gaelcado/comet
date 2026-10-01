@@ -8,6 +8,27 @@ use tokio_util::sync::CancellationToken;
 use zeron_harness::codex::realtime::{RealtimeHandle, VoiceCommand};
 use zeron_proto::{SessionStatus, voice::*};
 
+/// Visual speaker activity: hysteresis and a short hold bridge syllable gaps.
+#[derive(Default)]
+struct SpeakerActivity {
+    playing: bool,
+    last_loud: Option<Instant>,
+}
+impl SpeakerActivity {
+    fn update(&mut self, peak: u16, now: Instant) -> bool {
+        const ENTER: u16 = 655;
+        const EXIT: u16 = 328;
+        const HOLD: Duration = Duration::from_millis(250);
+        if peak >= if self.playing { EXIT } else { ENTER } {
+            self.playing = true;
+            self.last_loud = Some(now);
+        } else if self.last_loud.is_none_or(|last| now.duration_since(last) >= HOLD) {
+            self.playing = false;
+        }
+        self.playing
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct VoiceManager {
     inner: Arc<Inner>,
@@ -376,6 +397,7 @@ impl VoiceManager {
                 if started.is_err()||cancel.is_cancelled(){let _=bridge.stop().await;return started;}
                 let mut statuses=sessions.watch_sessions();
                 let mut last_partial:Option<String>=None;
+                let mut speaker_activity = SpeakerActivity::default();
                 let run=async {loop{tokio::select!{biased;
                     _=cancel.cancelled()=>return Ok(()),
                     changed=statuses.changed()=>{
@@ -398,7 +420,7 @@ impl VoiceManager {
                             },
                             VoiceEvent::Partial{generation,item_id,..}=>{if *generation!=lease.generation{continue;}if item_id!=&last_partial{last_partial=item_id.clone();}},
                             VoiceEvent::Levels{generation,speaker,..}=>{if *generation!=lease.generation{continue;}
-                                let playing=*speaker>100;
+                                let playing=speaker_activity.update(*speaker, Instant::now());
                                 let changed=manager.inner.slot.lock().unwrap().as_ref().is_some_and(|s|s.snapshot.playing!=playing);
                                 if changed{manager.update(&lease,|s|s.playing=playing)?;}
                             },
@@ -420,6 +442,25 @@ impl VoiceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speaker_activity_ignores_noise_and_holds_through_syllable_gaps() {
+        let now = Instant::now();
+        let mut activity = SpeakerActivity::default();
+        assert!(!activity.update(100, now));
+        assert!(!activity.update(500, now));
+        assert!(activity.update(1024, now));
+        assert!(activity.update(0, now + Duration::from_millis(100)));
+        assert!(activity.update(0, now + Duration::from_millis(249)));
+        assert!(!activity.update(0, now + Duration::from_millis(250)));
+        // The lower exit threshold keeps quiet speech active, but does not
+        // let the same background level start a new speaking interval.
+        assert!(!activity.update(500, now + Duration::from_millis(300)));
+        assert!(activity.update(1024, now + Duration::from_millis(400)));
+        assert!(activity.update(500, now + Duration::from_millis(600)));
+        assert!(activity.update(0, now + Duration::from_millis(800)));
+        assert!(!activity.update(0, now + Duration::from_millis(850)));
+    }
     #[tokio::test]
     async fn exclusive_owner_drop_and_stale_guards() {
         let manager = VoiceManager::default();

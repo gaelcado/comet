@@ -2115,11 +2115,13 @@ impl Shell {
         let voice_footer_orb = cx.new(|_| {
             crate::orb::Orb::new()
                 .size(crate::orb::OrbSize::Inline)
+                .state_transition(Duration::from_millis(300))
                 .visible(false)
         });
         let voice_stage_orb = cx.new(|_| {
             crate::orb::Orb::new()
                 .size(crate::orb::OrbSize::Hero)
+                .state_transition(Duration::from_millis(300))
                 .scale(VOICE_STAGE_ORB_SCALE)
                 .visible(false)
         });
