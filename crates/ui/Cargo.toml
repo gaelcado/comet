@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+voice-experimental = ["dep:zeron-audio"]
 project-palette-fixture = []
 compact-picker-fixture = ["gpui_platform/test-support"]
 
@@ -48,6 +49,7 @@ required-features = ["compact-picker-fixture"]
 
 [dependencies]
 zeron-voice = { path = "../voice" }
+zeron-audio = { workspace = true, optional = true }
 url = "2"
 zeron-proto.workspace = true
 similar.workspace = true
