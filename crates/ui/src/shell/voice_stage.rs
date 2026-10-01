@@ -67,7 +67,8 @@ impl Shell {
             });
         let voice = settings::current(cx).codex_voice;
         self.voice.update(cx, |controller, cx| {
-            controller.start(engine, device, config, voice, cx)
+            controller.start(engine, device, config, voice, cx);
+            controller.set_stage_open(true, cx);
         });
     }
 
