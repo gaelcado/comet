@@ -35,6 +35,10 @@ pub struct VoiceEligibility {
     #[serde(default)]
     pub ordinary_usage_allowed: Option<bool>,
     pub credits_excluded: bool,
+    #[serde(default)]
+    pub format: Option<VoiceFormat>,
+    #[serde(default)]
+    pub duplex_verified: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

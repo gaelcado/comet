@@ -63,6 +63,7 @@ zeron-theme.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui_tokio.workspace = true
+tokio-util.workspace = true
 gpui-base.workspace = true
 tokio.workspace = true
 futures.workspace = true

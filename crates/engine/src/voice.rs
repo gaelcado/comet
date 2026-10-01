@@ -28,7 +28,7 @@ impl Drop for VoiceOwner { fn drop(&mut self) { let _ = self.manager.stop(&self.
 
 impl VoiceManager {
     pub fn eligibility(&self) -> VoiceEligibility {
-        VoiceEligibility { available: false, reason: Some(VoiceRejection::CreditExclusionUnverified), ordinary_usage_allowed: None, credits_excluded: false }
+        VoiceEligibility { available: false, reason: Some(VoiceRejection::CreditExclusionUnverified), ordinary_usage_allowed: None, credits_excluded: false, format: None, duplex_verified: false }
     }
     pub fn start(&self, _chat: &str) -> Result<VoiceLease, VoiceRejection> {
         // Intentionally no configuration override. This gate must be replaced
