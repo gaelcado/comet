@@ -1689,6 +1689,21 @@ impl RpcService for AuthRpc {
 #[async_trait]
 impl RpcService for EngineRpc {
     async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
+        // Origin comes from the engine-injected MCP server, not tool arguments.
+        // The manager is authority on whether that runtime owns voice. Until
+        // G1 is proven, no voice-origin command may start a paid delegation.
+        if matches!(
+            method,
+            methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE
+        ) && params
+            .get("originChatId")
+            .and_then(|v| v.as_str())
+            .is_some_and(|origin| self.voice.restricts_origin(origin))
+        {
+            return Err(RpcError::Failed(
+                "voice delegation unavailable: creditExclusionUnverified".into(),
+            ));
+        }
         // Device-addressed routing: forward calls that target another device over its
         // relay. The target compares the id to its own, so forwards cannot loop.
         if forwardable(method)
@@ -1721,21 +1736,6 @@ impl RpcService for EngineRpc {
             .is_some_and(|v| v != self.engine_info.device_id)
         {
             return Err(RpcError::Failed("voice unavailable: remoteHost".into()));
-        }
-        // Origin comes from the engine-injected MCP server, not tool arguments.
-        // The manager is authority on whether that runtime owns voice. Until
-        // G1 is proven, no voice-origin command may start a paid delegation.
-        if matches!(
-            method,
-            methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE
-        ) && params
-            .get("originChatId")
-            .and_then(|v| v.as_str())
-            .is_some_and(|origin| self.voice.restricts_origin(origin))
-        {
-            return Err(RpcError::Failed(
-                "voice delegation unavailable: creditExclusionUnverified".into(),
-            ));
         }
         if matches!(
             method,
@@ -3542,6 +3542,38 @@ mod tests {
         core.sessions.shutdown().await;
         assert!(!first.voice.restricts_origin("chat"));
         drop(owner);
+    }
+
+    #[tokio::test]
+    async fn voice_origin_rejects_remote_mutation_before_forwarding() {
+        let temp = tempfile::tempdir().unwrap();
+        let core = crate::EngineCore::assemble_with_profile(
+            crate::EngineProfile::local(temp.path()).unwrap(),
+            std::sync::Arc::new(HarnessRegistry::new()),
+            HarnessId::Codex,
+            None,
+        )
+        .unwrap();
+        let rpc = core.rpc_service();
+        let lease = rpc.voice.reserve("voice-origin").unwrap();
+        let owner = rpc.voice.own(lease).unwrap();
+        for method in [
+            methods::QUEUE_COMMAND,
+            methods::QUEUE_MESSAGE,
+            methods::MUTATE,
+        ] {
+            let error = match rpc.handle(method, serde_json::json!({"originChatId":"voice-origin","targetDeviceId":"remote","chatId":"other"})).await {
+                Err(error) => error,
+                Ok(_) => panic!("voice-origin mutation accepted"),
+            };
+            assert!(
+                matches!(error, RpcError::Failed(ref message) if message == "voice delegation unavailable: creditExclusionUnverified")
+            );
+        }
+        // No relay is configured: reaching forwarding would give its distinct
+        // unavailable error, proving the policy precedes that boundary.
+        drop(owner);
+        core.sessions.shutdown().await;
     }
 
     // Each subprocess has private HOME/PATH/overrides, avoiding process-global test races.

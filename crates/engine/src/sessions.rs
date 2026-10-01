@@ -2603,6 +2603,8 @@ async fn drive_run(
                 inner.set_status(&chat_id, SessionStatus::Working, true);
             } else {
                 match &event {
+                    AgentEvent::SessionStarted { .. }
+                        if resume_state.idle && !saw_session_started => {}
                     AgentEvent::Steered { .. } => {
                         idle_since = None;
                         inner.set_status(&chat_id, SessionStatus::Working, true);
@@ -2684,6 +2686,7 @@ async fn drive_run(
         // helper that is down hard fails the retry too and surfaces its
         // crash text (the harness now appends exit status + stderr).
         if resume_state.resume_injected
+            && !resume_state.idle
             && !resume_state.startup_retry
             && !saw_session_started
             && folded.is_empty()
@@ -3178,6 +3181,164 @@ mod tests {
             attachments: Vec::new(),
             worktree: None,
         }
+    }
+
+    struct IdleStartupFixture {
+        idle_calls: Arc<std::sync::atomic::AtomicUsize>,
+        inference_calls: Arc<std::sync::atomic::AtomicUsize>,
+        fail: bool,
+    }
+    #[async_trait::async_trait]
+    impl zeron_harness::Harness for IdleStartupFixture {
+        fn id(&self) -> HarnessId {
+            HarnessId::Codex
+        }
+        fn display_name(&self) -> &str {
+            "Offline idle fixture"
+        }
+        fn supports_steering(&self) -> bool {
+            false
+        }
+        fn steering_mode(&self) -> zeron_proto::SteeringMode {
+            zeron_proto::SteeringMode::TurnBoundary
+        }
+        fn reasoning_levels(&self) -> &[zeron_proto::ReasoningLevel] {
+            &[]
+        }
+        async fn models(&self) -> Result<Vec<zeron_proto::Model>, zeron_harness::HarnessError> {
+            Ok(vec![])
+        }
+        async fn start_idle(
+            &self,
+            request: RunRequest,
+            _controls: zeron_harness::RunControls,
+        ) -> Result<
+            futures::stream::BoxStream<'static, Result<AgentEvent, zeron_harness::HarnessError>>,
+            zeron_harness::HarnessError,
+        > {
+            use futures::StreamExt;
+            self.idle_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(request.prompt.is_empty());
+            assert_eq!(request.resume.as_deref(), Some("old-native-thread"));
+            let event = if self.fail {
+                AgentEvent::Done {
+                    status: zeron_proto::DoneStatus::Errored,
+                    result: None,
+                    error: Some("offline startup failed".into()),
+                    session_id: None,
+                }
+            } else {
+                AgentEvent::SessionStarted {
+                    harness: HarnessId::Codex,
+                    model: "fixture".into(),
+                    tools: vec![],
+                    cwd: request.cwd,
+                    session_id: "new-native-thread".into(),
+                    assistant_message_id: "fixture-empty".into(),
+                }
+            };
+            Ok(futures::stream::iter([Ok(event)])
+                .chain(futures::stream::pending())
+                .boxed())
+        }
+        async fn run(
+            &self,
+            _request: RunRequest,
+            _controls: zeron_harness::RunControls,
+        ) -> Result<
+            futures::stream::BoxStream<'static, Result<AgentEvent, zeron_harness::HarnessError>>,
+            zeron_harness::HarnessError,
+        > {
+            self.inference_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(zeron_harness::HarnessError::Protocol(
+                "fixture forbids inference".into(),
+            ))
+        }
+    }
+
+    async fn idle_startup_case(fail: bool) {
+        use super::*;
+        let temp = tempfile::tempdir().unwrap();
+        let idle_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let inference_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = crate::HarnessRegistry::new();
+        registry.register(Arc::new(IdleStartupFixture {
+            idle_calls: idle_calls.clone(),
+            inference_calls: inference_calls.clone(),
+            fail,
+        }));
+        let core = crate::EngineCore::assemble_with_profile(
+            crate::EngineProfile::local(temp.path()).unwrap(),
+            Arc::new(registry),
+            HarnessId::Codex,
+            None,
+        )
+        .unwrap();
+        core.workspace
+            .create_chat("idle", None, Some(&core.device_id), None, None)
+            .unwrap();
+        let mut request = request();
+        request.prompt.clear();
+        core.sessions
+            .inner
+            .remember_harness_session("idle", "old-native-thread", &request.cwd);
+        core.sessions.start_idle("idle", request).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let completed = if fail {
+                    core.sessions
+                        .session_status("idle")
+                        .is_some_and(|s| s.status == SessionStatus::Errored)
+                } else {
+                    core.sessions.inner.resume_for("idle", "/tmp").as_deref()
+                        == Some("new-native-thread")
+                };
+                if completed {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(idle_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(inference_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let entries = core
+            .doc_host
+            .open("idle")
+            .unwrap()
+            .doc()
+            .read_entries()
+            .unwrap();
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.role == zeron_doc::MessageRole::User)
+        );
+        if !fail {
+            assert!(entries.is_empty());
+            assert_eq!(
+                core.sessions.session_status("idle").unwrap().status,
+                SessionStatus::Idle
+            );
+            assert_eq!(
+                core.workspace.chat_harness_session("idle").unwrap().0,
+                "new-native-thread"
+            );
+            let events = core.sessions.inner.journal.replay("idle", 0).unwrap();
+            assert!(events.iter().any(|(_, event)| matches!(event, AgentEvent::SessionStarted { session_id, .. } if session_id == "new-native-thread")));
+        }
+        core.sessions.shutdown().await;
+    }
+    #[tokio::test]
+    async fn voice_idle_startup_failure_never_retries_as_inference() {
+        idle_startup_case(true).await;
+    }
+    #[tokio::test]
+    async fn voice_idle_startup_remembers_thread_without_creating_messages() {
+        idle_startup_case(false).await;
     }
 
     #[test]

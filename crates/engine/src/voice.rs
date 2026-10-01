@@ -1,6 +1,7 @@
 //! One local voice owner per engine. Media and leases are never journaled.
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(test)]
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::Instant;

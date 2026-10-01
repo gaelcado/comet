@@ -250,7 +250,9 @@ async fn write_loop(
 ) {
     let mut health = tokio::time::interval(std::time::Duration::from_millis(100));
     loop {
-        if closed.load(Ordering::Acquire) {
+        if closed.load(Ordering::Acquire)
+            || (control.is_closed() && control.is_empty() && media.is_closed() && media.is_empty())
+        {
             break;
         }
         let line = tokio::select! {
@@ -410,7 +412,7 @@ async fn read_loop(
                         .map(Value::take)
                         .unwrap_or(Value::Null),
                 };
-                if tx.try_send(incoming).is_err() {
+                if tx.send(incoming).await.is_err() {
                     break;
                 }
             }
@@ -434,7 +436,7 @@ async fn read_loop(
                         continue;
                     }
                 }
-                if tx.try_send(incoming).is_err() {
+                if tx.send(incoming).await.is_err() {
                     break;
                 }
             }
@@ -510,6 +512,64 @@ mod tests {
         drop(future);
         assert!(client.pending.lock().unwrap().is_empty());
         assert!(rx.try_recv().is_ok()); // Queued once; a late ACK is harmless.
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn text_notification_burst_preserves_backpressure_and_pending_response() {
+        use crate::process::{Command, Stdio};
+        let script = r#"import json, sys
+for i in range(600):
+    print(json.dumps({'jsonrpc':'2.0','method':'text/delta','params':{'sequence':i}}))
+sys.stdout.flush()
+request = json.loads(sys.stdin.readline())
+print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':True}), flush=True)
+sys.stdin.read()
+"#;
+        let mut child = Command::new("python3")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let (client, mut incoming) =
+            RpcClient::new(child.stdin.take().unwrap(), child.stdout.take().unwrap());
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while incoming.len() < 256 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // Let stdout's reader observe the full channel before consuming it.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(!client.is_closed());
+        let response = client.request_now("text/status", json!({}));
+        for expected in 0..600 {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(5), incoming.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let Incoming::Notification { method, params } = event else {
+                panic!("text peer retired during burst");
+            };
+            assert_eq!(method, "text/delta");
+            assert_eq!(params["sequence"], expected);
+        }
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), response)
+                .await
+                .unwrap()
+                .unwrap(),
+            json!(true)
+        );
+        drop(client);
+        tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

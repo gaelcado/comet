@@ -110,3 +110,25 @@ build and simulation results, not live billing, provider or hardware evidence.
 No tests start inference or use a public API key. No push or release is part of
 this work. Manual provider validation must remain blocked until its spending
 behavior can satisfy the user's included-subscription-only requirement.
+
+## Audit corrections
+
+The Astra high review identified and the patch corrected these offline runtime
+regressions before approval:
+
+- Preserve backpressure for text/ACP notifications instead of closing their
+  shared peer on a burst. A subprocess fixture sends 600 events to a 256-slot
+  channel, delays consumption and still receives the pending RPC response.
+- Close child stdin after both writer queues are dropped; the health timer
+  must not retain a peer indefinitely. The same fixture exits only on stdin EOF.
+- Never retry a failed idle startup through the normal prompt dispatch path.
+  Existing text startup retries retain their original behavior.
+- Process and publish the first idle SessionStarted without starting a turn,
+  creating a message or losing the native thread identity.
+- Apply voice-origin delegation rejection before remote forwarding. Offline
+  owner fixtures reject command/message/mutation before consulting a relay.
+
+Engine fixtures cover the successful idle bootstrap and startup failure with an
+engine-injected resume, asserting zero inference calls and zero user messages.
+The successful bootstrap also stays Idle, stores the new thread identity and
+publishes its SessionStarted. These tests use a synthetic Codex harness.
