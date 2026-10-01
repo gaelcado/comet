@@ -2121,14 +2121,10 @@ impl Shell {
         let composer_events = cx.subscribe(&composer, {
             let transcript = transcript.clone();
             move |this: &mut Shell, _, event: &ComposerEvent, cx| match event {
-                ComposerEvent::StartVoice => {
-                    let state = this.state.read(cx);
-                    if let (Some(engine), Some(chat)) =
-                        (state.engine().cloned(), state.selected_chat_row().cloned())
-                    {
-                        this.voice.update(cx, |voice, cx| {
-                            voice.begin(engine, chat.id, chat.device_id, cx)
-                        });
+                ComposerEvent::StartVoice(request) => {
+                    if let Some(engine) = this.state.read(cx).engine().cloned() {
+                        this.voice
+                            .update(cx, |voice, cx| voice.begin(engine, request.clone(), cx));
                     }
                 }
                 ComposerEvent::WorkspaceCommand(command) => {
@@ -2520,7 +2516,10 @@ impl Shell {
     fn on_state_changed(&mut self, state: &Entity<AppState>, cx: &mut Context<Self>) {
         if self.voice.read(cx).chat_id.is_some()
             && (self.voice.read(cx).chat_id != state.read(cx).selected_chat
-                || state.read(cx).engine().is_none())
+                || state
+                    .read(cx)
+                    .engine()
+                    .is_none_or(|engine| !self.voice.read(cx).belongs_to(engine)))
         {
             self.voice.update(cx, |voice, cx| voice.cancel(cx));
         }
@@ -12238,6 +12237,13 @@ fn header_icon_button(
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !matches!(self.route, Route::Chat) {
+            self.composer
+                .update(cx, |composer, cx| composer.cancel_voice_preparation(cx));
+        }
+        if !matches!(self.route, Route::Chat) && self.voice.read(cx).chat_id.is_some() {
+            self.voice.update(cx, |voice, cx| voice.cancel(cx));
+        }
         let active_files_key = self.panel_key(cx);
         let hidden_explorers = self
             .files

@@ -4992,7 +4992,7 @@ impl Render for ComposerInput {
 /// Events the shell listens for.
 #[derive(Debug, Clone)]
 pub enum ComposerEvent {
-    StartVoice,
+    StartVoice(zeron_proto::voice::StartVoice),
     WorkspaceCommand(WorkspaceCommand),
     /// Arm the shared-element transition before the draft route is replaced
     /// by the newly-created session. Emitting this before `select_chat` keeps
@@ -5615,6 +5615,8 @@ fn slash_error_message(err: &RpcError, skill: bool) -> SharedString {
 
 pub struct Composer {
     voice_suspended: bool,
+    voice_preparing: bool,
+    voice_preparation_context: Option<(Option<String>, Option<String>, bool)>,
     pub(crate) voice_supported: bool,
     pub(crate) state: Entity<AppState>,
     pub(crate) input: Entity<ComposerInput>,
@@ -5933,6 +5935,8 @@ impl Composer {
         let current_key = state.read(cx).selected_chat.clone().unwrap_or_default();
         let mut composer = Self {
             voice_suspended: false,
+            voice_preparing: false,
+            voice_preparation_context: None,
             voice_supported: false,
             state,
             input,
@@ -7655,7 +7659,180 @@ impl Composer {
         }
     }
 
+    pub(crate) fn cancel_voice_preparation(&mut self, cx: &mut Context<Self>) {
+        if self.voice_preparing {
+            self.voice_preparing = false;
+            self.voice_preparation_context = None;
+            self.sending = false;
+            self.send_task = None;
+            cx.notify();
+        }
+    }
+    fn prepare_voice(&mut self, cx: &mut Context<Self>) {
+        if self.sending || self.voice_suspended {
+            return;
+        }
+        let state = self.state.read(cx);
+        let Some(engine) = state.engine().cloned() else {
+            return;
+        };
+        let Some(local) = state.local_device_id.clone() else {
+            return;
+        };
+        let resolved = self.pickers.read(cx).resolved(cx);
+        if resolved.harness != Some(zeron_proto::HarnessId::Codex) {
+            self.failure = Some("Voice requires a Codex chat.".into());
+            cx.notify();
+            return;
+        }
+        if let Some(chat) = state.selected_chat_row() {
+            if chat.device_id != local {
+                self.failure = Some("Voice requires a chat on this device.".into());
+                cx.notify();
+                return;
+            }
+            cx.emit(ComposerEvent::StartVoice(zeron_proto::voice::StartVoice {
+                chat_id: chat.id.clone(),
+                host_device_id: local,
+                voice: crate::settings::current(cx).codex_voice,
+                worktree: None,
+            }));
+            return;
+        }
+        if state
+            .effective_device_id()
+            .as_deref()
+            .is_some_and(|id| id != local)
+        {
+            self.failure = Some("Voice requires a chat on this device.".into());
+            cx.notify();
+            return;
+        }
+        let context = (
+            state.selected_space.clone(),
+            state.effective_device_id(),
+            state.no_project,
+        );
+        let space = state.selected_space_row().cloned();
+        let plan = self.pickers.read(cx).checkout_plan();
+        let chat = uuid::Uuid::new_v4().to_string();
+        let mut cwd = space
+            .as_ref()
+            .map(|s| s.path.clone())
+            .unwrap_or_else(|| "~".into());
+        let mut branch = None;
+        let mut worktree = None;
+        if let Some(space) = space.as_ref() {
+            match plan {
+                crate::pickers::CheckoutPlan::CurrentCheckout { branch: b } => branch = b,
+                crate::pickers::CheckoutPlan::ReuseWorktree { path, branch: b } => {
+                    cwd = path;
+                    branch = Some(b);
+                }
+                crate::pickers::CheckoutPlan::NewWorktree { base } => {
+                    branch = base.clone();
+                    worktree = Some(zeron_proto::WorktreeSpec {
+                        repo_path: space.path.clone(),
+                        base: base.unwrap_or_else(|| "HEAD".into()),
+                        space_id: Some(space.id.clone()),
+                    });
+                }
+            }
+        }
+        let mut create = serde_json::json!({"op":"createChat","chatId":chat,"deviceId":local,"config":resolved.chat_config(),"cwd":cwd});
+        if let Some(space) = space {
+            create["spaceId"] = serde_json::json!(space.id);
+        }
+        if let Some(branch) = branch {
+            create["branch"] = serde_json::json!(branch);
+        }
+        let request = zeron_proto::voice::StartVoice {
+            chat_id: chat.clone(),
+            host_device_id: local,
+            voice: crate::settings::current(cx).codex_voice,
+            worktree,
+        };
+        self.sending = true;
+        self.voice_preparing = true;
+        self.voice_preparation_context = Some(context);
+        self.failure = None;
+        let expected_engine = engine.clone();
+        cx.notify();
+        self.send_task = Some(cx.spawn(async move |this, cx| {
+            let result = gpui_tokio::Tokio::spawn(cx, async move {
+                tokio::time::timeout(
+                    Duration::from_secs(30),
+                    engine.client().call(methods::MUTATE, create),
+                )
+                .await
+            })
+            .await;
+            let _ = this.update(cx, |composer, cx| {
+                composer.sending = false;
+                composer.send_task = None;
+                if !composer.voice_preparing {
+                    return;
+                }
+                composer.voice_preparing = false;
+                let context = composer.voice_preparation_context.take();
+                let state = composer.state.read(cx);
+                let still_here = context
+                    == Some((
+                        state.selected_space.clone(),
+                        state.effective_device_id(),
+                        state.no_project,
+                    ));
+                if !still_here
+                    || composer.state.read(cx).selected_chat.is_some()
+                    || composer
+                        .state
+                        .read(cx)
+                        .engine()
+                        .is_none_or(|engine| !engine.same_connection(&expected_engine))
+                {
+                    cx.notify();
+                    return;
+                }
+                if !matches!(result, Ok(Ok(Ok(_)))) {
+                    composer.failure = Some("Could not prepare a voice chat.".into());
+                    cx.notify();
+                    return;
+                }
+                // Preserve the entire draft under its new chat: no Submit, echo, attachment upload or title request.
+                let text = composer.input.read(cx).text().to_string();
+                if !text.is_empty() {
+                    composer.drafts.insert(chat.clone(), text);
+                }
+                if let Some(attachments) = composer.attachments.remove(&composer.current_key) {
+                    composer.attachments.insert(chat.clone(), attachments);
+                }
+                if let Some(appshots) = composer.appshots.remove(&composer.current_key) {
+                    composer.appshots.insert(chat.clone(), appshots);
+                }
+                composer.launching_new_chat = true;
+                cx.emit(ComposerEvent::NewThreadTransitionStarted);
+                composer
+                    .state
+                    .update(cx, |s, cx| s.select_chat(Some(chat.clone()), cx));
+                cx.emit(ComposerEvent::StartVoice(request));
+                cx.notify();
+            });
+        }));
+    }
+
     fn on_state_changed(&mut self, cx: &mut Context<Self>) {
+        let state = self.state.read(cx);
+        if self.voice_preparing
+            && (state.selected_chat.is_some()
+                || self.voice_preparation_context
+                    != Some((
+                        state.selected_space.clone(),
+                        state.effective_device_id(),
+                        state.no_project,
+                    )))
+        {
+            self.cancel_voice_preparation(cx);
+        }
         {
             let state = self.state.read(cx);
             let now = chrono::Utc::now();
@@ -10331,20 +10508,21 @@ impl Render for Composer {
             }
         });
 
-        let voice_button =
-            (cfg!(feature = "voice-experimental") && self.voice_supported).then(|| {
-                div()
-                    .id("composer-voice")
-                    .cursor_pointer()
-                    .text_xs()
-                    .px(px(6.0))
-                    .tooltip(crate::settings::widgets::text_tooltip(
-                        "Voice (experimental; included quota only)",
-                    ))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ComposerEvent::StartVoice)))
-                    .child("Voice")
-                    .into_any_element()
-            });
+        let voice_button = (self.voice_supported
+            && self.pickers.read(cx).resolved(cx).harness == Some(zeron_proto::HarnessId::Codex))
+        .then(|| {
+            div()
+                .id("composer-voice")
+                .cursor_pointer()
+                .text_xs()
+                .px(px(6.0))
+                .tooltip(crate::settings::widgets::text_tooltip(
+                    "Talk using your Codex plan",
+                ))
+                .on_click(cx.listener(|this, _, _, cx| this.prepare_voice(cx)))
+                .child("Voice")
+                .into_any_element()
+        });
         let send_button = self.render_send_button(mode, cx);
         let (voice_t, voice_frame) = self.update_voice(window, cx);
         let dictating = self.input.read(cx).dictation.phase.active();

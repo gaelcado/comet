@@ -3,8 +3,6 @@ use crate::state::EngineHandle;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use zeron_proto::voice::*;
-use zeron_rpc::methods;
-#[cfg(feature = "voice-experimental")]
 mod session;
 
 pub enum VoiceControl {
@@ -17,6 +15,10 @@ pub struct VoiceController {
     pub reason: Option<VoiceRejection>,
     pub snapshot: Option<VoiceSnapshot>,
     pub partial: String,
+    pub microphone_level: u16,
+    pub speaker_level: u16,
+    partial_item: Option<String>,
+    engine: Option<EngineHandle>,
     controls: Option<tokio::sync::mpsc::Sender<VoiceControl>>,
     epoch: u64,
     task: Option<Task<()>>,
@@ -30,6 +32,10 @@ impl Default for VoiceController {
             reason: None,
             snapshot: None,
             partial: String::new(),
+            microphone_level: 0,
+            speaker_level: 0,
+            partial_item: None,
+            engine: None,
             controls: None,
             epoch: 0,
             task: None,
@@ -38,62 +44,19 @@ impl Default for VoiceController {
     }
 }
 impl VoiceController {
-    pub fn begin(
-        &mut self,
-        engine: EngineHandle,
-        chat_id: String,
-        host: String,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn begin(&mut self, engine: EngineHandle, request: StartVoice, cx: &mut Context<Self>) {
         self.cancel(cx);
+        self.engine = Some(engine.clone());
         self.phase = VoicePhase::Checking;
-        self.chat_id = Some(chat_id.clone());
+        self.chat_id = Some(request.chat_id.clone());
         self.reason = None;
         let epoch = self.epoch;
-        let request = StartVoice {
-            chat_id,
-            host_device_id: host,
-            voice: None,
-        };
         let cancellation = self.cancellation.clone();
         let (controls, control_rx) = tokio::sync::mpsc::channel(8);
         self.controls = Some(controls);
         let (events, mut event_rx) = tokio::sync::mpsc::channel(32);
         let query = Tokio::spawn(cx, async move {
-            let eligibility: VoiceEligibility = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                engine.client().call_as(
-                    methods::VOICE_ELIGIBILITY,
-                    serde_json::to_value(&request).unwrap(),
-                ),
-            )
-            .await
-            .map_err(|_| VoiceRejection::Protocol)?
-            .map_err(|_| VoiceRejection::Unsupported)?;
-            if !eligibility.available {
-                return Err(eligibility.reason.unwrap_or(VoiceRejection::Unsupported));
-            }
-            if eligibility.ordinary_usage_allowed != Some(true) {
-                return Err(VoiceRejection::IncludedUsageUnavailable);
-            }
-            if !eligibility.credits_excluded {
-                return Err(VoiceRejection::CreditExclusionUnverified);
-            }
-            if eligibility.format.is_none() {
-                return Err(VoiceRejection::AudioFormatUnverified);
-            }
-            if !eligibility.duplex_verified {
-                return Err(VoiceRejection::DuplexUnverified);
-            }
-            #[cfg(feature = "voice-experimental")]
-            {
-                session::run(engine, request, cancellation, events, control_rx).await
-            }
-            #[cfg(not(feature = "voice-experimental"))]
-            {
-                let _ = (cancellation, events, control_rx);
-                Err::<(), _>(VoiceRejection::Disabled)
-            }
+            session::run(engine, request, cancellation, events, control_rx).await
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let receive = async {
@@ -143,9 +106,18 @@ impl VoiceController {
         self.phase = VoicePhase::Closed;
         self.snapshot = None;
         self.partial.clear();
+        self.partial_item = None;
+        self.microphone_level = 0;
+        self.speaker_level = 0;
         self.chat_id = None;
         self.reason = None;
+        self.engine = None;
         cx.notify();
+    }
+    pub fn belongs_to(&self, engine: &EngineHandle) -> bool {
+        self.engine
+            .as_ref()
+            .is_some_and(|e| e.same_connection(engine))
     }
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         let muted = self.snapshot.as_ref().is_some_and(|s| s.muted);
@@ -170,12 +142,19 @@ impl VoiceController {
                 self.phase = snapshot.phase;
                 self.snapshot = Some(snapshot);
             }
-            VoiceEvent::Partial { generation, text }
-                if self
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|s| s.generation == generation) =>
+            VoiceEvent::Partial {
+                generation,
+                item_id,
+                text,
+            } if self
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| s.generation == generation) =>
             {
+                if self.partial_item != item_id {
+                    self.partial.clear();
+                    self.partial_item = item_id;
+                }
                 if self.partial.len() + text.len() <= MAX_TRANSCRIPT_BYTES {
                     self.partial.push_str(&text);
                 } else {
@@ -183,6 +162,27 @@ impl VoiceController {
                     self.phase = VoicePhase::Failed;
                     self.reason = Some(VoiceRejection::Overflow);
                 }
+            }
+            VoiceEvent::Levels {
+                generation,
+                microphone,
+                speaker,
+            } if self
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| s.generation == generation) =>
+            {
+                self.microphone_level = microphone;
+                self.speaker_level = speaker;
+            }
+            VoiceEvent::Final { transcript }
+                if self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.session_id == transcript.session_id) =>
+            {
+                self.partial.clear();
+                self.partial_item = None;
             }
             VoiceEvent::Closed { generation, reason }
                 if self
@@ -202,17 +202,25 @@ impl VoiceController {
     pub fn reason_text(&self) -> &'static str {
         match self.reason {
             Some(VoiceRejection::CreditExclusionUnverified) => {
-                "Voice is unavailable until Codex can guarantee use of included quota only."
+                "Codex controls subscription usage and any enabled additional credits."
             }
             Some(VoiceRejection::WrongHarness) => "Voice requires a Codex chat.",
             Some(VoiceRejection::RemoteHost) => "Voice requires a chat hosted on this device.",
             Some(VoiceRejection::IncludedUsageUnavailable) => {
-                "Included Codex usage is unavailable."
+                "Codex usage is currently unavailable."
             }
             Some(VoiceRejection::AudioFormatUnverified) => {
                 "This Codex voice format has not been verified."
             }
-            Some(_) => "Voice is unavailable on this engine.",
+            Some(VoiceRejection::ChatgptRequired) => "Sign in to Codex with ChatGPT to use voice.",
+            Some(VoiceRejection::NativeRuntimeUnavailable) => {
+                "Update the standalone Codex installation to include its native voice runtime."
+            }
+            Some(VoiceRejection::DeviceUnavailable) => {
+                "Check microphone permission and your audio devices."
+            }
+            Some(VoiceRejection::Busy) => "Another window already owns the voice session.",
+            Some(_) => "Voice could not connect. You can continue typing.",
             None => "",
         }
     }
@@ -242,6 +250,8 @@ mod tests {
                 playing: false,
                 work: VoiceWork::Idle,
                 reason: None,
+                voice: None,
+                voices: Vec::new(),
             };
             voice.reduce(
                 VoiceEvent::Snapshot {
@@ -252,6 +262,7 @@ mod tests {
             voice.reduce(
                 VoiceEvent::Partial {
                     generation: 1,
+                    item_id: None,
                     text: "old".into(),
                 },
                 cx,
@@ -260,6 +271,7 @@ mod tests {
             voice.reduce(
                 VoiceEvent::Partial {
                     generation: 2,
+                    item_id: None,
                     text: "current".into(),
                 },
                 cx,

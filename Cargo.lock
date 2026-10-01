@@ -13324,7 +13324,6 @@ dependencies = [
  "windows-sys 0.61.2",
  "wry",
  "x11rb 0.14.0",
- "zeron-audio",
  "zeron-doc",
  "zeron-engine",
  "zeron-harness",

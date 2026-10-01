@@ -61,6 +61,15 @@ impl Render for VoiceSurface {
         let partial = controller.partial.clone();
         let snapshot = controller.snapshot.clone();
         let muted = snapshot.as_ref().is_some_and(|s| s.muted);
+        let voices = snapshot
+            .as_ref()
+            .map(|s| s.voices.clone())
+            .unwrap_or_default();
+        let selected = crate::settings::current(cx).codex_voice;
+        let next_voice_label = format!(
+            "Next voice: {}",
+            selected.as_deref().unwrap_or("Codex default")
+        );
         let working = snapshot.as_ref().is_some_and(|s| s.work != VoiceWork::Idle);
         let state = orb_state(phase, snapshot.as_ref());
         let label = match phase {
@@ -70,10 +79,12 @@ impl Render for VoiceSurface {
             _ if working => "Codex is working",
             _ => "Listening",
         };
+        let level = f32::from(controller.microphone_level.max(controller.speaker_level)) / 65535.0;
         let reduced = crate::motion::reduced_motion(cx);
         self.orb.update(cx, |orb, cx| {
             orb.set_visible(phase.replaces_composer(), cx);
             orb.set_state(state, cx);
+            orb.set_speed(1.0 + level * 1.5, cx);
             orb.set_size(
                 if f32::from(window.viewport_size().width) < 440.0 {
                     OrbSize::Large
@@ -117,6 +128,36 @@ impl Render for VoiceSurface {
             }))
             .child(self.orb.clone())
             .child(div().text_sm().child(label))
+            .when(!voices.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("voice-choice")
+                        .cursor_pointer()
+                        .text_xs()
+                        .tooltip(crate::settings::widgets::text_tooltip(
+                            "Choose the voice for your next session",
+                        ))
+                        .on_click(move |_, _, cx| {
+                            let next = match selected
+                                .as_ref()
+                                .and_then(|v| voices.iter().position(|id| id == v))
+                            {
+                                Some(index) if index + 1 < voices.len() => {
+                                    Some(voices[index + 1].clone())
+                                }
+                                Some(_) => None,
+                                None => voices.first().cloned(),
+                            };
+                            crate::settings::update(
+                                crate::settings::SavePolicy::Immediate,
+                                cx,
+                                |s| s.codex_voice = next,
+                            );
+                            cx.refresh_windows();
+                        })
+                        .child(next_voice_label),
+                )
+            })
             .when(snapshot.as_ref().is_some_and(|s| s.playing), |el| {
                 el.child(div().text_xs().child("Playing response"))
             })
@@ -195,6 +236,8 @@ mod tests {
             playing: true,
             work: VoiceWork::Idle,
             reason: None,
+            voice: None,
+            voices: Vec::new(),
         };
         assert_eq!(orb_state(s.phase, Some(&s)), OrbState::Composing);
         s.playing = false;

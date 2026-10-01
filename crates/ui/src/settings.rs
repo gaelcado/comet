@@ -965,6 +965,9 @@ pub struct UiSettings {
     pub reduce_motion: crate::motion::ReduceMotion,
     /// Also snap animations while the main window is not focused.
     pub pause_animations_in_background: bool,
+    /// Stable native Codex voice id only; devices and microphone state are never persisted.
+    #[serde(default)]
+    pub codex_voice: Option<String>,
     /// Pre-theme settings used `accentColor`. Read it once, migrate to
     /// [`Self::accent`], and never write it again.
     #[serde(default, rename = "accentColor", skip_serializing)]
@@ -1052,6 +1055,7 @@ impl Default for UiSettings {
             new_thread_background_effect: NewThreadBackgroundEffect::None,
             reduce_motion: crate::motion::ReduceMotion::System,
             pause_animations_in_background: false,
+            codex_voice: None,
             legacy_accent_color: None,
         }
     }
@@ -2618,6 +2622,7 @@ mod tests {
             dictation_enabled: false,
             dictation_input: Some("coreaudio:usb-mic".into()),
             window_geometry: None,
+            codex_voice: Some("ember".into()),
             sidebar_width: 300.0,
             sidebar_collapsed: true,
             sidebar_grouped: true,
