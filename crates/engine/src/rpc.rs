@@ -1273,11 +1273,13 @@ impl EngineRpc {
                 .set_chat_branch(&chat_id, &branch)
                 .map_err(failed)
                 .map(drop),
-            MutateParams::SetChatCwd { chat_id, cwd } => self
-                .workspace
-                .set_chat_cwd(&chat_id, &cwd)
-                .map_err(failed)
-                .map(drop),
+            MutateParams::SetChatCwd { chat_id, cwd } => {
+                self.voice.retire_chat(&chat_id);
+                self.workspace
+                    .set_chat_cwd(&chat_id, &cwd)
+                    .map_err(failed)
+                    .map(drop)
+            }
             MutateParams::SetChatActivity {
                 chat_id,
                 last_message_at,
@@ -1287,11 +1289,13 @@ impl EngineRpc {
                 .set_chat_activity(&chat_id, last_message_at, created_at)
                 .map_err(failed)
                 .map(drop),
-            MutateParams::SetChatHost { chat_id, device_id } => self
-                .workspace
-                .set_chat_host(&chat_id, &device_id)
-                .map_err(failed)
-                .map(drop),
+            MutateParams::SetChatHost { chat_id, device_id } => {
+                self.voice.retire_chat(&chat_id);
+                self.workspace
+                    .set_chat_host(&chat_id, &device_id)
+                    .map_err(failed)
+                    .map(drop)
+            }
             MutateParams::SetChatArchived { chat_id, archived } => self
                 .workspace
                 .set_chat_archived(&chat_id, archived)
@@ -1300,15 +1304,15 @@ impl EngineRpc {
             MutateParams::ChangeSidebarPin { change } => {
                 self.workspace.change_sidebar_pin(&change).map_err(failed)
             }
-            MutateParams::SetChatConfig { chat_id, config } => self
-                .workspace
-                .set_chat_config(&chat_id, &config)
-                .map_err(failed)
-                .map(drop),
+            MutateParams::SetChatConfig { chat_id, config } => {
+                self.voice.retire_chat(&chat_id);
+                self.workspace
+                    .set_chat_config(&chat_id, &config)
+                    .map_err(failed)
+                    .map(drop)
+            }
             MutateParams::DeleteChat { chat_id } => {
-                if self.voice.restricts_origin(&chat_id) {
-                    self.voice.retire();
-                }
+                self.voice.retire_chat(&chat_id);
                 self.workspace.delete_chat(&chat_id).map_err(failed)?;
                 self.doc_host.purge_chat(&chat_id);
                 Ok(())
@@ -1909,6 +1913,11 @@ impl RpcService for EngineRpc {
                             .map_err(|e| RpcError::Failed(e.to_string()))?;
                     }
                 }
+                let expected_chat = self
+                    .workspace
+                    .chat(&p.chat_id)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?
+                    .ok_or_else(|| RpcError::Failed("voice unavailable: Unsupported".into()))?;
                 let prepared = self.prepare_voice_bridge(&p.chat_id).await;
                 let (bridge, events, active) = match prepared {
                     Ok(bridge) => bridge,
@@ -1932,6 +1941,18 @@ impl RpcService for EngineRpc {
                         eligibility.reason
                     )));
                 }
+                let current = self
+                    .workspace
+                    .chat(&p.chat_id)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?
+                    .ok_or_else(|| RpcError::Failed("voice unavailable: Unsupported".into()))?;
+                if current.device_id != self.engine_info.device_id
+                    || current.config.as_ref().map(|c| c.harness) != Some(HarnessId::Codex)
+                    || current.config != expected_chat.config
+                    || current.cwd != expected_chat.cwd
+                {
+                    return Err(RpcError::Failed("voice unavailable: InvalidLease".into()));
+                }
                 let doc = self
                     .doc_host
                     .open(&p.chat_id)
@@ -1950,6 +1971,8 @@ impl RpcService for EngineRpc {
                     active,
                     doc,
                     self.sessions.clone(),
+                    self.workspace.clone(),
+                    expected_chat,
                 ) {
                     let _ = self.voice.stop(&lease);
                     return Err(RpcError::Failed(format!("{reason:?}")));

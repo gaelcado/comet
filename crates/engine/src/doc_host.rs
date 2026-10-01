@@ -665,15 +665,15 @@ impl ChatDocHandle {
     pub(crate) fn commit_voice(
         &self,
         transcript: &zeron_proto::voice::VoiceTranscript,
-    ) -> Result<(), EngineError> {
+    ) -> Result<Option<String>, EngineError> {
         let _owner = lock(&self.transcript_import);
         zeron_doc::voice::commit_voice_transcript(
             &self.doc,
             transcript,
             &self.device_id,
             chrono::Utc::now().timestamp_millis(),
-        )?;
-        Ok(())
+        )
+        .map_err(EngineError::from)
     }
 
     pub fn doc(&self) -> &SessionDoc {

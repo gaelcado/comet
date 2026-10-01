@@ -266,6 +266,19 @@ impl VoiceManager {
             Self::close_slot(slot, None);
         }
     }
+    pub(crate) fn retire_chat(&self, chat: &str) {
+        let mut state = self.inner.slot.lock().unwrap();
+        self.inner.identity_epoch.fetch_add(1, Ordering::AcqRel);
+        let old = if state.as_ref().is_some_and(|s| s.snapshot.chat_id == chat) {
+            state.take()
+        } else {
+            None
+        };
+        drop(state);
+        if let Some(slot) = old {
+            Self::close_slot(slot, None);
+        }
+    }
     pub(crate) fn connect(
         &self,
         lease: VoiceLease,
@@ -277,7 +290,12 @@ impl VoiceManager {
         active: Arc<AtomicUsize>,
         doc: Arc<crate::doc_host::ChatDocHandle>,
         sessions: crate::sessions::SessionsEngine,
+        workspace: crate::workspace_host::WorkspaceHost,
+        expected_chat: zeron_proto::Chat,
     ) -> Result<(), VoiceRejection> {
+        if bridge.invalidated() {
+            return Err(VoiceRejection::InvalidLease);
+        }
         let cancel = {
             let mut state = self.inner.slot.lock().unwrap();
             let s = state
@@ -299,6 +317,48 @@ impl VoiceManager {
                 }
             }
             let _active = Active(active);
+            struct ChatGuard(tokio::task::JoinHandle<()>);
+            impl Drop for ChatGuard {
+                fn drop(&mut self) {
+                    self.0.abort();
+                }
+            }
+            let watch_manager = manager.clone();
+            let watch_lease = lease.clone();
+            let watch_cancel = cancel.clone();
+            let watched_workspace = workspace.clone();
+            let mut rows = workspace.watch_chats();
+            let _chat_guard = ChatGuard(tokio::spawn(async move {
+                loop {
+                    let invalid = match watched_workspace.chat(&expected_chat.id) {
+                        Ok(Some(row)) if row.device_id != watched_workspace.device_id() => {
+                            Some(VoiceRejection::RemoteHost)
+                        }
+                        Ok(Some(row))
+                            if row.config.as_ref().map(|c| c.harness)
+                                != Some(zeron_proto::HarnessId::Codex) =>
+                        {
+                            Some(VoiceRejection::WrongHarness)
+                        }
+                        Ok(Some(row))
+                            if row.config != expected_chat.config
+                                || row.cwd != expected_chat.cwd =>
+                        {
+                            Some(VoiceRejection::InvalidLease)
+                        }
+                        Ok(Some(_)) => None,
+                        _ => Some(VoiceRejection::Unsupported),
+                    };
+                    if let Some(reason) = invalid {
+                        let _ = watch_manager.finish(&watch_lease, Some(reason));
+                        return;
+                    }
+                    tokio::select! { biased;
+                        _ = watch_cancel.cancelled() => return,
+                        changed = rows.changed() => if changed.is_err() { let _ = watch_manager.finish(&watch_lease, Some(VoiceRejection::Protocol)); return; },
+                    }
+                }
+            }));
             let result=async {
                 let _serial=tokio::select!{biased;_=cancel.cancelled()=>return Ok(()),lock=manager.inner.native_lifecycle.lock()=>lock};
                 loop {
@@ -341,7 +401,9 @@ impl VoiceManager {
                         match &event {
                             VoiceEvent::Final{transcript}=>{
                                 if transcript.session_id!=lease.session_id{continue;}
-                                doc.commit_voice(transcript).map_err(|_|VoiceRejection::Protocol)?;
+                                if doc.commit_voice(transcript).map_err(|_|VoiceRejection::Protocol)?.is_some() {
+                                    workspace.note_message(&chat, &transcript.text);
+                                }
                                 last_partial=None;
                             },
                             VoiceEvent::Partial{generation,item_id,..}=>{if *generation!=lease.generation{continue;}if item_id!=&last_partial{last_partial=item_id.clone();}},

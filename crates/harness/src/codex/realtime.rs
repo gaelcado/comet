@@ -12,6 +12,12 @@ use tokio_util::sync::CancellationToken;
 type AudioAbort = Arc<Mutex<Option<(u64, CancellationToken)>>>;
 use zeron_proto::voice::*;
 
+#[derive(Clone)]
+pub(super) struct ThreadContext {
+    pub cwd: String,
+    pub model_provider: Option<String>,
+}
+
 pub enum VoiceCommand {
     Probe {
         reply: oneshot::Sender<Result<VoiceEligibility, VoiceRejection>>,
@@ -36,16 +42,21 @@ pub enum VoiceCommand {
 }
 pub struct RealtimeControls {
     audio_abort: AudioAbort,
+    invalidated: Arc<std::sync::atomic::AtomicBool>,
     pub commands: mpsc::Receiver<VoiceCommand>,
     pub events: broadcast::Sender<VoiceEvent>,
 }
 #[derive(Clone)]
 pub struct RealtimeHandle {
     audio_abort: AudioAbort,
+    invalidated: Arc<std::sync::atomic::AtomicBool>,
     pub commands: mpsc::Sender<VoiceCommand>,
     pub events: broadcast::Sender<VoiceEvent>,
 }
 impl RealtimeHandle {
+    pub fn invalidated(&self) -> bool {
+        self.invalidated.load(Ordering::Acquire)
+    }
     /// Immediately closes native capture even if the control actor is waiting on I/O.
     pub fn abort_voice(&self, generation: u64) {
         if let Some((current, cancel)) = self.audio_abort.lock().unwrap().as_ref() {
@@ -99,16 +110,19 @@ pub fn channel() -> (
     broadcast::Receiver<VoiceEvent>,
 ) {
     let audio_abort = Arc::default();
+    let invalidated = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (commands, rx) = mpsc::channel(8);
     let (events, receiver) = broadcast::channel(32);
     (
         RealtimeHandle {
             audio_abort: Arc::clone(&audio_abort),
+            invalidated: invalidated.clone(),
             commands,
             events: events.clone(),
         },
         RealtimeControls {
             audio_abort,
+            invalidated,
             commands: rx,
             events,
         },
@@ -122,14 +136,17 @@ impl Drop for BridgeTask {
     }
 }
 
-pub(crate) fn attach(
+pub(super) fn attach(
     client: RpcClient,
     thread: String,
     executable: PathBuf,
+    context: ThreadContext,
     controls: RealtimeControls,
 ) -> BridgeTask {
     let abort = controls.audio_abort.clone();
+    let invalidated = controls.invalidated.clone();
     let (mut wire, overflow) = client.subscribe_voice(move || {
+        invalidated.store(true, Ordering::Release);
         if let Some((_, cancel)) = abort.lock().unwrap().as_ref() {
             cancel.cancel();
         }
@@ -137,6 +154,7 @@ pub(crate) fn attach(
     BridgeTask(tokio::spawn(async move {
         let RealtimeControls {
             audio_abort,
+            invalidated,
             mut commands,
             events,
         } = controls;
@@ -156,20 +174,25 @@ pub(crate) fn attach(
         loop {
             tokio::select! { biased;
                 command=commands.recv()=>match command {
-                    Some(VoiceCommand::Probe{reply})=>{let _=reply.send(probe(&client,&executable).await);},
+                    Some(VoiceCommand::Probe{reply})=>{let result=if invalidated.load(Ordering::Acquire){Err(VoiceRejection::InvalidLease)}else{probe(&client,&executable,&context).await};let _=reply.send(if invalidated.load(Ordering::Acquire){Err(VoiceRejection::InvalidLease)}else{result});},
                     Some(VoiceCommand::Start{voice,session_id,generation:next,reply})=>{
+                        if invalidated.load(Ordering::Acquire){let _=reply.send(Err(VoiceRejection::InvalidLease));continue;}
                         if native.is_some() || starting.is_some() {let _=reply.send(Err(VoiceRejection::Busy));continue;}
                         generation=next;sequence=0;
-                        let abort=CancellationToken::new();*audio_abort.lock().unwrap()=Some((next,abort.clone()));
+                        let abort=CancellationToken::new();
+                        {let mut slot=audio_abort.lock().unwrap();
+                            if invalidated.load(Ordering::Acquire){let _=reply.send(Err(VoiceRejection::InvalidLease));continue;}
+                            *slot=Some((next,abort.clone()));
+                        }
                         let (answer,answer_rx)=oneshot::channel();let (accepted,accepted_rx)=oneshot::channel();
                         answer_tx=Some(answer);accepted_tx=Some(accepted);expected_session=session_id.clone();
-                        starting=Some(Box::pin(start(client.clone(),thread.clone(),executable.clone(),voice,session_id,accepted_rx,answer_rx,abort,server_live.clone())));
+                        starting=Some(Box::pin(start(client.clone(),thread.clone(),executable.clone(),context.clone(),voice,session_id,accepted_rx,answer_rx,abort,server_live.clone())));
                         start_reply=Some(reply);
                     },
                     Some(VoiceCommand::Mute{muted,reply})=>{
                         let result=if let Some(host)=native.as_mut(){host.controls(muted).await}else{Err(VoiceRejection::Busy)};
                         let failed=result.is_err();let _=reply.send(result);
-                        if failed {native=None;let _=stop(&client,&thread).await;let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::Protocol)});}
+                        if failed {native=None;let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::Protocol)});}
                     },
                     Some(VoiceCommand::Append{reply,..})=>{let _=reply.send(Err(VoiceRejection::Unsupported));},
                     Some(VoiceCommand::Stop{reply})=>{
@@ -183,12 +206,13 @@ pub(crate) fn attach(
                                 while let Some(notification)=wire.recv().await {
                                     if let Incoming::Notification{method,params}=notification {
                                         if params["threadId"]!=thread{continue;}
-                                        if method=="thread/realtime/closed"{server_live.store(false,Ordering::Release);return;}
+                                        if method=="thread/realtime/closed" && params["reason"]=="requested"{server_live.store(false,Ordering::Release);return Ok::<_,VoiceRejection>(());}
                                         if let Some(event)=normalize(&thread,generation,&mut sequence,&method,&params){let _=events.send(event);}
                                     }
                                 }
+                                Err(VoiceRejection::Protocol)
                             }).await;
-                            if result.is_err()||closed.is_err(){let _=reply.send(Err(VoiceRejection::Protocol));break;}
+                            if result.is_err()||!matches!(closed,Ok(Ok(()))){let _=reply.send(Err(VoiceRejection::Protocol));break;}
                             result
                         }else{Ok(())};
                         let _=events.send(VoiceEvent::Closed{generation,reason:None});let _=reply.send(result);
@@ -198,7 +222,6 @@ pub(crate) fn attach(
                 result=async{starting.as_mut().unwrap().await},if starting.is_some()=>{
                     starting=None;
                     match result {Ok(host)=>{native=Some(host);if let Some(reply)=start_reply.take(){let _=reply.send(Ok(()));}},Err(reason)=>{
-                        let _=stop(&client,&thread).await;
                         if let Some(reply)=start_reply.take(){let _=reply.send(Err(reason));}
                         let _=events.send(VoiceEvent::Closed{generation,reason:Some(reason)});
                     }}
@@ -206,11 +229,11 @@ pub(crate) fn attach(
                 notification=wire.recv()=>match notification {
                     Some(Incoming::Notification{method,params})=>{
                         if method=="thread/realtime/closed" && params["threadId"]==thread {server_live.store(false,Ordering::Release);}
-                        if method=="account/updated" {native=None;starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::ChatgptRequired));}let _=stop(&client,&thread).await;let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::ChatgptRequired)});continue;}
+                        if method=="account/updated" {native=None;starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::ChatgptRequired));}let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::ChatgptRequired)});continue;}
                         if params["threadId"]==thread && starting.is_some() {
                             if method=="thread/realtime/started" {
                                 if params["version"]=="v3" && params["realtimeSessionId"]==expected_session {if let Some(tx)=accepted_tx.take(){let _=tx.send(());}}
-                                else {starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::Unsupported));}let _=stop(&client,&thread).await;}
+                                else {starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::Unsupported));}let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::Unsupported)});}
                                 continue;
                             }
                             if method=="thread/realtime/sdp" {
@@ -230,7 +253,7 @@ pub(crate) fn attach(
                     if overflow.load(Ordering::Acquire)||client.is_closed(){break;}
                     if let Some(host)=native.as_mut(){ match host.levels().await {
                         Ok((microphone,speaker))=>{let _=events.send(VoiceEvent::Levels{generation,microphone,speaker});},
-                        Err(reason)=>{native=None;let _=stop(&client,&thread).await;let _=events.send(VoiceEvent::Closed{generation,reason:Some(reason)});}
+                        Err(reason)=>{native=None;let _=events.send(VoiceEvent::Closed{generation,reason:Some(reason)});}
                     }}
                 }
             }
@@ -249,16 +272,26 @@ pub(crate) fn attach(
 async fn probe(
     client: &RpcClient,
     executable: &std::path::Path,
+    context: &ThreadContext,
 ) -> Result<VoiceEligibility, VoiceRejection> {
-    tokio::time::timeout(Duration::from_secs(15), probe_details(client, executable))
-        .await
-        .map_err(|_| VoiceRejection::Protocol)?
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        probe_details(client, executable, context),
+    )
+    .await
+    .map_err(|_| VoiceRejection::Protocol)?
 }
 async fn probe_details(
     client: &RpcClient,
     executable: &std::path::Path,
+    context: &ThreadContext,
 ) -> Result<VoiceEligibility, VoiceRejection> {
     host::helper_path(executable)?;
+    if context.model_provider.as_deref() != Some("openai")
+        || !std::path::Path::new(&context.cwd).is_absolute()
+    {
+        return Err(VoiceRejection::ChatgptRequired);
+    }
     let account = client
         .request("account/read", json!({"refreshToken":false}))
         .await
@@ -267,7 +300,10 @@ async fn probe_details(
         return Err(VoiceRejection::ChatgptRequired);
     }
     let config = client
-        .request("config/read", json!({"includeLayers":false}))
+        .request(
+            "config/read",
+            json!({"includeLayers":false,"cwd":context.cwd}),
+        )
         .await
         .map_err(|_| VoiceRejection::Protocol)?;
     let config = &config["config"];
@@ -290,9 +326,8 @@ async fn probe_details(
         .await
         .map_err(|_| VoiceRejection::Protocol)?;
     let ordinary = limits["ordinaryUsageAllowed"].as_bool();
-    if ordinary == Some(false) {
-        return Err(VoiceRejection::IncludedUsageUnavailable);
-    }
+    // Ordinary quota may be exhausted while permitted account credits remain.
+    // The native backend applies spend controls and the final usage decision.
     let v = client
         .request("thread/realtime/listVoices", json!({}))
         .await
@@ -318,6 +353,7 @@ async fn start(
     client: RpcClient,
     thread: String,
     executable: PathBuf,
+    context: ThreadContext,
     voice: Option<String>,
     session_id: String,
     accepted: oneshot::Receiver<()>,
@@ -325,7 +361,7 @@ async fn start(
     abort: CancellationToken,
     server_live: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<host::NativeHost, VoiceRejection> {
-    let eligible = probe(&client, &executable).await?;
+    let eligible = probe(&client, &executable, &context).await?;
     if voice.as_ref().is_some_and(|v| !eligible.voices.contains(v)) {
         return Err(VoiceRejection::Unsupported);
     }

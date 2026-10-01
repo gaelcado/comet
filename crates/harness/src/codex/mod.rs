@@ -1118,9 +1118,13 @@ async fn run_session(session: Session) {
         let thread_id = thread["thread"]["id"].as_str().unwrap_or("").to_owned();
         let mut children = subagents::Subagents::new(thread_id.clone());
         children.restore(&thread["thread"]);
-        Ok::<_, HarnessError>((thread_id, children))
+        let voice_context = realtime::ThreadContext {
+            cwd: thread["cwd"].as_str().unwrap_or(&request.cwd).to_owned(),
+            model_provider: thread["modelProvider"].as_str().map(str::to_owned),
+        };
+        Ok::<_, HarnessError>((thread_id, children, voice_context))
     };
-    let (thread_id, mut children) = tokio::select! {
+    let (thread_id, mut children, voice_context) = tokio::select! {
         res = setup => match res {
             Ok(thread_id) => thread_id,
             Err(e) => {
@@ -1195,8 +1199,15 @@ async fn run_session(session: Session) {
     }
 
     let mut router = TurnRouter::default();
-    let _voice_bridge = realtime
-        .map(|controls| realtime::attach(client.clone(), thread_id.clone(), executable, controls));
+    let _voice_bridge = realtime.map(|controls| {
+        realtime::attach(
+            client.clone(),
+            thread_id.clone(),
+            executable,
+            voice_context,
+            controls,
+        )
+    });
     if !idle {
         match start_turn(&client, turn_params(&request.prompt)).await {
             Ok(id) => router.adopt_started(id),

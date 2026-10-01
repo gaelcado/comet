@@ -2515,7 +2515,10 @@ impl Shell {
 
     fn on_state_changed(&mut self, state: &Entity<AppState>, cx: &mut Context<Self>) {
         if self.voice.read(cx).chat_id.is_some()
-            && (self.voice.read(cx).chat_id != state.read(cx).selected_chat
+            && (state.read(cx).selected_chat_row().is_none_or(|row| {
+                Some(row.device_id.as_str()) != state.read(cx).local_device_id.as_deref()
+                    || row.config.as_ref().map(|c| c.harness) != Some(zeron_proto::HarnessId::Codex)
+            }) || self.voice.read(cx).chat_id != state.read(cx).selected_chat
                 || state
                     .read(cx)
                     .engine()

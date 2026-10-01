@@ -26,6 +26,7 @@ try:
             if (root/'helper-mode').exists() and (root/'helper-mode').read_text().strip()=='exit-open':sys.exit(25)
             send({'type':'devicesOpened'})
         elif kind=='setAudioControls':
+            if (root/'helper-mode').exists() and (root/'helper-mode').read_text().strip()=='exit-controls':sys.exit(26)
             if (root/'helper-mode').exists() and (root/'helper-mode').read_text().strip()=='stall-controls':
                 (root/'controls-stalled').write_text('true');time.sleep(60)
             send({'type':'audioControlsApplied'})

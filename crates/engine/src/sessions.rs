@@ -395,6 +395,35 @@ impl SessionsEngine {
         chat_id: &str,
         request: RunRequest,
     ) -> Result<String, EngineError> {
+        // A fresh explicit request may renew an identity-invalidated idle
+        // process. Never interrupt a native delegated turn to recover voice.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+        loop {
+            let stale = lock(&self.inner.runs).get(chat_id).map(|run| {
+                (
+                    run.voice.as_ref().is_some_and(|v| v.invalidated()),
+                    run.voice_active.load(std::sync::atomic::Ordering::Acquire),
+                )
+            });
+            match stale {
+                Some((true, 0)) => {
+                    if self.turn_in_flight(chat_id) {
+                        return Err(EngineError::Other(
+                            "identity changed during delegated work".into(),
+                        ));
+                    }
+                    self.interrupt(chat_id).await?;
+                    break;
+                }
+                Some((true, _)) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(EngineError::Other("voice cleanup in progress".into()));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                _ => break,
+            }
+        }
         self.dispatch_inner(chat_id, HarnessId::Codex, request, None, false, true)
             .await
     }

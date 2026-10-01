@@ -24,8 +24,12 @@ this integration. Native subscription voice uses **WebRTC V3** instead:
 1. Prepare or reuse an idle native thread with the normal Zeron MCP server.
    No initial `turn/start`, empty user message, title request, or submitted draft.
 2. Check `account/read` on that same process for `chatgpt` authentication, reject
-   custom providers and realtime backend overrides, inspect ordinary usage
-   permission, and obtain `thread/realtime/listVoices`.
+   custom providers and realtime backend overrides in the effective project
+   configuration (`config/read` with the resolved thread cwd), validate the
+   provider returned by `thread/start` or `thread/resume`, inspect ordinary
+   usage permission, and obtain `thread/realtime/listVoices`. Exhausted ordinary
+   quota alone does not reject permitted credits; the native backend makes the
+   final usage and spend-control decision.
 3. Resolve the helper inside the physical standalone Codex package (layout 1,
    version 0.159 or later). Its protocol/build handshake must succeed.
 4. Initialize the helper and gather its SDP offer. Call `thread/realtime/start`
@@ -53,23 +57,32 @@ One engine lease owns local voice. Tokens are redacted from Debug. Ownership is
 exclusive, generation checked, ephemeral, and cancelled when its scoped stream
 is dropped. A five-second unattached-owner watchdog prevents abandoned starts
 from creating a provider call. A successor waits for native stop and its terminal
-notification; late events cannot acquire the successor's generation. Native
+`requested` notification from that single stop; a spontaneous terminal cannot
+satisfy the barrier and leave our terminal queued for a successor. Late events
+cannot acquire the successor's generation. Native
 capture termination is independent of the actor's pending control I/O. The
 stdout reader also cancels capture on identity changes, overflow and EOF; it
 does not wait for a blocked audio-control reply. Identity retirement invalidates
 pending start reservations as well as existing leases. The physical Codex
 release is pinned before spawning app-server so an installer symlink change
-cannot select a different helper for a warm runtime.
+cannot select a different helper for a warm runtime. A reader identity change
+also permanently invalidates the voice bridge before any new token can be
+installed. A fresh explicit request can renew that idle runtime after cleanup;
+continuing delegated work is preserved and must finish before renewal.
 
 Voice protects the warm runtime from idle reaping and updates. Voice stop leaves
 delegated Codex work running. Account/profile retirement, navigation, window
 owner loss, audio failure and provider termination close voice. An agent question
 restores the text composer so the usual input UI can answer it. Reconnection and
-microphone resumption require a fresh user action.
+microphone resumption require a fresh user action. Changes to the chat host,
+configuration or checkout invalidate pending starts and active ownership;
+workspace monitoring also covers synced host/configuration changes.
 
 Canonical `thread/realtime/item/completed` transcript segments are committed by
 the serialized document owner, deduplicated by session/item identity. Legacy
-transcript events and partial text never become durable messages. Native BEM
+transcript events and partial text never become durable messages. Only a newly
+inserted canonical final updates sidebar activity and preview; replay does not
+bump the timestamp. Native BEM
 promotion uses the existing Codex task transcript; it does not resubmit a spoken
 request or create another task response. Native `turn/started` publishes the
 engine turn boundary before its text/tools, including on an idle bootstrap.

@@ -68,11 +68,13 @@ async def main():
         server.stdin.write(b'{"method":"initialized"}\n');await server.stdin.drain()
         account=await request('account/read',{'refreshToken':False})
         assert account.get('account',{}).get('type')=='chatgpt';result['chatgpt']=True
-        config=(await request('config/read',{'includeLayers':False}))['config']
+        config=(await request('config/read',{'includeLayers':False,'cwd':str(pathlib.Path.cwd())}))['config']
         assert config.get('model_provider','openai') in ('openai',None)
         assert not config.get('model_providers',{}).get('openai')
         assert not any(config.get(k) for k in ('experimental_realtime_ws_base_url','experimental_realtime_webrtc_call_base_url','experimental_realtime_ws_model'))
-        thread=(await request('thread/start',{'ephemeral':True,'cwd':str(pathlib.Path.cwd()),'approvalPolicy':'never','sandbox':'read-only','developerInstructions':'Connectivity check. Do not use tools or perform tasks. Stay silent until user speech.'}))['thread']['id']
+        started=await request('thread/start',{'ephemeral':True,'cwd':str(pathlib.Path.cwd()),'approvalPolicy':'never','sandbox':'read-only','developerInstructions':'Connectivity check. Do not use tools or perform tasks. Stay silent until user speech.'})
+        thread=started['thread']['id']
+        assert started['modelProvider']=='openai'
         stage='nativeCall'
         session=str(uuid.uuid4())
         await request('thread/realtime/start',{'threadId':thread,'transport':{'type':'webrtc','sdp':offer['sdp']},'version':'v3','realtimeSessionId':session,'outputModality':'audio','clientManagedHandoffs':False,'includeStartupContext':False})
