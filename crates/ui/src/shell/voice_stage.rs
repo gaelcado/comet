@@ -367,6 +367,18 @@ impl Shell {
             );
 
         let controls = self.render_voice_call_bar(&theme, awaiting, chat_id, cx);
+        // The stage occludes the conversation titlebar. Restore its native
+        // drag and double-click behavior above the stage artwork and controls.
+        let titlebar = self.titlebar_drag_region(
+            "voice-stage-titlebar",
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(px(Theme::TITLEBAR_HEIGHT)),
+            cx,
+        );
 
         Some(
             div()
@@ -414,6 +426,7 @@ impl Shell {
                         .justify_center()
                         .child(controls),
                 )
+                .child(titlebar)
                 .into_any_element(),
         )
     }
@@ -630,6 +643,72 @@ fn round_control(id: &'static str, theme: &Theme, active: bool) -> gpui::Statefu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn voice_stage_topbar_accepts_window_drag_presses(cx: &mut gpui::TestAppContext) {
+        struct StageHost(Entity<Shell>);
+        impl Render for StageHost {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                self.0.update(cx, |shell, cx| {
+                    div()
+                        .size_full()
+                        .relative()
+                        .children(shell.render_voice_stage(window, cx))
+                })
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            StageHost(cx.new(|cx| {
+                let state = cx.new(|_| AppState::new());
+                let mut shell = Shell::new(
+                    state,
+                    EngineBootConfig {
+                        data_dir: dir.path().into(),
+                        ipc_port: 0,
+                        edge_url: "http://127.0.0.1:1".into(),
+                        edge_token: None,
+                        org_id: None,
+                        workos_client_id: None,
+                        default_harness: HarnessId::Mock,
+                    },
+                    cx,
+                );
+                shell.reduced_motion = true;
+                shell.voice.update(cx, |voice, _| {
+                    voice.phase = VoicePhase::Active;
+                    voice.stage_open = true;
+                });
+                shell
+            }))
+        });
+        let shell = host.read_with(cx, |host, _| host.0.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let bounds = cx.debug_bounds("voice-stage").unwrap();
+        let topbar = gpui::point(
+            bounds.center().x,
+            bounds.top() + px(Theme::TITLEBAR_HEIGHT / 2.0),
+        );
+        cx.simulate_mouse_down(topbar, MouseButton::Left, gpui::Modifiers::default());
+        shell.read_with(cx, |shell, _| assert!(shell.titlebar_should_move));
+        cx.simulate_mouse_up(topbar, MouseButton::Left, gpui::Modifiers::default());
+        shell.read_with(cx, |shell, _| assert!(!shell.titlebar_should_move));
+
+        let body = gpui::point(
+            bounds.center().x,
+            bounds.top() + px(Theme::TITLEBAR_HEIGHT + 32.0),
+        );
+        cx.simulate_mouse_down(body, MouseButton::Left, gpui::Modifiers::default());
+        shell.read_with(cx, |shell, _| assert!(!shell.titlebar_should_move));
+        cx.simulate_mouse_up(body, MouseButton::Left, gpui::Modifiers::default());
+    }
 
     #[test]
     fn caption_keeps_the_latest_words_of_a_long_utterance() {
