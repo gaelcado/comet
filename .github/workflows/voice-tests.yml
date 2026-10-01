@@ -1,4 +1,4 @@
-name: Experimental native voice
+name: Native Codex voice
 on:
   pull_request:
     paths:
@@ -46,3 +46,19 @@ jobs:
           cargo check --locked -p zeron-ui --features voice-experimental
           cargo test --locked -p zeron-ui --test voice_orb_geometry
           cargo test --locked -p zeron-ui --lib voice
+
+  native-platform-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile subscription bridge without audio hardware or provider access
+        run: cargo check --locked -p zeron-harness -p zeron-engine
