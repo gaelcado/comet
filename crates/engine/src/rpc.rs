@@ -1195,6 +1195,7 @@ impl EngineRpc {
                 .map_err(failed)
                 .map(drop),
             MutateParams::DeleteChat { chat_id } => {
+                if self.voice.restricts_origin(&chat_id) { self.voice.retire(); }
                 self.workspace.delete_chat(&chat_id).map_err(failed)?;
                 self.doc_host.purge_chat(&chat_id);
                 Ok(())
@@ -1708,12 +1709,24 @@ impl RpcService for EngineRpc {
             && params.get("targetDeviceId").and_then(|v| v.as_str()).is_some_and(|v| v != self.engine_info.device_id) {
             return Err(RpcError::Failed("voice unavailable: remoteHost".into()));
         }
+        // Origin comes from the engine-injected MCP server, not tool arguments.
+        // The manager is authority on whether that runtime owns voice. Until
+        // G1 is proven, no voice-origin command may start a paid delegation.
+        if matches!(method, methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE)
+            && params.get("originChatId").and_then(|v|v.as_str()).is_some_and(|origin|self.voice.restricts_origin(origin)) {
+            return Err(RpcError::Failed("voice delegation unavailable: creditExclusionUnverified".into()));
+        }
+        if matches!(method, methods::SIGN_OUT | methods::SELECT_ORG | methods::COMPLETE_AGENT_LOGIN) { self.voice.retire(); }
         if AuthRpc::handles(method) {
             return AuthRpc::new(self.auth()?.clone())
                 .handle(method, params)
                 .await;
         }
         match method {
+            methods::VOICE_TASK_POLICY => {
+                let p:ChatParams=parse_params(params)?;
+                RpcReply::value(&serde_json::json!({"includedOnly":self.voice.restricts_origin(&p.chat_id),"deviceId":self.engine_info.device_id}))
+            }
             methods::VOICE_ELIGIBILITY | methods::START_VOICE => {
                 let p: zeron_proto::voice::StartVoice = parse_params(params)?;
                 let chat = self.workspace.chat(&p.chat_id).map_err(|e| RpcError::Failed(e.to_string()))?;
@@ -3341,6 +3354,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&snapshot)
             }
             methods::FORGET_AGENT_ACCOUNT => {
+                self.voice.retire();
                 let p: AgentAccountParams = parse_params(params)?;
                 let snapshot = self
                     .agent_accounts

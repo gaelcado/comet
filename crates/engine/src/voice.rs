@@ -82,6 +82,9 @@ impl VoiceManager {
         let _ = slot.sender.try_send(VoiceEvent::Closed { generation: lease.generation, reason: None });
         Ok(())
     }
+    pub fn restricts_origin(&self,chat_id:&str) -> bool {
+        self.inner.slot.lock().unwrap().as_ref().is_some_and(|slot|slot.snapshot.chat_id==chat_id)
+    }
     pub fn retire(&self) {
         self.inner.generation.fetch_add(1, Ordering::AcqRel);
         self.inner.slot.lock().unwrap().take();

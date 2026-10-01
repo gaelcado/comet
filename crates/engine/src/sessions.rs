@@ -2152,7 +2152,7 @@ async fn drive_run(
                                 + if subagents.is_empty() { session_idle } else { subagent_silence }
                         })
                         .unwrap_or_else(tokio::time::Instant::now)
-                ), if idle_since.is_some() => {
+                ), if idle_since.is_some() && !resume_state.voice_active.load(std::sync::atomic::Ordering::Acquire) => {
                     tracing::info!(
                         chat = %chat_id,
                         live_subagents = subagents.len(),
