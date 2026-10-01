@@ -9006,16 +9006,20 @@ impl Composer {
                 })
         });
 
-        div()
+        // Stands in for the composer pill, so it is the same frosted surface:
+        // without the backdrop blur the translucent fill let the transcript
+        // show through unblurred.
+        let panel = div()
             .id("question-panel")
             .track_focus(&self.wizard_focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.on_wizard_key(event, window, cx)
             }))
+            .occlude()
             .rounded(px(COMPOSER_RADIUS))
             .border_1()
             .border_color(theme.border)
-            .bg(theme.input_glass_bg())
+            .bg(theme.composer_surface_bg())
             .when(!theme.is_frost(), |el| el.shadow_lg())
             .flex()
             .flex_col()
@@ -9120,8 +9124,8 @@ impl Composer {
                             .when(!can_advance, |el| el.opacity(0.4))
                             .on_click(cx.listener(|this, _, _, cx| this.wizard_advance(cx))),
                     ),
-            )
-            .into_any_element()
+            );
+        crate::frost::frosted(COMPOSER_RADIUS, crate::frost::MENU_BLUR, panel).into_any_element()
     }
 
     fn toggle_dictation(&mut self, cx: &mut Context<Self>) {
@@ -10708,59 +10712,67 @@ mod tests {
         let input = handle
             .read_with(cx, |composer, _| composer.input.clone())
             .unwrap();
-        for thread_width in [436.0, 592.0, 768.0, 1232.0] {
-            for docked in [true, false] {
-                let amounts = if docked {
-                    [0.0, 0.2, 0.6, 0.98, 1.0]
-                } else {
-                    [1.0, 0.98, 0.6, 0.2, 0.0]
-                };
-                for amount in amounts {
-                    let outer_width = motion::lerp(COMPOSER_MAX_WIDTH, thread_width, amount);
-                    cx.update(|cx| {
-                    handle
-                        .update(cx, |composer, window, cx| {
-                            window.resize(size(px(outer_width), px(800.0)));
-                            composer.set_available_width(outer_width, cx);
-                            composer.state.update(cx, |state, _| {
-                                state.selected_chat = docked.then(|| "chat".into());
-                            });
-                            composer.on_state_changed(cx);
-                            composer
-                                .input
-                                .update(cx, |input, cx| input.set_text("Hi", cx));
-                            composer.expanded_mode = false;
-                            let mut frame = crate::composer_dock::DockFrame::settled(docked);
-                            frame.amount = amount;
-                            frame.active = amount != if docked { 1.0 } else { 0.0 };
-                            composer.set_dock_frame(frame, cx);
+        // The trigger stays beside Send whichever picker the chip opens.
+        for compact_picker in [false, true] {
+            cx.update(|cx| {
+                crate::settings::update(crate::settings::SavePolicy::Debounced, cx, |settings| {
+                    settings.compact_model_picker = compact_picker;
+                });
+            });
+            for thread_width in [436.0, 592.0, 768.0, 1232.0] {
+                for docked in [true, false] {
+                    let amounts = if docked {
+                        [0.0, 0.2, 0.6, 0.98, 1.0]
+                    } else {
+                        [1.0, 0.98, 0.6, 0.2, 0.0]
+                    };
+                    for amount in amounts {
+                        let outer_width = motion::lerp(COMPOSER_MAX_WIDTH, thread_width, amount);
+                        cx.update(|cx| {
+                        handle
+                            .update(cx, |composer, window, cx| {
+                                window.resize(size(px(outer_width), px(800.0)));
+                                composer.set_available_width(outer_width, cx);
+                                composer.state.update(cx, |state, _| {
+                                    state.selected_chat = docked.then(|| "chat".into());
+                                });
+                                composer.on_state_changed(cx);
+                                composer
+                                    .input
+                                    .update(cx, |input, cx| input.set_text("Hi", cx));
+                                composer.expanded_mode = false;
+                                let mut frame = crate::composer_dock::DockFrame::settled(docked);
+                                frame.amount = amount;
+                                frame.active = amount != if docked { 1.0 } else { 0.0 };
+                                composer.set_dock_frame(frame, cx);
+                            })
+                            .unwrap();
+                        cx.update_window(handle.into(), |_, window, cx| {
+                            window.refresh();
+                            window.draw(cx).clear();
                         })
                         .unwrap();
-                    cx.update_window(handle.into(), |_, window, cx| {
-                        window.refresh();
-                        window.draw(cx).clear();
-                    })
-                    .unwrap();
-                    // Inspect the first painted frame before TestAppContext
-                    // flushes effects and automatically draws dirty views.
-                    handle.read_with(cx, |composer, cx| {
-                    assert_eq!(composer.input, input);
-                    let surface = composer.surface_bounds.get().unwrap();
-                    assert!((f32::from(surface.size.width) - (outer_width - 2.0 * Theme::SPACE_LG)).abs() <= 1.0,
-                        "surface width clipped: docked={docked}, amount={amount}, outer={outer_width}, surface={surface:?}");
-                    let origin = input.read(cx).last_bounds.unwrap().origin;
-                    assert!((f32::from(origin.y - surface.top()) - (17.0 - 4.0 * amount)).abs() <= 1.0,
-                        "editor jumped: docked={docked}, amount={amount}, origin={origin:?}, surface={surface:?}");
-                    let model = composer.model_bounds.get().unwrap();
-                    let inset = motion::lerp(12.0, 8.0, amount);
-                    let expected_right = surface.right() - px(1.0 + inset + 28.0 + ACTION_PRIMARY_GAP);
-                    assert!((f32::from(model.right() - expected_right)).abs() <= 1.0,
-                        "model must stay right aligned: docked={docked}, amount={amount}, actual={model:?}, expected={expected_right:?}");
-                    let expected = if docked { COMPACT_TOTAL_HEIGHT } else { COMPOSER_MIN_HEIGHT };
-                    assert!((composer.last_rendered_height + composer.dock_clearance_correction - expected).abs() < 0.1);
-                    assert!((composer.last_rendered_height - motion::lerp(COMPOSER_MIN_HEIGHT, COMPACT_TOTAL_HEIGHT, amount)).abs() < 0.1);
-                        }).unwrap();
-                    });
+                        // Inspect the first painted frame before TestAppContext
+                        // flushes effects and automatically draws dirty views.
+                        handle.read_with(cx, |composer, cx| {
+                        assert_eq!(composer.input, input);
+                        let surface = composer.surface_bounds.get().unwrap();
+                        assert!((f32::from(surface.size.width) - (outer_width - 2.0 * Theme::SPACE_LG)).abs() <= 1.0,
+                            "surface width clipped: docked={docked}, amount={amount}, outer={outer_width}, surface={surface:?}");
+                        let origin = input.read(cx).last_bounds.unwrap().origin;
+                        assert!((f32::from(origin.y - surface.top()) - (17.0 - 4.0 * amount)).abs() <= 1.0,
+                            "editor jumped: docked={docked}, amount={amount}, origin={origin:?}, surface={surface:?}");
+                        let model = composer.model_bounds.get().unwrap();
+                        let inset = motion::lerp(12.0, 8.0, amount);
+                        let expected_right = surface.right() - px(1.0 + inset + 28.0 + ACTION_PRIMARY_GAP);
+                        assert!((f32::from(model.right() - expected_right)).abs() <= 1.0,
+                            "model must stay right aligned: compact_picker={compact_picker}, docked={docked}, amount={amount}, actual={model:?}, expected={expected_right:?}");
+                        let expected = if docked { COMPACT_TOTAL_HEIGHT } else { COMPOSER_MIN_HEIGHT };
+                        assert!((composer.last_rendered_height + composer.dock_clearance_correction - expected).abs() < 0.1);
+                        assert!((composer.last_rendered_height - motion::lerp(COMPOSER_MIN_HEIGHT, COMPACT_TOTAL_HEIGHT, amount)).abs() < 0.1);
+                            }).unwrap();
+                        });
+                    }
                 }
             }
         }

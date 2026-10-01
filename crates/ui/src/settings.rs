@@ -65,13 +65,50 @@ pub const FILES_AUTOSAVE_DELAY_MAX_MS: u64 = 10_000;
 const FILE_NAME: &str = "ui-settings.json";
 const NEW_THREAD_BACKGROUND_DIR: &str = "new-thread-backgrounds";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewThreadComposerBackground {
     /// Managed copy inside Zeron's device-local data directory.
     pub path: String,
     /// Original file name shown in Appearance settings.
     pub name: String,
+    /// Viewport-relative framing, kept with the image it belongs to.
+    #[serde(default)]
+    pub adjustment: NewThreadBackgroundAdjustment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NewThreadBackgroundAdjustment {
+    /// Normalized horizontal alignment of the overflowing image: 0 left, 1 right.
+    pub focal_x: f32,
+    /// Normalized vertical alignment of the overflowing image: 0 top, 1 bottom.
+    pub focal_y: f32,
+    /// Multiplier applied after the image has been scaled to cover the viewport.
+    pub zoom: f32,
+}
+
+impl NewThreadBackgroundAdjustment {
+    pub const MIN_ZOOM: f32 = 1.0;
+    pub const MAX_ZOOM: f32 = 4.0;
+
+    pub fn normalized(mut self) -> Self {
+        let defaults = Self::default();
+        self.focal_x = clamp_or(self.focal_x, 0.0, 1.0, defaults.focal_x);
+        self.focal_y = clamp_or(self.focal_y, 0.0, 1.0, defaults.focal_y);
+        self.zoom = clamp_or(self.zoom, Self::MIN_ZOOM, Self::MAX_ZOOM, defaults.zoom);
+        self
+    }
+}
+
+impl Default for NewThreadBackgroundAdjustment {
+    fn default() -> Self {
+        Self {
+            focal_x: 0.5,
+            focal_y: 0.5,
+            zoom: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,6 +350,12 @@ pub fn current(cx: &App) -> UiSettings {
         .unwrap_or_default()
 }
 
+/// Read the picker preference without cloning the full settings for each model row.
+pub fn compact_model_picker(cx: &App) -> bool {
+    cx.try_global::<SettingsStore>()
+        .is_some_and(|store| store.current.compact_model_picker)
+}
+
 /// Copy a selected image into Zeron's device-local data directory and make it
 /// the new-thread canvas background. A unique file name avoids stale image
 /// caches when the background is replaced.
@@ -392,6 +435,7 @@ fn prepare_background_file(
     let replacement = NewThreadComposerBackground {
         path: destination.to_string_lossy().into_owned(),
         name: staged.name,
+        adjustment: NewThreadBackgroundAdjustment::default(),
     };
     Ok(PreparedBackgroundFile(Some(replacement)))
 }
@@ -468,6 +512,19 @@ pub fn remove_new_thread_composer_background(cx: &mut App) -> Result<(), String>
 pub fn set_new_thread_background_effect(effect: NewThreadBackgroundEffect, cx: &mut App) {
     if update(SavePolicy::Immediate, cx, |settings| {
         settings.new_thread_background_effect = effect;
+    }) {
+        cx.refresh_windows();
+    }
+}
+
+pub fn set_new_thread_background_adjustment(
+    adjustment: NewThreadBackgroundAdjustment,
+    cx: &mut App,
+) {
+    if update(SavePolicy::Immediate, cx, |settings| {
+        if let Some(background) = settings.new_thread_composer_background.as_mut() {
+            background.adjustment = adjustment.normalized();
+        }
     }) {
         cx.refresh_windows();
     }
@@ -743,6 +800,8 @@ pub struct UiSettings {
     pub skills_in_slash_menu: bool,
     pub skill_completion_by_harness:
         std::collections::HashMap<zeron_proto::HarnessId, SkillCompletionSettings>,
+    /// Open model selection with an effort slider and a separate model list.
+    pub compact_model_picker: bool,
     pub sidebar_width: f32,
     pub sidebar_collapsed: bool,
     /// Legacy: the grouped-by-project toggle predates spaces (which group by
@@ -956,6 +1015,7 @@ impl Default for UiSettings {
             composer_send_behavior: ComposerSendBehavior::default(),
             skills_in_slash_menu: false,
             skill_completion_by_harness: Default::default(),
+            compact_model_picker: true,
             appshots_enabled: false,
             appshot_sound_enabled: true,
             appshot_destination: crate::appshots::AppshotDestination::Automatic,
@@ -1581,6 +1641,9 @@ impl UiSettings {
         self.git_history_column_widths = self.git_history_column_widths.clamped();
         self.git_history_column_order = self.git_history_column_order.normalized();
         self.ui_font_size = self.ui_font_size.normalized();
+        if let Some(background) = self.new_thread_composer_background.as_mut() {
+            background.adjustment = background.adjustment.normalized();
+        }
         self.keymap.heal_jump_slots();
         self.keymap.heal_reserved_composer_shortcuts();
         self
@@ -1791,6 +1854,19 @@ mod tests {
         settings.skills_in_slash_menu = true;
         settings.save(dir.path()).unwrap();
         assert!(UiSettings::load(dir.path()).skills_in_slash_menu);
+    }
+
+    #[test]
+    fn compact_model_picker_is_default_and_opt_out_persists() {
+        let legacy: UiSettings = serde_json::from_str("{}").unwrap();
+        assert!(legacy.compact_model_picker);
+        let settings = UiSettings {
+            compact_model_picker: false,
+            ..legacy
+        };
+        let saved = serde_json::to_string(&settings).unwrap();
+        let loaded: UiSettings = serde_json::from_str(&saved).unwrap();
+        assert!(!loaded.compact_model_picker);
     }
 
     #[test]
@@ -2195,6 +2271,7 @@ mod tests {
             Some(&NewThreadComposerBackground {
                 path: unrelated.to_string_lossy().into_owned(),
                 name: "keep.png".into(),
+                adjustment: NewThreadBackgroundAdjustment::default(),
             }),
             &backgrounds,
         );
@@ -2203,10 +2280,113 @@ mod tests {
             Some(&NewThreadComposerBackground {
                 path: managed.to_string_lossy().into_owned(),
                 name: "owned.png".into(),
+                adjustment: NewThreadBackgroundAdjustment::default(),
             }),
             &backgrounds,
         );
         assert!(!managed.exists());
+    }
+
+    #[test]
+    fn legacy_background_defaults_to_centered_cover_adjustment() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            UiSettings::path(dir.path()),
+            r#"{"newThreadComposerBackground":{"path":"managed.png","name":"background.png"}}"#,
+        )
+        .unwrap();
+
+        let loaded = UiSettings::load(dir.path());
+        assert_eq!(
+            loaded.new_thread_composer_background.unwrap().adjustment,
+            NewThreadBackgroundAdjustment::default()
+        );
+    }
+
+    #[test]
+    fn background_adjustment_normalizes_invalid_and_out_of_range_values() {
+        let normalized = NewThreadBackgroundAdjustment {
+            focal_x: f32::NAN,
+            focal_y: 2.0,
+            zoom: f32::INFINITY,
+        }
+        .normalized();
+        assert_eq!(
+            normalized,
+            NewThreadBackgroundAdjustment {
+                focal_x: 0.5,
+                focal_y: 1.0,
+                zoom: 1.0,
+            }
+        );
+
+        let clamped = UiSettings {
+            new_thread_composer_background: Some(NewThreadComposerBackground {
+                path: "managed.png".into(),
+                name: "background.png".into(),
+                adjustment: NewThreadBackgroundAdjustment {
+                    focal_x: -1.0,
+                    focal_y: 0.25,
+                    zoom: 99.0,
+                },
+            }),
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(
+            clamped.new_thread_composer_background.unwrap().adjustment,
+            NewThreadBackgroundAdjustment {
+                focal_x: 0.0,
+                focal_y: 0.25,
+                zoom: NewThreadBackgroundAdjustment::MAX_ZOOM,
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn background_adjustment_setter_normalizes_and_persists_immediately(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            let settings = UiSettings {
+                new_thread_composer_background: Some(NewThreadComposerBackground {
+                    path: "managed.png".into(),
+                    name: "background.png".into(),
+                    adjustment: NewThreadBackgroundAdjustment::default(),
+                }),
+                ..Default::default()
+            };
+            init(settings, dir.path(), cx);
+            set_new_thread_background_adjustment(
+                NewThreadBackgroundAdjustment {
+                    focal_x: -0.5,
+                    focal_y: 0.7,
+                    zoom: 2.25,
+                },
+                cx,
+            );
+
+            let expected = NewThreadBackgroundAdjustment {
+                focal_x: 0.0,
+                focal_y: 0.7,
+                zoom: 2.25,
+            };
+            assert_eq!(
+                current(cx)
+                    .new_thread_composer_background
+                    .unwrap()
+                    .adjustment,
+                expected
+            );
+            assert_eq!(
+                UiSettings::load(dir.path())
+                    .new_thread_composer_background
+                    .unwrap()
+                    .adjustment,
+                expected
+            );
+        });
     }
 
     #[gpui::test]
@@ -2263,6 +2443,14 @@ mod tests {
             };
             init(initial, dir.path(), cx);
             install_new_thread_composer_background(&first, cx).unwrap();
+            set_new_thread_background_adjustment(
+                NewThreadBackgroundAdjustment {
+                    focal_x: 0.2,
+                    focal_y: 0.8,
+                    zoom: 2.0,
+                },
+                cx,
+            );
             let old_path = current(cx).new_thread_composer_background.unwrap().path;
             install_new_thread_composer_background(&second, cx).unwrap();
             let settings = current(cx);
@@ -2276,6 +2464,10 @@ mod tests {
             assert_eq!(
                 settings.new_thread_background_effect,
                 NewThreadBackgroundEffect::Ascii
+            );
+            assert_eq!(
+                replacement.adjustment,
+                NewThreadBackgroundAdjustment::default()
             );
             assert!(!Path::new(&old_path).exists());
             assert!(first.exists() && second.exists());
@@ -2384,6 +2576,7 @@ mod tests {
             composer_send_behavior: ComposerSendBehavior::ModEnter,
             skills_in_slash_menu: true,
             skill_completion_by_harness: Default::default(),
+            compact_model_picker: true,
             appshots_enabled: false,
             appshot_sound_enabled: true,
             // The destination is only persisted where Appshots exist (macOS and
@@ -2436,6 +2629,11 @@ mod tests {
             new_thread_composer_background: Some(NewThreadComposerBackground {
                 path: "/tmp/zeron/new-thread-background.png".into(),
                 name: "background.png".into(),
+                adjustment: NewThreadBackgroundAdjustment {
+                    focal_x: 0.25,
+                    focal_y: 0.75,
+                    zoom: 1.8,
+                },
             }),
             wallpaper_folder: Some("/tmp/wallpapers".into()),
             wallpaper_source: Some("/tmp/wallpapers/background.png".into()),
@@ -2454,6 +2652,9 @@ mod tests {
         assert!(json.contains(r#""codeFencesFitContent": true"#));
         assert!(json.contains(r#""openWebLinksInZeron": false"#));
         assert!(json.contains(r#""newThreadBackgroundEffect": "ascii""#));
+        assert!(json.contains(r#""focalX": 0.25"#));
+        assert!(json.contains(r#""focalY": 0.75"#));
+        assert!(json.contains(r#""zoom": 1.8"#));
         assert!(json.contains(r#""reduceMotion": "on""#));
         assert!(json.contains(r#""pauseAnimationsInBackground": true"#));
         assert!(json.contains(r#""terminalFontFamily": "installed:Menlo""#));
