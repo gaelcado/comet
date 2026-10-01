@@ -16,7 +16,9 @@ const STAGE_EXIT_MS: f32 = 220.0;
 /// Captions show the tail of a long utterance rather than wrapping off-stage.
 const STAGE_CAPTION_CHARS: usize = 160;
 const FOOTER_HOVER: &str = "voice-footer-orb";
-const STAGE_HOVER: &str = "voice-stage-orb";
+/// Call-bar geometry: round controls inside a floating pill.
+const BAR_CONTROL: f32 = 44.0;
+const BAR_PAD: f32 = 8.0;
 
 /// Text tail of `text` holding at most `max` characters, ellipsized in front.
 pub(super) fn caption_tail(text: &str, max: usize) -> String {
@@ -149,22 +151,21 @@ impl Shell {
             .focus_visible(|s| s.border_2().border_color(theme.accent));
 
         if live {
-            let reveal = motion::hover_t(FOOTER_HOVER);
             return button
                 .aria_label(if stage_open {
                     "Hide voice"
                 } else {
                     "Open voice"
                 })
+                .tooltip(stage_tooltip(if stage_open {
+                    "Hide voice · Esc"
+                } else {
+                    "Voice is live · open"
+                }))
                 .on_click(
                     cx.listener(move |this, _, _, cx| this.set_voice_stage_open(!stage_open, cx)),
                 )
                 .child(self.voice_footer_orb.clone())
-                .child(
-                    end_voice_badge("voice-trigger-end", theme, 13.0, reveal, cx)
-                        .top(px(-3.0))
-                        .right(px(-3.0)),
-                )
                 .into_any_element();
         }
 
@@ -268,7 +269,6 @@ impl Shell {
         let (orb_state, level) = (voice.orb_state(), voice.level());
         let status = voice.status_text();
         let caption = caption_tail(&voice.partial, STAGE_CAPTION_CHARS);
-        let muted = voice.muted();
         let snapshot = voice.snapshot.clone();
         let chat_id = voice.chat_id.clone();
         let awaiting = snapshot
@@ -322,7 +322,6 @@ impl Shell {
         );
 
         let orb_px = OrbSize::Hero.pixels() * VOICE_STAGE_ORB_SCALE;
-        let end_reveal = motion::hover_t(STAGE_HOVER);
         let ring_alpha = if speaking { 0.09 } else { 0.05 };
         let rings = [
             (orb_px + 28.0, ring_alpha),
@@ -339,22 +338,14 @@ impl Shell {
                 .border_1()
                 .border_color(theme.text.opacity(alpha * reveal))
         });
-        let badge_inset = (STAGE_ORB_BOX - orb_px) / 2.0 + 10.0;
         let orb_block = div()
-            .id("voice-stage-orb")
             .relative()
             .size(px(STAGE_ORB_BOX))
             .flex()
             .items_center()
             .justify_center()
-            .on_hover(motion::hover_listener(STAGE_HOVER))
             .children(rings)
-            .child(self.voice_stage_orb.clone())
-            .child(
-                end_voice_badge("voice-stage-end", &theme, 30.0, end_reveal, cx)
-                    .top(px(badge_inset))
-                    .right(px(badge_inset)),
-            );
+            .child(self.voice_stage_orb.clone());
 
         let stage_bounds = self.voice_stage_bounds.clone();
         let center = div()
@@ -396,8 +387,7 @@ impl Shell {
                     .child(caption),
             );
 
-        let controls =
-            self.render_voice_stage_controls(&theme, muted, awaiting, snapshot, chat_id, cx);
+        let controls = self.render_voice_call_bar(&theme, awaiting, snapshot, chat_id, cx);
 
         Some(
             div()
@@ -440,7 +430,7 @@ impl Shell {
                         .absolute()
                         .left_0()
                         .right_0()
-                        .bottom(px(36.0 - 12.0 * (1.0 - reveal)))
+                        .bottom(px(32.0 - 16.0 * (1.0 - reveal)))
                         .flex()
                         .justify_center()
                         .child(controls),
@@ -449,17 +439,51 @@ impl Shell {
         )
     }
 
-    fn render_voice_stage_controls(
+    /// Video-call style bar: session time, the call controls grouped around
+    /// a red hang-up, and the way back to the chats.
+    fn render_voice_call_bar(
         &mut self,
         theme: &Theme,
-        muted: bool,
         awaiting: bool,
         snapshot: Option<zeron_proto::voice::VoiceSnapshot>,
         chat_id: Option<String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let popup = theme.for_popup();
-        let mute = stage_button("voice-stage-mute", &popup, muted)
+        let voice = self.voice.read(cx);
+        let muted = voice.muted();
+        let mic_level = voice.microphone_level();
+        let elapsed = voice
+            .active_since
+            .map(|since| crate::voice::format_elapsed(since.elapsed().as_secs()));
+        let live_tone = if awaiting {
+            popup.warning
+        } else if muted {
+            popup.text_faint
+        } else {
+            popup.success
+        };
+
+        // Session clock, like a meeting's running time.
+        let clock = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .pl(px(10.0))
+            .pr(px(6.0))
+            .child(div().size(px(7.0)).rounded_full().bg(live_tone))
+            .child(
+                div()
+                    .min_w(px(40.0))
+                    .font_family(popup.font_mono.clone())
+                    .text_size(crate::typography::ui_rems(13.0))
+                    .text_color(popup.text_muted)
+                    .child(SharedString::from(elapsed.unwrap_or_else(|| "–:––".into()))),
+            );
+
+        // Microphone: inverted plate while muted; while live, a ring that
+        // swells with your voice.
+        let mic = round_control("voice-bar-mic", &popup, muted)
             .aria_label(if muted {
                 "Unmute microphone"
             } else {
@@ -474,35 +498,22 @@ impl Shell {
                 this.voice.update(cx, |voice, cx| voice.toggle_mute(cx))
             }))
             .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded_full()
+                    .border_2()
+                    .border_color(popup.success.opacity((mic_level * 6.0).min(0.9))),
+            )
+            .child(
                 icon(if muted {
                     icons::MICROPHONE_OFF
                 } else {
                     icons::MICROPHONE
                 })
-                .size(px(16.0))
+                .size(px(19.0))
                 .text_color(if muted { popup.on_solid } else { popup.text }),
-            )
-            .child(SharedString::from(if muted { "Unmute" } else { "Mute" }));
-
-        let transcript = chat_id.map(|chat_id| {
-            stage_button("voice-stage-transcript", &popup, false)
-                .aria_label("Open the voice transcript")
-                .when(awaiting, |el| el.text_color(popup.warning))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_voice_stage_open(false, cx);
-                    this.open_chat(chat_id.clone(), cx);
-                }))
-                .child(
-                    icon(icons::CHAT_ROUND_LINE)
-                        .size(px(16.0))
-                        .text_color(if awaiting { popup.warning } else { popup.text }),
-                )
-                .child(SharedString::from(if awaiting {
-                    "Answer Codex"
-                } else {
-                    "Transcript"
-                }))
-        });
+            );
 
         // Voices apply to the next session; the current one keeps its own.
         let voices = snapshot
@@ -511,8 +522,11 @@ impl Shell {
             .unwrap_or_default();
         let selected = settings::current(cx).codex_voice;
         let voice_choice = (!voices.is_empty()).then(|| {
-            let label = selected.clone().unwrap_or_else(|| "Default voice".into());
-            stage_button("voice-stage-voice", &popup, false)
+            let label = selected.clone().unwrap_or_else(|| "Default".into());
+            round_control("voice-bar-voice", &popup, false)
+                .w_auto()
+                .px(px(14.0))
+                .gap(px(7.0))
                 .aria_label("Choose the voice for your next session")
                 .tooltip(stage_tooltip("Voice for your next session"))
                 .on_click(move |_, _, cx| {
@@ -531,40 +545,121 @@ impl Shell {
                 })
                 .child(
                     icon(icons::VOLUME_LOUD)
-                        .size(px(16.0))
+                        .size(px(17.0))
                         .text_color(popup.text_muted),
                 )
-                .child(SharedString::from(label))
+                .child(
+                    div()
+                        .text_size(crate::typography::ui_rems(13.0))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(SharedString::from(label)),
+                )
         });
 
-        let back = stage_button("voice-stage-back", &popup, false)
-            .px(px(10.0))
+        let transcript = chat_id.map(|chat_id| {
+            round_control("voice-bar-transcript", &popup, false)
+                .aria_label(if awaiting {
+                    "Answer Codex in the transcript"
+                } else {
+                    "Open the voice transcript"
+                })
+                .tooltip(stage_tooltip(if awaiting {
+                    "Codex is asking you something"
+                } else {
+                    "Transcript"
+                }))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_voice_stage_open(false, cx);
+                    this.open_chat(chat_id.clone(), cx);
+                }))
+                .child(
+                    icon(icons::CHAT_ROUND_LINE)
+                        .size(px(19.0))
+                        .text_color(if awaiting { popup.warning } else { popup.text }),
+                )
+                .when(awaiting, |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .top(px(9.0))
+                            .right(px(9.0))
+                            .size(px(8.0))
+                            .rounded_full()
+                            .border_2()
+                            .border_color(popover::surface_bg(&popup))
+                            .bg(popup.warning),
+                    )
+                })
+        });
+
+        // The hang-up: the one saturated control, wide enough to never be
+        // mistaken for its neighbours.
+        let end = div()
+            .id("voice-bar-end")
+            .role(gpui::Role::Button)
+            .aria_label("End voice")
+            .tab_index(0)
+            .h(px(BAR_CONTROL))
+            .px(px(20.0))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .cursor_pointer()
+            .bg(motion::hover_blend(
+                "voice-bar-end",
+                popup.danger,
+                popup.danger.blend(gpui::black().opacity(0.14)),
+            ))
+            .on_hover(motion::hover_listener("voice-bar-end"))
+            .focus_visible(|s| s.border_2().border_color(popup.accent))
+            .tooltip(stage_tooltip("End voice"))
+            .on_click(cx.listener(|this, _, _, cx| this.end_voice(cx)))
+            .child(
+                icon(icons::PHONE_HANG_UP)
+                    .size(px(19.0))
+                    .text_color(gpui::white()),
+            )
+            .child(
+                div()
+                    .text_size(crate::typography::ui_rems(13.0))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(gpui::white())
+                    .child(SharedString::from("End")),
+            );
+
+        let back = round_control("voice-bar-back", &popup, false)
             .aria_label("Back to chats")
             .tooltip(stage_tooltip("Back to chats · Esc"))
             .on_click(cx.listener(|this, _, _, cx| this.set_voice_stage_open(false, cx)))
             .child(
                 icon(icons::ALT_ARROW_DOWN)
-                    .size(px(16.0))
-                    .text_color(popup.text),
+                    .size(px(19.0))
+                    .text_color(popup.text_muted),
             );
 
-        let pill = div()
+        let divider = || div().w(px(1.0)).h(px(24.0)).mx(px(4.0)).bg(popup.border);
+        let radius = BAR_CONTROL / 2.0 + BAR_PAD;
+        let bar = div()
             .flex()
             .items_center()
-            .gap(px(4.0))
-            .p(px(5.0))
-            .rounded(px(24.0))
+            .gap(px(6.0))
+            .p(px(BAR_PAD))
+            .rounded(px(radius))
             .border_1()
             .border_color(popup.border.opacity(0.7))
             .bg(popover::surface_bg(&popup))
             .when(!popup.is_frost(), |el| el.shadow_lg())
             .text_color(popup.text)
-            .child(mute)
-            .children(transcript)
+            .child(clock)
+            .child(divider())
+            .child(mic)
             .children(voice_choice)
-            .child(div().w(px(1.0)).h(px(18.0)).mx(px(2.0)).bg(popup.border))
+            .children(transcript)
+            .child(end)
+            .child(divider())
             .child(back);
-        crate::frost::frosted(24.0, 16.0, pill).into_any_element()
+        crate::frost::frosted(radius, 18.0, bar).into_any_element()
     }
 }
 
@@ -572,65 +667,28 @@ fn stage_tooltip(text: &'static str) -> impl Fn(&mut Window, &mut App) -> gpui::
     move |_, cx| cx.new(|_| SurfaceTabTooltip { text: text.into() }).into()
 }
 
-fn stage_button(id: &'static str, theme: &Theme, active: bool) -> gpui::Stateful<gpui::Div> {
+/// A round call-bar control; `active` inverts it onto the solid plate.
+fn round_control(id: &'static str, theme: &Theme, active: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .role(gpui::Role::Button)
         .tab_index(0)
-        .h(px(36.0))
-        .px(px(14.0))
-        .rounded_full()
-        .flex()
-        .items_center()
-        .gap(px(7.0))
-        .cursor_pointer()
-        .text_size(crate::typography::ui_rems(13.0))
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(if active { theme.on_solid } else { theme.text })
-        .bg(if active {
-            theme.solid
-        } else {
-            motion::hover_blend(id, theme.glass_hover().opacity(0.0), theme.glass_hover())
-        })
-        .on_hover(motion::hover_listener(id))
-        .focus_visible(|s| s.border_2().border_color(theme.accent))
-}
-
-/// The hover-revealed ✕ that ends the session, shared by both orbs. It only
-/// takes clicks once visible, so a pass over the orb never ends voice.
-fn end_voice_badge(
-    id: &'static str,
-    theme: &Theme,
-    size: f32,
-    reveal: f32,
-    cx: &mut Context<Shell>,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .role(gpui::Role::Button)
-        .aria_label("End voice")
-        .absolute()
-        .size(px(size))
+        .relative()
+        .size(px(BAR_CONTROL))
+        .flex_none()
         .rounded_full()
         .flex()
         .items_center()
         .justify_center()
-        .bg(theme.solid)
-        .when(!theme.is_frost(), |el| el.shadow_md())
-        .opacity(reveal)
-        .when(reveal > 0.2, |el| {
-            el.cursor_pointer()
-                .tooltip(stage_tooltip("End voice"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.end_voice(cx);
-                }))
+        .cursor_pointer()
+        .text_color(if active { theme.on_solid } else { theme.text })
+        .bg(if active {
+            theme.solid
+        } else {
+            motion::hover_blend(id, theme.glass_hover().opacity(0.5), theme.glass_hover())
         })
-        .child(
-            icon(icons::CLOSE)
-                .size(px(size * 0.72))
-                .text_color(theme.on_solid),
-        )
+        .on_hover(motion::hover_listener(id))
+        .focus_visible(|s| s.border_2().border_color(theme.accent))
 }
 
 #[cfg(test)]

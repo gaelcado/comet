@@ -27,6 +27,8 @@ pub struct VoiceController {
     pub speaker_level: u16,
     /// The full-window stage is presented over the shell.
     pub stage_open: bool,
+    /// When the session first became active; drives the stage's call timer.
+    pub active_since: Option<std::time::Instant>,
     partial_item: Option<String>,
     engine: Option<EngineHandle>,
     controls: Option<tokio::sync::mpsc::Sender<VoiceControl>>,
@@ -45,6 +47,7 @@ impl Default for VoiceController {
             microphone_level: 0,
             speaker_level: 0,
             stage_open: false,
+            active_since: None,
             partial_item: None,
             engine: None,
             controls: None,
@@ -146,6 +149,7 @@ impl VoiceController {
         self.controls = None;
         self.task = None;
         self.stage_open = false;
+        self.active_since = None;
     }
 
     /// End the session (any phase). The provider stop runs in the background.
@@ -201,6 +205,14 @@ impl VoiceController {
         orb_state(self.phase, self.snapshot.as_ref())
     }
 
+    /// Normalized 0…1 microphone loudness; zero while muted.
+    pub fn microphone_level(&self) -> f32 {
+        if self.muted() {
+            return 0.0;
+        }
+        f32::from(self.microphone_level) / f32::from(u16::MAX)
+    }
+
     /// Normalized 0…1 loudness of whichever side is talking.
     pub fn level(&self) -> f32 {
         f32::from(self.microphone_level.max(self.speaker_level)) / f32::from(u16::MAX)
@@ -236,6 +248,9 @@ impl VoiceController {
                     return;
                 }
                 self.phase = snapshot.phase;
+                if self.phase == VoicePhase::Active && self.active_since.is_none() {
+                    self.active_since = Some(std::time::Instant::now());
+                }
                 self.snapshot = Some(snapshot);
             }
             VoiceEvent::Partial {
@@ -330,6 +345,16 @@ impl VoiceController {
             Some(_) => "Voice could not connect. Try again in a moment.",
             None => "",
         }
+    }
+}
+
+/// Call-timer text: `m:ss`, or `h:mm:ss` past the hour.
+pub fn format_elapsed(seconds: u64) -> String {
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
     }
 }
 
@@ -455,6 +480,13 @@ mod tests {
             voice.dismiss_reason(cx);
             assert_eq!(voice.phase, VoicePhase::Closed);
         });
+    }
+
+    #[test]
+    fn call_timer_reads_like_a_call() {
+        assert_eq!(format_elapsed(0), "0:00");
+        assert_eq!(format_elapsed(75), "1:15");
+        assert_eq!(format_elapsed(3600 + 62), "1:01:02");
     }
 
     #[test]

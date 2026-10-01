@@ -121,10 +121,10 @@ a stage over the conversation area (the whole window when the sidebar is
 collapsed); the titlebar cluster stays above it, and picking another thread,
 a new session or Settings steps it aside without ending voice. The stage shows
 the orb extracted from Bezel at `6141af9c16f7353cdf36003f7404e0a94566a163`
-(magnified), over the new-thread hero
-artwork cut out around it, with status, live caption, mute, transcript and
-next-session voice controls. Hovering either orb reveals an ✕ that ends the
-session; Escape or the chevron returns to the chats without ending it.
+(magnified), over the new-thread hero artwork cut out around it, with status
+and a live caption. A video-call style bar at the bottom carries the session
+clock, microphone mute (with a live input ring), next-session voice,
+transcript, a red End button and the way back to the chats (also Escape).
 Bezel is not a dependency. MIT notices accompany the extracted component.
 The orb tracks listening, speaking, task work and pending questions, uses the
 theme and reduced-motion setting, and stops hidden/background timers.
