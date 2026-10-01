@@ -97,9 +97,6 @@ impl Shell {
         }
         self.voice_stage_was_open = open;
         self.voice_stage_selection = selected;
-        if !open {
-            self.close_voice_menu(cx);
-        }
         self.voice_stage_changed_at = Some(std::time::Instant::now());
         let focus = if open {
             self.voice_stage_focus.clone()
@@ -369,7 +366,7 @@ impl Shell {
                     .child(caption),
             );
 
-        let controls = self.render_voice_call_bar(&theme, awaiting, snapshot, chat_id, cx);
+        let controls = self.render_voice_call_bar(&theme, awaiting, chat_id, cx);
 
         Some(
             div()
@@ -427,7 +424,6 @@ impl Shell {
         &mut self,
         theme: &Theme,
         awaiting: bool,
-        snapshot: Option<zeron_proto::voice::VoiceSnapshot>,
         chat_id: Option<String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -496,66 +492,6 @@ impl Shell {
                 .size(px(19.0))
                 .text_color(if muted { popup.on_solid } else { popup.text }),
             );
-
-        // Voices apply to the next session; the current one keeps its own.
-        let voices = snapshot
-            .as_ref()
-            .map(|s| s.voices.clone())
-            .unwrap_or_default();
-        let selected = settings::current(cx).codex_voice;
-        let voice_choice = (!voices.is_empty()).then(|| {
-            let label = selected.clone().unwrap_or_else(|| "Default".into());
-            let open = self.voice_menu.is_open();
-            let mut chip = round_control("voice-bar-voice", &popup, false)
-                .w_auto()
-                .pl(px(14.0))
-                .pr(px(12.0))
-                .gap(px(7.0))
-                .aria_label("Choose the voice for your next session")
-                .aria_expanded(open)
-                .when(open, |el| el.bg(popup.glass_hover()))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, _| this.voice_menu.note_trigger_press()),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if this.voice_menu.take_press_was_open() {
-                        this.close_voice_menu(cx);
-                    } else {
-                        this.voice_menu.open(());
-                        cx.notify();
-                    }
-                }))
-                .child(
-                    icon(icons::VOLUME_LOUD)
-                        .size(px(17.0))
-                        .text_color(popup.text_muted),
-                )
-                .child(
-                    div()
-                        .text_size(crate::typography::ui_rems(13.0))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(SharedString::from(label)),
-                )
-                .child(
-                    icon(if open {
-                        icons::ALT_ARROW_DOWN
-                    } else {
-                        icons::ALT_ARROW_UP
-                    })
-                    .size(px(13.0))
-                    .text_color(popup.text_faint),
-                );
-            if self.voice_menu.get().is_some() {
-                let menu = self.render_voice_menu(&popup, &voices, selected.as_deref(), cx);
-                chip = chip.child(popover::anchored_menu_above(
-                    "voice-bar-voice-menu",
-                    menu,
-                    self.voice_menu.closing_since(),
-                ));
-            }
-            chip
-        });
 
         let transcript = chat_id.map(|chat_id| {
             round_control("voice-bar-transcript", &popup, false)
@@ -655,93 +591,11 @@ impl Shell {
             .child(clock)
             .child(divider())
             .child(mic)
-            .children(voice_choice)
             .children(transcript)
             .child(end)
             .child(divider())
             .child(back);
         crate::frost::frosted(radius, 18.0, bar).into_any_element()
-    }
-}
-
-impl Shell {
-    pub(super) fn close_voice_menu(&mut self, cx: &mut Context<Self>) {
-        if self.voice_menu.begin_close() {
-            popover::reap_popup(cx, |shell: &mut Self| &mut shell.voice_menu);
-            cx.notify();
-        }
-    }
-
-    /// Voices for the next session, opening upward from the call bar. The
-    /// live session keeps the voice it started with.
-    fn render_voice_menu(
-        &mut self,
-        theme: &Theme,
-        voices: &[String],
-        selected: Option<&str>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let rows = std::iter::once(None)
-            .chain(voices.iter().map(|voice| Some(voice.clone())))
-            .enumerate()
-            .map(|(index, voice)| {
-                let checked = voice.as_deref() == selected;
-                let id = SharedString::from(format!("voice-menu-row-{index}"));
-                let label = voice.as_deref().map_or_else(
-                    || SharedString::from("Codex default"),
-                    |voice| {
-                        let mut chars = voice.chars();
-                        chars
-                            .next()
-                            .map(|first| first.to_uppercase().chain(chars).collect::<String>())
-                            .unwrap_or_default()
-                            .into()
-                    },
-                );
-                popover::menu_row(theme, checked, id.clone())
-                    .id(id)
-                    .justify_between()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let voice = voice.clone();
-                        settings::update(settings::SavePolicy::Immediate, cx, |s| {
-                            s.codex_voice = voice
-                        });
-                        this.close_voice_menu(cx);
-                    }))
-                    .child(label)
-                    .when(checked, |row| {
-                        row.child(icon(icons::CHECK).size(px(14.0)).text_color(theme.text))
-                    })
-            });
-        popover::popover_card(theme)
-            .w(px(220.0))
-            .flex()
-            .flex_col()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_voice_menu(cx)))
-            .child(
-                div()
-                    .px(px(8.0))
-                    .pt(px(6.0))
-                    .pb(px(4.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(1.0))
-                    .child(
-                        div()
-                            .text_size(crate::typography::ui_rems(12.0))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(SharedString::from("Voice")),
-                    )
-                    .child(
-                        div()
-                            .text_size(crate::typography::ui_rems(11.0))
-                            .text_color(theme.text_muted)
-                            .child(SharedString::from("Applies to your next session")),
-                    ),
-            )
-            .children(rows)
-            .into_any_element()
     }
 }
 

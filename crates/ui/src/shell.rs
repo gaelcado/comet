@@ -1774,8 +1774,6 @@ pub struct Shell {
     voice_footer_orb: Entity<crate::orb::Orb>,
     voice_stage_orb: Entity<crate::orb::Orb>,
     voice_stage_focus: FocusHandle,
-    /// The call bar's next-session voice menu.
-    voice_menu: popover::Popup<()>,
     voice_stage_was_open: bool,
     voice_stage_changed_at: Option<std::time::Instant>,
     /// The chat selected when the stage opened; picking another closes it.
@@ -2287,7 +2285,6 @@ impl Shell {
             voice_footer_orb,
             voice_stage_orb,
             voice_stage_focus: cx.focus_handle(),
-            voice_menu: Default::default(),
             voice_stage_was_open: false,
             voice_stage_changed_at: None,
             voice_stage_selection: None,
@@ -4946,7 +4943,14 @@ impl Shell {
                     None => Empty.into_any_element(),
                 }
             }
-            SettingsSection::Voice => crate::dictation::card(cx).into_any_element(),
+            SettingsSection::Voice => {
+                let card = crate::dictation::card(cx);
+                if let Some(snapshot) = &self.voice.read(cx).snapshot {
+                    let voices = snapshot.voices.clone();
+                    card.update(cx, |card, cx| card.set_voices(&voices, cx));
+                }
+                card.into_any_element()
+            }
             SettingsSection::Shortcuts | SettingsSection::General | SettingsSection::Appshots => {
                 if self.shortcuts_page.is_none() {
                     let state = self.state.clone();
@@ -9331,11 +9335,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.keystroke.key == "escape" && self.voice_menu.is_open() {
-            self.close_voice_menu(cx);
-            cx.stop_propagation();
-            return;
-        }
         if event.keystroke.key == "escape" && self.voice.read(cx).stage_open {
             self.set_voice_stage_open(false, cx);
             cx.stop_propagation();
