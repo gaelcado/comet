@@ -269,7 +269,6 @@ impl Shell {
         }
         let voice = self.voice.read(cx);
         let (orb_state, level) = (voice.orb_state(), voice.level());
-        let status = voice.status_text();
         let caption = caption_tail(&voice.partial, STAGE_CAPTION_CHARS);
         let snapshot = voice.snapshot.clone();
         let chat_id = voice.chat_id.clone();
@@ -356,14 +355,6 @@ impl Shell {
             .flex_col()
             .items_center()
             .child(orb_block)
-            .child(
-                div()
-                    .mt(px(6.0))
-                    .text_size(crate::typography::ui_rems(18.0))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(if awaiting { theme.warning } else { theme.text })
-                    .child(SharedString::from(status)),
-            )
             .child(
                 div()
                     .mt(px(10.0))

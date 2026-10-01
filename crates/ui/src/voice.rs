@@ -218,24 +218,6 @@ impl VoiceController {
         f32::from(self.microphone_level.max(self.speaker_level)) / f32::from(u16::MAX)
     }
 
-    /// One-line status for the orb's caption.
-    pub fn status_text(&self) -> &'static str {
-        let snapshot = self.snapshot.as_ref();
-        match self.phase {
-            VoicePhase::Checking | VoicePhase::Starting => "Connecting…",
-            VoicePhase::Stopping => "Ending voice…",
-            VoicePhase::Failed => "Voice disconnected",
-            VoicePhase::Closed => "",
-            VoicePhase::Active => match snapshot {
-                Some(s) if s.work == VoiceWork::AwaitingInput => "Codex needs your input",
-                Some(s) if s.playing => "Speaking",
-                Some(s) if s.muted => "Microphone muted",
-                Some(s) if s.work == VoiceWork::Working => "Working on it",
-                _ => "Listening",
-            },
-        }
-    }
-
     pub fn reduce(&mut self, event: VoiceEvent, cx: &mut Context<Self>) {
         match event {
             VoiceEvent::Snapshot { snapshot } => {
