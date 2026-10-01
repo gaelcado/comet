@@ -452,7 +452,6 @@ impl Shell {
         let popup = theme.for_popup();
         let voice = self.voice.read(cx);
         let muted = voice.muted();
-        let mic_level = voice.microphone_level();
         let elapsed = voice
             .active_since
             .map(|since| crate::voice::format_elapsed(since.elapsed().as_secs()));
@@ -481,8 +480,7 @@ impl Shell {
                     .child(SharedString::from(elapsed.unwrap_or_else(|| "–:––".into()))),
             );
 
-        // Microphone: inverted plate while muted; while live, a ring that
-        // swells with your voice.
+        // Microphone: inverted plate while muted.
         let mic = round_control("voice-bar-mic", &popup, muted)
             .aria_label(if muted {
                 "Unmute microphone"
@@ -497,14 +495,6 @@ impl Shell {
             .on_click(cx.listener(|this, _, _, cx| {
                 this.voice.update(cx, |voice, cx| voice.toggle_mute(cx))
             }))
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .rounded_full()
-                    .border_2()
-                    .border_color(popup.success.opacity((mic_level * 6.0).min(0.9))),
-            )
             .child(
                 icon(if muted {
                     icons::MICROPHONE_OFF
