@@ -9398,17 +9398,21 @@ impl Composer {
             })
             .tab_index(0)
             .cursor_pointer()
+            // At rest it is a sibling of the paperclip: the same eased ink
+            // wash. Live, it is the accent plate and dims like Send.
+            .on_hover(motion::hover_listener("composer-dictation"))
             .when(t <= 0.0, |el| {
-                el.hover(|style| style.bg(theme.surface_raised_hover))
+                el.bg(motion::hover_blend(
+                    "composer-dictation",
+                    gpui::transparent_black(),
+                    crate::theme::ink(0.10),
+                ))
             })
             .when(t > 0.0, |el| {
-                glass::accent(el, &theme, t, glow).hover(|style| style.opacity(0.9))
+                glass::accent(el, &theme, t, glow).hover(|style| style.opacity(0.85))
             })
-            .focus_visible(|style| style.border_1().border_color(theme.text))
-            .tooltip(move |_, cx| {
-                cx.new(|_| AppshotActionTooltip(tooltip.clone().into()))
-                    .into()
-            })
+            .focus_visible(|style| style.border_1().border_color(theme.accent))
+            .tooltip(crate::settings::widgets::text_tooltip(tooltip))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.press_dictation(HoldSource::Pointer, cx)),
