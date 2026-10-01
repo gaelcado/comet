@@ -5,6 +5,15 @@ pub const MAX_AUDIO_BYTES: usize = 16_384;
 pub const MEDIA_QUEUE_FRAMES: usize = 8;
 pub const MAX_TRANSCRIPT_BYTES: usize = 32_768;
 
+/// Id prefix of the hidden chat that hosts a voice orchestrator session. It
+/// never takes a sidebar row, and chats it creates are top-level sessions
+/// rather than its side chats.
+pub const ORCHESTRATOR_CHAT_PREFIX: &str = "voice-orchestrator-";
+
+pub fn is_orchestrator_chat(chat_id: &str) -> bool {
+    chat_id.starts_with(ORCHESTRATOR_CHAT_PREFIX)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum VoiceRejection {
@@ -240,5 +249,28 @@ mod tests {
             assert!(phase.replaces_composer());
         }
         assert!(!VoicePhase::Checking.replaces_composer());
+    }
+
+    #[test]
+    fn orchestrator_chats_are_never_top_level_sessions() {
+        let mut chat: crate::Chat = serde_json::from_value(serde_json::json!({
+            "id": format!("{ORCHESTRATOR_CHAT_PREFIX}1"),
+            "deviceId": "device",
+            "title": null,
+            "archived": false,
+            "cwd": null,
+            "branch": null,
+            "checkoutId": null,
+            "config": null,
+            "lastMessagePreview": null,
+            "lastMessageAt": null,
+            "createdAt": "2026-10-01T00:00:00Z",
+        }))
+        .unwrap();
+        assert!(!chat.is_top_level());
+        chat.id = "ordinary".into();
+        assert!(chat.is_top_level());
+        chat.parent_chat_id = Some("parent".into());
+        assert!(!chat.is_top_level());
     }
 }

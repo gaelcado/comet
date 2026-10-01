@@ -221,6 +221,7 @@ impl Shell {
     /// PTYs survive for the return trip).
     pub(super) fn open_new_session(&mut self, cx: &mut Context<Self>) {
         self.command_palette = None;
+        self.set_voice_stage_open(false, cx);
         self.route = Route::Chat;
         self.focus_composer(cx);
         // Pre-hide before the selection flips so the state change can't

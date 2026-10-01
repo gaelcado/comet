@@ -216,7 +216,6 @@ impl Shell {
                 let transcript = transcript.clone();
                 move |this: &mut Self, _, event, cx| {
                     match event {
-                        ComposerEvent::StartVoice(_) => {}
                         ComposerEvent::WorkspaceCommand(command) => {
                             this.pending_workspace_command = Some(*command);
                             cx.notify();

@@ -38,6 +38,8 @@ pub const DEFAULT_TARGET_FPS: f32 = 30.0;
 pub struct Orb {
     state: OrbState,
     size: OrbSize,
+    /// Uniform magnification of the size preset's painted geometry.
+    scale: f32,
     theme: OrbTheme,
     /// Multiplier on top of the preset's baked speed.
     speed: f32,
@@ -95,6 +97,7 @@ impl Orb {
         Self {
             state,
             size,
+            scale: 1.0,
             theme: OrbTheme::Auto,
             speed: 1.0,
             paused: false,
@@ -121,6 +124,12 @@ impl Orb {
 
     pub fn size(mut self, size: OrbSize) -> Self {
         self.size = size;
+        self
+    }
+
+    /// Paint the size preset magnified, e.g. a hero orb filling a stage.
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = sanitize_scale(scale);
         self
     }
 
@@ -193,6 +202,14 @@ impl Orb {
         if self.size != size {
             self.size = size;
             self.geometry_dirty = true;
+            cx.notify();
+        }
+    }
+
+    pub fn set_scale(&mut self, scale: f32, cx: &mut Context<Self>) {
+        let scale = sanitize_scale(scale);
+        if (self.scale - scale).abs() > f32::EPSILON {
+            self.scale = scale;
             cx.notify();
         }
     }
@@ -367,6 +384,7 @@ impl Render for Orb {
         }
 
         let size_px = self.size.pixels();
+        let scale = self.scale;
         let dark = self.dark(cx);
         let reduced = self.reduced_motion || cx.reduce_motion();
         let t = self.time_seconds(reduced);
@@ -400,14 +418,14 @@ impl Render for Orb {
 
         let frame = self.frame.clone();
         div()
-            .size(px(size_px))
+            .size(px(size_px * scale))
             .flex_shrink_0()
             .overflow_hidden()
             .child(
                 canvas(
                     move |_bounds: Bounds<Pixels>, _window, _cx| (),
                     move |bounds, (), window, _cx| {
-                        paint_frame(window, bounds, &frame.borrow(), dark, r_min);
+                        paint_frame(window, bounds, &frame.borrow(), dark, r_min, scale);
                     },
                 )
                 .size_full(),
@@ -449,7 +467,7 @@ pub fn orb_element(
                 move |_bounds: Bounds<Pixels>, _window, _cx| (),
                 move |bounds, (), window, cx| {
                     let dark = crate::theme::Theme::of(cx).appearance.is_dark();
-                    paint_frame(window, bounds, &frame.borrow(), dark, r_min);
+                    paint_frame(window, bounds, &frame.borrow(), dark, r_min, 1.0);
                 },
             )
             .size_full(),
@@ -483,6 +501,14 @@ fn apply_pause_clock(
 fn sanitize_speed(speed: f32) -> f32 {
     if speed.is_finite() {
         speed.clamp(0.0, 100.0)
+    } else {
+        1.0
+    }
+}
+
+fn sanitize_scale(scale: f32) -> f32 {
+    if scale.is_finite() {
+        scale.clamp(0.25, 8.0)
     } else {
         1.0
     }

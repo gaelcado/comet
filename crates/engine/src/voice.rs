@@ -382,8 +382,9 @@ impl VoiceManager {
                         changed.map_err(|_|VoiceRejection::Protocol)?;
                         let status=statuses.borrow().iter().find(|s|s.chat_id==chat).map(|s|s.status);
                         let work=match status{Some(SessionStatus::AwaitingInput)=>VoiceWork::AwaitingInput,Some(SessionStatus::Working)=>VoiceWork::Working,_=>VoiceWork::Idle};
+                        // The orchestrator outlives navigation: a pending question is
+                        // surfaced on the voice stage instead of ending the session.
                         manager.update(&lease,|s|s.work=work)?;
-                        if work==VoiceWork::AwaitingInput{return Ok(());}
                     },
                     event=events.recv()=>{
                         let event=event.map_err(|_|VoiceRejection::Overflow)?;

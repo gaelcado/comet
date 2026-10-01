@@ -1130,6 +1130,10 @@ impl EngineRpc {
                 cwd,
                 parent_chat_id,
             } => {
+                // A voice orchestrator is hidden, so the chats it creates are
+                // the user's top-level sessions rather than its side chats.
+                let parent_chat_id = parent_chat_id
+                    .filter(|parent| !zeron_proto::voice::is_orchestrator_chat(parent));
                 self.workspace
                     .create_chat_with_parent(
                         &chat_id,
@@ -3633,6 +3637,36 @@ mod tests {
         core.sessions.shutdown().await;
         assert!(!first.voice.owns_chat("chat"));
         drop(owner);
+    }
+
+    #[tokio::test]
+    async fn chats_created_by_a_voice_orchestrator_are_top_level() {
+        let temp = tempfile::tempdir().unwrap();
+        let core = crate::EngineCore::assemble_with_profile(
+            crate::EngineProfile::local(temp.path()).unwrap(),
+            std::sync::Arc::new(HarnessRegistry::new()),
+            HarnessId::Codex,
+            None,
+        )
+        .unwrap();
+        let rpc = core.rpc_service();
+        let orchestrator = format!("{}1", zeron_proto::voice::ORCHESTRATOR_CHAT_PREFIX);
+        for (chat, parent, expected) in [
+            ("worker", orchestrator.as_str(), None),
+            ("side", "ordinary", Some("ordinary")),
+        ] {
+            rpc.handle(
+                methods::MUTATE,
+                serde_json::json!({"op":"createChat", "chatId":chat,
+                    "parentChatId":parent, "deviceId":core.device_id,
+                    "config":{"harness":"codex","sandbox":"workspace-write"}}),
+            )
+            .await
+            .unwrap();
+            let row = core.workspace.chat(chat).unwrap().unwrap();
+            assert_eq!(row.parent_chat_id.as_deref(), expected);
+        }
+        core.sessions.shutdown().await;
     }
 
     #[tokio::test]

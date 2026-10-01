@@ -27,8 +27,45 @@ impl Drop for ProviderGuard {
         }
     }
 }
+/// Removes the orchestrator chat unless a voice session actually started in it.
+struct ChatGuard {
+    engine: EngineHandle,
+    chat_id: String,
+    armed: bool,
+}
+impl Drop for ChatGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let engine = self.engine.clone();
+        let delete = serde_json::json!({"op":"deleteChat","chatId":self.chat_id});
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(8),
+                    engine.client().call(methods::MUTATE, delete),
+                )
+                .await;
+            });
+        }
+    }
+}
+
+async fn mutate(engine: &EngineHandle, params: serde_json::Value) -> Result<(), VoiceRejection> {
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        engine.client().call(methods::MUTATE, params),
+    )
+    .await
+    .map_err(|_| VoiceRejection::Protocol)?
+    .map(drop)
+    .map_err(|_| VoiceRejection::Protocol)
+}
+
 pub(super) async fn run(
     engine: EngineHandle,
+    create: serde_json::Value,
     request: StartVoice,
     cancel: CancellationToken,
     events: mpsc::Sender<VoiceEvent>,
@@ -43,7 +80,18 @@ pub(super) async fn run(
         .media_client()
         .await
         .map_err(|_| VoiceRejection::Protocol)?;
+    let mut chat = ChatGuard {
+        engine: engine.clone(),
+        chat_id: request.chat_id.clone(),
+        armed: true,
+    };
+    let rename = serde_json::json!({"op":"renameChat","chatId":request.chat_id,"title":super::VOICE_CHAT_TITLE});
+    tokio::select! {biased;
+        _ = cancel.cancelled() => return Ok(()),
+        result = async { mutate(&engine, create).await?; mutate(&engine, rename).await } => result?,
+    }
     let lease: VoiceLease = tokio::select! {biased;_=cancel.cancelled()=>return Ok(()),result=tokio::time::timeout(Duration::from_secs(60),engine.client().call_as(methods::START_VOICE,serde_json::to_value(request).unwrap()))=>result.map_err(|_|VoiceRejection::Protocol)?.map_err(rejection)?};
+    chat.armed = false;
     let _provider = ProviderGuard {
         engine: engine.clone(),
         lease: lease.clone(),

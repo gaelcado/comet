@@ -1,4 +1,8 @@
-//! Viewport-owned voice controller. No automatic reconnect or microphone resume.
+//! Window-owned voice orchestrator. Each session runs in a fresh projectless
+//! Codex chat on this device and survives navigation between threads; only an
+//! explicit end, an engine change or a provider failure closes it. No
+//! automatic reconnect or microphone resume.
+use crate::orb::OrbState;
 use crate::state::EngineHandle;
 use gpui::{Context, Task};
 use gpui_tokio::Tokio;
@@ -10,6 +14,9 @@ pub enum VoiceControl {
     Mute(bool),
 }
 
+/// Sidebar title of each orchestrator chat; transcripts never trigger a titler.
+pub const VOICE_CHAT_TITLE: &str = "Voice session";
+
 pub struct VoiceController {
     pub phase: VoicePhase,
     pub chat_id: Option<String>,
@@ -18,6 +25,8 @@ pub struct VoiceController {
     pub partial: String,
     pub microphone_level: u16,
     pub speaker_level: u16,
+    /// The full-window stage is presented over the shell.
+    pub stage_open: bool,
     partial_item: Option<String>,
     engine: Option<EngineHandle>,
     controls: Option<tokio::sync::mpsc::Sender<VoiceControl>>,
@@ -35,6 +44,7 @@ impl Default for VoiceController {
             partial: String::new(),
             microphone_level: 0,
             speaker_level: 0,
+            stage_open: false,
             partial_item: None,
             engine: None,
             controls: None,
@@ -45,11 +55,40 @@ impl Default for VoiceController {
     }
 }
 impl VoiceController {
-    pub fn begin(&mut self, engine: EngineHandle, request: StartVoice, cx: &mut Context<Self>) {
+    /// A session is underway (including its preparation and native stop).
+    pub fn is_live(&self) -> bool {
+        matches!(self.phase, VoicePhase::Checking) || self.phase.replaces_composer()
+    }
+
+    /// Start an orchestrator in a new projectless Codex chat on `host_device_id`.
+    /// `config` is the chat's Codex configuration; its harness must be Codex.
+    pub fn start(
+        &mut self,
+        engine: EngineHandle,
+        host_device_id: String,
+        config: zeron_proto::ChatConfig,
+        voice: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         self.cancel(cx);
+        // Hidden from every chat list; see `ORCHESTRATOR_CHAT_PREFIX`.
+        let chat_id = format!("{ORCHESTRATOR_CHAT_PREFIX}{}", uuid::Uuid::new_v4());
+        let request = StartVoice {
+            chat_id: chat_id.clone(),
+            host_device_id: host_device_id.clone(),
+            voice,
+            worktree: None,
+        };
+        // No spaceId: the engine mints a projectless chat whose cwd is `~`.
+        let create = serde_json::json!({
+            "op": "createChat",
+            "chatId": chat_id,
+            "deviceId": host_device_id,
+            "config": config,
+        });
         self.engine = Some(engine.clone());
         self.phase = VoicePhase::Checking;
-        self.chat_id = Some(request.chat_id.clone());
+        self.chat_id = Some(chat_id);
         self.reason = None;
         let epoch = self.epoch;
         let cancellation = self.cancellation.clone();
@@ -57,7 +96,7 @@ impl VoiceController {
         self.controls = Some(controls);
         let (events, mut event_rx) = tokio::sync::mpsc::channel(32);
         let query = Tokio::spawn(cx, async move {
-            session::run(engine, request, cancellation, events, control_rx).await
+            session::run(engine, create, request, cancellation, events, control_rx).await
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let receive = async {
@@ -81,6 +120,8 @@ impl VoiceController {
                     return;
                 }
                 match result {
+                    // A provider failure already reduced to Failed keeps its reason.
+                    Ok(()) if controller.phase == VoicePhase::Failed => {}
                     Ok(()) => {
                         controller.phase = VoicePhase::Closed;
                     }
@@ -89,39 +130,65 @@ impl VoiceController {
                         controller.reason = Some(reason);
                     }
                 }
-                controller.snapshot = None;
-                controller.partial.clear();
-                controller.controls = None;
-                controller.task = None;
+                controller.reset_session();
                 cx.notify();
             });
         }));
         cx.notify();
     }
-    pub fn cancel(&mut self, cx: &mut Context<Self>) {
-        self.epoch = self.epoch.wrapping_add(1);
-        self.cancellation.cancel();
-        self.cancellation = tokio_util::sync::CancellationToken::new();
-        self.task = None;
-        self.controls = None;
-        self.phase = VoicePhase::Closed;
+
+    fn reset_session(&mut self) {
         self.snapshot = None;
         self.partial.clear();
         self.partial_item = None;
         self.microphone_level = 0;
         self.speaker_level = 0;
+        self.controls = None;
+        self.task = None;
+        self.stage_open = false;
+    }
+
+    /// End the session (any phase). The provider stop runs in the background.
+    pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.cancellation.cancel();
+        self.cancellation = tokio_util::sync::CancellationToken::new();
+        self.reset_session();
+        self.phase = VoicePhase::Closed;
         self.chat_id = None;
         self.reason = None;
         self.engine = None;
         cx.notify();
     }
+
+    pub fn set_stage_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        let open = open && self.is_live();
+        if self.stage_open != open {
+            self.stage_open = open;
+            cx.notify();
+        }
+    }
+
+    /// Forget a failure once it has been seen.
+    pub fn dismiss_reason(&mut self, cx: &mut Context<Self>) {
+        if self.reason.take().is_some() {
+            if self.phase == VoicePhase::Failed {
+                self.phase = VoicePhase::Closed;
+            }
+            cx.notify();
+        }
+    }
+
     pub fn belongs_to(&self, engine: &EngineHandle) -> bool {
         self.engine
             .as_ref()
             .is_some_and(|e| e.same_connection(engine))
     }
+    pub fn muted(&self) -> bool {
+        self.snapshot.as_ref().is_some_and(|s| s.muted)
+    }
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
-        let muted = self.snapshot.as_ref().is_some_and(|s| s.muted);
+        let muted = self.muted();
         if let Some(controls) = &self.controls {
             if controls.try_send(VoiceControl::Mute(!muted)).is_err() {
                 self.cancel(cx);
@@ -129,6 +196,34 @@ impl VoiceController {
             }
         }
     }
+
+    pub fn orb_state(&self) -> OrbState {
+        orb_state(self.phase, self.snapshot.as_ref())
+    }
+
+    /// Normalized 0…1 loudness of whichever side is talking.
+    pub fn level(&self) -> f32 {
+        f32::from(self.microphone_level.max(self.speaker_level)) / f32::from(u16::MAX)
+    }
+
+    /// One-line status for the orb's caption.
+    pub fn status_text(&self) -> &'static str {
+        let snapshot = self.snapshot.as_ref();
+        match self.phase {
+            VoicePhase::Checking | VoicePhase::Starting => "Connecting…",
+            VoicePhase::Stopping => "Ending voice…",
+            VoicePhase::Failed => "Voice disconnected",
+            VoicePhase::Closed => "",
+            VoicePhase::Active => match snapshot {
+                Some(s) if s.work == VoiceWork::AwaitingInput => "Codex needs your input",
+                Some(s) if s.playing => "Speaking",
+                Some(s) if s.muted => "Microphone muted",
+                Some(s) if s.work == VoiceWork::Working => "Working on it",
+                _ => "Listening",
+            },
+        }
+    }
+
     pub fn reduce(&mut self, event: VoiceEvent, cx: &mut Context<Self>) {
         match event {
             VoiceEvent::Snapshot { snapshot } => {
@@ -176,14 +271,16 @@ impl VoiceController {
                 self.microphone_level = microphone;
                 self.speaker_level = speaker;
             }
+            // The final segment keeps showing as the caption until the next
+            // item starts; the canonical copy is already in the transcript.
             VoiceEvent::Final { transcript }
                 if self
                     .snapshot
                     .as_ref()
                     .is_some_and(|s| s.session_id == transcript.session_id) =>
             {
-                self.partial.clear();
-                self.partial_item = None;
+                self.partial = transcript.text;
+                self.partial_item = Some(transcript.item_id);
             }
             VoiceEvent::Closed { generation, reason }
                 if self
@@ -191,10 +288,13 @@ impl VoiceController {
                     .as_ref()
                     .is_some_and(|s| s.generation == generation) =>
             {
-                self.phase = VoicePhase::Closed;
+                self.phase = if reason.is_some() {
+                    VoicePhase::Failed
+                } else {
+                    VoicePhase::Closed
+                };
                 self.reason = reason;
-                self.partial.clear();
-                self.snapshot = None;
+                self.reset_session();
             }
             _ => return,
         }
@@ -205,8 +305,8 @@ impl VoiceController {
             Some(VoiceRejection::CreditExclusionUnverified) => {
                 "Codex controls subscription usage and any enabled additional credits."
             }
-            Some(VoiceRejection::WrongHarness) => "Voice requires a Codex chat.",
-            Some(VoiceRejection::RemoteHost) => "Voice requires a chat hosted on this device.",
+            Some(VoiceRejection::WrongHarness) => "Voice requires Codex.",
+            Some(VoiceRejection::RemoteHost) => "Voice runs on this device only.",
             Some(VoiceRejection::IncludedUsageUnavailable) => {
                 "Codex usage is currently unavailable."
             }
@@ -227,9 +327,26 @@ impl VoiceController {
                 "Microphone setup is missing. Rebuild or reinstall Zeron, then restart it."
             }
             Some(VoiceRejection::Busy) => "Another window already owns the voice session.",
-            Some(_) => "Voice could not connect. You can continue typing.",
+            Some(_) => "Voice could not connect. Try again in a moment.",
             None => "",
         }
+    }
+}
+
+pub fn orb_state(phase: VoicePhase, snapshot: Option<&VoiceSnapshot>) -> OrbState {
+    if matches!(
+        phase,
+        VoicePhase::Checking | VoicePhase::Starting | VoicePhase::Stopping
+    ) {
+        return OrbState::Connecting;
+    }
+    match snapshot {
+        Some(s) if s.playing => OrbState::Composing,
+        Some(s) if s.work == VoiceWork::AwaitingInput => OrbState::Solving,
+        Some(s) if s.work == VoiceWork::Working => OrbState::Working,
+        Some(s) if s.muted => OrbState::Breathing,
+        Some(_) => OrbState::Listening,
+        None => OrbState::Breathing,
     }
 }
 
@@ -243,23 +360,28 @@ impl Drop for VoiceController {
 mod tests {
     use super::*;
     use gpui::AppContext;
+
+    fn snapshot() -> VoiceSnapshot {
+        VoiceSnapshot {
+            session_id: "one".into(),
+            chat_id: "chat".into(),
+            generation: 2,
+            phase: VoicePhase::Active,
+            muted: false,
+            playing: false,
+            work: VoiceWork::Idle,
+            reason: None,
+            voice: None,
+            voices: Vec::new(),
+        }
+    }
+
     #[gpui::test]
     fn voice_reducer_ignores_stale_and_foreign_events(cx: &mut gpui::TestAppContext) {
         let voice = cx.new(|_| VoiceController::default());
         voice.update(cx, |voice, cx| {
             voice.chat_id = Some("chat".into());
-            let snapshot = VoiceSnapshot {
-                session_id: "one".into(),
-                chat_id: "chat".into(),
-                generation: 2,
-                phase: VoicePhase::Active,
-                muted: false,
-                playing: false,
-                work: VoiceWork::Idle,
-                reason: None,
-                voice: None,
-                voices: Vec::new(),
-            };
+            let snapshot = snapshot();
             voice.reduce(
                 VoiceEvent::Snapshot {
                     snapshot: snapshot.clone(),
@@ -295,10 +417,63 @@ mod tests {
                 },
                 cx,
             );
-            assert!(voice.phase.replaces_composer());
+            assert!(voice.is_live());
+            voice.set_stage_open(true, cx);
+            assert!(voice.stage_open);
             voice.cancel(cx);
-            assert!(!voice.phase.replaces_composer());
+            assert!(!voice.is_live());
+            assert!(!voice.stage_open);
             assert!(voice.partial.is_empty());
+            // A closed session never reopens the stage.
+            voice.set_stage_open(true, cx);
+            assert!(!voice.stage_open);
         });
+    }
+
+    #[gpui::test]
+    fn provider_failure_closes_the_stage_and_keeps_its_reason(cx: &mut gpui::TestAppContext) {
+        let voice = cx.new(|_| VoiceController::default());
+        voice.update(cx, |voice, cx| {
+            voice.chat_id = Some("chat".into());
+            voice.reduce(
+                VoiceEvent::Snapshot {
+                    snapshot: snapshot(),
+                },
+                cx,
+            );
+            voice.set_stage_open(true, cx);
+            voice.reduce(
+                VoiceEvent::Closed {
+                    generation: 2,
+                    reason: Some(VoiceRejection::DeviceUnavailable),
+                },
+                cx,
+            );
+            assert_eq!(voice.phase, VoicePhase::Failed);
+            assert!(!voice.stage_open);
+            assert!(!voice.reason_text().is_empty());
+            voice.dismiss_reason(cx);
+            assert_eq!(voice.phase, VoicePhase::Closed);
+        });
+    }
+
+    #[test]
+    fn visual_state_keeps_muting_and_playback_orthogonal() {
+        let mut s = snapshot();
+        s.muted = true;
+        s.playing = true;
+        assert_eq!(orb_state(s.phase, Some(&s)), OrbState::Composing);
+        s.playing = false;
+        assert_eq!(orb_state(s.phase, Some(&s)), OrbState::Breathing);
+        s.muted = false;
+        assert_eq!(orb_state(s.phase, Some(&s)), OrbState::Listening);
+        s.work = VoiceWork::Working;
+        assert_eq!(orb_state(s.phase, Some(&s)), OrbState::Working);
+        s.work = VoiceWork::AwaitingInput;
+        assert_eq!(orb_state(s.phase, Some(&s)), OrbState::Solving);
+        assert_eq!(
+            orb_state(VoicePhase::Starting, Some(&s)),
+            OrbState::Connecting
+        );
     }
 }

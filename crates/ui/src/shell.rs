@@ -24,7 +24,7 @@ use gpui::{
 
 use gpui_tokio::Tokio;
 use zeron_engine::InstanceLock;
-use zeron_proto::{AuthState, WorkspaceScope};
+use zeron_proto::{AuthState, ChatConfig, HarnessId, WorkspaceScope};
 use zeron_rpc::methods;
 
 use crate::changes::{Changes, ChangesEvent, DiscardWorkingTreeRequest};
@@ -76,6 +76,8 @@ mod sidebar_sections;
 pub(crate) mod spaces;
 use side_chats::SideChatTab;
 mod tabs;
+mod voice_stage;
+use voice_stage::VOICE_STAGE_ORB_SCALE;
 
 use spaces::{AddSpaceFlow, RenameSpaceDialog};
 
@@ -1766,9 +1768,19 @@ pub struct Shell {
     sidebar_pane: Entity<SidebarPane>,
     transcript: Entity<Transcript>,
     composer: Entity<Composer>,
+    /// The window's voice orchestrator: independent of the selected chat.
     voice: Entity<crate::voice::VoiceController>,
-    voice_surface: Entity<crate::voice_surface::VoiceSurface>,
-    voice_was_visible: bool,
+    /// Sidebar footer orb (session live) and the full-window stage's orb.
+    voice_footer_orb: Entity<crate::orb::Orb>,
+    voice_stage_orb: Entity<crate::orb::Orb>,
+    voice_stage_focus: FocusHandle,
+    /// Measured orb halo; the stage's artwork is cut out around it like the
+    /// new-thread hero is around its composer.
+    voice_stage_bounds: crate::new_thread_background_mask::SurfaceBounds,
+    voice_stage_was_open: bool,
+    voice_stage_changed_at: Option<std::time::Instant>,
+    /// The chat selected when the stage opened; picking another closes it.
+    voice_stage_selection: Option<String>,
     _voice_observation: gpui::Subscription,
     /// Measured height of the bottom chrome stack (status strip + composer +
     /// terminal dock) the full-height transcript scrolls under. Paint-time
@@ -2102,16 +2114,19 @@ impl Shell {
         let transcript = cx.new(|cx| Transcript::new(state.clone(), cx));
         transcript.update(cx, |transcript, _| transcript.retain_for_route_exit());
         let composer = cx.new(|cx| Composer::new(state.clone(), cx));
-        composer.update(cx, |composer, _| composer.voice_supported = true);
         let voice = cx.new(|_| crate::voice::VoiceController::default());
-        let voice_surface = cx
-            .new(|cx| crate::voice_surface::VoiceSurface::new(voice.clone(), composer.clone(), cx));
-        let voice_observation = cx.observe(&voice, |this: &mut Shell, voice, cx| {
-            let hidden = voice.read(cx).phase.replaces_composer();
-            this.composer
-                .update(cx, |composer, _| composer.suspend_for_voice(hidden));
-            cx.notify();
+        let voice_footer_orb = cx.new(|_| {
+            crate::orb::Orb::new()
+                .size(crate::orb::OrbSize::Inline)
+                .visible(false)
         });
+        let voice_stage_orb = cx.new(|_| {
+            crate::orb::Orb::new()
+                .size(crate::orb::OrbSize::Hero)
+                .scale(VOICE_STAGE_ORB_SCALE)
+                .visible(false)
+        });
+        let voice_observation = cx.observe(&voice, |_: &mut Shell, _, cx| cx.notify());
         let links = Self::session_links(None, cx);
         transcript.update(cx, |transcript, _| {
             transcript.set_workspace_link_handler(links)
@@ -2121,12 +2136,6 @@ impl Shell {
         let composer_events = cx.subscribe(&composer, {
             let transcript = transcript.clone();
             move |this: &mut Shell, _, event: &ComposerEvent, cx| match event {
-                ComposerEvent::StartVoice(request) => {
-                    if let Some(engine) = this.state.read(cx).engine().cloned() {
-                        this.voice
-                            .update(cx, |voice, cx| voice.begin(engine, request.clone(), cx));
-                    }
-                }
                 ComposerEvent::WorkspaceCommand(command) => {
                     this.pending_workspace_command = Some(*command);
                     cx.notify();
@@ -2276,8 +2285,13 @@ impl Shell {
             transcript,
             composer,
             voice,
-            voice_surface,
-            voice_was_visible: false,
+            voice_footer_orb,
+            voice_stage_orb,
+            voice_stage_focus: cx.focus_handle(),
+            voice_stage_bounds: Default::default(),
+            voice_stage_was_open: false,
+            voice_stage_changed_at: None,
+            voice_stage_selection: None,
             _voice_observation: voice_observation,
             // Seed with the compact composer stack's rough height so the
             // first frame's clearance isn't zero (the measure corrects it).
@@ -2514,15 +2528,13 @@ impl Shell {
     // ---- splash ----
 
     fn on_state_changed(&mut self, state: &Entity<AppState>, cx: &mut Context<Self>) {
+        // Voice is an orchestrator over every thread: navigation keeps it,
+        // only losing the engine that hosts it ends the session.
         if self.voice.read(cx).chat_id.is_some()
-            && (state.read(cx).selected_chat_row().is_none_or(|row| {
-                Some(row.device_id.as_str()) != state.read(cx).local_device_id.as_deref()
-                    || row.config.as_ref().map(|c| c.harness) != Some(zeron_proto::HarnessId::Codex)
-            }) || self.voice.read(cx).chat_id != state.read(cx).selected_chat
-                || state
-                    .read(cx)
-                    .engine()
-                    .is_none_or(|engine| !self.voice.read(cx).belongs_to(engine)))
+            && state
+                .read(cx)
+                .engine()
+                .is_none_or(|engine| !self.voice.read(cx).belongs_to(engine))
         {
             self.voice.update(cx, |voice, cx| voice.cancel(cx));
         }
@@ -2662,7 +2674,7 @@ impl Shell {
                         let send_pending = state.send_pending(&s.chat_id, now);
                         let chat = state.chats.iter().find(|c| c.id == s.chat_id);
                         let title = chat.and_then(|c| c.title.clone());
-                        let notify = chat.is_some_and(|c| c.parent_chat_id.is_none());
+                        let notify = chat.is_some_and(|c| c.is_top_level());
                         (s.chat_id.clone(), status, send_pending, title, notify)
                     })
                     .collect();
@@ -5332,6 +5344,7 @@ impl Shell {
     /// the keys it records before they can dispatch.
     pub(super) fn overlay_owns_keyboard(&self, cx: &App) -> bool {
         self.command_palette.is_some()
+            || self.voice.read(cx).stage_open
             || self.section_dialog.is_some()
             || self.section_menu.is_some()
             || self.add_space.is_some()
@@ -6249,13 +6262,14 @@ impl Shell {
         // leave two competing + placements across the responsive variants.
         let plus_alpha = self.titlebar_plus_alpha(cx);
         let show_plus = plus_alpha > 0.01;
+        let over_artwork = settings::current(cx)
+            .new_thread_composer_background
+            .as_ref()
+            .is_some_and(|background| std::path::Path::new(&background.path).is_file());
         let island_target = if matches!(self.route, Route::Chat)
-            && self.state.read(cx).selected_chat.is_none()
+            && (self.state.read(cx).selected_chat.is_none() || self.voice.read(cx).stage_open)
             && self.settings.sidebar_collapsed
-            && settings::current(cx)
-                .new_thread_composer_background
-                .as_ref()
-                .is_some_and(|background| std::path::Path::new(&background.path).is_file())
+            && over_artwork
         {
             1.0
         } else {
@@ -8785,6 +8799,7 @@ impl Shell {
             (true, true) => "Close settings · ⌘,".into(),
             (true, false) => "Close settings · Ctrl+,".into(),
         };
+        let voice_trigger = self.render_voice_trigger(theme, cx);
         div()
             .w_full()
             .flex()
@@ -8794,55 +8809,61 @@ impl Shell {
             .child(trigger)
             .child(
                 div()
-                    .id("settings-trigger")
-                    .debug_selector(|| "settings-trigger".into())
-                    .role(gpui::Role::Button)
-                    .aria_label(if settings_open {
-                        "Close settings"
-                    } else {
-                        "Settings"
-                    })
-                    .aria_toggled(if settings_open {
-                        gpui::Toggled::True
-                    } else {
-                        gpui::Toggled::False
-                    })
-                    .tooltip(move |_, cx| {
-                        let text = settings_tooltip.clone();
-                        cx.new(|_| SurfaceTabTooltip { text }).into()
-                    })
-                    .tab_index(0)
-                    .size(px(SIDEBAR_FOOTER_BUTTON_SIZE))
-                    .flex_none()
-                    .rounded(px(8.0))
                     .flex()
+                    .flex_none()
                     .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .bg(if settings_open {
-                        theme.glass_hover()
-                    } else {
-                        motion::hover_blend(
-                            "settings-trigger",
-                            theme.glass_hover().opacity(0.0),
-                            theme.glass_hover(),
-                        )
-                    })
-                    .on_hover(motion::hover_listener("settings-trigger"))
-                    .focus_visible(|s| s.border_2().border_color(theme.accent))
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx)))
+                    .gap(px(2.0))
+                    .child(voice_trigger)
                     .child(
-                        icon(icons::SETTINGS)
-                            .size(px(15.0))
-                            .text_color(if settings_open {
-                                theme.text
+                        div()
+                            .id("settings-trigger")
+                            .debug_selector(|| "settings-trigger".into())
+                            .role(gpui::Role::Button)
+                            .aria_label(if settings_open {
+                                "Close settings"
+                            } else {
+                                "Settings"
+                            })
+                            .aria_toggled(if settings_open {
+                                gpui::Toggled::True
+                            } else {
+                                gpui::Toggled::False
+                            })
+                            .tooltip(move |_, cx| {
+                                let text = settings_tooltip.clone();
+                                cx.new(|_| SurfaceTabTooltip { text }).into()
+                            })
+                            .tab_index(0)
+                            .size(px(SIDEBAR_FOOTER_BUTTON_SIZE))
+                            .flex_none()
+                            .rounded(px(8.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .bg(if settings_open {
+                                theme.glass_hover()
                             } else {
                                 motion::hover_blend(
                                     "settings-trigger",
-                                    theme.text_muted,
-                                    theme.text,
+                                    theme.glass_hover().opacity(0.0),
+                                    theme.glass_hover(),
                                 )
-                            }),
+                            })
+                            .on_hover(motion::hover_listener("settings-trigger"))
+                            .focus_visible(|s| s.border_2().border_color(theme.accent))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx)))
+                            .child(icon(icons::SETTINGS).size(px(15.0)).text_color(
+                                if settings_open {
+                                    theme.text
+                                } else {
+                                    motion::hover_blend(
+                                        "settings-trigger",
+                                        theme.text_muted,
+                                        theme.text,
+                                    )
+                                },
+                            )),
                     ),
             )
             .into_any_element()
@@ -9311,6 +9332,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.keystroke.key == "escape" && self.voice.read(cx).stage_open {
+            self.set_voice_stage_open(false, cx);
+            cx.stop_propagation();
+            return;
+        }
         if event.keystroke.key == "escape" && self.sidebar_session_transfer.is_some() {
             cx.stop_active_drag(window);
             self.cancel_sidebar_session_transfer(cx);
@@ -10238,20 +10264,6 @@ impl Shell {
                 let measured_has_composer = self.bottom_stack_has_composer.clone();
                 let contains_composer = (has_spaces || no_project || has_appshots) && has_selection;
                 let composer = self.composer.clone();
-                let voice_visible = self.voice.read(cx).phase.replaces_composer();
-                self.voice_surface
-                    .update(cx, |surface, cx| surface.set_visible(voice_visible, cx));
-                if voice_visible != self.voice_was_visible {
-                    self.voice_was_visible = voice_visible;
-                    let focus = if voice_visible {
-                        self.voice_surface.read(cx).focus_handle()
-                    } else {
-                        self.composer.focus_handle(cx)
-                    };
-                    if window.is_window_active() {
-                        window.focus(&focus, cx);
-                    }
-                }
                 div()
                     .flex_none()
                     .relative()
@@ -10262,11 +10274,7 @@ impl Shell {
                             move |bounds, window, cx| {
                                 // Reserve the destination footprint, never the animated height.
                                 let next_height = f32::from(bounds.size.height)
-                                    + if voice_visible {
-                                        0.0
-                                    } else {
-                                        composer.read(cx).dock_clearance_correction()
-                                    };
+                                    + composer.read(cx).dock_clearance_correction();
                                 let changed = (measured.get() - next_height).abs() > 0.5
                                     || measured_has_composer.get() != contains_composer;
                                 measured.set(next_height);
@@ -10283,51 +10291,27 @@ impl Shell {
                     .child(status)
                     .when(has_spaces || no_project || has_appshots, |el| {
                         let composer_opacity = self.composer_dock.borrow().opacity();
-                        if voice_visible {
-                            el.child(
+                        el.child(
+                            crate::composer_dock::docked_composer(
                                 div()
-                                    .id("persistent-voice")
+                                    .id("persistent-composer")
                                     .relative()
                                     .w(px(composer_width))
+                                    .opacity(composer_opacity)
                                     .mx_auto()
-                                    .child(self.voice_surface.clone())
-                                    .children(self.render_jump_to_bottom(cx)),
+                                    .child(self.composer.clone())
+                                    .children(if has_selection {
+                                        self.render_jump_to_bottom(cx)
+                                    } else {
+                                        None
+                                    }),
+                                self.composer_dock.clone(),
+                                self.viewport_height,
+                                self.reduced_motion,
+                                frame_time,
                             )
-                        } else {
-                            el.child(
-                                crate::composer_dock::docked_composer(
-                                    div()
-                                        .id("persistent-composer")
-                                        .relative()
-                                        .w(px(composer_width))
-                                        .opacity(composer_opacity)
-                                        .mx_auto()
-                                        .child(self.composer.clone())
-                                        .children(if has_selection {
-                                            self.render_jump_to_bottom(cx)
-                                        } else {
-                                            None
-                                        }),
-                                    self.composer_dock.clone(),
-                                    self.viewport_height,
-                                    self.reduced_motion,
-                                    frame_time,
-                                )
-                                .reserve_terminal(terminal_geometry.clone()),
-                            )
-                            .when(
-                                self.voice.read(cx).reason.is_some(),
-                                |el| {
-                                    el.child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme.text)
-                                            .mx_auto()
-                                            .child(self.voice.read(cx).reason_text()),
-                                    )
-                                },
-                            )
-                        }
+                            .reserve_terminal(terminal_geometry.clone()),
+                        )
                     })
                     .child(self.render_terminal_container(terminal_geometry, window, cx))
             })
@@ -12240,13 +12224,6 @@ fn header_icon_button(
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !matches!(self.route, Route::Chat) {
-            self.composer
-                .update(cx, |composer, cx| composer.cancel_voice_preparation(cx));
-        }
-        if !matches!(self.route, Route::Chat) && self.voice.read(cx).chat_id.is_some() {
-            self.voice.update(cx, |voice, cx| voice.cancel(cx));
-        }
         let active_files_key = self.panel_key(cx);
         let hidden_explorers = self
             .files
@@ -12260,6 +12237,7 @@ impl Render for Shell {
             files.update(cx, |files, cx| files.suspend_tree_interactions(cx));
         }
         settings::wallpaper::preload(cx);
+        self.sync_voice_stage(window, cx);
         self.navigation_focus
             .remember(&self.shortcut_focus, window, cx);
         if let Some(command) = self.pending_workspace_command.take() {
@@ -12813,6 +12791,8 @@ impl Render for Shell {
                 };
                 let files_panel = self.render_files_panel(window, cx);
                 let overlays = self.render_overlays(window.viewport_size(), window, cx);
+                // Full-window voice stage: above the page chrome, below dialogs.
+                let voice_stage = self.render_voice_stage(window, cx);
                 // Copied out (not held) — `render_title_bar` needs `cx` mutable.
                 let border_color = Theme::of(cx).border;
                 // No inset cards (user request): the conversation column sits
@@ -12913,6 +12893,9 @@ impl Render for Shell {
                             ),
                     )
                     .child(div().absolute().top_0().left_0().right_0().child(title_bar))
+                    // The stage covers the conversation's titlebar but never
+                    // the cluster: the sidebar toggle and navigation stay live.
+                    .children(voice_stage)
                     .child(self.render_titlebar_cluster(cx))
                     .children(overlays);
                 root.child(sidebar_tone)

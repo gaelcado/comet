@@ -74,9 +74,10 @@ installed. A fresh explicit request can renew that idle runtime after cleanup;
 continuing delegated work is preserved and must finish before renewal.
 
 Voice protects the warm runtime from idle reaping and updates. Voice stop leaves
-delegated Codex work running. Account/profile retirement, navigation, window
-owner loss, audio failure and provider termination close voice. An agent question
-restores the text composer so the usual input UI can answer it. Reconnection and
+delegated Codex work running. Account/profile retirement, engine/window owner
+loss, audio failure and provider termination close voice; navigating between
+threads does not. An agent question keeps voice open: the stage reports it and
+links to the session transcript, where the usual input UI answers it. Reconnection and
 microphone resumption require a fresh user action. Changes to the chat host,
 configuration or checkout invalidate pending starts and active ownership;
 workspace monitoring also covers synced host/configuration changes.
@@ -90,6 +91,11 @@ promotion uses the existing Codex task transcript; it does not resubmit a spoken
 request or create another task response. Native `turn/started` publishes the
 engine turn boundary before its text/tools, including on an idle bootstrap.
 
+Every session is an orchestrator. `thread/realtime/start` carries one short
+English instruction, as `realtimeStartInstructions` for the backing Codex model
+and as a developer `initialItems` entry for the voice model: use the Zeron MCP
+to create, message and monitor chats, and delegate coding work to them.
+
 The voice agent uses the unchanged upstream Zeron MCP. Creating chats, sending
 messages and delegating tasks use the normal provider selection, authentication
 and device routing. A Codex voice session can create a Grok, Claude Code or other
@@ -100,18 +106,32 @@ continuing tasks or their children.
 
 ## Interface and packaging
 
-During Starting, Active and Stopping, the composer is replaced by a central
-orb extracted from Bezel at `6141af9c16f7353cdf36003f7404e0a94566a163`.
-Bezel is not a dependency. MIT notices accompany the extracted component.
-The orb tracks listening, speaking and task work, responds to level meters,
-uses the theme and reduced-motion setting, and stops hidden/background timers.
-Controls distinguish microphone mute, ending voice and stopping a task.
+Voice starts from the microphone in the sidebar footer, next to Settings. Each
+session creates a fresh projectless Codex chat (cwd `~`) on this device whose id
+starts with `voice-orchestrator-`. That prefix keeps it out of the sidebar,
+jump slots, command palette, archive and completion notifications, and the
+engine drops it as a `parentChatId`: chats the orchestrator creates are ordinary
+top-level sessions. The chat is deleted again if startup fails before a lease
+exists. It uses the composer's Codex model when Codex is selected, otherwise
+Codex's default. The composer is never replaced or suspended: the user keeps typing in
+and switching between threads while voice runs.
 
-New voice chats preserve drafts and attachments without uploading or submitting
-them. Current, reused and fresh worktree selections prepare the normal workspace
-before idle startup. Native voice ids from the provider catalog can be selected
-for the next session; only that preference is persisted. Devices use the operating
-system defaults. Codex's current helper protocol does not expose device selection.
+While a session is live the microphone becomes a small orb. Pressing it toggles
+a stage over the conversation area (the whole window when the sidebar is
+collapsed); the titlebar cluster stays above it, and picking another thread,
+a new session or Settings steps it aside without ending voice. The stage shows
+the orb extracted from Bezel at `6141af9c16f7353cdf36003f7404e0a94566a163`
+(magnified), over the new-thread hero
+artwork cut out around it, with status, live caption, mute, transcript and
+next-session voice controls. Hovering either orb reveals an ✕ that ends the
+session; Escape or the chevron returns to the chats without ending it.
+Bezel is not a dependency. MIT notices accompany the extracted component.
+The orb tracks listening, speaking, task work and pending questions, uses the
+theme and reduced-motion setting, and stops hidden/background timers.
+
+Native voice ids from the provider catalog can be selected for the next session;
+only that preference is persisted. Devices use the operating system defaults.
+Codex's current helper protocol does not expose device selection.
 
 The native helper/runtime is supplied by the standalone Codex installation,
 not redistributed by Zeron. npm/CLI-only installations without those resources

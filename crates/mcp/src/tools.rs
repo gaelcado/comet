@@ -677,6 +677,8 @@ impl Tools {
                 Some(key) => Some(self.zeron.resolve_chat(key).await?.id),
                 None => self.zeron.origin().chat_id.clone(),
             }
+            // A hidden voice orchestrator creates top-level sessions.
+            .filter(|parent| !zeron_proto::voice::is_orchestrator_chat(parent))
         };
         anyhow::ensure!(
             args.kind != Some(ChatKind::Side) || parent_chat_id.is_some(),

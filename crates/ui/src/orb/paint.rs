@@ -31,14 +31,20 @@ fn ink_color(white: f32, alpha: f32, dark: bool) -> gpui::Hsla {
 ///
 /// Measured: batching saves nothing at one orb (2.0 % either way) and about one
 /// point of a core at twelve. Not worth a visible change to the artwork.
-fn paint_lines(window: &mut Window, origin: Point<Pixels>, lines: &[Line], dark: bool) {
+fn paint_lines(window: &mut Window, origin: Point<Pixels>, lines: &[Line], dark: bool, scale: f32) {
     for l in lines {
         if l.a < 0.02 {
             continue;
         }
-        let mut b = PathBuilder::stroke(px(l.w));
-        b.move_to(point(origin.x + px(l.x1), origin.y + px(l.y1)));
-        b.line_to(point(origin.x + px(l.x2), origin.y + px(l.y2)));
+        let mut b = PathBuilder::stroke(px(l.w * scale));
+        b.move_to(point(
+            origin.x + px(l.x1 * scale),
+            origin.y + px(l.y1 * scale),
+        ));
+        b.line_to(point(
+            origin.x + px(l.x2 * scale),
+            origin.y + px(l.y2 * scale),
+        ));
         if let Ok(path) = b.build() {
             window.paint_path(path, ink_color(l.white, l.a, dark));
         }
@@ -46,15 +52,25 @@ fn paint_lines(window: &mut Window, origin: Point<Pixels>, lines: &[Line], dark:
 }
 
 /// Paint dots as rounded quads (true circles at GPU level via corner radii).
-fn paint_dots(window: &mut Window, origin: Point<Pixels>, frame: &Frame, dark: bool, r_min: f32) {
+fn paint_dots(
+    window: &mut Window,
+    origin: Point<Pixels>,
+    frame: &Frame,
+    dark: bool,
+    r_min: f32,
+    scale: f32,
+) {
     for d in &frame.dots {
         if d.a < 0.02 {
             continue;
         }
-        let r = d.r.max(r_min);
+        let r = d.r.max(r_min) * scale;
         let diameter = r * 2.0;
         let bounds = Bounds {
-            origin: point(origin.x + px(d.x - r), origin.y + px(d.y - r)),
+            origin: point(
+                origin.x + px(d.x * scale - r),
+                origin.y + px(d.y * scale - r),
+            ),
             size: size(px(diameter), px(diameter)),
         };
         // Fully rounded corners → disk.
@@ -81,16 +97,19 @@ fn no_layer() -> bool {
 /// Paint a complete frame into `bounds` (top-left of the orb).
 ///
 /// Background is fully transparent — the host supplies the substrate.
+/// `scale` magnifies the preset's geometry uniformly (dots, strokes and
+/// spacing), so a preset tuned at one edge length stays crisp at another.
 pub fn paint_frame(
     window: &mut Window,
     bounds: Bounds<Pixels>,
     frame: &Frame,
     dark: bool,
     r_min: f32,
+    scale: f32,
 ) {
     if no_layer() {
-        paint_lines(window, bounds.origin, &frame.lines, dark);
-        paint_dots(window, bounds.origin, frame, dark, r_min);
+        paint_lines(window, bounds.origin, &frame.lines, dark, scale);
+        paint_dots(window, bounds.origin, frame, dark, r_min, scale);
         return;
     }
 
@@ -108,7 +127,7 @@ pub fn paint_frame(
     // still holds. Confirmed by pixel-diffing the golden grid against a build
     // with this call removed: every dot-only orb came out byte-identical.
     window.paint_layer(bounds, |window| {
-        paint_lines(window, bounds.origin, &frame.lines, dark);
-        paint_dots(window, bounds.origin, frame, dark, r_min);
+        paint_lines(window, bounds.origin, &frame.lines, dark, scale);
+        paint_dots(window, bounds.origin, frame, dark, r_min, scale);
     });
 }

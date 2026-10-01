@@ -1795,10 +1795,11 @@ impl AppState {
     /// another chat (`parent_chat_id`, the Zeron MCP's orchestration link)
     /// are the parent's workers, not sessions the user started: they stay
     /// reachable by id/deep link but never take a sidebar row or jump slot.
+    /// Voice orchestrator chats are hidden the same way.
     pub fn visible_chats(&self) -> impl Iterator<Item = &Chat> {
         self.chats
             .iter()
-            .filter(|c| !c.archived && c.parent_chat_id.is_none())
+            .filter(|c| !c.archived && c.is_top_level())
     }
 
     pub(crate) fn restore_composer_target(
