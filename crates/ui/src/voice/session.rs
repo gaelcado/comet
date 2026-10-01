@@ -24,7 +24,7 @@ impl Drop for AudioGuard {
     fn drop(&mut self) { self.stopped.store(true,Ordering::Release); let _=self.commands.try_send(AudioCommand::Stop); }
 }
 
-pub(super) async fn run(engine:EngineHandle, request:StartVoice, cancellation:CancellationToken, events:mpsc::Sender<VoiceEvent>) -> Result<(),VoiceRejection> {
+pub(super) async fn run(engine:EngineHandle, request:StartVoice, cancellation:CancellationToken, events:mpsc::Sender<VoiceEvent>,mut controls:mpsc::Receiver<super::VoiceControl>) -> Result<(),VoiceRejection> {
     // Independent connections for media and owner stream, while Stop stays on
     // the normal control client. Both modes use identical JSON serialization.
     let media=engine.media_client().await.map_err(|_|VoiceRejection::Protocol)?;
@@ -84,6 +84,13 @@ pub(super) async fn run(engine:EngineHandle, request:StartVoice, cancellation:Ca
             biased;
             _=cancellation.cancelled()=>break,
             _=events.closed()=>break,
+            control=controls.recv()=> match control {
+                Some(super::VoiceControl::Mute(muted))=> {
+                    engine.client().call(methods::MUTE_VOICE,serde_json::to_value(MuteVoice { lease:lease.clone(),muted }).unwrap()).await.map_err(|_|VoiceRejection::Protocol)?;
+                    commands.try_send(AudioCommand::Mute(muted)).map_err(|_|VoiceRejection::Overflow)?;
+                }
+                None=>break,
+            },
             event=owner.recv()=> {
                 let event:VoiceEvent=serde_json::from_value(event.ok_or(VoiceRejection::Protocol)?).map_err(|_|VoiceRejection::Protocol)?;
                 match event {

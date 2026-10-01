@@ -4992,6 +4992,7 @@ impl Render for ComposerInput {
 /// Events the shell listens for.
 #[derive(Debug, Clone)]
 pub enum ComposerEvent {
+    StartVoice,
     WorkspaceCommand(WorkspaceCommand),
     /// Arm the shared-element transition before the draft route is replaced
     /// by the newly-created session. Emitting this before `select_chat` keeps
@@ -5613,6 +5614,8 @@ fn slash_error_message(err: &RpcError, skill: bool) -> SharedString {
 }
 
 pub struct Composer {
+    voice_suspended: bool,
+    pub(crate) voice_supported: bool,
     pub(crate) state: Entity<AppState>,
     pub(crate) input: Entity<ComposerInput>,
     /// Draft displaced while a queued message occupies the composer.
@@ -5929,6 +5932,8 @@ impl Composer {
         });
         let current_key = state.read(cx).selected_chat.clone().unwrap_or_default();
         let mut composer = Self {
+            voice_suspended: false,
+            voice_supported: false,
             state,
             input,
             queue_edit_draft: None,
@@ -7882,6 +7887,7 @@ impl Composer {
     /// New chats need a runnable agent, but may target the device's home
     /// directory without a project. Existing chats carry their own run config.
     fn send_blocked(&self, cx: &App) -> bool {
+        if self.voice_suspended { return true; }
         if self.queue_edit_finishing {
             return true;
         }
@@ -7929,7 +7935,10 @@ impl Composer {
         cx.notify();
     }
 
+    pub(crate) fn suspend_for_voice(&mut self,suspended:bool) { self.voice_suspended=suspended; }
+
     fn on_submit(&mut self, cx: &mut Context<Self>) {
+        if self.voice_suspended { return; }
         if self
             .input
             .update(cx, |input, cx| input.finish_dictation(true, cx))
@@ -8009,6 +8018,7 @@ impl Composer {
     /// is on), `Mutate createChat` with the `ChatConfig` + cwd, and the model /
     /// reasoning / options on the Run request itself (§1.7).
     fn send(&mut self, text: String, queue: bool, cx: &mut Context<Self>) {
+        if self.voice_suspended { return; }
         if !self.check_reference_delivery(&text, cx) {
             return;
         }
@@ -10313,6 +10323,12 @@ impl Render for Composer {
             }
         });
 
+        let voice_button=(cfg!(feature="voice-experimental") && self.voice_supported).then(|| {
+            div().id("composer-voice").cursor_pointer().text_xs().px(px(6.0))
+                .tooltip(crate::settings::widgets::text_tooltip("Voice (experimental; included quota only)"))
+                .on_click(cx.listener(|_,_,_,cx|cx.emit(ComposerEvent::StartVoice)))
+                .child("Voice").into_any_element()
+        });
         let send_button = self.render_send_button(mode, cx);
         let (voice_t, voice_frame) = self.update_voice(window, cx);
         let dictating = self.input.read(cx).dictation.phase.active();
@@ -10571,6 +10587,7 @@ impl Render for Composer {
                                 .child(attach),
                         )
                         .child(model_picker)
+                        .children(voice_button)
                         .child(
                             div()
                                 .flex_none()
@@ -10655,6 +10672,7 @@ impl Render for Composer {
                                 .items_center()
                                 .gap(px(ACTION_PRIMARY_GAP))
                                 .children(microphone)
+                                .children(voice_button)
                                 .child(send_button),
                         )
                         .children(voice_track),

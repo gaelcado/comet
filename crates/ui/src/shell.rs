@@ -1766,6 +1766,10 @@ pub struct Shell {
     sidebar_pane: Entity<SidebarPane>,
     transcript: Entity<Transcript>,
     composer: Entity<Composer>,
+    voice: Entity<crate::voice::VoiceController>,
+    voice_surface: Entity<crate::voice_surface::VoiceSurface>,
+    voice_was_visible: bool,
+    _voice_observation: gpui::Subscription,
     /// Measured height of the bottom chrome stack (status strip + composer +
     /// terminal dock) the full-height transcript scrolls under. Paint-time
     /// measurement schedules another frame whenever this value changes.
@@ -2098,6 +2102,14 @@ impl Shell {
         let transcript = cx.new(|cx| Transcript::new(state.clone(), cx));
         transcript.update(cx, |transcript, _| transcript.retain_for_route_exit());
         let composer = cx.new(|cx| Composer::new(state.clone(), cx));
+        composer.update(cx,|composer,_|composer.voice_supported=true);
+        let voice=cx.new(|_|crate::voice::VoiceController::default());
+        let voice_surface=cx.new(|cx|crate::voice_surface::VoiceSurface::new(voice.clone(),composer.clone(),cx));
+        let voice_observation=cx.observe(&voice,|this:&mut Shell,voice,cx| {
+            let hidden=voice.read(cx).phase.replaces_composer();
+            this.composer.update(cx,|composer,_|composer.suspend_for_voice(hidden));
+            cx.notify();
+        });
         let links = Self::session_links(None, cx);
         transcript.update(cx, |transcript, _| {
             transcript.set_workspace_link_handler(links)
@@ -2107,6 +2119,12 @@ impl Shell {
         let composer_events = cx.subscribe(&composer, {
             let transcript = transcript.clone();
             move |this: &mut Shell, _, event: &ComposerEvent, cx| match event {
+                ComposerEvent::StartVoice => {
+                    let state=this.state.read(cx);
+                    if let (Some(engine),Some(chat))=(state.engine().cloned(),state.selected_chat_row().cloned()) {
+                        this.voice.update(cx,|voice,cx|voice.begin(engine,chat.id,chat.device_id,cx));
+                    }
+                }
                 ComposerEvent::WorkspaceCommand(command) => {
                     this.pending_workspace_command = Some(*command);
                     cx.notify();
@@ -2255,6 +2273,7 @@ impl Shell {
             sidebar_pane,
             transcript,
             composer,
+            voice, voice_surface, voice_was_visible:false, _voice_observation:voice_observation,
             // Seed with the compact composer stack's rough height so the
             // first frame's clearance isn't zero (the measure corrects it).
             bottom_stack: std::rc::Rc::new(std::cell::Cell::new(120.0)),
@@ -2490,6 +2509,9 @@ impl Shell {
     // ---- splash ----
 
     fn on_state_changed(&mut self, state: &Entity<AppState>, cx: &mut Context<Self>) {
+        if self.voice.read(cx).chat_id.is_some() && (self.voice.read(cx).chat_id != state.read(cx).selected_chat || state.read(cx).engine().is_none()) {
+            self.voice.update(cx,|voice,cx|voice.cancel(cx));
+        }
         self.prune_file_explorers(cx);
         self.refresh_harness_update_watch(cx);
         if state.read(cx).engine().is_none() {
@@ -10192,6 +10214,13 @@ impl Shell {
                 let measured_has_composer = self.bottom_stack_has_composer.clone();
                 let contains_composer = (has_spaces || no_project || has_appshots) && has_selection;
                 let composer = self.composer.clone();
+                let voice_visible=self.voice.read(cx).phase.replaces_composer();
+                self.voice_surface.update(cx,|surface,cx|surface.set_visible(voice_visible,cx));
+                if voice_visible!=self.voice_was_visible {
+                    self.voice_was_visible=voice_visible;
+                    let focus=if voice_visible { self.voice_surface.read(cx).focus_handle() } else { self.composer.focus_handle(cx) };
+                    if window.is_window_active() { window.focus(&focus,cx); }
+                }
                 div()
                     .flex_none()
                     .relative()
@@ -10202,7 +10231,7 @@ impl Shell {
                             move |bounds, window, cx| {
                                 // Reserve the destination footprint, never the animated height.
                                 let next_height = f32::from(bounds.size.height)
-                                    + composer.read(cx).dock_clearance_correction();
+                                    + if voice_visible { 0.0 } else { composer.read(cx).dock_clearance_correction() };
                                 let changed = (measured.get() - next_height).abs() > 0.5
                                     || measured_has_composer.get() != contains_composer;
                                 measured.set(next_height);
@@ -10219,6 +10248,10 @@ impl Shell {
                     .child(status)
                     .when(has_spaces || no_project || has_appshots, |el| {
                         let composer_opacity = self.composer_dock.borrow().opacity();
+                        if voice_visible {
+                            el.child(div().id("persistent-voice").relative().w(px(composer_width)).mx_auto()
+                                .child(self.voice_surface.clone()).children(self.render_jump_to_bottom(cx)))
+                        } else {
                         el.child(
                             crate::composer_dock::docked_composer(
                                 div()
@@ -10240,6 +10273,8 @@ impl Shell {
                             )
                             .reserve_terminal(terminal_geometry.clone()),
                         )
+                        .when(self.voice.read(cx).reason.is_some(),|el|el.child(div().text_xs().text_color(theme.text).mx_auto().child(self.voice.read(cx).reason_text())))
+                        }
                     })
                     .child(self.render_terminal_container(terminal_geometry, window, cx))
             })

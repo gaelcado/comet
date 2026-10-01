@@ -7,18 +7,21 @@ use crate::state::EngineHandle;
 #[cfg(feature = "voice-experimental")]
 mod session;
 
+pub enum VoiceControl { Mute(bool) }
+
 pub struct VoiceController {
     pub phase: VoicePhase,
     pub chat_id: Option<String>,
     pub reason: Option<VoiceRejection>,
     pub snapshot: Option<VoiceSnapshot>,
     pub partial: String,
+    controls: Option<tokio::sync::mpsc::Sender<VoiceControl>>,
     epoch: u64,
     task: Option<Task<()>>,
     cancellation: tokio_util::sync::CancellationToken,
 }
 impl Default for VoiceController {
-    fn default() -> Self { Self { phase:VoicePhase::Closed,chat_id:None,reason:None,snapshot:None,partial:String::new(),epoch:0,task:None,cancellation:tokio_util::sync::CancellationToken::new() } }
+    fn default() -> Self { Self { phase:VoicePhase::Closed,chat_id:None,reason:None,snapshot:None,partial:String::new(),controls:None,epoch:0,task:None,cancellation:tokio_util::sync::CancellationToken::new() } }
 }
 impl VoiceController {
     pub fn begin(&mut self, engine:EngineHandle, chat_id:String, host:String, cx:&mut Context<Self>) {
@@ -27,6 +30,7 @@ impl VoiceController {
         let epoch=self.epoch;
         let request=StartVoice { chat_id,host_device_id:host,voice:None };
         let cancellation=self.cancellation.clone();
+        let (controls,control_rx)=tokio::sync::mpsc::channel(8); self.controls=Some(controls);
         let (events,mut event_rx)=tokio::sync::mpsc::channel(32);
         let query=Tokio::spawn(cx,async move {
             let eligibility:VoiceEligibility=tokio::time::timeout(std::time::Duration::from_secs(5),
@@ -38,9 +42,9 @@ impl VoiceController {
             if eligibility.format.is_none() { return Err(VoiceRejection::AudioFormatUnverified); }
             if !eligibility.duplex_verified { return Err(VoiceRejection::DuplexUnverified); }
             #[cfg(feature = "voice-experimental")]
-            { session::run(engine,request,cancellation,events).await }
+            { session::run(engine,request,cancellation,events,control_rx).await }
             #[cfg(not(feature = "voice-experimental"))]
-            { let _=(cancellation,events); Err::<(),_>(VoiceRejection::Disabled) }
+            { let _=(cancellation,events,control_rx); Err::<(),_>(VoiceRejection::Disabled) }
         });
         self.task=Some(cx.spawn(async move |this,cx| {
             let receive=async {
@@ -60,8 +64,16 @@ impl VoiceController {
     pub fn cancel(&mut self,cx:&mut Context<Self>) {
         self.epoch=self.epoch.wrapping_add(1); self.cancellation.cancel();
         self.cancellation=tokio_util::sync::CancellationToken::new(); self.task=None;
-        self.phase=VoicePhase::Closed; self.snapshot=None; self.partial.clear(); self.chat_id=None;
+        self.controls=None; self.phase=VoicePhase::Closed; self.snapshot=None; self.partial.clear(); self.chat_id=None;
         cx.notify();
+    }
+    pub fn toggle_mute(&mut self,cx:&mut Context<Self>) {
+        let muted=self.snapshot.as_ref().is_some_and(|s|s.muted);
+        if let Some(controls)=&self.controls {
+            if controls.try_send(VoiceControl::Mute(!muted)).is_err() {
+                self.cancel(cx); self.reason=Some(VoiceRejection::Overflow);
+            }
+        }
     }
     pub fn reduce(&mut self,event:VoiceEvent,cx:&mut Context<Self>) {
         match event {
