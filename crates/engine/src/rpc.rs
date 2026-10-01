@@ -1118,89 +1118,6 @@ impl EngineRpc {
             .ok_or(VoiceRejection::Unsupported)
     }
 
-    async fn check_voice_delegation(
-        &self,
-        method: &str,
-        params: &serde_json::Value,
-    ) -> Result<(), RpcError> {
-        let reject = || {
-            RpcError::Failed(
-                "Voice tasks require local Codex with ChatGPT subscription authentication".into(),
-            )
-        };
-        if params
-            .get("targetDeviceId")
-            .and_then(|v| v.as_str())
-            .is_some_and(|id| id != self.engine_info.device_id)
-        {
-            return Err(reject());
-        }
-        if method == methods::MUTATE
-            && params.get("op").and_then(|v| v.as_str()) == Some("createChat")
-        {
-            let parsed: MutateParams = parse_params(params.clone())?;
-            if let MutateParams::CreateChat {
-                chat_id,
-                space_id,
-                device_id,
-                config,
-                ..
-            } = parsed
-            {
-                let target = if let Some(space) = space_id {
-                    self.workspace
-                        .space(&space)
-                        .map_err(|_| reject())?
-                        .map(|s| s.device_id)
-                } else {
-                    device_id
-                };
-                if target
-                    .as_deref()
-                    .is_some_and(|id| id != self.engine_info.device_id)
-                    || config.as_ref().map(|c| c.harness) != Some(HarnessId::Codex)
-                {
-                    return Err(reject());
-                }
-                self.voice.mark_subscription(&chat_id);
-                return Ok(());
-            }
-        }
-        if matches!(method, methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE) {
-            let chat = params
-                .get("chatId")
-                .and_then(|v| v.as_str())
-                .ok_or_else(reject)?;
-            let row = self
-                .workspace
-                .chat(chat)
-                .map_err(|_| reject())?
-                .ok_or_else(reject)?;
-            if row.device_id != self.engine_info.device_id
-                || row.config.as_ref().map(|c| c.harness) != Some(HarnessId::Codex)
-            {
-                return Err(reject());
-            }
-            // Commands may carry a Run override: prevent changing provider after validation.
-            let command = params.get("command");
-            if command
-                .and_then(|c| c.get("request"))
-                .and_then(|r| r.get("harness"))
-                .and_then(|v| v.as_str())
-                .is_some_and(|h| h != "codex")
-            {
-                return Err(reject());
-            }
-            let bridge = self
-                .prepare_voice_bridge(chat)
-                .await
-                .map_err(|_| reject())?;
-            bridge.0.probe().await.map_err(|_| reject())?;
-            self.voice.mark_subscription(chat);
-        }
-        Ok(())
-    }
-
     fn mutate(&self, params: MutateParams) -> Result<(), RpcError> {
         let failed = |e: crate::EngineError| RpcError::Failed(e.to_string());
         match params {
@@ -1804,20 +1721,6 @@ impl RpcService for AuthRpc {
 #[async_trait]
 impl RpcService for EngineRpc {
     async fn handle(&self, method: &str, params: serde_json::Value) -> Result<RpcReply, RpcError> {
-        // A voice-origin task must stay local and subscription authenticated.
-        // Read-only MCP calls remain available; normal Codex quota/credit limits apply.
-        let subscription_origin = params
-            .get("originChatId")
-            .and_then(|v| v.as_str())
-            .is_some_and(|origin| self.voice.subscription_origin(origin));
-        if subscription_origin
-            && matches!(
-                method,
-                methods::MUTATE | methods::QUEUE_COMMAND | methods::QUEUE_MESSAGE
-            )
-        {
-            self.check_voice_delegation(method, &params).await?;
-        }
         // Device-addressed routing: forward calls that target another device over its
         // relay. The target compares the id to its own, so forwards cannot loop.
         if forwardable(method)
@@ -1867,12 +1770,6 @@ impl RpcService for EngineRpc {
                 .await;
         }
         match method {
-            methods::VOICE_TASK_POLICY => {
-                let p: ChatParams = parse_params(params)?;
-                RpcReply::value(
-                    &serde_json::json!({"subscriptionBacked":self.voice.subscription_origin(&p.chat_id),"deviceId":self.engine_info.device_id}),
-                )
-            }
             methods::VOICE_ELIGIBILITY | methods::START_VOICE => {
                 let identity_epoch = self.voice.identity_epoch();
                 let p: zeron_proto::voice::StartVoice = parse_params(params)?;
@@ -3727,19 +3624,19 @@ mod tests {
         let first = core.rpc_service();
         let second = core.rpc_service();
         let lease = first.voice.reserve("chat").unwrap();
-        assert!(second.voice.restricts_origin("chat"));
+        assert!(second.voice.owns_chat("chat"));
         assert_eq!(
             second.voice.reserve("other").unwrap_err(),
             zeron_proto::voice::VoiceRejection::Busy
         );
         let owner = second.voice.own(lease).unwrap();
         core.sessions.shutdown().await;
-        assert!(!first.voice.restricts_origin("chat"));
+        assert!(!first.voice.owns_chat("chat"));
         drop(owner);
     }
 
     #[tokio::test]
-    async fn voice_origin_rejects_remote_mutation_before_forwarding() {
+    async fn voice_origin_uses_normal_remote_routing() {
         let temp = tempfile::tempdir().unwrap();
         let core = crate::EngineCore::assemble_with_profile(
             crate::EngineProfile::local(temp.path()).unwrap(),
@@ -3751,21 +3648,28 @@ mod tests {
         let rpc = core.rpc_service();
         let lease = rpc.voice.reserve("voice-origin").unwrap();
         let owner = rpc.voice.own(lease).unwrap();
-        for method in [
-            methods::QUEUE_COMMAND,
-            methods::QUEUE_MESSAGE,
-            methods::MUTATE,
-        ] {
+        for method in [methods::QUEUE_COMMAND, methods::QUEUE_MESSAGE] {
             let error = match rpc.handle(method, serde_json::json!({"originChatId":"voice-origin","targetDeviceId":"remote","chatId":"other"})).await {
                 Err(error) => error,
-                Ok(_) => panic!("voice-origin mutation accepted"),
+                Ok(_) => panic!("offline remote routing unexpectedly succeeded"),
             };
             assert!(
-                matches!(error, RpcError::Failed(ref message) if message == "Voice tasks require local Codex with ChatGPT subscription authentication")
+                matches!(error, RpcError::Failed(ref message) if message == "cannot reach device remote: remote routing unavailable (offline)")
             );
         }
-        // No relay is configured: reaching forwarding would give its distinct
-        // unavailable error, proving the policy precedes that boundary.
+        // Voice origin follows the same forwarding boundary as ordinary MCP
+        // calls; this fixture has no relay configured.
+        rpc.handle(
+            methods::MUTATE,
+            serde_json::json!({"op":"createChat", "chatId":"remote-grok",
+                "originChatId":"voice-origin", "deviceId":"remote",
+                "config":{"harness":"grok","sandbox":"workspace-write"}}),
+        )
+        .await
+        .unwrap();
+        let chat = core.workspace.chat("remote-grok").unwrap().unwrap();
+        assert_eq!(chat.device_id, "remote");
+        assert_eq!(chat.config.unwrap().harness, HarnessId::Grok);
         drop(owner);
         core.sessions.shutdown().await;
     }

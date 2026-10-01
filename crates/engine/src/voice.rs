@@ -21,7 +21,6 @@ struct Inner {
     preparation: tokio::sync::Mutex<()>,
     native_lifecycle: tokio::sync::Mutex<()>,
     mute_order: tokio::sync::Mutex<()>,
-    subscription_chats: Mutex<std::collections::HashSet<String>>,
 }
 struct Slot {
     lease: VoiceLease,
@@ -113,7 +112,6 @@ impl VoiceManager {
             provider: None,
         });
         drop(state);
-        self.mark_subscription(chat);
         let manager = self.clone();
         let pending = lease.clone();
         tokio::spawn(async move {
@@ -236,23 +234,14 @@ impl VoiceManager {
             reason,
         });
     }
-    pub fn restricts_origin(&self, chat: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn owns_chat(&self, chat: &str) -> bool {
         self.inner
             .slot
             .lock()
             .unwrap()
             .as_ref()
             .is_some_and(|s| s.snapshot.chat_id == chat)
-    }
-    pub fn subscription_origin(&self, chat: &str) -> bool {
-        self.inner.subscription_chats.lock().unwrap().contains(chat)
-    }
-    pub fn mark_subscription(&self, chat: &str) {
-        self.inner
-            .subscription_chats
-            .lock()
-            .unwrap()
-            .insert(chat.into());
     }
     pub fn retire(&self) {
         let mut state = self.inner.slot.lock().unwrap();
@@ -458,9 +447,9 @@ mod tests {
         let owner = manager.own(next).unwrap();
         tokio::time::advance(Duration::from_secs(6)).await;
         tokio::task::yield_now().await;
-        assert!(manager.restricts_origin("next"));
+        assert!(manager.owns_chat("next"));
         drop(owner);
-        assert!(!manager.restricts_origin("next"));
+        assert!(!manager.owns_chat("next"));
     }
 
     #[tokio::test]

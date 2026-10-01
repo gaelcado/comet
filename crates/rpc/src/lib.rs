@@ -34,7 +34,6 @@ pub use server::{serve_connection, serve_ws_listener};
 /// Full surface: docs/research/feature-inventory.md §2.
 pub mod methods {
     // Ephemeral local voice; never relay-forwardable.
-    pub const VOICE_TASK_POLICY: &str = "VoiceTaskPolicy";
     pub const VOICE_ELIGIBILITY: &str = "VoiceEligibility";
     pub const START_VOICE: &str = "StartVoice";
     pub const OWN_VOICE: &str = "OwnVoice";

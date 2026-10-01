@@ -90,11 +90,13 @@ promotion uses the existing Codex task transcript; it does not resubmit a spoken
 request or create another task response. Native `turn/started` publishes the
 engine turn boundary before its text/tools, including on an idle bootstrap.
 
-The engine-injected MCP origin defaults voice-created chats to Codex. Existing
-chat delivery and derived local tasks require Codex/ChatGPT authentication;
-other providers and unverified remote execution are rejected before forwarding.
-Read-only status queries remain available. This subscription policy stays with
-continuing tasks after voice ends; ordinary text MCP defaults are preserved.
+The voice agent uses the unchanged upstream Zeron MCP. Creating chats, sending
+messages and delegating tasks use the normal provider selection, authentication
+and device routing. A Codex voice session can create a Grok, Claude Code or other
+available provider session; those children use their own provider credentials.
+Codex/ChatGPT authentication and local-host checks apply to starting voice itself,
+not to the sessions it controls through MCP. Ending voice does not restrict
+continuing tasks or their children.
 
 ## Interface and packaging
 

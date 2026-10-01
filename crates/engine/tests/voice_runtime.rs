@@ -383,40 +383,73 @@ async fn device_open_failure_releases_lease_and_preserves_text_runtime() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn delegated_subscription_policy_survives_voice_stop_and_propagates_to_children() {
+async fn voice_delegates_to_other_providers_without_changing_voice_eligibility() {
     let temp = tempfile::tempdir().unwrap();
     let core = native_core(&temp).await;
     let client = zeron_rpc::memory_client(core.rpc_service());
     let (lease, owner) = active_owner(&client, &core.device_id).await;
-    client
-        .call(methods::STOP_VOICE, serde_json::to_value(&lease).unwrap())
-        .await
-        .unwrap();
+    for phase in ["active", "stopped"] {
+        if phase == "stopped" {
+            client
+                .call(methods::STOP_VOICE, serde_json::to_value(&lease).unwrap())
+                .await
+                .unwrap();
+        }
+        for harness in ["grok", "claude-code"] {
+            let chat_id = format!("{phase}-{harness}");
+            // Keep the old origin field to also cover older MCP clients.
+            client
+                .call(
+                    methods::MUTATE,
+                    json!({"op":"createChat", "chatId":chat_id,
+                        "originChatId":"native-voice", "parentChatId":"native-voice",
+                        "deviceId":core.device_id,
+                        "config":{"harness":harness,"sandbox":"workspace-write"}}),
+                )
+                .await
+                .unwrap();
+            let chat = core.workspace.chat(&chat_id).unwrap().unwrap();
+            assert_eq!(chat.parent_chat_id.as_deref(), Some("native-voice"));
+            assert_eq!(
+                serde_json::to_value(chat.config.unwrap().harness).unwrap(),
+                harness
+            );
+            client
+                .call(
+                    methods::QUEUE_MESSAGE,
+                    json!({"originChatId":"native-voice", "chatId":chat_id,
+                        "text":"hello", "holdForTurnEnd":true}),
+                )
+                .await
+                .unwrap();
+            let queued = client
+                .call(
+                    methods::QUEUE_COMMAND,
+                    json!({"originChatId":"native-voice", "chatId":chat_id,
+                        "command":{"kind":"run", "messageId":format!("hello-{chat_id}"),
+                            "request":{"prompt":"hello", "harness":harness,
+                                "cwd":temp.path(), "sandbox":"workspace-write"}}}),
+                )
+                .await
+                .unwrap();
+            assert!(queued["commandId"].is_string());
+            let request = json!({"chatId":chat_id,"hostDeviceId":core.device_id});
+            let eligibility: VoiceEligibility = client
+                .call_as(methods::VOICE_ELIGIBILITY, request.clone())
+                .await
+                .unwrap();
+            assert_eq!(eligibility.reason, Some(VoiceRejection::WrongHarness));
+            assert!(
+                client
+                    .call(methods::START_VOICE, request)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("WrongHarness")
+            );
+        }
+    }
     drop(owner);
-    let create = json!({"op":"createChat", "chatId":"voice-child", "originChatId":"native-voice", "deviceId":core.device_id, "config":{"harness":"codex","sandbox":"workspace-write"}});
-    client.call(methods::MUTATE, create.clone()).await.unwrap();
-    let policy = client
-        .call(methods::VOICE_TASK_POLICY, json!({"chatId":"voice-child"}))
-        .await
-        .unwrap();
-    assert_eq!(policy["subscriptionBacked"], true);
-    let mut forbidden = create;
-    forbidden["chatId"] = json!("claude-child");
-    forbidden["originChatId"] = json!("voice-child");
-    forbidden["config"]["harness"] = json!("claude-code");
-    assert!(client.call(methods::MUTATE, forbidden).await.is_err());
-    assert!(core.workspace.chat("claude-child").unwrap().is_none());
-    client.call(methods::MUTATE, json!({"op":"setChatConfig", "chatId":"voice-child", "config":{"harness":"claude-code","sandbox":"workspace-write"}})).await.unwrap();
-    assert!(
-        client
-            .call(
-                methods::QUEUE_MESSAGE,
-                json!({"originChatId":"native-voice", "chatId":"voice-child", "text":"go"})
-            )
-            .await
-            .is_err()
-    );
-    assert!(client.call(methods::QUEUE_MESSAGE, json!({"originChatId":"voice-child", "chatId":"native-voice", "text":"go", "targetDeviceId":"remote"})).await.is_err());
     core.sessions.shutdown().await;
 }
 
