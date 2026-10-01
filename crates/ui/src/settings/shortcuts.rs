@@ -368,7 +368,7 @@ pub struct ShortcutField {
     id: ShortcutId,
     focus: FocusHandle,
     recording: bool,
-    recording_subscriptions: Option<(gpui::Subscription, gpui::Subscription)>,
+    recording_subscriptions: Option<[gpui::Subscription; 3]>,
     notice: Option<SharedString>,
 }
 
@@ -406,7 +406,19 @@ impl ShortcutField {
             field.stop_recording();
             cx.notify();
         });
-        self.recording_subscriptions = Some((interceptor, blur));
+        // The Voice page outlives its window (closing it keeps the app
+        // running), and a close does not blur. Never leave Appshots'
+        // capture shortcut suspended.
+        let field = cx.entity().downgrade();
+        let closed = cx.on_window_closed(move |cx, _| {
+            field
+                .update(cx, |field, cx| {
+                    field.stop_recording();
+                    cx.notify();
+                })
+                .ok();
+        });
+        self.recording_subscriptions = Some([interceptor, blur, closed]);
         self.notice = None;
         window.focus(&self.focus, cx);
         cx.notify();
@@ -632,8 +644,13 @@ fn refusal(
         return Some(format!("{} is reserved for the composer.", display_combo(combo)).into());
     }
     conflict_owner(keymap, id, combo).map(|owner| {
+        // Name the page for shortcuts that live on their feature's page.
+        let page = match group(owner) {
+            page @ ("Appshots" | "Voice") => format!(" in Settings → {page}"),
+            _ => String::new(),
+        };
         format!(
-            "{} is already assigned to {}.",
+            "{} is already assigned to {}{page}.",
             display_combo(combo),
             owner.label()
         )
@@ -1070,6 +1087,24 @@ mod tests {
                 "mod-shift-v"
             );
         });
+        // Closing the window mid-recording (the app keeps running) must not
+        // leave Appshots' capture shortcut suspended.
+        field.update_in(cx, |field, window, cx| field.start_recording(window, cx));
+        cx.update(|window, _| window.remove_window());
+        cx.run_until_parked();
+        field.update(cx, |field, _| assert!(!field.recording));
+        // Elsewhere, a clash with a feature page's shortcut says where it lives.
+        let notice = refusal(
+            &KeymapConfig::default(),
+            ComposerSendBehavior::Enter,
+            ShortcutId::ToggleSidebar,
+            "mod-d",
+        )
+        .unwrap();
+        assert!(
+            notice.ends_with("Hold to dictate in Settings → Voice."),
+            "{notice}"
+        );
         // Settings → Shortcuts, opened later with an older copy, adopts the
         // store's binding so its own commits cannot revert Voice's.
         let (page, cx) = cx.add_window_view(|_, cx| {

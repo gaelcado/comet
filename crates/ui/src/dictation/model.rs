@@ -376,7 +376,9 @@ impl Render for VoiceCard {
                 )
                 .child(control)
         });
-        let shortcut_row = (enabled && self.ready).then(|| {
+        // Always visible, so ⌘D can be rebound (and freed) before the model
+        // is downloaded.
+        let shortcut_row = {
             let field = self
                 .shortcut
                 .get_or_insert_with(|| {
@@ -402,7 +404,7 @@ impl Render for VoiceCard {
                         )),
                 )
                 .child(field)
-        });
+        };
         let model_card = (self.cache_present && !downloading).then(|| {
             let remove_weak = cx.entity().downgrade();
             widgets::section_card(&theme).child(
@@ -481,7 +483,7 @@ impl Render for VoiceCard {
                                     widgets::section_card(&theme)
                                         .child(dictation_row)
                                         .children(microphone_row)
-                                        .children(shortcut_row),
+                                        .child(shortcut_row),
                                 )
                                 .children(error)
                                 .children(model_card),

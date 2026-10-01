@@ -566,13 +566,12 @@ impl SettingsSection {
     }
 
     fn visible_in_nav(self) -> bool {
-        self != Self::Agents
-            && (!matches!(self, Self::Appshots | Self::Voice) || crate::appshots::is_desktop())
+        self != Self::Agents && (self != Self::Appshots || crate::appshots::is_desktop())
     }
 
     /// Where a generic "open Settings" lands for a remembered section: legacy
     /// aliases resolve to their page, and a section this build does not show
-    /// (Appshots or Voice off-desktop) falls back to General.
+    /// (Appshots off macOS/Linux) falls back to General.
     pub(crate) fn reopenable(self) -> Self {
         let section = self.canonical();
         if section.visible_in_nav() {

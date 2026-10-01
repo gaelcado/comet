@@ -1120,3 +1120,80 @@ fn dictation_load_failure_or_timeout_preserves_selected_draft_and_rejects_late_f
         assert!(!matches!(event, DictationInputEvent::Submit(_)));
     }
 }
+
+#[gpui::test]
+fn dictation_microphone_key_hold_keeps_focus_and_queue_lease_blocks_start(cx: &mut TestAppContext) {
+    let (dir, handle) = super::tests::composer_focus_window(cx);
+    enable_dictation(dir.path(), cx);
+    handle
+        .update(cx, |composer, _, cx| {
+            // Enter/Space on the focused microphone must leave focus there,
+            // or its key-up never reaches the hold.
+            composer.focus_pending = false;
+            composer.press_dictation(HoldSource::Button, cx);
+            assert!(composer.input.read(cx).dictation.phase.active());
+            assert!(!composer.focus_pending);
+            composer
+                .input
+                .update(cx, |input, _| input.cancel_dictation());
+            composer.dictation_hold = None;
+            // An edit lease still in flight is about to replace the draft.
+            composer.queue_edit_pending_id = Some("row".into());
+            composer.press_dictation(HoldSource::Pointer, cx);
+            assert!(!composer.input.read(cx).dictation.phase.active());
+            assert!(composer.dictation_hold.is_none());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn dictation_another_source_takes_over_a_hold_whose_release_was_lost(cx: &mut TestAppContext) {
+    let (dir, handle) = super::tests::composer_focus_window(cx);
+    enable_dictation(dir.path(), cx);
+    let fake = handle
+        .update(cx, |composer, _, cx| {
+            let fake = composer.input.update(cx, |input, cx| {
+                let fake = start(input, cx);
+                deliver(input, &fake, [Event::Listening], cx);
+                fake
+            });
+            composer.dictation_hold = Some(DictationHold {
+                source: HoldSource::Button,
+                started: None,
+            });
+            composer.press_dictation(HoldSource::Pointer, cx);
+            composer.release_dictation(HoldSource::Pointer, cx);
+            fake
+        })
+        .unwrap();
+    assert_eq!(fake.borrow().finishes, 1);
+}
+
+#[gpui::test]
+fn dictation_shortcut_falls_through_while_dictation_is_off(cx: &mut TestAppContext) {
+    gpui::actions!(dictation_test, [Probe]);
+    let (_dir, handle) = super::tests::composer_focus_window(cx);
+    let fired = Rc::new(std::cell::Cell::new(false));
+    let probe = fired.clone();
+    cx.update(|cx| {
+        crate::shell::apply_keymap(
+            cx,
+            &crate::settings::KeymapConfig::default(),
+            ComposerSendBehavior::Enter,
+        );
+        // Another binding of the same chord, as a user may already have.
+        cx.bind_keys([KeyBinding::new("secondary-d", Probe, None)]);
+        cx.on_action(move |_: &Probe, _| probe.set(true));
+    });
+    cx.simulate_keystrokes(handle.into(), "secondary-d");
+    assert!(
+        fired.get(),
+        "dictation is off by default and must not eat ⌘D"
+    );
+    handle
+        .read_with(cx, |composer, cx| {
+            assert!(composer.dictation_hold.is_none());
+            assert!(composer.input.read(cx).dictation_key.is_none());
+        })
+        .unwrap();
+}

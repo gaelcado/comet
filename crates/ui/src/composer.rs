@@ -2612,8 +2612,15 @@ impl ComposerInput {
         if self.dictation_key.is_some() {
             return; // Auto-repeat while held.
         }
-        let combo = crate::settings::current(cx).keymap.toggle_dictation;
-        let keystroke = Keystroke::parse(&crate::settings::platform_combo(&combo)).ok();
+        if !crate::dictation::enabled(cx) && !self.dictation.phase.active() {
+            // Off by default: let another binding of the same chord run.
+            cx.propagate();
+            return;
+        }
+        // Mirror `apply_keymap`, which binds the default for an unparseable combo.
+        let parse = |combo: &str| Keystroke::parse(&crate::settings::platform_combo(combo)).ok();
+        let keystroke = parse(&crate::settings::current(cx).keymap.toggle_dictation)
+            .or_else(|| parse(crate::settings::ShortcutId::ToggleDictation.default_combo()));
         let blur = cx.on_blur(&self.focus_handle, window, |input, _, cx| {
             input.release_dictation_key(cx);
         });
@@ -9218,13 +9225,18 @@ impl Composer {
         crate::frost::frosted(COMPOSER_RADIUS, crate::frost::MENU_BLUR, panel).into_any_element()
     }
 
-    fn toggle_dictation(&mut self, cx: &mut Context<Self>) {
+    /// `refocus` returns focus to the editor afterwards. Enter/Space on the
+    /// focused microphone keeps focus there so its key-up ends the hold.
+    fn toggle_dictation(&mut self, refocus: bool, cx: &mut Context<Self>) {
         use crate::dictation::Phase;
         if !crate::dictation::enabled(cx) && !self.input.read(cx).dictation.phase.active() {
             return;
         }
+        // A queue row still acquiring its edit lease is about to replace the
+        // draft, which would discard the dictation.
         if self.wizard.is_some()
             || self.queue_edit_finishing
+            || self.queue_edit_pending_id.is_some()
             || self.sending
             || self.input.read(cx).read_only
         {
@@ -9254,7 +9266,7 @@ impl Composer {
                     }
                 }
             });
-        self.focus_pending = true;
+        self.focus_pending |= refocus;
         cx.notify();
     }
 
@@ -9264,7 +9276,15 @@ impl Composer {
     fn press_dictation(&mut self, source: HoldSource, cx: &mut Context<Self>) {
         use crate::dictation::Phase;
         let phase = self.input.read(cx).dictation.phase.clone();
-        if self.dictation_hold.is_some() && phase.active() {
+        // Repeats from the same source are ignored. Another source takes the
+        // session over, so a hold whose release went missing (focus moved
+        // within the composer) can always be ended.
+        if phase.active()
+            && self
+                .dictation_hold
+                .as_ref()
+                .is_some_and(|hold| hold.source == source)
+        {
             return;
         }
         self.dictation_hold = None;
@@ -9277,7 +9297,7 @@ impl Composer {
                 });
             }
             _ => {
-                self.toggle_dictation(cx);
+                self.toggle_dictation(source != HoldSource::Button, cx);
                 if self.input.read(cx).dictation.phase.active() {
                     self.dictation_hold = Some(DictationHold {
                         source,
@@ -9322,7 +9342,10 @@ impl Composer {
                 }
                 _ => {}
             });
-        self.focus_pending = true;
+        // Only the pointer moved focus to the microphone. A key hold already
+        // sits in the editor (or focus has left it on purpose), and Enter/Space
+        // keeps the microphone focused.
+        self.focus_pending |= source == HoldSource::Pointer;
         cx.notify();
     }
 
@@ -9415,7 +9438,7 @@ impl Composer {
             // Assistive technology cannot hold: Click starts, then finishes.
             .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
                 composer
-                    .update(cx, |this, cx| this.toggle_dictation(cx))
+                    .update(cx, |this, cx| this.toggle_dictation(true, cx))
                     .ok();
             })
             .when(t < 1.0, |el| {
