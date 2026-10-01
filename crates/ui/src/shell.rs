@@ -1774,9 +1774,8 @@ pub struct Shell {
     voice_footer_orb: Entity<crate::orb::Orb>,
     voice_stage_orb: Entity<crate::orb::Orb>,
     voice_stage_focus: FocusHandle,
-    /// Measured orb halo; the stage's artwork is cut out around it like the
-    /// new-thread hero is around its composer.
-    voice_stage_bounds: crate::new_thread_background_mask::SurfaceBounds,
+    /// The call bar's next-session voice menu.
+    voice_menu: popover::Popup<()>,
     voice_stage_was_open: bool,
     voice_stage_changed_at: Option<std::time::Instant>,
     /// The chat selected when the stage opened; picking another closes it.
@@ -2288,7 +2287,7 @@ impl Shell {
             voice_footer_orb,
             voice_stage_orb,
             voice_stage_focus: cx.focus_handle(),
-            voice_stage_bounds: Default::default(),
+            voice_menu: Default::default(),
             voice_stage_was_open: false,
             voice_stage_changed_at: None,
             voice_stage_selection: None,
@@ -9332,6 +9331,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.keystroke.key == "escape" && self.voice_menu.is_open() {
+            self.close_voice_menu(cx);
+            cx.stop_propagation();
+            return;
+        }
         if event.keystroke.key == "escape" && self.voice.read(cx).stage_open {
             self.set_voice_stage_open(false, cx);
             cx.stop_propagation();

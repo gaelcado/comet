@@ -97,6 +97,9 @@ impl Shell {
         }
         self.voice_stage_was_open = open;
         self.voice_stage_selection = selected;
+        if !open {
+            self.close_voice_menu(cx);
+        }
         self.voice_stage_changed_at = Some(std::time::Instant::now());
         let focus = if open {
             self.voice_stage_focus.clone()
@@ -309,15 +312,34 @@ impl Shell {
             .as_ref()
             .map(|background| background.adjustment)
             .unwrap_or_default();
-        let hero = new_thread_background(
-            artwork,
-            adjustment,
-            f32::from(viewport.height),
-            width,
-            self.voice_stage_bounds.clone(),
-            0.0,
-            new_thread_background_opacity(theme.is_frost()),
-        );
+        // The new-thread hero's artwork with only its soft bottom fade: no
+        // cutout around the orb, so no light channel splits the picture.
+        let hero = artwork.map(|artwork| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w(px(width))
+                .h(px(new_thread_background_height(f32::from(viewport.height))))
+                .opacity(new_thread_background_opacity(theme.is_frost()))
+                .child(
+                    gpui::canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            crate::new_thread_background_mask::paint(
+                                artwork.clone(),
+                                bounds,
+                                bounds,
+                                adjustment,
+                                false,
+                                window,
+                            );
+                        },
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+        });
 
         let orb_block = div()
             .relative()
@@ -327,23 +349,12 @@ impl Shell {
             .justify_center()
             .child(self.voice_stage_orb.clone());
 
-        let stage_bounds = self.voice_stage_bounds.clone();
         let center = div()
             .relative()
             .top(px(18.0 * (1.0 - reveal)))
             .flex()
             .flex_col()
             .items_center()
-            .child(
-                // The hero's cutout follows this block like it follows the
-                // new-thread composer, keeping the orb and caption legible.
-                gpui::canvas(
-                    move |bounds, _, _| stage_bounds.set(Some(bounds)),
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            )
             .child(orb_block)
             .child(
                 div()
@@ -393,7 +404,7 @@ impl Shell {
                         cx.stop_propagation();
                     }
                 }))
-                .child(div().absolute().inset_0().child(hero))
+                .child(div().absolute().inset_0().children(hero))
                 .child(
                     div()
                         .absolute()
@@ -503,26 +514,27 @@ impl Shell {
         let selected = settings::current(cx).codex_voice;
         let voice_choice = (!voices.is_empty()).then(|| {
             let label = selected.clone().unwrap_or_else(|| "Default".into());
-            round_control("voice-bar-voice", &popup, false)
+            let open = self.voice_menu.is_open();
+            let mut chip = round_control("voice-bar-voice", &popup, false)
                 .w_auto()
-                .px(px(14.0))
+                .pl(px(14.0))
+                .pr(px(12.0))
                 .gap(px(7.0))
                 .aria_label("Choose the voice for your next session")
-                .tooltip(stage_tooltip("Voice for your next session"))
-                .on_click(move |_, _, cx| {
-                    let next = match selected
-                        .as_ref()
-                        .and_then(|v| voices.iter().position(|id| id == v))
-                    {
-                        Some(index) if index + 1 < voices.len() => Some(voices[index + 1].clone()),
-                        Some(_) => None,
-                        None => voices.first().cloned(),
-                    };
-                    settings::update(settings::SavePolicy::Immediate, cx, |s| {
-                        s.codex_voice = next
-                    });
-                    cx.refresh_windows();
-                })
+                .aria_expanded(open)
+                .when(open, |el| el.bg(popup.glass_hover()))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.voice_menu.note_trigger_press()),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    if this.voice_menu.take_press_was_open() {
+                        this.close_voice_menu(cx);
+                    } else {
+                        this.voice_menu.open(());
+                        cx.notify();
+                    }
+                }))
                 .child(
                     icon(icons::VOLUME_LOUD)
                         .size(px(17.0))
@@ -534,6 +546,24 @@ impl Shell {
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .child(SharedString::from(label)),
                 )
+                .child(
+                    icon(if open {
+                        icons::ALT_ARROW_DOWN
+                    } else {
+                        icons::ALT_ARROW_UP
+                    })
+                    .size(px(13.0))
+                    .text_color(popup.text_faint),
+                );
+            if self.voice_menu.get().is_some() {
+                let menu = self.render_voice_menu(&popup, &voices, selected.as_deref(), cx);
+                chip = chip.child(popover::anchored_menu_above(
+                    "voice-bar-voice-menu",
+                    menu,
+                    self.voice_menu.closing_since(),
+                ));
+            }
+            chip
         });
 
         let transcript = chat_id.map(|chat_id| {
@@ -640,6 +670,87 @@ impl Shell {
             .child(divider())
             .child(back);
         crate::frost::frosted(radius, 18.0, bar).into_any_element()
+    }
+}
+
+impl Shell {
+    pub(super) fn close_voice_menu(&mut self, cx: &mut Context<Self>) {
+        if self.voice_menu.begin_close() {
+            popover::reap_popup(cx, |shell: &mut Self| &mut shell.voice_menu);
+            cx.notify();
+        }
+    }
+
+    /// Voices for the next session, opening upward from the call bar. The
+    /// live session keeps the voice it started with.
+    fn render_voice_menu(
+        &mut self,
+        theme: &Theme,
+        voices: &[String],
+        selected: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let rows = std::iter::once(None)
+            .chain(voices.iter().map(|voice| Some(voice.clone())))
+            .enumerate()
+            .map(|(index, voice)| {
+                let checked = voice.as_deref() == selected;
+                let id = SharedString::from(format!("voice-menu-row-{index}"));
+                let label = voice.as_deref().map_or_else(
+                    || SharedString::from("Codex default"),
+                    |voice| {
+                        let mut chars = voice.chars();
+                        chars
+                            .next()
+                            .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+                            .unwrap_or_default()
+                            .into()
+                    },
+                );
+                popover::menu_row(theme, checked, id.clone())
+                    .id(id)
+                    .justify_between()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let voice = voice.clone();
+                        settings::update(settings::SavePolicy::Immediate, cx, |s| {
+                            s.codex_voice = voice
+                        });
+                        this.close_voice_menu(cx);
+                    }))
+                    .child(label)
+                    .when(checked, |row| {
+                        row.child(icon(icons::CHECK).size(px(14.0)).text_color(theme.text))
+                    })
+            });
+        popover::popover_card(theme)
+            .w(px(220.0))
+            .flex()
+            .flex_col()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_voice_menu(cx)))
+            .child(
+                div()
+                    .px(px(8.0))
+                    .pt(px(6.0))
+                    .pb(px(4.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(1.0))
+                    .child(
+                        div()
+                            .text_size(crate::typography::ui_rems(12.0))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child(SharedString::from("Voice")),
+                    )
+                    .child(
+                        div()
+                            .text_size(crate::typography::ui_rems(11.0))
+                            .text_color(theme.text_muted)
+                            .child(SharedString::from("Applies to your next session")),
+                    ),
+            )
+            .children(rows)
+            .into_any_element()
     }
 }
 
