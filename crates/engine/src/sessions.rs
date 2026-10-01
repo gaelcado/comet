@@ -106,8 +106,7 @@ impl RuntimeConfig {
 
 struct RunHandle {
     voice: Option<zeron_harness::codex::realtime::RealtimeHandle>,
-    voice_events: Option<mpsc::Receiver<zeron_proto::voice::VoiceEvent>>,
-    voice_active: Arc<std::sync::atomic::AtomicBool>,
+    voice_active: Arc<std::sync::atomic::AtomicUsize>,
     run_id: String,
     steerable: bool,
     runtime_config: RuntimeConfig,
@@ -317,6 +316,9 @@ impl SessionsEngine {
     /// "don't restart from under a session" gate.
     pub fn any_active(&self) -> bool {
         lock(&self.inner.statuses).values().any(is_active)
+            || lock(&self.inner.runs)
+                .values()
+                .any(|r| r.voice_active.load(std::sync::atomic::Ordering::Acquire) > 0)
     }
 
     /// A text prompt for `chat_id` would land in the mailbox of a live
@@ -402,14 +404,14 @@ impl SessionsEngine {
         chat_id: &str,
     ) -> Option<(
         zeron_harness::codex::realtime::RealtimeHandle,
-        mpsc::Receiver<zeron_proto::voice::VoiceEvent>,
-        Arc<std::sync::atomic::AtomicBool>,
+        tokio::sync::broadcast::Receiver<zeron_proto::voice::VoiceEvent>,
+        Arc<std::sync::atomic::AtomicUsize>,
     )> {
         let mut runs = lock(&self.inner.runs);
         let run = runs.get_mut(chat_id)?;
         Some((
             run.voice.clone()?,
-            run.voice_events.take()?,
+            run.voice.as_ref()?.events.subscribe(),
             run.voice_active.clone(),
         ))
     }
@@ -634,8 +636,8 @@ impl SessionsEngine {
         };
         let interrupt_token = CancellationToken::new();
         let fork_history_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (voice_handle, realtime, voice_events) = zeron_harness::codex::realtime::channel();
-        let voice_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (voice_handle, realtime, _voice_events) = zeron_harness::codex::realtime::channel();
+        let voice_active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let controls = RunControls {
             realtime: (harness_id == HarnessId::Codex).then_some(realtime),
             execution_lease: None,
@@ -648,7 +650,6 @@ impl SessionsEngine {
             chat_id.to_string(),
             RunHandle {
                 voice: (harness_id == HarnessId::Codex).then_some(voice_handle),
-                voice_events: (harness_id == HarnessId::Codex).then_some(voice_events),
                 voice_active: voice_active.clone(),
                 run_id: run_id.clone(),
                 steerable: harness.supports_steering(),
@@ -1787,7 +1788,7 @@ fn finish_segment<'a>(
 /// and whether this run already IS the retry (one attempt only).
 struct RunResumeState {
     idle: bool,
-    voice_active: Arc<std::sync::atomic::AtomicBool>,
+    voice_active: Arc<std::sync::atomic::AtomicUsize>,
     user_message_id: String,
     resume_injected: bool,
     startup_retry: bool,
@@ -2177,7 +2178,7 @@ async fn drive_run(
                 // already durable, so retire the parked process cleanly and let
                 // the queued exclusive lease proceed.
                 _ = tokio::time::sleep_until(tokio::time::Instant::now()),
-                    if idle_since.is_some() && inner.registry.update_pending(harness_id) =>
+                    if idle_since.is_some() && resume_state.voice_active.load(std::sync::atomic::Ordering::Acquire) == 0 && inner.registry.update_pending(harness_id) =>
                 {
                     if let Some(token) = lock(&inner.runs)
                         .get(&chat_id)
@@ -2201,7 +2202,7 @@ async fn drive_run(
                                 + if subagents.is_empty() { session_idle } else { subagent_silence }
                         })
                         .unwrap_or_else(tokio::time::Instant::now)
-                ), if idle_since.is_some() && !resume_state.voice_active.load(std::sync::atomic::Ordering::Acquire) => {
+                ), if idle_since.is_some() && resume_state.voice_active.load(std::sync::atomic::Ordering::Acquire) == 0 => {
                     tracing::info!(
                         chat = %chat_id,
                         live_subagents = subagents.len(),
