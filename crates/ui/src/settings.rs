@@ -1695,6 +1695,7 @@ impl UiSettings {
             new_thread_background_effect,
             reduce_motion,
             pause_animations_in_background,
+            codex_voice,
             legacy_accent_color,
         );
         current
