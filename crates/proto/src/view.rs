@@ -82,6 +82,55 @@ pub fn attention_rank(status: ChatIndicator) -> u8 {
     }
 }
 
+/// A parent row's status once one of its child chats is counted. Children
+/// (side chats, agent-spawned chats) have no row of their own, so their live
+/// work shows on the parent's: a `Working`/`AwaitingInput` child lends its
+/// status when it is the more urgent of the two ([`attention_rank`]). A
+/// settled child never marks the parent — opening the parent would not clear
+/// it. Pure.
+pub fn fold_child_status(parent: ChatIndicator, child: ChatIndicator) -> ChatIndicator {
+    match child {
+        ChatIndicator::Working | ChatIndicator::AwaitingInput
+            if attention_rank(child) < attention_rank(parent) =>
+        {
+            child
+        }
+        _ => parent,
+    }
+}
+
+#[cfg(test)]
+mod child_status_tests {
+    use super::*;
+    use ChatIndicator::*;
+
+    #[test]
+    fn live_child_work_surfaces_on_a_settled_parent() {
+        assert_eq!(fold_child_status(Idle, Working), Working);
+        assert_eq!(fold_child_status(Idle, AwaitingInput), AwaitingInput);
+        // The parent's unseen result waits behind work still in flight.
+        assert_eq!(fold_child_status(Completed, Working), Working);
+    }
+
+    #[test]
+    fn the_more_urgent_live_status_wins() {
+        assert_eq!(fold_child_status(Working, AwaitingInput), AwaitingInput);
+        assert_eq!(fold_child_status(AwaitingInput, Working), AwaitingInput);
+        assert_eq!(fold_child_status(Errored, Working), Errored);
+        assert_eq!(fold_child_status(Errored, AwaitingInput), AwaitingInput);
+    }
+
+    #[test]
+    fn a_settled_child_never_marks_its_parent() {
+        // Opening the parent would not clear a child's unseen result.
+        for child in [Completed, Errored, Idle] {
+            for parent in [Working, AwaitingInput, Errored, Completed, Idle] {
+                assert_eq!(fold_child_status(parent, child), parent);
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Sort orders
 // ---------------------------------------------------------------------------

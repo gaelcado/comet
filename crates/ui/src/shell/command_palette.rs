@@ -232,6 +232,8 @@ impl Shell {
         let scroll = palette.scroll.clone();
         let theme = Theme::of(cx).for_popup();
         let action_count = entries.iter().take_while(|e| e.action().is_some()).count();
+        // Chat rows read like their sidebar copies, child chats' work included.
+        let children = self.state.read(cx).child_activity(Utc::now());
         let mut rows = Vec::new();
         for (ix, entry) in entries.iter().enumerate() {
             // End spacing belongs to the content, so it scrolls out of the
@@ -331,7 +333,7 @@ impl Shell {
                     branch,
                     pr,
                     harness,
-                    state.display_status_for(chat, Utc::now()),
+                    children.row_status(id, state.display_status_for(chat, Utc::now())),
                     ix == active,
                     chat.archived,
                     false,

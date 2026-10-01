@@ -5041,9 +5041,11 @@ impl Shell {
         }
         let rows: Vec<_> = {
             let state = self.state.read(cx);
+            let children = state.child_activity(now);
             rows.into_iter()
                 .map(|chat| {
-                    self.sidebar_chat_data(state.display_status_for(&chat, now), chat, state)
+                    let own = state.display_status_for(&chat, now);
+                    self.sidebar_chat_data(children.row_status(&chat.id, own), chat, state)
                 })
                 .collect()
         };

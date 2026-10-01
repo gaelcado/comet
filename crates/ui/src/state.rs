@@ -581,9 +581,32 @@ async fn query_engine_info(client: &RpcClient) -> Result<EngineInfo, RpcError> {
 // this crate reads them as `state::…`.
 pub use zeron_proto::view::{
     ChatGroup, ConnectionStatus, GatePhase, Indicator, SESSION_STALE_MS, attention_rank,
-    chat_location, display_status, effective_indicator, format_time_ago, gate_phase, group_chats,
-    parse_auth_state, project_label, sort_active, sort_chats, sort_spaces, sort_tabs,
+    chat_location, display_status, effective_indicator, fold_child_status, format_time_ago,
+    gate_phase, group_chats, parse_auth_state, project_label, sort_active, sort_chats, sort_spaces,
+    sort_tabs,
 };
+
+/// How many parents a child chat's activity climbs. Nesting is shallow in
+/// practice (a side chat whose agent spawns its own workers); the cap only
+/// has to survive a malformed parent cycle.
+const CHILD_ACTIVITY_DEPTH: usize = 8;
+
+/// Live work in child chats (side chats, agent-spawned chats), keyed by every
+/// chat it rolls up to. Children take no sidebar row, so their parent's row
+/// carries their activity. One snapshot per render pass
+/// ([`AppState::child_activity`]).
+#[derive(Debug, Default)]
+pub struct ChildActivity(HashMap<String, ChatIndicator>);
+
+impl ChildActivity {
+    /// The status `chat_id`'s row shows: its `own` status with its children's
+    /// live work folded in ([`fold_child_status`]).
+    pub fn row_status(&self, chat_id: &str, own: ChatIndicator) -> ChatIndicator {
+        self.0
+            .get(chat_id)
+            .map_or(own, |child| fold_child_status(own, *child))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Org gate (pure)
@@ -1950,10 +1973,45 @@ impl AppState {
         display_status(chat, self.session_for(&chat.id), now)
     }
 
+    /// What every row should know about the chats hanging off it: the most
+    /// urgent live status among its unarchived descendants. Archived children
+    /// are out of the Explorer's Chats list, so they stay out of the row too.
+    pub fn child_activity(&self, now: DateTime<Utc>) -> ChildActivity {
+        let mut activity: HashMap<String, ChatIndicator> = HashMap::new();
+        for child in self
+            .chats
+            .iter()
+            .filter(|c| !c.archived && c.parent_chat_id.is_some())
+        {
+            let status = self.display_status_for(child, now);
+            if !matches!(
+                status,
+                ChatIndicator::Working | ChatIndicator::AwaitingInput
+            ) {
+                continue;
+            }
+            let ancestors = std::iter::successors(child.parent_chat_id.as_deref(), |id| {
+                self.chats
+                    .iter()
+                    .find(|c| c.id == *id)
+                    .and_then(|c| c.parent_chat_id.as_deref())
+            });
+            for id in ancestors.take(CHILD_ACTIVITY_DEPTH) {
+                let known = activity.entry(id.to_owned()).or_insert(status);
+                if attention_rank(status) < attention_rank(*known) {
+                    *known = status;
+                }
+            }
+        }
+        ChildActivity(activity)
+    }
+
     /// The sidebar's Sessions list: every non-archived chat of a LIVE space,
     /// on any device — idle included — in pure recency order (status drives
-    /// the dot, never the position; see [`sort_active`]).
+    /// the dot, never the position; see [`sort_active`]). A row's status
+    /// counts its child chats' live work ([`Self::child_activity`]).
     pub fn overview_chats(&self, now: DateTime<Utc>) -> Vec<(ChatIndicator, &Chat)> {
+        let children = self.child_activity(now);
         let mut rows: Vec<(ChatIndicator, &Chat)> = self
             .visible_chats()
             .filter(|c| match c.space_id.as_deref() {
@@ -1961,7 +2019,10 @@ impl AppState {
                 None => true,
                 Some(id) => self.space_row(id).is_some(),
             })
-            .map(|c| (self.display_status_for(c, now), c))
+            .map(|c| {
+                let own = self.display_status_for(c, now);
+                (children.row_status(&c.id, own), c)
+            })
             .collect();
         sort_active(&mut rows);
         rows
@@ -4716,6 +4777,110 @@ mod tests {
         assert_eq!(
             state.selected_chat_row().unwrap().parent_chat_id.as_deref(),
             Some("main")
+        );
+    }
+
+    fn child_of(id: &str, parent: &str) -> Chat {
+        let mut child = chat(id, 1, None);
+        child.parent_chat_id = Some(parent.into());
+        child
+    }
+
+    fn sidebar_status(state: &AppState, id: &str, now: DateTime<Utc>) -> ChatIndicator {
+        state
+            .sidebar_chats(now, None)
+            .into_iter()
+            .find(|(_, chat)| chat.id == id)
+            .map(|(status, _)| status)
+            .expect("row is listed")
+    }
+
+    #[test]
+    fn sidebar_row_shows_live_work_in_its_side_chats() {
+        let now = Utc::now();
+        let mut state = AppState::new();
+        let main = chat("main", 0, None);
+        state.apply_chats(vec![main.clone(), child_of("side", "main")]);
+        assert_eq!(sidebar_status(&state, "main", now), ChatIndicator::Idle);
+
+        state.apply_sessions(vec![session("side", SessionStatus::Working, 5, now)]);
+        assert_eq!(sidebar_status(&state, "main", now), ChatIndicator::Working);
+        // The parent's own status is untouched: the composer, the stop button
+        // and notifications still answer for the main conversation alone.
+        assert_eq!(state.display_status_for(&main, now), ChatIndicator::Idle);
+        assert_eq!(state.indicator_for("main", now), Indicator::None);
+
+        // A question in a side chat outranks the parent's own run.
+        state.apply_sessions(vec![
+            session("main", SessionStatus::Working, 5, now),
+            session("side", SessionStatus::AwaitingInput, 5, now),
+        ]);
+        assert_eq!(
+            sidebar_status(&state, "main", now),
+            ChatIndicator::AwaitingInput
+        );
+
+        // A crashed host's side chat goes quiet with its lease.
+        state.apply_sessions(vec![session("side", SessionStatus::Working, 300, now)]);
+        assert_eq!(sidebar_status(&state, "main", now), ChatIndicator::Idle);
+    }
+
+    #[test]
+    fn sidebar_row_counts_a_side_chat_send_in_flight() {
+        let now = Utc::now();
+        let mut state = AppState::new();
+        state.apply_chats(vec![chat("main", 0, None), child_of("side", "main")]);
+        state.begin_pending_send("side", "m1", now);
+        assert_eq!(sidebar_status(&state, "main", now), ChatIndicator::Working);
+    }
+
+    #[test]
+    fn sidebar_row_ignores_settled_and_archived_side_chats() {
+        let now = Utc::now();
+        let mut state = AppState::new();
+        // Finished but unseen: opening the parent would not clear it.
+        let mut done = child_of("done", "main");
+        done.last_message_at = Some(done.created_at);
+        let mut archived = child_of("archived", "main");
+        archived.archived = true;
+        state.apply_chats(vec![chat("main", 0, None), done, archived]);
+        state.apply_sessions(vec![
+            session("done", SessionStatus::Errored, 5, now),
+            session("archived", SessionStatus::Working, 5, now),
+        ]);
+        assert_eq!(sidebar_status(&state, "main", now), ChatIndicator::Idle);
+    }
+
+    #[test]
+    fn nested_child_activity_reaches_the_top_level_row() {
+        let now = Utc::now();
+        let mut state = AppState::new();
+        state.apply_chats(vec![
+            chat("main", 0, None),
+            child_of("side", "main"),
+            child_of("worker", "side"),
+            chat("other", 2, None),
+        ]);
+        state.apply_sessions(vec![session("worker", SessionStatus::Working, 5, now)]);
+        assert_eq!(sidebar_status(&state, "main", now), ChatIndicator::Working);
+        assert_eq!(sidebar_status(&state, "other", now), ChatIndicator::Idle);
+        let children = state.child_activity(now);
+        assert_eq!(
+            children.row_status("side", ChatIndicator::Idle),
+            ChatIndicator::Working
+        );
+    }
+
+    #[test]
+    fn child_activity_survives_a_parent_cycle() {
+        let now = Utc::now();
+        let mut state = AppState::new();
+        state.apply_chats(vec![child_of("a", "b"), child_of("b", "a")]);
+        state.apply_sessions(vec![session("a", SessionStatus::Working, 5, now)]);
+        let children = state.child_activity(now);
+        assert_eq!(
+            children.row_status("b", ChatIndicator::Idle),
+            ChatIndicator::Working
         );
     }
 
