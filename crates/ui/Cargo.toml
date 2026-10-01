@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-voice-experimental = ["dep:zeron-audio"]
+voice-experimental = ["dep:zeron-audio", "zeron-audio/aec"]
 project-palette-fixture = []
 compact-picker-fixture = ["gpui_platform/test-support"]
 

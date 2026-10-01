@@ -1,5 +1,9 @@
 //! Desktop-only bounded audio. PCM is ephemeral; no logs, files or network I/O.
 pub mod dsp;
+#[cfg(feature = "aec")]
+pub mod aec;
+#[cfg(all(feature = "aec", feature = "native"))]
+pub mod worker;
 #[cfg(feature = "native")]
 pub mod native;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
