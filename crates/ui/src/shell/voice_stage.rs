@@ -4,12 +4,11 @@
 //! threads freely while the orchestrator keeps listening.
 
 use super::*;
-use crate::orb::OrbSize;
 use zeron_proto::voice::{VoicePhase, VoiceWork};
 
 /// The stage paints the hero preset magnified to fill the canvas.
 pub(super) const VOICE_STAGE_ORB_SCALE: f32 = 2.25;
-/// Halo box around the stage orb: the orb plus room for its rings.
+/// Stage orb footprint, including breathing room around the artwork.
 const STAGE_ORB_BOX: f32 = 128.0 * VOICE_STAGE_ORB_SCALE + 112.0;
 const STAGE_ENTER_MS: f32 = 460.0;
 const STAGE_EXIT_MS: f32 = 220.0;
@@ -274,7 +273,6 @@ impl Shell {
         let awaiting = snapshot
             .as_ref()
             .is_some_and(|s| s.work == VoiceWork::AwaitingInput);
-        let speaking = snapshot.as_ref().is_some_and(|s| s.playing);
         let reduced = self.reduced_motion;
         self.voice_stage_orb.update(cx, |orb, cx| {
             orb.set_visible(open, cx);
@@ -321,30 +319,12 @@ impl Shell {
             new_thread_background_opacity(theme.is_frost()),
         );
 
-        let orb_px = OrbSize::Hero.pixels() * VOICE_STAGE_ORB_SCALE;
-        let ring_alpha = if speaking { 0.09 } else { 0.05 };
-        let rings = [
-            (orb_px + 28.0, ring_alpha),
-            (orb_px + 92.0, ring_alpha * 0.55),
-        ]
-        .map(|(diameter, alpha)| {
-            let inset = (STAGE_ORB_BOX - diameter) / 2.0;
-            div()
-                .absolute()
-                .top(px(inset))
-                .left(px(inset))
-                .size(px(diameter))
-                .rounded_full()
-                .border_1()
-                .border_color(theme.text.opacity(alpha * reveal))
-        });
         let orb_block = div()
             .relative()
             .size(px(STAGE_ORB_BOX))
             .flex()
             .items_center()
             .justify_center()
-            .children(rings)
             .child(self.voice_stage_orb.clone());
 
         let stage_bounds = self.voice_stage_bounds.clone();
