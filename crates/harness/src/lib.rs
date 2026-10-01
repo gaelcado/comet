@@ -30,6 +30,8 @@ pub enum HarnessError {
     NotInstalled(String),
     #[error("harness protocol error: {0}")]
     Protocol(String),
+    #[error("JSON-RPC rejection {code}: {message}")]
+    Rpc { code: i64, message: String, data: Option<serde_json::Value> },
     /// A managed adapter install (npm) failed; carries npm's own output so
     /// the cause is diagnosable from the chat error alone.
     #[error("adapter install failed: {0}")]

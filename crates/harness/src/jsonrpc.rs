@@ -42,14 +42,16 @@ pub(crate) enum Incoming {
 
 type StdoutObserver = Box<dyn Fn(&str) + Send>;
 
-type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>;
+type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, HarnessError>>>>>;
 
 #[derive(Clone)]
 pub(crate) struct RpcClient {
     next_id: Arc<AtomicI64>,
     pending: Pending,
-    writer: mpsc::UnboundedSender<String>,
+    writer: mpsc::Sender<String>,
+    media_writer: mpsc::Sender<String>,
     closed: Arc<AtomicBool>,
+    voice_router: Arc<Mutex<Option<(mpsc::Sender<Incoming>, Arc<AtomicBool>)>>>,
 }
 
 impl RpcClient {
@@ -64,27 +66,47 @@ impl RpcClient {
         stdout: ChildStdout,
         observer: Option<StdoutObserver>,
     ) -> (Self, mpsc::Receiver<Incoming>) {
-        let (writer_tx, writer_rx) = mpsc::unbounded_channel::<String>();
-        tokio::spawn(write_loop(stdin, writer_rx));
+        let (writer_tx, writer_rx) = mpsc::channel::<String>(256);
+        let (media_writer, media_rx) = mpsc::channel::<String>(8);
         let pending: Pending = Arc::default();
         let (incoming_tx, incoming_rx) = mpsc::channel(256);
         let closed = Arc::new(AtomicBool::new(false));
+        let voice_router = Arc::default();
+        tokio::spawn(write_loop(
+            stdin,
+            writer_rx,
+            media_rx,
+            pending.clone(),
+            closed.clone(),
+        ));
         tokio::spawn(read_loop(
             stdout,
             Arc::clone(&pending),
             incoming_tx,
             closed.clone(),
             observer,
+            Arc::clone(&voice_router),
         ));
         (
             Self {
                 next_id: Arc::new(AtomicI64::new(0)),
                 pending,
                 writer: writer_tx,
+                media_writer,
                 closed,
+                voice_router,
             },
             incoming_rx,
         )
+    }
+
+    /// Ephemeral realtime notifications bypass the durable/control channel.
+    /// Overflow is terminal and observable; stdout never waits for playout.
+    pub fn subscribe_voice(&self) -> (mpsc::Receiver<Incoming>, Arc<AtomicBool>) {
+        let (tx, rx) = mpsc::channel(32);
+        let overflow = Arc::new(AtomicBool::new(false));
+        *self.voice_router.lock().expect("voice router") = Some((tx, overflow.clone()));
+        (rx, overflow)
     }
 
     pub fn is_closed(&self) -> bool {
@@ -104,6 +126,24 @@ impl RpcClient {
         method: &str,
         params: Value,
     ) -> futures::future::BoxFuture<'static, Result<Value, HarnessError>> {
+        self.queue_request(method, params, false)
+    }
+
+    /// Bounded low-priority media lane. Never retries an accepted chunk.
+    pub fn request_media(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> futures::future::BoxFuture<'static, Result<Value, HarnessError>> {
+        self.queue_request(method, params, true)
+    }
+
+    fn queue_request(
+        &self,
+        method: &str,
+        params: Value,
+        media: bool,
+    ) -> futures::future::BoxFuture<'static, Result<Value, HarnessError>> {
         let method = method.to_owned();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
@@ -111,7 +151,7 @@ impl RpcClient {
             let mut pending = self.pending.lock().expect("pending lock");
             // Check under the same lock as EOF cleanup: a request racing the
             // reader exit must either be rejected here or cleared by it.
-            if self.is_closed() {
+            if self.is_closed() || pending.len() >= 256 {
                 return Box::pin(async move {
                     Err(HarnessError::Protocol(format!(
                         "{method}: app-server exited before responding"
@@ -121,7 +161,13 @@ impl RpcClient {
             pending.insert(id, tx);
         }
         let line = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        if self.writer.send(line.to_string()).is_err() {
+        let encoded = line.to_string();
+        let writer = if media {
+            &self.media_writer
+        } else {
+            &self.writer
+        };
+        if (media && encoded.len() > 32_768) || writer.try_send(encoded).is_err() {
             self.pending.lock().expect("pending lock").remove(&id);
             return Box::pin(async move {
                 Err(HarnessError::Protocol(format!(
@@ -129,10 +175,15 @@ impl RpcClient {
                 )))
             });
         }
+        let cleanup = PendingGuard {
+            id,
+            pending: self.pending.clone(),
+        };
         Box::pin(async move {
+            let _cleanup = cleanup;
             match rx.await {
                 Ok(Ok(result)) => Ok(result),
-                Ok(Err(message)) => Err(HarnessError::Protocol(format!("{method}: {message}"))),
+                Ok(Err(error)) => Err(error),
                 // Sender dropped: the reader hit EOF and failed all pending.
                 Err(_) => Err(HarnessError::Protocol(format!(
                     "{method}: app-server exited before responding"
@@ -147,13 +198,13 @@ impl RpcClient {
             Some(params) => json!({ "jsonrpc": "2.0", "method": method, "params": params }),
             None => json!({ "jsonrpc": "2.0", "method": method }),
         };
-        let _ = self.writer.send(line.to_string());
+        let _ = self.writer.try_send(line.to_string());
     }
 
     /// Answer a server→client request.
     pub fn respond(&self, id: &Value, result: Value) {
         let line = json!({ "jsonrpc": "2.0", "id": id, "result": result });
-        let _ = self.writer.send(line.to_string());
+        let _ = self.writer.try_send(line.to_string());
     }
 
     /// Reject a server→client request (e.g. unknown method).
@@ -163,23 +214,58 @@ impl RpcClient {
             "id": id,
             "error": { "code": code, "message": message },
         });
-        let _ = self.writer.send(line.to_string());
+        let _ = self.writer.try_send(line.to_string());
     }
 }
 
 /// Owns the child's stdin; a write failure (EPIPE after the child died) is
 /// tolerated and logged.
-async fn write_loop(mut stdin: ChildStdin, mut rx: mpsc::UnboundedReceiver<String>) {
-    while let Some(line) = rx.recv().await {
+struct PendingGuard {
+    id: i64,
+    pending: Pending,
+}
+impl Drop for PendingGuard {
+    fn drop(&mut self) {
+        self.pending.lock().expect("pending lock").remove(&self.id);
+    }
+}
+
+async fn write_loop(
+    mut stdin: ChildStdin,
+    mut control: mpsc::Receiver<String>,
+    mut media: mpsc::Receiver<String>,
+    pending: Pending,
+    closed: Arc<AtomicBool>,
+) {
+    loop {
+        let line = tokio::select! {
+            biased;
+            line = control.recv(), if !control.is_closed() || !control.is_empty() => line,
+            line = media.recv(), if !media.is_closed() || !media.is_empty() => line,
+            else => break,
+        };
+        let Some(line) = line else { continue };
         let write = async {
             stdin.write_all(line.as_bytes()).await?;
             stdin.write_all(b"\n").await?;
             stdin.flush().await
         };
-        if let Err(e) = write.await {
-            tracing::debug!(target: "zeron_harness::rpc", "stdin write failed (tolerated): {e}");
-            return;
+        if write.await.is_err() {
+            closed.store(true, Ordering::Release);
+            pending.lock().expect("pending lock").clear();
+            break;
         }
+    }
+}
+
+struct ReaderGuard {
+    pending: Pending,
+    closed: Arc<AtomicBool>,
+}
+impl Drop for ReaderGuard {
+    fn drop(&mut self) {
+        self.closed.store(true, Ordering::Release);
+        self.pending.lock().expect("pending lock").clear();
     }
 }
 
@@ -228,7 +314,12 @@ async fn read_loop(
     tx: mpsc::Sender<Incoming>,
     closed: Arc<AtomicBool>,
     observer: Option<StdoutObserver>,
+    voice_router: Arc<Mutex<Option<(mpsc::Sender<Incoming>, Arc<AtomicBool>)>>>,
 ) {
+    let _cleanup = ReaderGuard {
+        pending: pending.clone(),
+        closed: closed.clone(),
+    };
     let mut lines = BufReader::new(stdout).lines();
     // A read error ends the loop like EOF: either way the child's stdout is
     // unusable, pending requests must fail, and the session loop must know.
@@ -265,7 +356,11 @@ async fn read_loop(
                     continue;
                 };
                 let outcome = match msg.get("error") {
-                    Some(err) => Err(response_error(err)),
+                    Some(err) => Err(HarnessError::Rpc {
+                        code: err.get("code").and_then(Value::as_i64).unwrap_or(-32603),
+                        message: response_error(err),
+                        data: err.get("data").filter(|v| !v.is_null()).cloned(),
+                    }),
                     None => Ok(msg
                         .get_mut("result")
                         .map(Value::take)
@@ -289,6 +384,7 @@ async fn read_loop(
             }
             // Notification.
             (Some(method), None) => {
+                let realtime = method.starts_with("thread/realtime/");
                 let incoming = Incoming::Notification {
                     method: method.to_owned(),
                     params: msg
@@ -296,6 +392,16 @@ async fn read_loop(
                         .map(Value::take)
                         .unwrap_or(Value::Null),
                 };
+                if realtime {
+                    if let Some((voice_tx, overflow)) =
+                        voice_router.lock().expect("voice router").as_ref()
+                    {
+                        if voice_tx.try_send(incoming).is_err() {
+                            overflow.store(true, Ordering::Release);
+                        }
+                        continue;
+                    }
+                }
                 if tx.send(incoming).await.is_err() {
                     return;
                 }
@@ -315,12 +421,14 @@ mod tests {
 
     #[test]
     fn cancel_notification_wire_has_no_id() {
-        let (writer, mut receiver) = mpsc::unbounded_channel();
+        let (writer, mut receiver) = mpsc::channel(256);
         let client = RpcClient {
             next_id: Arc::new(AtomicI64::new(0)),
             pending: Arc::default(),
             writer,
+            media_writer: mpsc::channel(8).0,
             closed: Arc::new(AtomicBool::new(false)),
+            voice_router: Arc::default(),
         };
         client.notify("session/cancel", Some(json!({"sessionId": "parent"})));
         let frame: Value = serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
@@ -334,12 +442,14 @@ mod tests {
 
     #[tokio::test]
     async fn requests_after_eof_fail_without_entering_pending_map() {
-        let (writer, mut receiver) = mpsc::unbounded_channel();
+        let (writer, mut receiver) = mpsc::channel(256);
         let client = RpcClient {
             next_id: Arc::new(AtomicI64::new(0)),
             pending: Arc::default(),
             writer,
+            media_writer: mpsc::channel(8).0,
             closed: Arc::new(AtomicBool::new(true)),
+            voice_router: Arc::default(),
         };
         let result = tokio::time::timeout(
             std::time::Duration::from_millis(100),
@@ -350,6 +460,43 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("exited"));
         assert!(client.pending.lock().unwrap().is_empty());
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn cancelled_unpolled_request_cleans_pending() {
+        let (writer, mut rx) = mpsc::channel(256);
+        let client = RpcClient {
+            next_id: Arc::new(AtomicI64::new(0)),
+            pending: Arc::default(),
+            writer,
+            media_writer: mpsc::channel(8).0,
+            closed: Arc::new(AtomicBool::new(false)),
+            voice_router: Arc::default(),
+        };
+        let future = client.request_now("test", json!({}));
+        assert_eq!(client.pending.lock().unwrap().len(), 1);
+        drop(future);
+        assert!(client.pending.lock().unwrap().is_empty());
+        assert!(rx.try_recv().is_ok()); // Queued once; a late ACK is harmless.
+    }
+
+    #[tokio::test]
+    async fn media_flood_is_bounded_and_stop_has_separate_capacity() {
+        let (writer, mut control) = mpsc::channel(256);
+        let (media_writer, media) = mpsc::channel(8);
+        let client = RpcClient { next_id: Arc::new(AtomicI64::new(0)),
+            pending: Arc::default(), writer, media_writer,
+            closed: Arc::new(AtomicBool::new(false)), voice_router: Arc::default() };
+        let mut requests = Vec::new();
+        for _ in 0..8 { requests.push(client.request_media("append", json!({}))); }
+        assert_eq!(media.len(), 8);
+        assert!(client.request_media("append", json!({})).await.is_err());
+        let stop = client.request_now("stop", json!({}));
+        let wire: Value = serde_json::from_str(&control.try_recv().unwrap()).unwrap();
+        assert_eq!(wire["method"], "stop");
+        drop(stop);
+        drop(requests);
+        assert!(client.pending.lock().unwrap().is_empty());
     }
 
     #[test]
