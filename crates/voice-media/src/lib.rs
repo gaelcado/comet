@@ -322,3 +322,87 @@ mod tests {
         assert!(verify_runtime(dir.path()).is_err());
     }
 }
+
+/// Desktop implementation shared by UIs; permission belongs to the viewport.
+/// Instantiate one per call. Closing cannot wait behind a locked helper pipe.
+pub struct DesktopMedia {
+    path: std::path::PathBuf,
+    host: tokio::sync::Mutex<Option<NativeHost>>,
+    stop: tokio_util::sync::CancellationToken,
+}
+impl DesktopMedia {
+    pub fn bundled() -> Result<Self, VoiceRejection> {
+        Ok(Self {
+            path: bundled_helper()?,
+            host: Default::default(),
+            stop: Default::default(),
+        })
+    }
+}
+#[async_trait::async_trait]
+impl zeron_voice_session::VoiceMediaEndpoint for DesktopMedia {
+    async fn prepare(&self) -> Result<(), VoiceRejection> {
+        let host = NativeHost::open(&self.path, self.stop.clone()).await?;
+        if self.stop.is_cancelled() {
+            return Err(VoiceRejection::InvalidLease);
+        }
+        *self.host.lock().await = Some(host);
+        Ok(())
+    }
+    async fn offer(&self) -> Result<zeron_proto::voice::remote::Sdp, VoiceRejection> {
+        let mut state = self.host.lock().await;
+        let host = state.as_mut().ok_or(VoiceRejection::InvalidLease)?;
+        let offer = host.exchange(json!({"type":"startTransport"}), 20).await?;
+        if offer["type"] != "offer" {
+            return Err(VoiceRejection::Protocol);
+        }
+        zeron_proto::voice::remote::Sdp::new(
+            offer["sdp"]
+                .as_str()
+                .ok_or(VoiceRejection::Protocol)?
+                .into(),
+        )
+    }
+    async fn apply_answer(
+        &self,
+        answer: zeron_proto::voice::remote::Sdp,
+    ) -> Result<(), VoiceRejection> {
+        let mut state = self.host.lock().await;
+        let host = state.as_mut().ok_or(VoiceRejection::InvalidLease)?;
+        host.expect(
+            json!({"type":"applyAnswer","sdp":answer.expose()}),
+            "transportReady",
+            20,
+        )
+        .await?;
+        host.expect(json!({"type":"openDevices"}), "devicesOpened", 5)
+            .await?;
+        host.expect(json!({"type":"setAudioControls","controls":{"microphoneMuted":true,"speakerSuppressed":true}}),"audioControlsApplied",5).await
+    }
+    async fn set_muted(&self, muted: bool) -> Result<(), VoiceRejection> {
+        self.host
+            .lock()
+            .await
+            .as_mut()
+            .ok_or(VoiceRejection::InvalidLease)?
+            .controls(muted)
+            .await
+    }
+    async fn levels(&self) -> Result<(u16, u16), VoiceRejection> {
+        self.host
+            .lock()
+            .await
+            .as_mut()
+            .ok_or(VoiceRejection::InvalidLease)?
+            .levels()
+            .await
+    }
+    fn close(&self) {
+        self.stop.cancel();
+    }
+}
+impl Drop for DesktopMedia {
+    fn drop(&mut self) {
+        self.stop.cancel();
+    }
+}

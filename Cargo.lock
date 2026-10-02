@@ -12995,6 +12995,7 @@ dependencies = [
  "zeron-proto",
  "zeron-rpc",
  "zeron-sync",
+ "zeron-voice-session",
 ]
 
 [[package]]
@@ -13336,6 +13337,8 @@ dependencies = [
  "zeron-theme",
  "zeron-update",
  "zeron-voice",
+ "zeron-voice-media",
+ "zeron-voice-session",
 ]
 
 [[package]]
@@ -13375,12 +13378,28 @@ dependencies = [
 name = "zeron-voice-media"
 version = "0.2.101"
 dependencies = [
+ "async-trait",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
  "tokio-util",
  "zeron-proto",
+ "zeron-voice-session",
+]
+
+[[package]]
+name = "zeron-voice-session"
+version = "0.2.101"
+dependencies = [
+ "async-trait",
+ "futures",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "zeron-proto",
+ "zeron-rpc",
 ]
 
 [[package]]
