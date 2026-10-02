@@ -10,11 +10,28 @@ on:
       - 'crates/mcp/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'scripts/codex-voice-remote-smoke.py'
+      - 'scripts/tests/*voice_remote*'
       - '.github/workflows/voice-tests.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  split-host-probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Split-host diagnostic fixtures (no Codex, microphone or provider)
+        run: python3 -m unittest discover -s scripts/tests -p 'test_voice_remote*.py' -v
+
   offline-linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
