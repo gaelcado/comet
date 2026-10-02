@@ -1098,6 +1098,12 @@ public protocol CoreClientProtocol: AnyObject, Sendable {
      */
     func workspaceRevision()  -> UInt64
     
+    /**
+     * Returns immediately. Callbacks are dispatched on the core runtime; the
+     * platform must hop to its media/UI executor and call complete_media.
+     */
+    func startVoice(hostDeviceId: String, voice: String?, media: VoiceMediaListener, listener: VoiceSessionListener)  -> VoiceCall
+    
 }
 /**
  * One signed-in account (or Demo mode). Create one per sign-in; call
@@ -1895,6 +1901,23 @@ open func workspaceRevision() -> UInt64  {
         uniffiCallStatus in
     uniffi_zeron_mobile_fn_method_coreclient_workspace_revision(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Returns immediately. Callbacks are dispatched on the core runtime; the
+     * platform must hop to its media/UI executor and call complete_media.
+     */
+open func startVoice(hostDeviceId: String, voice: String?, media: VoiceMediaListener, listener: VoiceSessionListener) -> VoiceCall  {
+    return try!  FfiConverterTypeVoiceCall_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_coreclient_start_voice(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hostDeviceId),
+        FfiConverterOptionString.lower(voice),
+        FfiConverterTypeVoiceMediaListener_lower(media),
+        FfiConverterTypeVoiceSessionListener_lower(listener),uniffiCallStatus
     )
 })
 }
@@ -3748,6 +3771,591 @@ public func FfiConverterTypeUploadProgress_lift(_ handle: UInt64) throws -> Uplo
 #endif
 public func FfiConverterTypeUploadProgress_lower(_ value: UploadProgress) -> UInt64 {
     return FfiConverterTypeUploadProgress.lower(value)
+}
+
+
+
+
+
+
+public protocol VoiceCallProtocol: AnyObject, Sendable {
+    
+    /**
+     * Late native callbacks simply miss the retired request. No resume is possible.
+     */
+    func completeMedia(requestId: UInt64, success: Bool, sdp: String?, microphone: UInt16, speaker: UInt16) 
+    
+    func setMuted(muted: Bool) 
+    
+    func stop() 
+    
+}
+open class VoiceCall: VoiceCallProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_zeron_mobile_fn_clone_voicecall(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_zeron_mobile_fn_free_voicecall(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Late native callbacks simply miss the retired request. No resume is possible.
+     */
+open func completeMedia(requestId: UInt64, success: Bool, sdp: String?, microphone: UInt16, speaker: UInt16)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_voicecall_complete_media(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(requestId),
+        FfiConverterBool.lower(success),
+        FfiConverterOptionString.lower(sdp),
+        FfiConverterUInt16.lower(microphone),
+        FfiConverterUInt16.lower(speaker),uniffiCallStatus
+    )
+}
+}
+    
+open func setMuted(muted: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_voicecall_set_muted(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(muted),uniffiCallStatus
+    )
+}
+}
+    
+open func stop()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_voicecall_stop(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceCall: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = VoiceCall
+
+    public static func lift(_ handle: UInt64) throws -> VoiceCall {
+        return VoiceCall(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: VoiceCall) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceCall {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: VoiceCall, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceCall_lift(_ handle: UInt64) throws -> VoiceCall {
+    return try FfiConverterTypeVoiceCall.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceCall_lower(_ value: VoiceCall) -> UInt64 {
+    return FfiConverterTypeVoiceCall.lower(value)
+}
+
+
+
+
+
+
+public protocol VoiceMediaListener: AnyObject, Sendable {
+    
+    func onRequest(request: VoiceMediaRequest) 
+    
+}
+open class VoiceMediaListenerImpl: VoiceMediaListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_zeron_mobile_fn_clone_voicemedialistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_zeron_mobile_fn_free_voicemedialistener(handle, $0) }
+    }
+
+    
+
+    
+open func onRequest(request: VoiceMediaRequest)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_voicemedialistener_on_request(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeVoiceMediaRequest_lower(request),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceVoiceMediaListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceVoiceMediaListener = UniffiVTableCallbackInterfaceVoiceMediaListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeVoiceMediaListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface VoiceMediaListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeVoiceMediaListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface VoiceMediaListener: handle missing in uniffiClone")
+            }
+        },
+        onRequest: { (
+            uniffiHandle: UInt64,
+            request: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVoiceMediaListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onRequest(
+                     request: try FfiConverterTypeVoiceMediaRequest_lift(request)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceVoiceMediaListener> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceVoiceMediaListener>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitVoiceMediaListener() {
+    uniffi_zeron_mobile_fn_init_callback_vtable_voicemedialistener(UniffiCallbackInterfaceVoiceMediaListener.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceMediaListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<VoiceMediaListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = VoiceMediaListener
+
+    public static func lift(_ handle: UInt64) throws -> VoiceMediaListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return VoiceMediaListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: VoiceMediaListener) -> UInt64 {
+         if let rustImpl = value as? VoiceMediaListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMediaListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: VoiceMediaListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMediaListener_lift(_ handle: UInt64) throws -> VoiceMediaListener {
+    return try FfiConverterTypeVoiceMediaListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMediaListener_lower(_ value: VoiceMediaListener) -> UInt64 {
+    return FfiConverterTypeVoiceMediaListener.lower(value)
+}
+
+
+
+
+
+
+public protocol VoiceSessionListener: AnyObject, Sendable {
+    
+    /**
+     * Ephemeral UI event. Do not log or persist transcript payloads here.
+     */
+    func onVoiceEvent(eventJson: String) 
+    
+    func onVoiceClosed(reason: String?) 
+    
+}
+open class VoiceSessionListenerImpl: VoiceSessionListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_zeron_mobile_fn_clone_voicesessionlistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_zeron_mobile_fn_free_voicesessionlistener(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Ephemeral UI event. Do not log or persist transcript payloads here.
+     */
+open func onVoiceEvent(eventJson: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_voicesessionlistener_on_voice_event(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(eventJson),uniffiCallStatus
+    )
+}
+}
+    
+open func onVoiceClosed(reason: String?)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_voicesessionlistener_on_voice_closed(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(reason),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceVoiceSessionListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceVoiceSessionListener = UniffiVTableCallbackInterfaceVoiceSessionListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeVoiceSessionListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface VoiceSessionListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeVoiceSessionListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface VoiceSessionListener: handle missing in uniffiClone")
+            }
+        },
+        onVoiceEvent: { (
+            uniffiHandle: UInt64,
+            eventJson: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVoiceSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onVoiceEvent(
+                     eventJson: try FfiConverterString.lift(eventJson)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onVoiceClosed: { (
+            uniffiHandle: UInt64,
+            reason: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVoiceSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onVoiceClosed(
+                     reason: try FfiConverterOptionString.lift(reason)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceVoiceSessionListener> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceVoiceSessionListener>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitVoiceSessionListener() {
+    uniffi_zeron_mobile_fn_init_callback_vtable_voicesessionlistener(UniffiCallbackInterfaceVoiceSessionListener.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceSessionListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<VoiceSessionListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = VoiceSessionListener
+
+    public static func lift(_ handle: UInt64) throws -> VoiceSessionListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return VoiceSessionListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: VoiceSessionListener) -> UInt64 {
+         if let rustImpl = value as? VoiceSessionListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceSessionListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: VoiceSessionListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceSessionListener_lift(_ handle: UInt64) throws -> VoiceSessionListener {
+    return try FfiConverterTypeVoiceSessionListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceSessionListener_lower(_ value: VoiceSessionListener) -> UInt64 {
+    return FfiConverterTypeVoiceSessionListener.lower(value)
 }
 
 
@@ -8001,6 +8609,68 @@ public func FfiConverterTypeUserInputQuestion_lower(_ value: UserInputQuestion) 
 }
 
 
+public struct VoiceMediaRequest: Equatable, Hashable {
+    public var requestId: UInt64
+    public var operation: VoiceMediaOperation
+    public var sdp: String?
+    public var muted: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(requestId: UInt64, operation: VoiceMediaOperation, sdp: String?, muted: Bool) {
+        self.requestId = requestId
+        self.operation = operation
+        self.sdp = sdp
+        self.muted = muted
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VoiceMediaRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceMediaRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMediaRequest {
+        return
+            try VoiceMediaRequest(
+                requestId: FfiConverterUInt64.read(from: &buf), 
+                operation: FfiConverterTypeVoiceMediaOperation.read(from: &buf), 
+                sdp: FfiConverterOptionString.read(from: &buf), 
+                muted: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VoiceMediaRequest, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.requestId, into: &buf)
+        FfiConverterTypeVoiceMediaOperation.write(value.operation, into: &buf)
+        FfiConverterOptionString.write(value.sdp, into: &buf)
+        FfiConverterBool.write(value.muted, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMediaRequest_lift(_ buf: RustBuffer) throws -> VoiceMediaRequest {
+    return try FfiConverterTypeVoiceMediaRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMediaRequest_lower(_ value: VoiceMediaRequest) -> RustBuffer {
+    return FfiConverterTypeVoiceMediaRequest.lower(value)
+}
+
+
 public struct Widget: Equatable, Hashable {
     public var id: UInt32
     public var kind: WidgetKind
@@ -10997,6 +11667,100 @@ public func FfiConverterTypeTranscriptScale_lower(_ value: TranscriptScale) -> R
 
 
 
+
+public enum VoiceMediaOperation: Equatable, Hashable {
+    
+    case prepare
+    case offer
+    case applyAnswer
+    case setMuted
+    case levels
+    case close
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VoiceMediaOperation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceMediaOperation: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceMediaOperation
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMediaOperation {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .prepare
+        
+        case 2: return .offer
+        
+        case 3: return .applyAnswer
+        
+        case 4: return .setMuted
+        
+        case 5: return .levels
+        
+        case 6: return .close
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VoiceMediaOperation, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .prepare:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .offer:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .applyAnswer:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .setMuted:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .levels:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .close:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMediaOperation_lift(_ buf: RustBuffer) throws -> VoiceMediaOperation {
+    return try FfiConverterTypeVoiceMediaOperation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMediaOperation_lower(_ value: VoiceMediaOperation) -> RustBuffer {
+    return FfiConverterTypeVoiceMediaOperation.lower(value)
+}
+
+
+
 /**
  * Artwork treatment (desktop `NewThreadBackgroundEffect`).
  */
@@ -13285,6 +14049,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_zeron_mobile_checksum_method_coreclient_workspace_revision() != 48105) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_zeron_mobile_checksum_method_coreclient_start_voice() != 62086) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_zeron_mobile_checksum_method_uploadprogress_on_progress() != 40458) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13346,6 +14113,24 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_sessionhandle_transcript_status() != 12910) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_voicecall_complete_media() != 14177) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_voicecall_set_muted() != 41942) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_voicecall_stop() != 33696) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_voicemedialistener_on_request() != 10473) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_voicesessionlistener_on_voice_event() != 9855) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_voicesessionlistener_on_voice_closed() != 5619) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_layoutframe_build_micros() != 17231) {
@@ -13437,6 +14222,8 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitLayoutListener()
     uniffiCallbackInitPlatformMeasurer()
     uniffiCallbackInitUploadProgress()
+    uniffiCallbackInitVoiceMediaListener()
+    uniffiCallbackInitVoiceSessionListener()
     return InitializationResult.ok
 }()
 

@@ -13110,10 +13110,13 @@ dependencies = [
 name = "zeron-mobile"
 version = "0.2.101"
 dependencies = [
+ "async-trait",
  "serde",
  "serde_json",
  "similar",
  "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
  "uniffi",
  "zeron-client",
  "zeron-doc",
@@ -13121,6 +13124,7 @@ dependencies = [
  "zeron-proto",
  "zeron-syntax",
  "zeron-text",
+ "zeron-voice-session",
 ]
 
 [[package]]
