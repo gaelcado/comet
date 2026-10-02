@@ -5,6 +5,7 @@ on:
       - 'crates/audio/**'
       - 'crates/voice-media/**'
       - 'crates/voice-session/**'
+      - 'crates/orb/**'
       - 'crates/proto/src/voice/**'
       - 'crates/rpc/**'
       - 'crates/client/**'
@@ -60,8 +61,10 @@ jobs:
       - name: Protocol, transport and idle runtime (no provider access)
         run: |
           cargo test --locked -p zeron-voice-media --lib
+          cargo test --locked -p zeron-orb
           cargo test --locked -p zeron-voice-session --lib
           cargo test --locked -p zeron-mobile --lib voice
+          cargo test --locked -p zeron-mobile --lib orb
           cargo test --locked -p zeron-proto voice --lib
           cargo test --locked -p zeron-harness --lib
           cargo test --locked -p zeron-harness --test codex --test acp

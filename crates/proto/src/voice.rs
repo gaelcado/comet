@@ -10,6 +10,12 @@ pub const MAX_TRANSCRIPT_BYTES: usize = 32_768;
 /// never takes a sidebar row, and chats it creates are top-level sessions
 /// rather than its side chats.
 pub const ORCHESTRATOR_CHAT_PREFIX: &str = "voice-orchestrator-";
+/// Title of every orchestrator chat; transcripts never trigger a titler.
+pub const ORCHESTRATOR_CHAT_TITLE: &str = "Voice session";
+/// Codex voice styles offered before a host reports its own list.
+pub const DEFAULT_VOICES: &[&str] = &[
+    "juniper", "maple", "spruce", "ember", "vale", "breeze", "arbor", "sol", "cove",
+];
 
 pub fn is_orchestrator_chat(chat_id: &str) -> bool {
     chat_id.starts_with(ORCHESTRATOR_CHAT_PREFIX)

@@ -20,10 +20,18 @@ subscription negotiation, interruption or MCP work on an actual iPhone.
 
 The endpoint keeps its audio track and manual audio device disabled until the
 host confirms the lease. Mute disables the local track without a network roundtrip.
-Close disables audio and releases the peer before remote cleanup. Backgrounding,
-interruption, a lost audio route or failed connection closes the call; it never
-resumes automatically. Cancellation invalidates pending continuations so late SDK
-callbacks cannot return a second result or reactivate media.
+Close disables audio and releases the peer before remote cleanup. The WebRTC audio
+configuration is installed globally (`setWebRTCConfiguration`), because WebRTC
+re-applies its global configuration when the audio unit starts and would otherwise
+drop the app's category options mid-call. Output follows the proximity sensor
+(loudspeaker in hand, earpiece at the ear) unless a headset, Bluetooth or car route
+is active. The call survives the screen locking (background audio). An interruption
+or failed connection closes it; it never resumes automatically. Cancellation
+invalidates pending continuations so late SDK callbacks cannot return a second
+result or reactivate media.
+
+The orb is the desktop's: `zeron-orb` computes geometry, clock, audio response and
+crossfades for both, and iOS only paints the frames (`OrbView`).
 
 Required live checks: iPhone on Wi-Fi and cellular, Fedora and Mac hosts, actual
 bidirectional sound, barge-in/AEC, Bluetooth and route changes, background during

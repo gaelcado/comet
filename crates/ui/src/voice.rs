@@ -16,7 +16,7 @@ pub enum VoiceControl {
 }
 
 /// Sidebar title of each orchestrator chat; transcripts never trigger a titler.
-pub const VOICE_CHAT_TITLE: &str = "Voice session";
+pub const VOICE_CHAT_TITLE: &str = ORCHESTRATOR_CHAT_TITLE;
 
 pub struct VoiceController {
     pub phase: VoicePhase,
@@ -391,22 +391,8 @@ pub fn format_elapsed(seconds: u64) -> String {
     }
 }
 
-pub fn orb_state(phase: VoicePhase, snapshot: Option<&VoiceSnapshot>) -> OrbState {
-    if matches!(
-        phase,
-        VoicePhase::Checking | VoicePhase::Starting | VoicePhase::Stopping
-    ) {
-        return OrbState::Connecting;
-    }
-    match snapshot {
-        Some(s) if s.playing => OrbState::Composing,
-        Some(s) if s.work == VoiceWork::AwaitingInput => OrbState::Solving,
-        Some(s) if s.work == VoiceWork::Working => OrbState::Working,
-        Some(s) if s.muted => OrbState::Breathing,
-        Some(_) => OrbState::Listening,
-        None => OrbState::Breathing,
-    }
-}
+/// Shared with the mobile apps so every orb reads the call the same way.
+pub use zeron_voice_session::orb_state;
 
 impl Drop for VoiceController {
     fn drop(&mut self) {

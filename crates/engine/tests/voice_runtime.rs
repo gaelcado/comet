@@ -852,6 +852,15 @@ async fn remote_voice_full_control_flow_and_idempotent_prepare_without_host_audi
         prepared.lease.voice.session_id
     );
     assert!(prepared.chat_id.starts_with("voice-orchestrator-"));
+    assert_eq!(
+        core.workspace
+            .chat(&prepared.chat_id)
+            .unwrap()
+            .unwrap()
+            .title
+            .as_deref(),
+        Some(zeron_proto::voice::ORCHESTRATOR_CHAT_TITLE)
+    );
     let mut owner = client
         .subscribe_checked(
             methods::OWN_VOICE_V2,

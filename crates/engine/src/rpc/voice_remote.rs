@@ -160,6 +160,11 @@ impl EngineRpc {
                 None,
             )
             .map_err(|_| VoiceRejection::Protocol)?;
+        // Same title as a local orchestrator: its transcript is reachable from
+        // every client's voice controls, never an untitled "New session".
+        self.workspace
+            .rename_chat(&chat, zeron_proto::voice::ORCHESTRATOR_CHAT_TITLE)
+            .map_err(|_| VoiceRejection::Protocol)?;
         let (bridge, events, active) = self.prepare_voice_bridge(&chat).await?;
         let eligibility = bridge.probe_external().await?;
         if p.voice

@@ -34,12 +34,10 @@ pub(crate) fn init(root: PathBuf, cx: &mut App) {
         host_select: widgets::SelectState::default(),
         hosts: Vec::new(),
         call_live: false,
-        voices: [
-            "juniper", "maple", "spruce", "ember", "vale", "breeze", "arbor", "sol", "cove",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect(),
+        voices: zeron_proto::voice::DEFAULT_VOICES
+            .iter()
+            .map(|voice| (*voice).to_owned())
+            .collect(),
         shortcut: None,
     });
     cx.set_global(VoiceGlobal { card, directory });

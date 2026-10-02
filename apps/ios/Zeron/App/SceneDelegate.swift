@@ -53,6 +53,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.makeKeyAndVisible()
         if !args.contains("-lab") { shellShown() }
 
+        #if DEBUG
+        if args.contains("-voice-preview") {
+            app.voice.preview()
+            if args.contains("-voice-stage") {
+                DispatchQueue.main.async { [app] in window.rootViewController?.presentVoiceStage(app: app, source: nil) }
+            }
+        }
+        #endif
         if let router = window.rootViewController as? AppRouter, let i = args.firstIndex(of: "-route"), i + 1 < args.count {
             let route = args[i + 1]
             DispatchQueue.main.async {

@@ -13121,6 +13121,7 @@ dependencies = [
  "zeron-client",
  "zeron-doc",
  "zeron-markdown",
+ "zeron-orb",
  "zeron-proto",
  "zeron-syntax",
  "zeron-text",
@@ -13408,6 +13409,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "zeron-orb",
  "zeron-proto",
  "zeron-rpc",
 ]

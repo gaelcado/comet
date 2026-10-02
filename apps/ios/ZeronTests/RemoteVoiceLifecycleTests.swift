@@ -34,4 +34,35 @@ final class RemoteVoiceLifecycleTests: XCTestCase {
         do { _ = try await peer.offer(); XCTFail("Closed peer cannot negotiate") } catch {}
         do { try await peer.apply(answer: "late answer"); XCTFail("Closed peer cannot apply answer") } catch {}
     }
+
+    @MainActor
+    func testOrbFramesMatchTheDesktopArtworkBox() {
+        for orb: VoiceOrb in [.idle, .connecting, .listening, .speaking, .working, .awaitingInput, .muted] {
+            let renderer = OrbRenderer(preset: .hero, orb: orb)
+            renderer.setAudioLevels(microphone: 0.4, speaker: 0.9)
+            let frame = renderer.nextFrame(animating: true, reducedMotion: false)
+            XCTAssertEqual(frame.size, 128)
+            XCTAssertFalse(frame.dots.isEmpty)
+            XCTAssertEqual(frame.dots.count % 5, 0)
+            XCTAssertEqual(frame.lines.count % 7, 0)
+            XCTAssertTrue((frame.dots + frame.lines).allSatisfy(\.isFinite))
+        }
+    }
+
+    @MainActor
+    func testStageCaptionShowsTheTailOfALongUtterance() {
+        XCTAssertEqual(VoiceStageViewController.tail("  short  "), "short")
+        let long = String(repeating: "a", count: 300) + " end"
+        let tail = VoiceStageViewController.tail(long)
+        XCTAssertTrue(tail.hasPrefix("…"))
+        XCTAssertTrue(tail.hasSuffix(" end"))
+        XCTAssertLessThanOrEqual(tail.count, 161)
+    }
+
+    @MainActor
+    func testEveryEndReasonExplainsItself() {
+        for reason: VoiceEndReason in [.microphoneDenied, .audioUnavailable, .signInRequired, .usageUnavailable, .busy, .hostUnavailable, .hostIncompatible, .connectionLost] {
+            XCTAssertFalse(RemoteVoiceController.message(for: reason, host: "Fedora").isEmpty)
+        }
+    }
 }

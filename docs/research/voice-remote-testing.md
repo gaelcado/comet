@@ -65,17 +65,30 @@ frames or volume-meter stream are added to sync or the command ledger.
 ## iOS
 
 Build the Rust core with `scripts/ios/build-core.sh iphonesimulator` (or `iphoneos`
-for a physical device). Open `apps/ios/Zeron.xcodeproj`, use the **Zeron** scheme
-and add the launch argument `-remote-voice`. Sign a physical-device build using
-your existing development team. No Codex executable or OpenAI credentials are
-installed in the iOS app.
+for a physical device). Open `apps/ios/Zeron.xcodeproj` and use the **Zeron** scheme.
+Sign a physical-device build using your existing development team. No Codex
+executable or OpenAI credentials are installed in the iOS app.
 
-In **More → Settings → Voice**, select an online registered execution host with
-`voice-client-media-v1`, optionally choose a style and tap Start call. Microphone
-permission is requested after checking the host capability. Mute and hang-up act
-locally first. Navigating away retains the controls when you return; backgrounding,
-audio interruption or losing a route ends the call without automatic restart.
-The remote host also needs `ZERON_REMOTE_VOICE=1` and authenticated Codex.
+Voice appears by itself once a registered execution host advertises
+`voice-client-media-v1` (the host needs `ZERON_REMOTE_VOICE=1` and authenticated
+Codex); the `-remote-voice` launch argument still forces it on for development.
+Tap the waveform at the end of the **New session** bar to call the chosen host —
+or the only one online — and hold it to pick the host and voice. On iPad it sits
+beside compose in the sidebar toolbar. **More → Settings → Voice** keeps the same
+choices. Microphone permission is requested after checking the host capability.
+
+During a call the bar becomes a live strip (orb, clock, mute, hang-up) and an
+open session shows the live orb in its navigation bar; both open the full-screen
+stage. The stage has the desktop orb, caption, transcript button (marked when
+Codex is waiting for an answer) and mute/route/end. Mute and hang-up act locally
+first. Like a phone call: in hand audio plays on the loudspeaker, held to the ear
+the proximity sensor turns the screen off and moves it to the earpiece, and a
+headset or car route always wins. Locking the screen keeps the call (background
+audio); an interruption such as an incoming call ends it, without automatic
+restart. Losing a headset re-routes instead of ending the call.
+
+`-demo -voice-preview [-voice-stage]` (debug builds) plays a scripted call for
+screenshots and UI work without audio, host or relay.
 
 Offline iOS lifecycle tests (no microphone permission or provider):
 
@@ -93,8 +106,8 @@ cannot link that archive. Keep simulator ad-hoc signing enabled so it can launch
 
 ## Local validation record
 
-On macOS ARM64, the iOS simulator build and all three native lifecycle tests
-passed. Rust tests cover incompatible hosts before permission, cancellation
+On macOS ARM64, the iOS simulator build and all six native lifecycle tests
+passed (including the shared orb frames). Rust tests cover incompatible hosts before permission, cancellation
 while an offer is stalled, a half-open heartbeat, local meters, owner drop,
 duplicate prepare/negotiation, late controls and bounded UniFFI callbacks.
 The full remote flow also passed with two engines over the WebSocket test relay

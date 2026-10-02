@@ -2491,6 +2491,183 @@ public func FfiConverterTypeLayoutListener_lower(_ value: LayoutListener) -> UIn
 
 
 /**
+ * One animated orb. Calls are cheap and safe from any thread; drive
+ * [`OrbRenderer::next_frame`] from the display link.
+ */
+public protocol OrbRendererProtocol: AnyObject, Sendable {
+    
+    /**
+     * Advance to now and return the frame to paint. Time only accumulates
+     * while `animating`; reduced motion shows the static representative frame.
+     */
+    func nextFrame(animating: Bool, reducedMotion: Bool)  -> OrbFrame
+    
+    /**
+     * Normalized 0…1 peaks; they speed the motion up, never the geometry.
+     */
+    func setAudioLevels(microphone: Float, speaker: Float) 
+    
+    func setOrb(orb: VoiceOrb) 
+    
+}
+/**
+ * One animated orb. Calls are cheap and safe from any thread; drive
+ * [`OrbRenderer::next_frame`] from the display link.
+ */
+open class OrbRenderer: OrbRendererProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_zeron_mobile_fn_clone_orbrenderer(self.handle, $0) }
+    }
+    /**
+     * Crossfades state changes over 300 ms, like the desktop voice orbs.
+     */
+public convenience init(preset: OrbPreset, orb: VoiceOrb) {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_constructor_orbrenderer_new(
+        FfiConverterTypeOrbPreset_lower(preset),
+        FfiConverterTypeVoiceOrb_lower(orb),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_zeron_mobile_fn_free_orbrenderer(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Advance to now and return the frame to paint. Time only accumulates
+     * while `animating`; reduced motion shows the static representative frame.
+     */
+open func nextFrame(animating: Bool, reducedMotion: Bool) -> OrbFrame  {
+    return try!  FfiConverterTypeOrbFrame_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_orbrenderer_next_frame(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(animating),
+        FfiConverterBool.lower(reducedMotion),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Normalized 0…1 peaks; they speed the motion up, never the geometry.
+     */
+open func setAudioLevels(microphone: Float, speaker: Float)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_orbrenderer_set_audio_levels(
+            self.uniffiCloneHandle(),
+        FfiConverterFloat.lower(microphone),
+        FfiConverterFloat.lower(speaker),uniffiCallStatus
+    )
+}
+}
+    
+open func setOrb(orb: VoiceOrb)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_method_orbrenderer_set_orb(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeVoiceOrb_lower(orb),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrbRenderer: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = OrbRenderer
+
+    public static func lift(_ handle: UInt64) throws -> OrbRenderer {
+        return OrbRenderer(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: OrbRenderer) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrbRenderer {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: OrbRenderer, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrbRenderer_lift(_ handle: UInt64) throws -> OrbRenderer {
+    return try FfiConverterTypeOrbRenderer.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrbRenderer_lower(_ value: OrbRenderer) -> UInt64 {
+    return FfiConverterTypeOrbRenderer.lower(value)
+}
+
+
+
+
+
+
+/**
  * Measures text the bundled faces can't render (emoji, CJK…) with the
  * platform's own text engine — pretext's "browser as ground truth".
  * Self-describing (face, size, ligatures) because style ids are per-view.
@@ -3783,7 +3960,7 @@ public protocol VoiceCallProtocol: AnyObject, Sendable {
     /**
      * Late native callbacks simply miss the retired request. No resume is possible.
      */
-    func completeMedia(requestId: UInt64, success: Bool, sdp: String?, microphone: UInt16, speaker: UInt16) 
+    func completeMedia(requestId: UInt64, failure: VoiceMediaFailure?, sdp: String?, microphone: UInt16, speaker: UInt16) 
     
     func setMuted(muted: Bool) 
     
@@ -3846,12 +4023,12 @@ open class VoiceCall: VoiceCallProtocol, @unchecked Sendable {
     /**
      * Late native callbacks simply miss the retired request. No resume is possible.
      */
-open func completeMedia(requestId: UInt64, success: Bool, sdp: String?, microphone: UInt16, speaker: UInt16)  {try! rustCall() {
+open func completeMedia(requestId: UInt64, failure: VoiceMediaFailure?, sdp: String?, microphone: UInt16, speaker: UInt16)  {try! rustCall() {
         uniffiCallStatus in
     uniffi_zeron_mobile_fn_method_voicecall_complete_media(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(requestId),
-        FfiConverterBool.lower(success),
+        FfiConverterOptionTypeVoiceMediaFailure.lower(failure),
         FfiConverterOptionString.lower(sdp),
         FfiConverterUInt16.lower(microphone),
         FfiConverterUInt16.lower(speaker),uniffiCallStatus
@@ -4126,12 +4303,12 @@ public func FfiConverterTypeVoiceMediaListener_lower(_ value: VoiceMediaListener
 
 public protocol VoiceSessionListener: AnyObject, Sendable {
     
-    /**
-     * Ephemeral UI event. Do not log or persist transcript payloads here.
-     */
-    func onVoiceEvent(eventJson: String) 
+    func onVoiceState(state: VoiceCallState) 
     
-    func onVoiceClosed(reason: String?) 
+    /**
+     * Terminal, exactly once. `None` is an orderly end.
+     */
+    func onVoiceClosed(reason: VoiceEndReason?) 
     
 }
 open class VoiceSessionListenerImpl: VoiceSessionListener, @unchecked Sendable {
@@ -4187,23 +4364,23 @@ open class VoiceSessionListenerImpl: VoiceSessionListener, @unchecked Sendable {
     
 
     
-    /**
-     * Ephemeral UI event. Do not log or persist transcript payloads here.
-     */
-open func onVoiceEvent(eventJson: String)  {try! rustCall() {
+open func onVoiceState(state: VoiceCallState)  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_zeron_mobile_fn_method_voicesessionlistener_on_voice_event(
+    uniffi_zeron_mobile_fn_method_voicesessionlistener_on_voice_state(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(eventJson),uniffiCallStatus
+        FfiConverterTypeVoiceCallState_lower(state),uniffiCallStatus
     )
 }
 }
     
-open func onVoiceClosed(reason: String?)  {try! rustCall() {
+    /**
+     * Terminal, exactly once. `None` is an orderly end.
+     */
+open func onVoiceClosed(reason: VoiceEndReason?)  {try! rustCall() {
         uniffiCallStatus in
     uniffi_zeron_mobile_fn_method_voicesessionlistener_on_voice_closed(
             self.uniffiCloneHandle(),
-        FfiConverterOptionString.lower(reason),uniffiCallStatus
+        FfiConverterOptionTypeVoiceEndReason.lower(reason),uniffiCallStatus
     )
 }
 }
@@ -4236,9 +4413,9 @@ fileprivate struct UniffiCallbackInterfaceVoiceSessionListener {
                 fatalError("Uniffi callback interface VoiceSessionListener: handle missing in uniffiClone")
             }
         },
-        onVoiceEvent: { (
+        onVoiceState: { (
             uniffiHandle: UInt64,
-            eventJson: RustBuffer,
+            state: RustBuffer,
             uniffiOutReturn: UnsafeMutableRawPointer,
             uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
         ) in
@@ -4247,8 +4424,8 @@ fileprivate struct UniffiCallbackInterfaceVoiceSessionListener {
                 guard let uniffiObj = try? FfiConverterTypeVoiceSessionListener.handleMap.get(handle: uniffiHandle) else {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
-                return uniffiObj.onVoiceEvent(
-                     eventJson: try FfiConverterString.lift(eventJson)
+                return uniffiObj.onVoiceState(
+                     state: try FfiConverterTypeVoiceCallState_lift(state)
                 )
             }
 
@@ -4272,7 +4449,7 @@ fileprivate struct UniffiCallbackInterfaceVoiceSessionListener {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
                 return uniffiObj.onVoiceClosed(
-                     reason: try FfiConverterOptionString.lift(reason)
+                     reason: try FfiConverterOptionTypeVoiceEndReason.lift(reason)
                 )
             }
 
@@ -6567,6 +6744,70 @@ public func FfiConverterTypeNewSession_lower(_ value: NewSession) -> RustBuffer 
 }
 
 
+public struct OrbFrame: Equatable, Hashable {
+    /**
+     * Edge length of the artwork box, in logical points.
+     */
+    public var size: Float
+    public var lines: [Float]
+    public var dots: [Float]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Edge length of the artwork box, in logical points.
+         */size: Float, lines: [Float], dots: [Float]) {
+        self.size = size
+        self.lines = lines
+        self.dots = dots
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension OrbFrame: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrbFrame: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrbFrame {
+        return
+            try OrbFrame(
+                size: FfiConverterFloat.read(from: &buf), 
+                lines: FfiConverterSequenceFloat.read(from: &buf), 
+                dots: FfiConverterSequenceFloat.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: OrbFrame, into buf: inout [UInt8]) {
+        FfiConverterFloat.write(value.size, into: &buf)
+        FfiConverterSequenceFloat.write(value.lines, into: &buf)
+        FfiConverterSequenceFloat.write(value.dots, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrbFrame_lift(_ buf: RustBuffer) throws -> OrbFrame {
+    return try FfiConverterTypeOrbFrame.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrbFrame_lower(_ value: OrbFrame) -> RustBuffer {
+    return FfiConverterTypeOrbFrame.lower(value)
+}
+
+
 public struct OutgoingAttachment: Equatable, Hashable {
     public var name: String
     public var mimeType: String
@@ -8609,6 +8850,129 @@ public func FfiConverterTypeUserInputQuestion_lower(_ value: UserInputQuestion) 
 }
 
 
+/**
+ * Everything a call screen shows. Ephemeral: never log or persist captions.
+ */
+public struct VoiceCallState: Equatable, Hashable {
+    public var phase: VoiceCallPhase
+    public var orb: VoiceOrb
+    /**
+     * Full id of the host's orchestrator chat (its canonical transcript).
+     */
+    public var chatId: String?
+    public var work: VoiceCallWork
+    public var muted: Bool
+    /**
+     * The assistant's voice is playing.
+     */
+    public var speaking: Bool
+    public var caption: String
+    /**
+     * Set once the caption is a final segment; live partials have none.
+     */
+    public var captionSpeaker: VoiceSpeaker?
+    /**
+     * Normalized 0…1 peaks (microphone is 0 while muted).
+     */
+    public var microphone: Float
+    public var speaker: Float
+    /**
+     * Styles the host offers, once it reports them.
+     */
+    public var voices: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(phase: VoiceCallPhase, orb: VoiceOrb, 
+        /**
+         * Full id of the host's orchestrator chat (its canonical transcript).
+         */chatId: String?, work: VoiceCallWork, muted: Bool, 
+        /**
+         * The assistant's voice is playing.
+         */speaking: Bool, caption: String, 
+        /**
+         * Set once the caption is a final segment; live partials have none.
+         */captionSpeaker: VoiceSpeaker?, 
+        /**
+         * Normalized 0…1 peaks (microphone is 0 while muted).
+         */microphone: Float, speaker: Float, 
+        /**
+         * Styles the host offers, once it reports them.
+         */voices: [String]) {
+        self.phase = phase
+        self.orb = orb
+        self.chatId = chatId
+        self.work = work
+        self.muted = muted
+        self.speaking = speaking
+        self.caption = caption
+        self.captionSpeaker = captionSpeaker
+        self.microphone = microphone
+        self.speaker = speaker
+        self.voices = voices
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VoiceCallState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceCallState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceCallState {
+        return
+            try VoiceCallState(
+                phase: FfiConverterTypeVoiceCallPhase.read(from: &buf), 
+                orb: FfiConverterTypeVoiceOrb.read(from: &buf), 
+                chatId: FfiConverterOptionString.read(from: &buf), 
+                work: FfiConverterTypeVoiceCallWork.read(from: &buf), 
+                muted: FfiConverterBool.read(from: &buf), 
+                speaking: FfiConverterBool.read(from: &buf), 
+                caption: FfiConverterString.read(from: &buf), 
+                captionSpeaker: FfiConverterOptionTypeVoiceSpeaker.read(from: &buf), 
+                microphone: FfiConverterFloat.read(from: &buf), 
+                speaker: FfiConverterFloat.read(from: &buf), 
+                voices: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VoiceCallState, into buf: inout [UInt8]) {
+        FfiConverterTypeVoiceCallPhase.write(value.phase, into: &buf)
+        FfiConverterTypeVoiceOrb.write(value.orb, into: &buf)
+        FfiConverterOptionString.write(value.chatId, into: &buf)
+        FfiConverterTypeVoiceCallWork.write(value.work, into: &buf)
+        FfiConverterBool.write(value.muted, into: &buf)
+        FfiConverterBool.write(value.speaking, into: &buf)
+        FfiConverterString.write(value.caption, into: &buf)
+        FfiConverterOptionTypeVoiceSpeaker.write(value.captionSpeaker, into: &buf)
+        FfiConverterFloat.write(value.microphone, into: &buf)
+        FfiConverterFloat.write(value.speaker, into: &buf)
+        FfiConverterSequenceString.write(value.voices, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceCallState_lift(_ buf: RustBuffer) throws -> VoiceCallState {
+    return try FfiConverterTypeVoiceCallState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceCallState_lower(_ value: VoiceCallState) -> RustBuffer {
+    return FfiConverterTypeVoiceCallState.lower(value)
+}
+
+
 public struct VoiceMediaRequest: Equatable, Hashable {
     public var requestId: UInt64
     public var operation: VoiceMediaOperation
@@ -10509,6 +10873,89 @@ public func FfiConverterTypeFadeEdge_lower(_ value: FadeEdge) -> RustBuffer {
 
 
 
+/**
+ * The four tuned size presets (inline 20, avatar 64, large 96, hero 128).
+ */
+
+public enum OrbPreset: Equatable, Hashable {
+    
+    case inline
+    case avatar
+    case large
+    case hero
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension OrbPreset: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOrbPreset: FfiConverterRustBuffer {
+    typealias SwiftType = OrbPreset
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OrbPreset {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .inline
+        
+        case 2: return .avatar
+        
+        case 3: return .large
+        
+        case 4: return .hero
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: OrbPreset, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .inline:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .avatar:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .large:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .hero:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrbPreset_lift(_ buf: RustBuffer) throws -> OrbPreset {
+    return try FfiConverterTypeOrbPreset.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOrbPreset_lower(_ value: OrbPreset) -> RustBuffer {
+    return FfiConverterTypeOrbPreset.lower(value)
+}
+
+
+
 
 public enum PendingKind: Equatable, Hashable {
     
@@ -11668,6 +12115,347 @@ public func FfiConverterTypeTranscriptScale_lower(_ value: TranscriptScale) -> R
 
 
 
+public enum VoiceCallPhase: Equatable, Hashable {
+    
+    case connecting
+    case active
+    case ending
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VoiceCallPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceCallPhase: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceCallPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceCallPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .connecting
+        
+        case 2: return .active
+        
+        case 3: return .ending
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VoiceCallPhase, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .connecting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .active:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .ending:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceCallPhase_lift(_ buf: RustBuffer) throws -> VoiceCallPhase {
+    return try FfiConverterTypeVoiceCallPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceCallPhase_lower(_ value: VoiceCallPhase) -> RustBuffer {
+    return FfiConverterTypeVoiceCallPhase.lower(value)
+}
+
+
+
+
+public enum VoiceCallWork: Equatable, Hashable {
+    
+    case idle
+    /**
+     * The orchestrator's Codex turn (or a delegation) is running.
+     */
+    case working
+    /**
+     * Codex asked the user something; answer it in the transcript.
+     */
+    case awaitingInput
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VoiceCallWork: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceCallWork: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceCallWork
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceCallWork {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .idle
+        
+        case 2: return .working
+        
+        case 3: return .awaitingInput
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VoiceCallWork, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .idle:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .working:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .awaitingInput:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceCallWork_lift(_ buf: RustBuffer) throws -> VoiceCallWork {
+    return try FfiConverterTypeVoiceCallWork.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceCallWork_lower(_ value: VoiceCallWork) -> RustBuffer {
+    return FfiConverterTypeVoiceCallWork.lower(value)
+}
+
+
+
+/**
+ * Why a call ended without the user hanging up.
+ */
+
+public enum VoiceEndReason: Equatable, Hashable {
+    
+    case microphoneDenied
+    case audioUnavailable
+    /**
+     * Codex on the host must be signed in with ChatGPT.
+     */
+    case signInRequired
+    case usageUnavailable
+    /**
+     * The host already has a voice call.
+     */
+    case busy
+    case hostUnavailable
+    /**
+     * The host's Zeron is too old or has remote voice disabled.
+     */
+    case hostIncompatible
+    case connectionLost
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VoiceEndReason: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceEndReason: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceEndReason
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceEndReason {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .microphoneDenied
+        
+        case 2: return .audioUnavailable
+        
+        case 3: return .signInRequired
+        
+        case 4: return .usageUnavailable
+        
+        case 5: return .busy
+        
+        case 6: return .hostUnavailable
+        
+        case 7: return .hostIncompatible
+        
+        case 8: return .connectionLost
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VoiceEndReason, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .microphoneDenied:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .audioUnavailable:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .signInRequired:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .usageUnavailable:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .busy:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .hostUnavailable:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .hostIncompatible:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .connectionLost:
+            writeInt(&buf, Int32(8))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceEndReason_lift(_ buf: RustBuffer) throws -> VoiceEndReason {
+    return try FfiConverterTypeVoiceEndReason.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceEndReason_lower(_ value: VoiceEndReason) -> RustBuffer {
+    return FfiConverterTypeVoiceEndReason.lower(value)
+}
+
+
+
+/**
+ * Why a platform media operation failed.
+ */
+
+public enum VoiceMediaFailure: Equatable, Hashable {
+    
+    case permissionDenied
+    case unavailable
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VoiceMediaFailure: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceMediaFailure: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceMediaFailure
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMediaFailure {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .permissionDenied
+        
+        case 2: return .unavailable
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VoiceMediaFailure, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .permissionDenied:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .unavailable:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMediaFailure_lift(_ buf: RustBuffer) throws -> VoiceMediaFailure {
+    return try FfiConverterTypeVoiceMediaFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMediaFailure_lower(_ value: VoiceMediaFailure) -> RustBuffer {
+    return FfiConverterTypeVoiceMediaFailure.lower(value)
+}
+
+
+
+
 public enum VoiceMediaOperation: Equatable, Hashable {
     
     case prepare
@@ -11757,6 +12545,179 @@ public func FfiConverterTypeVoiceMediaOperation_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeVoiceMediaOperation_lower(_ value: VoiceMediaOperation) -> RustBuffer {
     return FfiConverterTypeVoiceMediaOperation.lower(value)
+}
+
+
+
+/**
+ * What the voice orb is showing, in call terms.
+ */
+
+public enum VoiceOrb: Equatable, Hashable {
+    
+    /**
+     * No call: the calm form of a muted orchestrator.
+     */
+    case idle
+    case connecting
+    case listening
+    case speaking
+    case working
+    case awaitingInput
+    case muted
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VoiceOrb: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceOrb: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceOrb
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceOrb {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .idle
+        
+        case 2: return .connecting
+        
+        case 3: return .listening
+        
+        case 4: return .speaking
+        
+        case 5: return .working
+        
+        case 6: return .awaitingInput
+        
+        case 7: return .muted
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VoiceOrb, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .idle:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .connecting:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .listening:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .speaking:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .working:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .awaitingInput:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .muted:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceOrb_lift(_ buf: RustBuffer) throws -> VoiceOrb {
+    return try FfiConverterTypeVoiceOrb.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceOrb_lower(_ value: VoiceOrb) -> RustBuffer {
+    return FfiConverterTypeVoiceOrb.lower(value)
+}
+
+
+
+
+public enum VoiceSpeaker: Equatable, Hashable {
+    
+    case user
+    case assistant
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VoiceSpeaker: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceSpeaker: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceSpeaker
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceSpeaker {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .user
+        
+        case 2: return .assistant
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VoiceSpeaker, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .user:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .assistant:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceSpeaker_lift(_ buf: RustBuffer) throws -> VoiceSpeaker {
+    return try FfiConverterTypeVoiceSpeaker.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceSpeaker_lower(_ value: VoiceSpeaker) -> RustBuffer {
+    return FfiConverterTypeVoiceSpeaker.lower(value)
 }
 
 
@@ -12615,6 +13576,78 @@ fileprivate struct FfiConverterOptionTypeSendState: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSendState.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeVoiceEndReason: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceEndReason?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeVoiceEndReason.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeVoiceEndReason.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeVoiceMediaFailure: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceMediaFailure?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeVoiceMediaFailure.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeVoiceMediaFailure.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeVoiceSpeaker: FfiConverterRustBuffer {
+    typealias SwiftType = VoiceSpeaker?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeVoiceSpeaker.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeVoiceSpeaker.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -13720,6 +14753,26 @@ public func fileMentionLink(path: String, isDir: Bool) -> String  {
 })
 }
 /**
+ * Codex voice styles to offer before a host reports its own.
+ */
+public func defaultVoiceStyles() -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_func_default_voice_styles(uniffiCallStatus
+    )
+})
+}
+/**
+ * Hosts advertising this capability accept client-media voice calls.
+ */
+public func voiceHostCapability() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_zeron_mobile_fn_func_voice_host_capability(uniffiCallStatus
+    )
+})
+}
+/**
  * Rust's line breaks for `text` in one face/size at `width`, as UTF-16
  * offsets of each line start — the accuracy harness compares these with
  * CoreText's own framesetter (platform engine as ground truth).
@@ -13858,6 +14911,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_func_file_mention_link() != 14340) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_func_default_voice_styles() != 30650) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_func_voice_host_capability() != 32424) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_func_debug_line_starts() != 43822) {
@@ -14115,7 +15174,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_zeron_mobile_checksum_method_sessionhandle_transcript_status() != 12910) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zeron_mobile_checksum_method_voicecall_complete_media() != 14177) {
+    if (uniffi_zeron_mobile_checksum_method_voicecall_complete_media() != 130) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_voicecall_set_muted() != 41942) {
@@ -14127,10 +15186,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_zeron_mobile_checksum_method_voicemedialistener_on_request() != 10473) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zeron_mobile_checksum_method_voicesessionlistener_on_voice_event() != 9855) {
+    if (uniffi_zeron_mobile_checksum_method_voicesessionlistener_on_voice_state() != 7593) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zeron_mobile_checksum_method_voicesessionlistener_on_voice_closed() != 5619) {
+    if (uniffi_zeron_mobile_checksum_method_voicesessionlistener_on_voice_closed() != 14100) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_method_layoutframe_build_micros() != 17231) {
@@ -14208,6 +15267,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_zeron_mobile_checksum_method_transcriptview_toggle_detail() != 17098) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_zeron_mobile_checksum_method_orbrenderer_next_frame() != 6064) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_orbrenderer_set_audio_levels() != 53067) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_method_orbrenderer_set_orb() != 18211) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_zeron_mobile_checksum_constructor_coreclient_new() != 27504) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -14215,6 +15283,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zeron_mobile_checksum_constructor_transcriptview_new() != 26914) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zeron_mobile_checksum_constructor_orbrenderer_new() != 46989) {
         return InitializationResult.apiChecksumMismatch
     }
 

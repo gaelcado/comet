@@ -1,4 +1,5 @@
 //! Shared call lifecycle. Platforms own media; the execution host owns Codex.
+mod view;
 use async_trait::async_trait;
 use futures::{StreamExt, stream::BoxStream};
 use serde_json::{Value, json};
@@ -6,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
+pub use view::{SpeakerActivity, VoiceView, orb_state};
 use zeron_proto::voice::{remote as wire, *};
 use zeron_rpc::{RpcClient, methods};
 
@@ -383,8 +385,11 @@ pub async fn run(
                 changed=muted.changed()=>{changed.map_err(|_|VoiceRejection::Protocol)?;let value=*muted.borrow_and_update();media.set_muted(value).await?;},
                 _=tick.tick()=>{
                     let (microphone,speaker)=media.levels().await?;
-                    // Visual samples are lossy; they never block owner finals/controls.
-                    let _=events.try_send(VoiceEvent::Levels{generation:prepared.lease.voice.generation,microphone,speaker});
+                    // Visual samples are lossy and leave headroom: a slow consumer
+                    // must drop meters, never overflow on owner finals/controls.
+                    if events.capacity()>events.max_capacity()/4{
+                        let _=events.try_send(VoiceEvent::Levels{generation:prepared.lease.voice.generation,microphone,speaker});
+                    }
                 },
                 _=events.closed()=>return Ok(()),
             }

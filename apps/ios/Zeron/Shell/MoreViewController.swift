@@ -184,9 +184,9 @@ final class MoreViewController: UIViewController, UICollectionViewDelegate {
         ])
         s.appendSections(["Devices"])
         s.appendItems(app.hostOptions.map { Row(id: "device:\($0.id)", title: $0.name, subtitle: $0.online ? "Online" : "Offline", symbol: "desktopcomputer", accessory: .dot($0.online)) })
-        if RemoteVoiceController.enabled {
+        if app.voice.available {
             s.appendSections(["Voice"])
-            s.appendItems([Row(id: "voice", title: "Voice", subtitle: "Codex voice device and call controls", symbol: "waveform")])
+            s.appendItems([Row(id: "voice", title: "Voice", subtitle: app.voice.selectedStyle.map { "Codex voice · \($0.capitalized)" } ?? "Codex voice device and style", symbol: "waveform")])
         }
         s.appendSections(["Notifications"])
         s.appendItems(notificationRows())
