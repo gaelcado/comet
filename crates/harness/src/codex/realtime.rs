@@ -24,6 +24,7 @@ pub(super) struct ThreadContext {
 
 pub enum VoiceCommand {
     Probe {
+        external: bool,
         reply: oneshot::Sender<Result<VoiceEligibility, VoiceRejection>>,
     },
     Start {
@@ -31,6 +32,13 @@ pub enum VoiceCommand {
         session_id: String,
         generation: u64,
         reply: oneshot::Sender<Result<(), VoiceRejection>>,
+    },
+    External {
+        voice: Option<String>,
+        session_id: String,
+        generation: u64,
+        offer: remote::Sdp,
+        reply: oneshot::Sender<Result<remote::Sdp, VoiceRejection>>,
     },
     Mute {
         muted: bool,
@@ -71,10 +79,16 @@ impl RealtimeHandle {
     }
 
     pub async fn probe(&self) -> Result<VoiceEligibility, VoiceRejection> {
+        self.probe_mode(false).await
+    }
+    pub async fn probe_external(&self) -> Result<VoiceEligibility, VoiceRejection> {
+        self.probe_mode(true).await
+    }
+    async fn probe_mode(&self, external: bool) -> Result<VoiceEligibility, VoiceRejection> {
         let (reply, rx) = oneshot::channel();
         tokio::time::timeout(Duration::from_secs(15), async {
             self.commands
-                .send(VoiceCommand::Probe { reply })
+                .send(VoiceCommand::Probe { external, reply })
                 .await
                 .map_err(|_| VoiceRejection::Protocol)?;
             rx.await.map_err(|_| VoiceRejection::Protocol)?
@@ -163,8 +177,10 @@ pub(super) fn attach(
             events,
         } = controls;
         let mut native: Option<host::NativeHost> = None;
+        let mut external_active = false;
+        let mut external_reply: Option<oneshot::Sender<Result<remote::Sdp, VoiceRejection>>> = None;
         let mut starting: Option<
-            futures::future::BoxFuture<'static, Result<host::NativeHost, VoiceRejection>>,
+            futures::future::BoxFuture<'static, Result<Started, VoiceRejection>>,
         > = None;
         let mut start_reply: Option<oneshot::Sender<Result<(), VoiceRejection>>> = None;
         let mut answer_tx: Option<oneshot::Sender<String>> = None;
@@ -178,10 +194,10 @@ pub(super) fn attach(
         loop {
             tokio::select! { biased;
                 command=commands.recv()=>match command {
-                    Some(VoiceCommand::Probe{reply})=>{let result=if invalidated.load(Ordering::Acquire){Err(VoiceRejection::InvalidLease)}else{probe(&client,&executable,&context).await};let _=reply.send(if invalidated.load(Ordering::Acquire){Err(VoiceRejection::InvalidLease)}else{result});},
+                    Some(VoiceCommand::Probe{external,reply})=>{let result=if invalidated.load(Ordering::Acquire){Err(VoiceRejection::InvalidLease)}else{probe_mode(&client,&executable,&context,external).await};let _=reply.send(if invalidated.load(Ordering::Acquire){Err(VoiceRejection::InvalidLease)}else{result});},
                     Some(VoiceCommand::Start{voice,session_id,generation:next,reply})=>{
                         if invalidated.load(Ordering::Acquire){let _=reply.send(Err(VoiceRejection::InvalidLease));continue;}
-                        if native.is_some() || starting.is_some() {let _=reply.send(Err(VoiceRejection::Busy));continue;}
+                        if external_active || native.is_some() || starting.is_some() {let _=reply.send(Err(VoiceRejection::Busy));continue;}
                         generation=next;sequence=0;
                         let abort=CancellationToken::new();
                         {let mut slot=audio_abort.lock().unwrap();
@@ -190,8 +206,27 @@ pub(super) fn attach(
                         }
                         let (answer,answer_rx)=oneshot::channel();let (accepted,accepted_rx)=oneshot::channel();
                         answer_tx=Some(answer);accepted_tx=Some(accepted);expected_session=session_id.clone();
-                        starting=Some(Box::pin(start(client.clone(),thread.clone(),executable.clone(),context.clone(),voice,session_id,accepted_rx,answer_rx,abort,server_live.clone())));
+                        starting=Some(Box::pin({let client=client.clone();let thread=thread.clone();let executable=executable.clone();let context=context.clone();let server_live=server_live.clone();async move {
+                            start(client,thread,executable,context,voice,session_id,accepted_rx,answer_rx,abort,server_live).await.map(Started::Local)
+                        }}));
                         start_reply=Some(reply);
+                    },
+                    Some(VoiceCommand::External{voice,session_id,generation:next,offer,reply})=>{
+                        if invalidated.load(Ordering::Acquire){let _=reply.send(Err(VoiceRejection::InvalidLease));continue;}
+                        if external_active || native.is_some() || starting.is_some(){let _=reply.send(Err(VoiceRejection::Busy));continue;}
+                        generation=next;sequence=0;
+                        let abort=CancellationToken::new();
+                        *audio_abort.lock().unwrap()=Some((next,abort.clone()));
+                        let (answer,answer_rx)=oneshot::channel();let (accepted,accepted_rx)=oneshot::channel();
+                        answer_tx=Some(answer);accepted_tx=Some(accepted);expected_session=session_id.clone();
+                        let client=client.clone();let thread=thread.clone();let context=context.clone();let server_live=server_live.clone();
+                        starting=Some(Box::pin(async move {
+                            tokio::select!{biased;
+                                _=abort.cancelled()=>Err(VoiceRejection::InvalidLease),
+                                answer=start_external(client,thread,context,voice,session_id,offer,accepted_rx,answer_rx,server_live)=>answer.map(Started::External),
+                            }
+                        }));
+                        external_reply=Some(reply);
                     },
                     Some(VoiceCommand::Mute{muted,reply})=>{
                         let result=if let Some(host)=native.as_mut(){host.controls(muted).await}else{Err(VoiceRejection::Busy)};
@@ -200,7 +235,8 @@ pub(super) fn attach(
                     },
                     Some(VoiceCommand::Append{reply,..})=>{let _=reply.send(Err(VoiceRejection::Unsupported));},
                     Some(VoiceCommand::Stop{reply})=>{
-                        let had_session=server_live.load(Ordering::Acquire);starting=None;native=None;
+                        let had_session=server_live.load(Ordering::Acquire);starting=None;native=None;external_active=false;
+                        if let Some(reply)=external_reply.take(){let _=reply.send(Err(VoiceRejection::InvalidLease));}
                         if let Some(pending)=start_reply.take(){let _=pending.send(Err(VoiceRejection::InvalidLease));}
                         let result=if had_session{
                             let result=stop(&client,&thread).await;
@@ -225,7 +261,11 @@ pub(super) fn attach(
                 },
                 result=async{starting.as_mut().unwrap().await},if starting.is_some()=>{
                     starting=None;
-                    match result {Ok(host)=>{native=Some(host);if let Some(reply)=start_reply.take(){let _=reply.send(Ok(()));}},Err(reason)=>{
+                    match result {
+                        Ok(Started::Local(host))=>{native=Some(host);if let Some(reply)=start_reply.take(){let _=reply.send(Ok(()));}},
+                        Ok(Started::External(answer))=>{external_active=true;if let Some(reply)=external_reply.take(){let _=reply.send(Ok(answer));}},
+                        Err(reason)=>{
+                        if let Some(reply)=external_reply.take(){let _=reply.send(Err(reason));}
                         if let Some(reply)=start_reply.take(){let _=reply.send(Err(reason));}
                         let _=events.send(VoiceEvent::Closed{generation,reason:Some(reason)});
                     }}
@@ -233,11 +273,11 @@ pub(super) fn attach(
                 notification=wire.recv()=>match notification {
                     Some(Incoming::Notification{method,params})=>{
                         if method=="thread/realtime/closed" && params["threadId"]==thread {server_live.store(false,Ordering::Release);}
-                        if method=="account/updated" {native=None;starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::ChatgptRequired));}let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::ChatgptRequired)});continue;}
+                        if method=="account/updated" {native=None;starting=None;external_active=false;if let Some(reply)=external_reply.take(){let _=reply.send(Err(VoiceRejection::ChatgptRequired));}if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::ChatgptRequired));}let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::ChatgptRequired)});continue;}
                         if params["threadId"]==thread && starting.is_some() {
                             if method=="thread/realtime/started" {
                                 if params["version"]=="v3" && params["realtimeSessionId"]==expected_session {if let Some(tx)=accepted_tx.take(){let _=tx.send(());}}
-                                else {starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::Unsupported));}let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::Unsupported)});}
+                                else {starting=None;if let Some(reply)=external_reply.take(){let _=reply.send(Err(VoiceRejection::Unsupported));}if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::Unsupported));}let _=events.send(VoiceEvent::Closed{generation,reason:Some(VoiceRejection::Unsupported)});}
                                 continue;
                             }
                             if method=="thread/realtime/sdp" {
@@ -245,10 +285,10 @@ pub(super) fn attach(
                                 continue;
                             }
                         }
-                        if native.is_some() || starting.is_some() {
+                        if external_active || native.is_some() || starting.is_some() {
                             if let Some(event)=normalize(&thread,generation,&mut sequence,&method,&params) {
                                 let terminal=matches!(event,VoiceEvent::Closed{..}); let _=events.send(event);
-                                if terminal {native=None;starting=None;if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::Protocol));}}
+                                if terminal {native=None;starting=None;external_active=false;if let Some(reply)=external_reply.take(){let _=reply.send(Err(VoiceRejection::Protocol));}if let Some(reply)=start_reply.take(){let _=reply.send(Err(VoiceRejection::Protocol));}}
                             }
                         }
                     },Some(_)=>{},None=>break,
@@ -262,7 +302,10 @@ pub(super) fn attach(
                 }
             }
         }
-        let had_session = starting.take().is_some() || native.is_some();
+        let had_session = starting.take().is_some()
+            || native.is_some()
+            || external_active
+            || server_live.load(Ordering::Acquire);
         drop(native);
         if had_session {
             let _ = stop(&client, &thread).await;
@@ -273,24 +316,35 @@ pub(super) fn attach(
         });
     }))
 }
+enum Started {
+    Local(host::NativeHost),
+    External(remote::Sdp),
+}
+
 async fn probe(
     client: &RpcClient,
     executable: &std::path::Path,
     context: &ThreadContext,
 ) -> Result<VoiceEligibility, VoiceRejection> {
-    tokio::time::timeout(
-        Duration::from_secs(15),
-        probe_details(client, executable, context),
-    )
-    .await
-    .map_err(|_| VoiceRejection::Protocol)?
+    probe_mode(client, executable, context, false).await
 }
-async fn probe_details(
+async fn probe_mode(
     client: &RpcClient,
     executable: &std::path::Path,
     context: &ThreadContext,
+    external: bool,
 ) -> Result<VoiceEligibility, VoiceRejection> {
-    host::helper_path(executable)?;
+    if !external {
+        host::helper_path(executable)?;
+    }
+    tokio::time::timeout(Duration::from_secs(15), probe_details(client, context))
+        .await
+        .map_err(|_| VoiceRejection::Protocol)?
+}
+async fn probe_details(
+    client: &RpcClient,
+    context: &ThreadContext,
+) -> Result<VoiceEligibility, VoiceRejection> {
     if context.model_provider.as_deref() != Some("openai")
         || !std::path::Path::new(&context.cwd).is_absolute()
     {
@@ -412,6 +466,41 @@ async fn start(
     // Keep devices muted/suppressed until the engine confirms the owner stream.
     Ok(host)
 }
+async fn start_external(
+    client: RpcClient,
+    thread: String,
+    context: ThreadContext,
+    voice: Option<String>,
+    session_id: String,
+    offer: remote::Sdp,
+    accepted: oneshot::Receiver<()>,
+    answer: oneshot::Receiver<String>,
+    server_live: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<remote::Sdp, VoiceRejection> {
+    let eligible = tokio::time::timeout(Duration::from_secs(15), probe_details(&client, &context))
+        .await
+        .map_err(|_| VoiceRejection::Protocol)??;
+    if voice.as_ref().is_some_and(|v| !eligible.voices.contains(v)) {
+        return Err(VoiceRejection::Unsupported);
+    }
+    let mut params = json!({"threadId":thread,"transport":{"type":"webrtc","sdp":offer.expose()},"version":"v3","outputModality":"audio","realtimeSessionId":session_id,"clientManagedHandoffs":false,"includeStartupContext":true,
+        "realtimeStartInstructions":ORCHESTRATOR_INSTRUCTIONS,"initialItems":[{"role":"developer","text":ORCHESTRATOR_INSTRUCTIONS}]});
+    if let Some(voice) = voice {
+        params["voice"] = json!(voice);
+    }
+    server_live.store(true, Ordering::Release);
+    tokio::time::timeout(Duration::from_secs(90), async {
+        client
+            .request("thread/realtime/start", params)
+            .await
+            .map_err(|_| VoiceRejection::Protocol)?;
+        accepted.await.map_err(|_| VoiceRejection::Protocol)?;
+        remote::Sdp::new(answer.await.map_err(|_| VoiceRejection::Protocol)?)
+    })
+    .await
+    .map_err(|_| VoiceRejection::Protocol)?
+}
+
 async fn stop(client: &RpcClient, thread: &str) -> Result<(), VoiceRejection> {
     tokio::time::timeout(
         Duration::from_secs(2),

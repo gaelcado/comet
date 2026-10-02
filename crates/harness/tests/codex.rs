@@ -1647,3 +1647,44 @@ async fn idle_voice_runtime_has_no_initial_turn_and_preserves_mcp() {
     token.cancel();
     drop(stream);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn external_voice_keeps_canonical_events_without_any_local_helper() {
+    use std::os::unix::fs::PermissionsExt;
+    use zeron_harness::codex::realtime::{VoiceCommand, channel};
+    use zeron_proto::voice::{VoiceEvent, remote::Sdp};
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("bin/codex");
+    std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+    std::fs::copy(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-codex-voice-native.py"), &binary).unwrap();
+    std::fs::set_permissions(&binary,std::fs::Permissions::from_mode(0o755)).unwrap();
+    let driver = CodexHarness::new().with_executable(binary);
+    let mut req = request("");
+    req.cwd = dir.path().display().to_string();
+    req.mcp = Some(zeron_proto::McpServer { name:"zeron".into(),command:"zeron".into(),args:vec!["mcp".into()],env:Default::default() });
+    let (mut controls, _steer, token) = controls("Yes");
+    let (voice, bridge, mut events) = channel();
+    controls.realtime=Some(bridge);
+    let mut stream=driver.start_idle(req,controls).await.unwrap();
+    assert!(matches!(tokio::time::timeout(Duration::from_secs(3),stream.next()).await.unwrap().unwrap().unwrap(),AgentEvent::SessionStarted{..}));
+    let pump=tokio::spawn(async move { while stream.next().await.is_some() {} });
+    assert!(voice.probe_external().await.unwrap().available);
+    assert_eq!(voice.probe().await.unwrap_err(),zeron_proto::voice::VoiceRejection::NativeRuntimeUnavailable);
+    let (reply,answer)=oneshot::channel();
+    voice.commands.send(VoiceCommand::External {voice:None,session_id:"external-session".into(),generation:1,offer:Sdp::new("fixture-offer".into()).unwrap(),reply}).await.unwrap();
+    assert_eq!(tokio::time::timeout(Duration::from_secs(3),answer).await.unwrap().unwrap().unwrap().expose(),"fixture-answer");
+    // Re-emission occurs after negotiation has completed, when there is no NativeHost.
+    std::fs::write(dir.path().join("replay-transcripts"), "true").unwrap();
+    tokio::time::timeout(Duration::from_secs(3),async {
+        loop { if let VoiceEvent::Final{transcript}=events.recv().await.unwrap() {
+            assert_eq!(transcript.session_id,"external-session");break;
+        }}
+    }).await.unwrap();
+    voice.stop().await.unwrap();
+    assert!(!dir.path().join("helper-wire.jsonl").exists());
+    let wire=std::fs::read_to_string(dir.path().join("voice-wire.jsonl")).unwrap();
+    assert!(wire.contains("mcp_servers"));
+    assert!(!wire.contains("appendAudio"));
+    token.cancel();pump.abort();
+}
