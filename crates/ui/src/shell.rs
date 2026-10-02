@@ -4959,6 +4959,17 @@ impl Shell {
             }
             SettingsSection::Voice => {
                 let card = crate::dictation::card(cx);
+                let state=self.state.read(cx);
+                let mut hosts=vec![(None,"This device".to_owned(),true,"Local".to_owned())];
+                for device in &state.devices {
+                    if state.local_device_id.as_deref()==Some(&device.id){continue;}
+                    let online=state.device_online(&device.id,chrono::Utc::now());
+                    let compatible=device.supports(zeron_proto::voice::remote::CAPABILITY);
+                    let detail=if !online {"Offline"} else if !compatible {"Update Zeron / enable remote voice"} else {"Available"};
+                    hosts.push((Some(device.id.clone()),device.name.clone(),online&&compatible,detail.into()));
+                }
+                let live=self.voice.read(cx).is_live();
+                card.update(cx,|card,cx|card.set_hosts(hosts,live,cx));
                 if let Some(snapshot) = &self.voice.read(cx).snapshot {
                     let voices = snapshot.voices.clone();
                     card.update(cx, |card, cx| card.set_voices(&voices, cx));

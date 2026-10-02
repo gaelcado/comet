@@ -9,6 +9,7 @@ use gpui_tokio::Tokio;
 use zeron_proto::voice::*;
 mod permissions;
 mod session;
+mod remote;
 
 pub enum VoiceControl {
     Mute(bool),
@@ -27,6 +28,9 @@ pub struct VoiceController {
     pub speaker_level: u16,
     /// The full-window stage is presented over the shell.
     pub stage_open: bool,
+    pub host_name: Option<String>,
+    remote: bool,
+    speaker_last_loud: Option<std::time::Instant>,
     /// When the session first became active; drives the stage's call timer.
     pub active_since: Option<std::time::Instant>,
     partial_item: Option<String>,
@@ -47,6 +51,9 @@ impl Default for VoiceController {
             microphone_level: 0,
             speaker_level: 0,
             stage_open: false,
+            host_name: None,
+            remote: false,
+            speaker_last_loud: None,
             active_since: None,
             partial_item: None,
             engine: None,
@@ -74,6 +81,7 @@ impl VoiceController {
         cx: &mut Context<Self>,
     ) {
         self.cancel(cx);
+        self.remote = std::env::var("ZERON_REMOTE_VOICE").as_deref() == Ok("1");
         // Hidden from every chat list; see `ORCHESTRATOR_CHAT_PREFIX`.
         let chat_id = format!("{ORCHESTRATOR_CHAT_PREFIX}{}", uuid::Uuid::new_v4());
         let request = StartVoice {
@@ -91,15 +99,17 @@ impl VoiceController {
         });
         self.engine = Some(engine.clone());
         self.phase = VoicePhase::Checking;
-        self.chat_id = Some(chat_id);
+        self.chat_id = (!self.remote).then_some(chat_id);
         self.reason = None;
         let epoch = self.epoch;
         let cancellation = self.cancellation.clone();
         let (controls, control_rx) = tokio::sync::mpsc::channel(8);
         self.controls = Some(controls);
         let (events, mut event_rx) = tokio::sync::mpsc::channel(32);
+        let remote = self.remote;
         let query = Tokio::spawn(cx, async move {
-            session::run(engine, create, request, cancellation, events, control_rx).await
+            if remote { remote::run(engine, request.host_device_id, config, request.voice, cancellation, events, control_rx).await }
+            else { session::run(engine, create, request, cancellation, events, control_rx).await }
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let receive = async {
@@ -193,6 +203,7 @@ impl VoiceController {
     }
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         let muted = self.muted();
+        if self.remote { if let Some(snapshot)=&mut self.snapshot { snapshot.muted=!muted; } cx.notify(); }
         if let Some(controls) = &self.controls {
             if controls.try_send(VoiceControl::Mute(!muted)).is_err() {
                 self.cancel(cx);
@@ -221,6 +232,8 @@ impl VoiceController {
     pub fn reduce(&mut self, event: VoiceEvent, cx: &mut Context<Self>) {
         match event {
             VoiceEvent::Snapshot { snapshot } => {
+                if self.remote && self.chat_id.is_none() { self.chat_id=Some(snapshot.chat_id.clone()); }
+
                 if self.chat_id.as_deref() != Some(snapshot.chat_id.as_str()) {
                     return;
                 }
@@ -267,6 +280,11 @@ impl VoiceController {
             {
                 self.microphone_level = microphone;
                 self.speaker_level = speaker;
+                if self.remote { if let Some(snapshot)=&mut self.snapshot {
+                    let threshold=if snapshot.playing {328}else{655};
+                    if speaker>=threshold {snapshot.playing=true;self.speaker_last_loud=Some(std::time::Instant::now());}
+                    else if self.speaker_last_loud.is_none_or(|t|t.elapsed()>=std::time::Duration::from_millis(250)){snapshot.playing=false;}
+                }}
             }
             // The final segment keeps showing as the caption until the next
             // item starts; the canonical copy is already in the transcript.

@@ -65,9 +65,15 @@ impl Shell {
                 model_options: Default::default(),
                 sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
             });
-        let voice = settings::current(cx).codex_voice;
+        let saved = settings::current(cx);
+        let device = if std::env::var("ZERON_REMOTE_VOICE").as_deref()==Ok("1") {
+            saved.codex_voice_device.unwrap_or(device)
+        } else { device };
+        let voice = saved.codex_voice;
+        let host_name = state.device_name(&device).unwrap_or("This device").to_owned();
         self.voice.update(cx, |controller, cx| {
             controller.start(engine, device, config, voice, cx);
+            controller.host_name = Some(host_name);
             controller.set_stage_open(true, cx);
         });
     }
@@ -538,6 +544,8 @@ impl Shell {
                     .text_color(popup.text_muted)
                     .child(SharedString::from(elapsed.unwrap_or_else(|| "–:––".into()))),
             );
+
+        let clock = clock.children(voice.host_name.clone().map(|name| div().text_size(crate::typography::ui_rems(12.0)).text_color(popup.text_faint).child(name)));
 
         // Microphone: inverted plate while muted.
         let mic = round_control("voice-bar-mic", &popup, muted)
