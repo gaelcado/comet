@@ -815,3 +815,40 @@ async fn failed_start_or_mute_emits_one_requested_stop_barrier_before_immediate_
         core.sessions.shutdown().await;
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "run with ZERON_REMOTE_VOICE=1; no provider or hardware access"]
+async fn remote_voice_full_control_flow_and_idempotent_prepare_without_host_audio() {
+    use zeron_proto::voice::{remote as wire, VoiceEvent};
+    assert_eq!(std::env::var("ZERON_REMOTE_VOICE").as_deref(),Ok("1"));
+    let temp=tempfile::tempdir().unwrap();
+    let core=native_core(&temp).await;
+    std::fs::remove_file(temp.path().join("codex-package/codex-resources/voice/bin/codex-voice-host")).unwrap();
+    let client=zeron_rpc::memory_client(core.rpc_service());
+    let request=wire::Prepare{attempt_key:wire::AttemptKey::new(),config:serde_json::from_value(json!({"harness":"codex","sandbox":"danger-full-access"})).unwrap(),voice:None};
+    let envelope=|p:serde_json::Value|json!({"targetDeviceId":core.device_id,"payload":p});
+    let call=envelope(serde_json::to_value(&request).unwrap());
+    let prepared:wire::Prepared=client.call_as(methods::PREPARE_VOICE_V2,call.clone()).await.unwrap();
+    let again:wire::Prepared=client.call_as(methods::PREPARE_VOICE_V2,call).await.unwrap();
+    assert_eq!(again.chat_id,prepared.chat_id);
+    assert_eq!(again.lease.voice.session_id,prepared.lease.voice.session_id);
+    assert!(prepared.chat_id.starts_with("voice-orchestrator-"));
+    let mut owner=client.subscribe_checked(methods::OWN_VOICE_V2,envelope(serde_json::to_value(&prepared.lease).unwrap())).await.unwrap();
+    assert!(client.subscribe_checked(methods::OWN_VOICE_V2,envelope(serde_json::to_value(&prepared.lease).unwrap())).await.is_err());
+    let id=wire::AttemptKey::new();
+    let negotiation=wire::Negotiate{lease:prepared.lease.clone(),negotiation_id:id.clone(),offer:wire::Sdp::new("fixture-offer".into()).unwrap()};
+    let reply:wire::Negotiated=client.call_as(methods::NEGOTIATE_VOICE_V2,envelope(serde_json::to_value(&negotiation).unwrap())).await.unwrap();
+    assert_eq!(reply.answer.expose(),"fixture-answer");
+    let repeat:wire::Negotiated=client.call_as(methods::NEGOTIATE_VOICE_V2,envelope(serde_json::to_value(&negotiation).unwrap())).await.unwrap();
+    assert_eq!(repeat.answer,reply.answer);
+    client.call(methods::CONFIRM_VOICE_MEDIA_V2,envelope(serde_json::to_value(wire::Confirm{lease:prepared.lease.clone(),negotiation_id:id,muted:false}).unwrap())).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3),async {
+        loop { if matches!(serde_json::from_value::<VoiceEvent>(owner.recv().await.unwrap()).unwrap(),VoiceEvent::Final{..}) {break;} }
+    }).await.unwrap();
+    drop(owner);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(client.call(methods::PREPARE_VOICE_V2,envelope(serde_json::to_value(request).unwrap())).await.is_err());
+    assert!(!temp.path().join("codex-package/helper-wire.jsonl").exists());
+    core.sessions.shutdown().await;
+}
