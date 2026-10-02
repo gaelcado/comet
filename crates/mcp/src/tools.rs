@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -270,7 +270,8 @@ struct DeviceArgs {
 
 #[derive(Clone, Default)]
 struct TurnStart {
-    since_millis: i64,
+    /// Transcript identities captured before dispatch; remote wall clocks
+    /// cannot tell whether a reply belongs after our local send.
     message_ids: Vec<String>,
 }
 
@@ -354,13 +355,6 @@ fn wait_duration(secs: Option<u64>) -> Duration {
     secs.map(Duration::from_secs)
         .unwrap_or(DEFAULT_WAIT)
         .min(MAX_WAIT)
-}
-
-fn now_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or_default()
 }
 
 fn parse_enum<T: serde::de::DeserializeOwned>(what: &str, raw: &str) -> Result<T, String> {
@@ -811,17 +805,14 @@ impl Tools {
                 last_seen_at: None,
                 room_gen: None,
             };
-            let sent_at = now_millis();
             let sent = self
                 .deliver(&chat, space.as_ref(), &harnesses, None, prompt, "run")
                 .await?;
             result["sent"] = sent;
             let pending = Arc::new(PendingTurn {
                 baseline: None,
-                start: TurnStart {
-                    since_millis: sent_at,
-                    message_ids: vec![],
-                },
+                // This newly minted chat has no prior transcript identities.
+                start: TurnStart::default(),
             });
             self.pending_turns
                 .lock()
@@ -897,7 +888,6 @@ impl Tools {
             .map(|m| m.id)
             .collect();
         let body = self.attribute(&chat, text).await;
-        let sent_at = now_millis();
         let mut result = json!({
             "chatId": chat.id,
             "title": chat.title,
@@ -907,10 +897,7 @@ impl Tools {
             .await?;
         let pending = Arc::new(PendingTurn {
             baseline,
-            start: TurnStart {
-                since_millis: sent_at,
-                message_ids,
-            },
+            start: TurnStart { message_ids },
         });
         self.pending_turns
             .lock()
@@ -1155,8 +1142,8 @@ impl Tools {
         Ok(turn)
     }
 
-    /// Wait, then report the outcome with the assistant messages that
-    /// landed since `since_millis`.
+    /// Wait for the session to settle, then collect assistant messages whose
+    /// ids were absent before dispatch, regardless of their host's wall clock.
     async fn await_turn(
         &self,
         chat: &Chat,
@@ -1198,9 +1185,7 @@ impl Tools {
             replies = rendered
                 .iter()
                 .filter(|m| m.role == zeron_doc::MessageRole::Assistant)
-                .filter(|m| {
-                    m.created_at >= start.since_millis && !start.message_ids.contains(&m.id)
-                })
+                .filter(|m| !start.message_ids.contains(&m.id))
                 .cloned()
                 .collect();
             if !expect_turn
@@ -1247,7 +1232,15 @@ mod tests {
     use async_trait::async_trait;
     use futures::StreamExt;
     use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use zeron_rpc::{RpcError, RpcReply, RpcService, memory_client, methods};
+
+    fn now_millis() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+    }
 
     /// Two devices with distinct catalogs and repeated project paths, plus
     /// two chats with a two-message transcript. Writes are recorded for assertions.
@@ -2024,6 +2017,7 @@ mod tests {
         sent: Mutex<Option<(i64, Instant, String)>>,
         reply_delay: Duration,
         never_reply: bool,
+        clock_offset_millis: i64,
     }
 
     #[async_trait]
@@ -2049,7 +2043,7 @@ mod tests {
                 methods::QUEUE_COMMAND => {
                     let reply = self.world.handle(method, params.clone()).await?;
                     *self.sent.lock().unwrap() = Some((
-                        now_millis(),
+                        now_millis() + self.clock_offset_millis,
                         Instant::now(),
                         params["chatId"].as_str().unwrap().into(),
                     ));
@@ -2074,9 +2068,14 @@ mod tests {
                 methods::WATCH_DOC_MESSAGES => {
                     let sent = self.sent.lock().unwrap().clone();
                     let mut messages = json!([{
-                        "id":"previous-reply", "role":"assistant", "createdAt":now_millis() - 1,
+                        "id":"previous-reply", "role":"assistant", "createdAt":now_millis() - 1 + self.clock_offset_millis,
                         "deviceId":"dev-remote", "status":"complete", "parts":[{"kind":"text", "id":"t", "text":"old reply"}]
                     }]);
+                    // Only the existing Beta chat has history. A freshly
+                    // minted chat starts empty even before its registry row arrives.
+                    if params["chatId"] != "chat-beta-2" {
+                        messages = json!([]);
+                    }
                     if let Some((timestamp, started, _)) = sent
                         && started.elapsed() >= self.reply_delay
                         && !self.never_reply
@@ -2086,14 +2085,12 @@ mod tests {
                             "deviceId":"dev-remote", "status":"complete", "parts":[{"kind":"text", "id":"t", "text":"new reply"}]
                         }));
                     }
-                    // The old message predates the send even when the transcript
-                    // snapshot is taken after completion.
-                    if let Some((timestamp, _, _)) = self.sent.lock().unwrap().as_ref() {
-                        messages[0]["createdAt"] = json!(if params["chatId"] == "chat-beta-2" {
-                            *timestamp
-                        } else {
-                            timestamp - 1_000
-                        });
+                    // Deliberately give the known old reply the same timestamp
+                    // as the new one: identity must distinguish them.
+                    if params["chatId"] == "chat-beta-2"
+                        && let Some((timestamp, _, _)) = self.sent.lock().unwrap().as_ref()
+                    {
+                        messages[0]["createdAt"] = json!(*timestamp);
                     }
                     Ok(stream(json!({"reset":messages})))
                 }
@@ -2113,6 +2110,7 @@ mod tests {
                 sent: Mutex::new(None),
                 reply_delay: Duration::from_millis(450),
                 never_reply: false,
+                clock_offset_millis: -1_000,
             });
             let tools = Tools::new(Arc::new(Zeron::with_client(
                 memory_client(service),
@@ -2151,6 +2149,7 @@ mod tests {
                 sent: Mutex::new(None),
                 reply_delay: Duration::from_millis(450),
                 never_reply: false,
+                clock_offset_millis: -1_000,
             });
             let tools = Tools::new(Arc::new(Zeron::with_client(
                 memory_client(service),
@@ -2196,6 +2195,7 @@ mod tests {
             sent: Mutex::new(None),
             reply_delay: Duration::ZERO,
             never_reply: true,
+            clock_offset_millis: 0,
         });
         let tools = Tools::new(Arc::new(Zeron::with_client(
             memory_client(service),
@@ -2210,6 +2210,60 @@ mod tests {
             .unwrap();
         assert_eq!(result["turn"]["outcome"], "timedOut");
         assert_eq!(result["turn"]["replies"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn remote_replies_do_not_require_synchronized_clocks() {
+        for clock_offset_millis in [-1_000, 1_000] {
+            for wait in [true, false] {
+                let service = Arc::new(DelayedTurn {
+                    world: World {
+                        beta_remote: true,
+                        ..Default::default()
+                    },
+                    sent: Mutex::new(None),
+                    reply_delay: Duration::from_millis(450),
+                    never_reply: false,
+                    clock_offset_millis,
+                });
+                let tools = Tools::new(Arc::new(Zeron::with_client(
+                    memory_client(service),
+                    Origin::default(),
+                )));
+                let sent = tools
+                    .call(
+                        "send_message",
+                        json!({
+                            "chat":"Beta", "text":"go", "wait":wait, "timeout_secs":2
+                        }),
+                    )
+                    .await
+                    .unwrap();
+                let result = if wait {
+                    sent
+                } else {
+                    tools
+                        .call(
+                            "wait_for_turn",
+                            json!({
+                                "chat":sent["chatId"], "timeout_secs":2
+                            }),
+                        )
+                        .await
+                        .unwrap()
+                };
+                assert_eq!(
+                    result["turn"]["outcome"], "completed",
+                    "offset={clock_offset_millis}, wait={wait}: {result}"
+                );
+                assert_eq!(
+                    result["turn"]["replies"].as_array().unwrap().len(),
+                    1,
+                    "{result}"
+                );
+                assert_eq!(result["turn"]["replies"][0]["id"], "new-reply");
+            }
+        }
     }
 
     #[tokio::test]
