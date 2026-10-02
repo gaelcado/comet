@@ -7,7 +7,8 @@ The dependency is pinned to [stasel/WebRTC 150.0.0](https://github.com/stasel/We
 whose Swift package declares binary SHA-256
 `f9890492b0016e4c88ab20f07867b8b420054caedc8a692b2ec6ac041f3cf6b2`.
 Xcode verifies this artifact checksum and records the resolved revision. Retain
-WebRTC's bundled notices when distributing; the package wraps the upstream native
+WebRTC's bundled notices when distributing (`Voice/WebRTC-LICENSE.txt` is copied
+from the pinned XCFramework and included as an app resource). The package wraps the upstream native
 SDK rather than reimplementing its codecs, echo cancellation or audio device.
 
 Contract reference: the [pinned Codex helper transport](https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/voice-host/src/transport.rs)

@@ -171,6 +171,7 @@ pub async fn run(
     events: mpsc::Sender<VoiceEvent>,
     muted: watch::Receiver<bool>,
 ) -> Result<(), VoiceRejection> {
+    let started = tokio::time::Instant::now();
     let local_cancel = cancel.child_token();
     let failure = Arc::new(Mutex::new(None));
     let mut scope = Scope {
@@ -182,6 +183,11 @@ pub async fn run(
         cancel: local_cancel.clone(),
     };
     let operation = async {
+        tracing::info!(
+            stage = "capabilities",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         let cap: wire::Capabilities = call(
             control.as_ref(),
             methods::VOICE_CAPABILITIES_V2,
@@ -192,7 +198,17 @@ pub async fn run(
         if !cap.client_webrtc || cap.protocol != wire::CAPABILITY {
             return Err(VoiceRejection::Unsupported);
         }
+        tracing::info!(
+            stage = "local_media",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         media.prepare().await?;
+        tracing::info!(
+            stage = "prepare_host",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         let prepared: wire::Prepared = call(
             control.as_ref(),
             methods::PREPARE_VOICE_V2,
@@ -205,6 +221,11 @@ pub async fn run(
         )
         .await?;
         *scope.lease.lock().unwrap() = Some(prepared.lease.clone());
+        tracing::info!(
+            stage = "attach_owner",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         let mut owner = control.own(&prepared.lease).await?;
         let lease = prepared.lease.clone();
         let owner_cancel = local_cancel.clone();
@@ -216,7 +237,9 @@ pub async fn run(
             let result = async {
                 while let Some(event) = owner.next().await {
                     let mut event = event?;
-                    if let VoiceEvent::Snapshot{snapshot}=&mut event { snapshot.muted=*owner_mute.borrow(); }
+                    if let VoiceEvent::Snapshot { snapshot } = &mut event {
+                        snapshot.muted = *owner_mute.borrow();
+                    }
                     let current = match &event {
                         VoiceEvent::Snapshot { snapshot } => {
                             snapshot.generation == lease.voice.generation
@@ -288,8 +311,18 @@ pub async fn run(
                 }
             }
         }));
+        tracing::info!(
+            stage = "local_offer",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         let offer = media.offer().await?;
         let negotiation_id = wire::AttemptKey::new();
+        tracing::info!(
+            stage = "negotiate",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         let answer: wire::Negotiated = call(
             control.as_ref(),
             methods::NEGOTIATE_VOICE_V2,
@@ -304,8 +337,18 @@ pub async fn run(
         if answer.negotiation_id != negotiation_id {
             return Err(VoiceRejection::Protocol);
         }
+        tracing::info!(
+            stage = "apply_answer",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         media.apply_answer(answer.answer).await?;
         let initial_muted = *muted.borrow();
+        tracing::info!(
+            stage = "confirm",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         let snapshot: VoiceSnapshot = call(
             control.as_ref(),
             methods::CONFIRM_VOICE_MEDIA_V2,
@@ -326,6 +369,11 @@ pub async fn run(
             return Err(VoiceRejection::InvalidLease);
         }
         let muted_now = *muted.borrow();
+        tracing::info!(
+            stage = "active",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote voice stage"
+        );
         media.set_muted(muted_now).await?;
         let mut muted = muted;
         let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -347,6 +395,7 @@ pub async fn run(
         result=operation=>result,
     };
     drop(scope);
+    tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, reason = ?result.as_ref().err(), "remote voice closed");
     result
 }
 
@@ -387,6 +436,7 @@ mod tests {
     }
     struct Control {
         supported: bool,
+        half_open: bool,
         calls: Mutex<Vec<String>>,
         lease: wire::Lease,
     }
@@ -394,6 +444,10 @@ mod tests {
     impl VoiceControlTransport for Control {
         async fn call(&self, method: &str, p: Value, _: u64) -> Result<Value, VoiceRejection> {
             self.calls.lock().unwrap().push(method.into());
+            if self.half_open && method == methods::REPORT_VOICE_MEDIA_V2 {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                return Err(VoiceRejection::Protocol);
+            }
             Ok(match method {
                 methods::VOICE_CAPABILITIES_V2 => json!(wire::Capabilities {
                     protocol: wire::CAPABILITY.into(),
@@ -438,6 +492,7 @@ mod tests {
     fn control(supported: bool) -> Arc<Control> {
         Arc::new(Control {
             supported,
+            half_open: false,
             calls: Default::default(),
             lease: wire::Lease {
                 host_device_id: "host".into(),
@@ -548,5 +603,31 @@ mod tests {
         task.abort();
         let _ = task.await;
         assert!(media.closed.load(Ordering::SeqCst));
+    }
+    #[tokio::test(start_paused = true)]
+    async fn half_open_heartbeat_closes_stalled_media_without_user_action() {
+        let media = Arc::new(Media {
+            prepared: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            block: true,
+        });
+        let mut control = control(true);
+        Arc::get_mut(&mut control).unwrap().half_open = true;
+        let (tx, _rx) = mpsc::channel(8);
+        let (_mute, muted) = watch::channel(false);
+        let started = tokio::time::Instant::now();
+        let result = run(
+            control,
+            media.clone(),
+            config(),
+            None,
+            CancellationToken::new(),
+            tx,
+            muted,
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), VoiceRejection::Protocol);
+        assert!(media.closed.load(Ordering::SeqCst));
+        assert!(started.elapsed() <= Duration::from_secs(wire::LEASE_SECS));
     }
 }

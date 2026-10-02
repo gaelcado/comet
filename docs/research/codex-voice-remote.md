@@ -3,7 +3,8 @@
 Status (2026-10-01): **G0 pending**. The diagnostic and its offline tests are
 implemented. No Mac/Fedora conversation, cross-network test, MCP roundtrip or
 iPhone test has been performed. Do not enable remote voice based on these tests.
-The current application voice path is unchanged.
+The V1 local path remains available. V2 desktop and iOS are now implemented
+behind a development gate; see [testing instructions](voice-remote-testing.md).
 
 ## Run the diagnostic
 
@@ -122,14 +123,17 @@ Bundled notice files cover LGPL-2.1, Opus, PCRE2, libffi, proxy-libintl, sljit a
 zlib. The package's `NOTICE.md` identifies the upstream Codex
 `third_party/voice/` build/projection/package scripts and references
 `manifest.json` for the source commit. This inventories existing provenance;
-**a reproducible standalone Zeron build, complete helper-source licensing
-review and signed relocation test have not been completed**. C02 must retain
-all required notices/resources and verify the complete artifact before shipping.
+C02 now verifies the pinned input hashes, projects all runtime resources, adds
+the helper source license, and signs the relocated helper and libraries with the
+bundle identity. A strict signature check passed for the local ARM64 projection.
+This reuses the pinned upstream binary; it does not claim an independent rebuild
+of every dependency from source.
 No binaries or credentials were copied into this repository.
 
 ## Remaining G0 evidence
 
-Required before dependent implementation commits:
+Remaining live acceptance (the user requested proceeding with implementation
+and will run these checks after it):
 
 1. Supply the Fedora SSH alias, absolute Codex path and working directory, with
    compatible subscription authentication already configured.
@@ -146,5 +150,8 @@ Required before dependent implementation commits:
 5. Record any provider restriction and resolve runtime redistribution/build
    requirements before committing the dependent product architecture.
 
-Access to Fedora has not yet been specified for this work. G0 remains pending;
-C02–C15 are not implemented. A physical iPhone will also be required at G3/G4.
+G0–G4 remain pending live validation. C02–C15 code is implemented,
+including the shared coordinator, remote engine control, desktop media runtime,
+UniFFI bridge and native iOS UI/audio. Automated tests cover a fake Codex host
+through two engines and the WebSocket relay; they do not establish live provider
+acceptance. A physical iPhone is required at G3/G4.

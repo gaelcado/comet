@@ -37,7 +37,8 @@ pub struct VoiceManager {
 #[derive(Default)]
 struct Inner {
     slot: Mutex<Option<Slot>>,
-    attempts: Mutex<std::collections::HashMap<zeron_proto::voice::remote::AttemptKey, remote::Attempt>>,
+    attempts:
+        Mutex<std::collections::HashMap<zeron_proto::voice::remote::AttemptKey, remote::Attempt>>,
     generation: AtomicU64,
     identity_epoch: AtomicU64,
     // A successor waits until the old native stop completes, even after its owner is dropped.
@@ -98,7 +99,12 @@ impl VoiceManager {
     pub(crate) fn reserve_at(&self, chat: &str, epoch: u64) -> Result<VoiceLease, VoiceRejection> {
         self.reserve_with_deadline(chat, epoch, 5)
     }
-    fn reserve_with_deadline(&self, chat: &str, epoch: u64, seconds: u64) -> Result<VoiceLease, VoiceRejection> {
+    fn reserve_with_deadline(
+        &self,
+        chat: &str,
+        epoch: u64,
+        seconds: u64,
+    ) -> Result<VoiceLease, VoiceRejection> {
         let mut state = self.inner.slot.lock().unwrap();
         if self.identity_epoch() != epoch {
             return Err(VoiceRejection::InvalidLease);
@@ -172,7 +178,9 @@ impl VoiceManager {
         }
         let events = slot.events.take().ok_or(VoiceRejection::InvalidLease)?;
         slot.owner_attached = true;
-        if let Some(remote) = &mut slot.remote { remote.last_report = Instant::now(); }
+        if let Some(remote) = &mut slot.remote {
+            remote.last_report = Instant::now();
+        }
         Ok(VoiceOwner {
             manager: self.clone(),
             lease,
@@ -277,7 +285,9 @@ impl VoiceManager {
         // The same lock covers reservation and identity changes: a pending probe
         // may never create a lease after account/profile retirement.
         self.inner.identity_epoch.fetch_add(1, Ordering::AcqRel);
-        for attempt in self.inner.attempts.lock().unwrap().values() { attempt.cancel.cancel(); }
+        for attempt in self.inner.attempts.lock().unwrap().values() {
+            attempt.cancel.cancel();
+        }
         self.inner.generation.fetch_add(1, Ordering::AcqRel);
         let old = state.take();
         drop(state);

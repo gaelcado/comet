@@ -9,6 +9,9 @@ on:
       - 'crates/rpc/**'
       - 'crates/client/**'
       - 'crates/mobile/**'
+      - 'apps/ios/Zeron/Voice/**'
+      - 'apps/ios/ZeronTests/RemoteVoiceLifecycleTests.swift'
+      - 'dist/voice/**'
       - 'scripts/package-voice-runtime.py'
       - 'crates/proto/src/voice.rs'
       - 'crates/harness/**'
@@ -58,6 +61,7 @@ jobs:
         run: |
           cargo test --locked -p zeron-voice-media --lib
           cargo test --locked -p zeron-voice-session --lib
+          cargo test --locked -p zeron-mobile --lib voice
           cargo test --locked -p zeron-proto voice --lib
           cargo test --locked -p zeron-harness --lib
           cargo test --locked -p zeron-harness --test codex --test acp

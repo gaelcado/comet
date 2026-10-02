@@ -65,9 +65,19 @@ pub(crate) struct WatchKey {
 }
 
 impl Relay {
-    pub(crate) async fn voice_transport(&self, device_id: &str) -> Result<Arc<zeron_voice_session::RpcTransport>> {
-        let client=self.links.client(device_id).await.map_err(|e|map_rpc(device_id,methods::VOICE_CAPABILITIES_V2,e))?;
-        Ok(Arc::new(zeron_voice_session::RpcTransport{client,host:device_id.into()}))
+    pub(crate) async fn voice_transport(
+        &self,
+        device_id: &str,
+    ) -> Result<Arc<zeron_voice_session::RpcTransport>> {
+        let client = self
+            .links
+            .client(device_id)
+            .await
+            .map_err(|e| map_rpc(device_id, methods::VOICE_CAPABILITIES_V2, e))?;
+        Ok(Arc::new(zeron_voice_session::RpcTransport {
+            client,
+            host: device_id.into(),
+        }))
     }
 
     pub(crate) fn new(inner: &Arc<ClientInner>, edge: &str, bearer: Bearer) -> Self {

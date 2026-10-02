@@ -35,6 +35,7 @@ def install(package, destination, identity):
     with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
         stage = Path(temporary) / 'voice'
         shutil.copytree(source, stage)
+        shutil.copyfile(Path(__file__).resolve().parents[1] / "dist/voice/Codex-LICENSE.txt", stage / "licenses/Codex-LICENSE.txt")
         # Inside-out signing with the app identity allows hardened library load.
         for path in sorted(stage.rglob('*')):
             if path.is_file() and (path.suffix == '.dylib' or path.name == 'codex-voice-host'):

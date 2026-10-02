@@ -8,8 +8,8 @@ use gpui::{Context, Task};
 use gpui_tokio::Tokio;
 use zeron_proto::voice::*;
 mod permissions;
-mod session;
 mod remote;
+mod session;
 
 pub enum VoiceControl {
     Mute(bool),
@@ -108,8 +108,20 @@ impl VoiceController {
         let (events, mut event_rx) = tokio::sync::mpsc::channel(32);
         let remote = self.remote;
         let query = Tokio::spawn(cx, async move {
-            if remote { remote::run(engine, request.host_device_id, config, request.voice, cancellation, events, control_rx).await }
-            else { session::run(engine, create, request, cancellation, events, control_rx).await }
+            if remote {
+                remote::run(
+                    engine,
+                    request.host_device_id,
+                    config,
+                    request.voice,
+                    cancellation,
+                    events,
+                    control_rx,
+                )
+                .await
+            } else {
+                session::run(engine, create, request, cancellation, events, control_rx).await
+            }
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let receive = async {
@@ -203,7 +215,12 @@ impl VoiceController {
     }
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         let muted = self.muted();
-        if self.remote { if let Some(snapshot)=&mut self.snapshot { snapshot.muted=!muted; } cx.notify(); }
+        if self.remote {
+            if let Some(snapshot) = &mut self.snapshot {
+                snapshot.muted = !muted;
+            }
+            cx.notify();
+        }
         if let Some(controls) = &self.controls {
             if controls.try_send(VoiceControl::Mute(!muted)).is_err() {
                 self.cancel(cx);
@@ -232,8 +249,14 @@ impl VoiceController {
     pub fn reduce(&mut self, event: VoiceEvent, cx: &mut Context<Self>) {
         match event {
             VoiceEvent::Snapshot { mut snapshot } => {
-                if self.remote { if let Some(previous)=&self.snapshot { snapshot.playing=previous.playing; } }
-                if self.remote && self.chat_id.is_none() { self.chat_id=Some(snapshot.chat_id.clone()); }
+                if self.remote {
+                    if let Some(previous) = &self.snapshot {
+                        snapshot.playing = previous.playing;
+                    }
+                }
+                if self.remote && self.chat_id.is_none() {
+                    self.chat_id = Some(snapshot.chat_id.clone());
+                }
 
                 if self.chat_id.as_deref() != Some(snapshot.chat_id.as_str()) {
                     return;
@@ -281,11 +304,20 @@ impl VoiceController {
             {
                 self.microphone_level = microphone;
                 self.speaker_level = speaker;
-                if self.remote { if let Some(snapshot)=&mut self.snapshot {
-                    let threshold=if snapshot.playing {328}else{655};
-                    if speaker>=threshold {snapshot.playing=true;self.speaker_last_loud=Some(std::time::Instant::now());}
-                    else if self.speaker_last_loud.is_none_or(|t|t.elapsed()>=std::time::Duration::from_millis(250)){snapshot.playing=false;}
-                }}
+                if self.remote {
+                    if let Some(snapshot) = &mut self.snapshot {
+                        let threshold = if snapshot.playing { 328 } else { 655 };
+                        if speaker >= threshold {
+                            snapshot.playing = true;
+                            self.speaker_last_loud = Some(std::time::Instant::now());
+                        } else if self
+                            .speaker_last_loud
+                            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(250))
+                        {
+                            snapshot.playing = false;
+                        }
+                    }
+                }
             }
             // The final segment keeps showing as the caption until the next
             // item starts; the canonical copy is already in the transcript.

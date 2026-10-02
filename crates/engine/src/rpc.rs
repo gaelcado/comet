@@ -1351,8 +1351,12 @@ where
 }
 
 fn forward_deadline(method: &str) -> std::time::Duration {
-    if method == methods::PREPARE_VOICE_V2 { return Duration::from_secs(65); }
-    if method == methods::NEGOTIATE_VOICE_V2 { return Duration::from_secs(95); }
+    if method == methods::PREPARE_VOICE_V2 {
+        return Duration::from_secs(65);
+    }
+    if method == methods::NEGOTIATE_VOICE_V2 {
+        return Duration::from_secs(95);
+    }
     use std::time::Duration;
     match method {
         methods::CLONE_REPO | methods::FETCH_ALL | methods::APPLY_UPDATE => {
@@ -1380,7 +1384,9 @@ const LOGIN_TUNNEL_TTL: Duration = Duration::from_secs(15 * 60);
 /// list (plus [`is_stream_method`] for streams) to make more of the surface
 /// device-addressable — the handlers themselves need no changes.
 fn forwardable(method: &str) -> bool {
-    if voice_remote::handles(method) { return true; }
+    if voice_remote::handles(method) {
+        return true;
+    }
     matches!(
         method,
         methods::FORK_SIDE_CHAT
@@ -1479,7 +1485,9 @@ fn forwardable(method: &str) -> bool {
 
 /// Forwardable methods whose reply is a stream (proxied item-by-item).
 fn is_stream_method(method: &str) -> bool {
-    if method == methods::OWN_VOICE_V2 { return true; }
+    if method == methods::OWN_VOICE_V2 {
+        return true;
+    }
     matches!(
         method,
         methods::WATCH_DOC_MESSAGES
@@ -1775,7 +1783,9 @@ impl RpcService for EngineRpc {
         ) {
             self.voice.retire();
         }
-        if voice_remote::handles(method) { return self.voice_remote(method, params).await; }
+        if voice_remote::handles(method) {
+            return self.voice_remote(method, params).await;
+        }
         if AuthRpc::handles(method) {
             return AuthRpc::new(self.auth()?.clone())
                 .handle(method, params)

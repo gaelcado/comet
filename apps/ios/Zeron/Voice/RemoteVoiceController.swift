@@ -76,8 +76,8 @@ final class RemoteVoiceController {
         case "snapshot":
             if let snapshot = event["snapshot"] as? [String: Any] { phase = snapshot["phase"] as? String ?? phase }
         case "partial":
-            let item = event["item_id"] as? String
-            guard item.map({ !finals.contains($0) }) ?? true else { return }
+            let item = event["item_id"] as? String ?? ""
+            guard !finals.contains(item) else { return }
             if partialItem != item || partialItem == nil { caption = "" }
             partialItem = item
             caption = String((caption + (event["text"] as? String ?? "")).suffix(32_768))

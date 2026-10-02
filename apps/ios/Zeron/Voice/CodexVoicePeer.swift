@@ -21,7 +21,7 @@ final class CodexVoicePeer: NSObject {
     func prepare() async throws {
         guard !closed else { throw Failure.closed }
         guard await AVAudioApplication.requestRecordPermission() else { throw Failure.unavailable }
-        guard !closed else { throw Failure.closed }
+        guard !closed, UIApplication.shared.applicationState != .background else { throw Failure.closed }
         let audio = RTCAudioSession.sharedInstance()
         audio.useManualAudio = true
         audio.isAudioEnabled = false
@@ -124,7 +124,7 @@ final class CodexVoicePeer: NSObject {
         audio.unlockForConfiguration()
     }
 
-    private func fail() { close(); onFailure?() }
+    private func fail() { guard !closed else { return }; close(); onFailure?() }
     private func waitUntil(_ ready: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(25))
         while !ready() {
@@ -146,7 +146,7 @@ final class CodexVoicePeer: NSObject {
 }
 
 /// A cancelled operation can receive a late RTC callback, exactly once.
-private final class VoiceContinuation<T>: @unchecked Sendable {
+final class VoiceContinuation<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Error>?
     private var result: Result<T, Error>?

@@ -258,19 +258,43 @@ impl CoreClient {
 mod tests {
     use super::*;
     struct Listener(Mutex<Vec<u64>>);
-    impl VoiceMediaListener for Listener {fn on_request(&self,r:VoiceMediaRequest){self.0.lock().unwrap().push(r.request_id);}}
+    impl VoiceMediaListener for Listener {
+        fn on_request(&self, r: VoiceMediaRequest) {
+            self.0.lock().unwrap().push(r.request_id);
+        }
+    }
     #[tokio::test]
     async fn close_releases_pending_callbacks_and_rejects_late_replies() {
-        let listener=Arc::new(Listener(Mutex::new(vec![])));
-        let media=Arc::new(PlatformMedia{listener:listener.clone(),pending:Default::default(),next:AtomicU64::new(0),closed:AtomicBool::new(false)});
-        let clone=media.clone();let task=tokio::spawn(async move{clone.offer().await});
+        let listener = Arc::new(Listener(Mutex::new(vec![])));
+        let media = Arc::new(PlatformMedia {
+            listener: listener.clone(),
+            pending: Default::default(),
+            next: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
+        });
+        let clone = media.clone();
+        let task = tokio::spawn(async move { clone.offer().await });
         tokio::task::yield_now().await;
-        media.close();assert!(task.await.unwrap().is_err());
+        media.close();
+        assert!(task.await.unwrap().is_err());
         assert!(media.pending.lock().unwrap().is_empty());
-        let (muted,_)=watch::channel(false);
-        let call=VoiceCall{media:media.clone(),cancel:CancellationToken::new(),muted};
-        call.complete_media(1,true,Some("late SDP".into()),0,0);
+        let (muted, _) = watch::channel(false);
+        let call = VoiceCall {
+            media: media.clone(),
+            cancel: CancellationToken::new(),
+            muted,
+        };
+        call.complete_media(1, true, Some("late SDP".into()), 0, 0);
         assert!(media.offer().await.is_err());
-        assert_eq!(listener.0.lock().unwrap().iter().filter(|id|**id==0).count(),1);
+        assert_eq!(
+            listener
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|id| **id == 0)
+                .count(),
+            1
+        );
     }
 }
