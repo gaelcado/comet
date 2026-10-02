@@ -86,9 +86,14 @@ impl Shell {
     /// another thread or to Settings steps the stage aside; voice continues.
     pub(super) fn sync_voice_stage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.state.read(cx).selected_chat.clone();
+        let navigating_to_settings =
+            self.route != self.voice_stage_route && matches!(self.route, Route::Settings(_));
+        // Record every render, even with no visibility change: leaving and
+        // reentering the same settings page must count as navigation too.
+        self.voice_stage_route = self.route;
         if self.voice.read(cx).stage_open
             && self.voice_stage_was_open
-            && (matches!(self.route, Route::Settings(_)) || selected != self.voice_stage_selection)
+            && (navigating_to_settings || selected != self.voice_stage_selection)
         {
             self.set_voice_stage_open(false, cx);
         }
@@ -761,6 +766,113 @@ mod tests {
         cx.simulate_mouse_down(body, MouseButton::Left, gpui::Modifiers::default());
         shell.read_with(cx, |shell, _| assert!(!shell.titlebar_should_move));
         cx.simulate_mouse_up(body, MouseButton::Left, gpui::Modifiers::default());
+    }
+
+    #[gpui::test]
+    fn voice_stage_can_start_and_reopen_in_settings_until_navigation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        struct StageHost(Entity<Shell>);
+        impl Render for StageHost {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                self.0.update(cx, |shell, cx| {
+                    shell.sync_voice_stage(window, cx);
+                    div()
+                        .size_full()
+                        .children(shell.render_voice_stage(window, cx))
+                })
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+        });
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            StageHost(cx.new(|cx| {
+                let state = cx.new(|_| AppState::new());
+                let mut shell = Shell::new(
+                    state,
+                    EngineBootConfig {
+                        data_dir: dir.path().into(),
+                        ipc_port: 0,
+                        edge_url: "http://127.0.0.1:1".into(),
+                        edge_token: None,
+                        org_id: None,
+                        workos_client_id: None,
+                        default_harness: HarnessId::Mock,
+                    },
+                    cx,
+                );
+                shell.reduced_motion = true;
+                shell.route = Route::Settings(SettingsSection::Voice);
+                // The initial stage opens while native voice is still preparing.
+                shell.voice.update(cx, |voice, cx| {
+                    voice.phase = VoicePhase::Checking;
+                    voice.set_stage_open(true, cx);
+                });
+                shell
+            }))
+        });
+        let shell = host.read_with(cx, |host, _| host.0.clone());
+        let stays_open = |cx: &mut gpui::VisualTestContext| {
+            for _ in 0..3 {
+                cx.update(|window, cx| window.draw(cx).clear());
+                shell.read_with(cx, |shell, cx| assert!(shell.voice.read(cx).stage_open));
+                assert!(cx.debug_bounds("voice-stage").is_some());
+            }
+        };
+        stays_open(cx);
+
+        shell.update(cx, |shell, cx| {
+            shell
+                .voice
+                .update(cx, |voice, _| voice.phase = VoicePhase::Active);
+            shell.set_voice_stage_open(false, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        shell.update(cx, |shell, cx| shell.set_voice_stage_open(true, cx));
+        stays_open(cx);
+
+        // Choosing another settings page hides the stage without ending voice.
+        shell.update(cx, |shell, cx| {
+            shell.open_settings(SettingsSection::General, cx)
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        shell.read_with(cx, |shell, cx| {
+            assert!(!shell.voice.read(cx).stage_open);
+            assert!(shell.voice.read(cx).is_live());
+        });
+        shell.update(cx, |shell, cx| shell.set_voice_stage_open(true, cx));
+        stays_open(cx);
+
+        // Leaving and reentering the same settings page is navigation too.
+        shell.update(cx, |shell, _| shell.route = Route::Chat);
+        cx.update(|window, cx| window.draw(cx).clear());
+        shell.update(cx, |shell, cx| {
+            shell.open_settings(SettingsSection::General, cx)
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        shell.read_with(cx, |shell, cx| {
+            assert!(!shell.voice.read(cx).stage_open);
+            assert!(shell.voice.read(cx).is_live());
+        });
+
+        shell.update(cx, |shell, cx| shell.set_voice_stage_open(true, cx));
+        stays_open(cx);
+        shell.update(cx, |shell, cx| {
+            shell.state.update(cx, |state, _| {
+                state.selected_chat = Some("another-chat".into())
+            });
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        shell.read_with(cx, |shell, cx| {
+            assert!(!shell.voice.read(cx).stage_open);
+            assert!(shell.voice.read(cx).is_live());
+        });
     }
 
     #[gpui::test]

@@ -1777,6 +1777,8 @@ pub struct Shell {
     voice_composer_orb: Entity<crate::orb::Orb>,
     voice_stage_focus: FocusHandle,
     voice_stage_was_open: bool,
+    /// Last rendered route, used to distinguish navigation from staying in Settings.
+    voice_stage_route: Route,
     voice_stage_changed_at: Option<std::time::Instant>,
     /// The chat selected when the stage opened; picking another closes it.
     voice_stage_selection: Option<String>,
@@ -2297,6 +2299,7 @@ impl Shell {
             voice_composer_orb,
             voice_stage_focus: cx.focus_handle(),
             voice_stage_was_open: false,
+            voice_stage_route: Route::Chat,
             voice_stage_changed_at: None,
             voice_stage_selection: None,
             _voice_observation: voice_observation,
