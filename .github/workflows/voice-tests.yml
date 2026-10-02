@@ -3,6 +3,13 @@ on:
   pull_request:
     paths:
       - 'crates/audio/**'
+      - 'crates/voice-media/**'
+      - 'crates/voice-session/**'
+      - 'crates/proto/src/voice/**'
+      - 'crates/rpc/**'
+      - 'crates/client/**'
+      - 'crates/mobile/**'
+      - 'scripts/package-voice-runtime.py'
       - 'crates/proto/src/voice.rs'
       - 'crates/harness/**'
       - 'crates/engine/**'
@@ -49,12 +56,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Protocol, transport and idle runtime (no provider access)
         run: |
+          cargo test --locked -p zeron-voice-media --lib
+          cargo test --locked -p zeron-voice-session --lib
           cargo test --locked -p zeron-proto voice --lib
           cargo test --locked -p zeron-harness --lib
           cargo test --locked -p zeron-harness --test codex --test acp
           cargo test --locked -p zeron-doc voice --lib
           cargo test --locked -p zeron-engine --lib voice
           cargo test --locked -p zeron-engine --test voice_runtime
+          ZERON_REMOTE_VOICE=1 cargo test --locked -p zeron-engine --test voice_runtime remote_ -- --ignored
+          cargo test --locked -p zeron-engine --test device_routing
+          cargo test --locked -p zeron-rpc --test device_room
           cargo test --locked -p zeron-mcp --lib
       - name: Native audio and WebRTC AEC3
         run: cargo test --locked -p zeron-audio --features aec --lib
@@ -62,7 +74,7 @@ jobs:
         run: |
           cargo check --locked -p zeron-ui --features voice-experimental
           cargo test --locked -p zeron-ui --test voice_orb_geometry
-          cargo test --locked -p zeron-ui --lib voice
+          cargo test --locked -p zeron-ui --lib voice -- --test-threads=1
 
   native-platform-check:
     strategy:
