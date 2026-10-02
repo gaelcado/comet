@@ -231,7 +231,8 @@ impl VoiceController {
 
     pub fn reduce(&mut self, event: VoiceEvent, cx: &mut Context<Self>) {
         match event {
-            VoiceEvent::Snapshot { snapshot } => {
+            VoiceEvent::Snapshot { mut snapshot } => {
+                if self.remote { if let Some(previous)=&self.snapshot { snapshot.playing=previous.playing; } }
                 if self.remote && self.chat_id.is_none() { self.chat_id=Some(snapshot.chat_id.clone()); }
 
                 if self.chat_id.as_deref() != Some(snapshot.chat_id.as_str()) {

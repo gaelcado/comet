@@ -852,3 +852,33 @@ async fn remote_voice_full_control_flow_and_idempotent_prepare_without_host_audi
     assert!(!temp.path().join("codex-package/helper-wire.jsonl").exists());
     core.sessions.shutdown().await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "run with ZERON_REMOTE_VOICE=1; no provider or hardware access"]
+async fn remote_cancel_before_prepare_and_owner_drop_preserve_other_calls() {
+    use zeron_proto::voice::remote as wire;
+    assert_eq!(std::env::var("ZERON_REMOTE_VOICE").as_deref(),Ok("1"));
+    let temp=tempfile::tempdir().unwrap();let core=native_core(&temp).await;
+    let client=zeron_rpc::memory_client(core.rpc_service());
+    let wrap=|p:serde_json::Value|json!({"targetDeviceId":core.device_id,"payload":p});
+    let config=serde_json::from_value(json!({"harness":"codex","sandbox":"danger-full-access"})).unwrap();
+    let mut request=wire::Prepare{attempt_key:wire::AttemptKey::new(),config,voice:None};
+    client.call(methods::CANCEL_VOICE_ATTEMPT_V2,wrap(json!({"attemptKey":request.attempt_key}))).await.unwrap();
+    assert!(client.call(methods::PREPARE_VOICE_V2,wrap(json!(request))).await.is_err());
+    assert!(!temp.path().join("codex-package/voice-wire.jsonl").exists());
+    request.attempt_key=wire::AttemptKey::new();
+    let prepared:wire::Prepared=client.call_as(methods::PREPARE_VOICE_V2,wrap(json!(request))).await.unwrap();
+    let owner=client.subscribe_checked(methods::OWN_VOICE_V2,wrap(json!(prepared.lease))).await.unwrap();
+    drop(owner);
+    tokio::time::timeout(std::time::Duration::from_secs(3),async {
+        while core.workspace.chat(&prepared.chat_id).unwrap().is_some(){tokio::time::sleep(std::time::Duration::from_millis(20)).await;}
+    }).await.unwrap();
+    let _:zeron_proto::EngineInfo=client.call_as(methods::ENGINE_INFO,json!({})).await.unwrap();
+    // The dropped voice stream did not close the connection or another generation.
+    request.attempt_key=wire::AttemptKey::new();
+    let next:wire::Prepared=client.call_as(methods::PREPARE_VOICE_V2,wrap(json!(request))).await.unwrap();
+    client.call(methods::STOP_VOICE_V2,wrap(json!(prepared.lease))).await.unwrap();
+    let next_owner=client.subscribe_checked(methods::OWN_VOICE_V2,wrap(json!(next.lease))).await.unwrap();
+    drop(next_owner);core.sessions.shutdown().await;
+}

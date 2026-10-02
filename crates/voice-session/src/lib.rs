@@ -211,10 +211,12 @@ pub async fn run(
         let owner_events = events.clone();
         let owner_failure = failure.clone();
         let owner_media = media.clone();
+        let owner_mute = muted.clone();
         scope.tasks.push(tokio::spawn(async move {
             let result = async {
                 while let Some(event) = owner.next().await {
-                    let event = event?;
+                    let mut event = event?;
+                    if let VoiceEvent::Snapshot{snapshot}=&mut event { snapshot.muted=*owner_mute.borrow(); }
                     let current = match &event {
                         VoiceEvent::Snapshot { snapshot } => {
                             snapshot.generation == lease.voice.generation

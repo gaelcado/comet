@@ -22,6 +22,7 @@ pub(super) struct RemoteSlot {
     confirm_deadline: Option<Instant>,
     negotiation: Option<Negotiation>,
     confirmed: bool,
+    attempted: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl VoiceManager {
@@ -195,6 +196,9 @@ impl VoiceManager {
             if !matches!(&*n.result.borrow(), Some(Ok(_))) {
                 return Err(VoiceRejection::Protocol);
             }
+            if r.confirm_deadline.is_some_and(|d| Instant::now() >= d) {
+                return Err(VoiceRejection::InvalidLease);
+            }
             if !r.confirmed {
                 s.snapshot.muted = p.muted;
             }
@@ -234,6 +238,7 @@ impl VoiceManager {
                     offer: p.offer.clone(),
                     result: result.clone(),
                 });
+                r.attempted.store(true, Ordering::Release);
                 let bridge = s.provider.clone().ok_or(VoiceRejection::Protocol)?;
                 let voice = s.snapshot.voice.clone();
                 let cancel = s.cancel.clone();
@@ -311,6 +316,7 @@ impl VoiceManager {
             return Err(VoiceRejection::InvalidLease);
         }
         let lease = self.reserve_with_deadline(&chat, epoch, 15)?;
+        let attempted = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel = {
             let mut state = self.inner.slot.lock().unwrap();
             let s = state
@@ -324,6 +330,7 @@ impl VoiceManager {
                 confirm_deadline: None,
                 negotiation: None,
                 confirmed: false,
+                attempted: attempted.clone(),
             });
             s.provider = Some(bridge.clone());
             s.snapshot.voice = voice;
@@ -389,6 +396,11 @@ impl VoiceManager {
             let _ = manager.finish(&lease, result.err());
             // A terminal attempt cannot replay a successful but dead lease.
             attempt.cancel();
+            let empty = doc.watch_messages().borrow().entries.is_empty();
+            if !attempted.load(Ordering::Acquire) && empty {
+                let _ = sessions.interrupt(&chat).await;
+                let _ = workspace.delete_chat(&chat);
+            }
         });
         Ok(prepared)
     }
@@ -448,6 +460,7 @@ mod tests {
                 confirm_deadline: None,
                 negotiation: None,
                 confirmed: false,
+                attempted: Arc::default(),
             });
         }
         let lease = wire::Lease {
