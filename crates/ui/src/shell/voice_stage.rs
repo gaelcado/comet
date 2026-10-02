@@ -253,6 +253,60 @@ impl Shell {
             .into_any_element()
     }
 
+    /// The live orb above the orchestrator chat's composer. Every other chat
+    /// keeps its plain composer; pressing the orb returns to the stage.
+    pub(super) fn render_voice_composer_orb(
+        &mut self,
+        composer_width: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let voice = self.voice.read(cx);
+        let shown = matches!(self.route, Route::Chat)
+            && voice.is_live()
+            && voice.chat_id.is_some()
+            && voice.chat_id == self.state.read(cx).selected_chat;
+        let (orb_state, microphone, speaker) = (
+            voice.orb_state(),
+            voice.microphone_level(),
+            voice.speaker_level(),
+        );
+        let reduced = self.reduced_motion;
+        self.voice_composer_orb.update(cx, |orb, cx| {
+            orb.set_visible(shown, cx);
+            orb.set_state(orb_state, cx);
+            orb.set_audio_levels(microphone, speaker, cx);
+            orb.set_reduced_motion(reduced, cx);
+        });
+        if !shown {
+            return None;
+        }
+        let orb = div()
+            .id("voice-composer-orb")
+            .debug_selector(|| "voice-composer-orb".into())
+            .role(gpui::Role::Button)
+            .aria_label("Open voice")
+            .tab_index(0)
+            .rounded_full()
+            .cursor_pointer()
+            .tooltip(stage_tooltip("Open voice"))
+            .on_click(cx.listener(|this, _, _, cx| this.set_voice_stage_open(true, cx)))
+            .child(self.voice_composer_orb.clone());
+        Some(
+            motion::fade_in(
+                "voice-composer-orb-in",
+                div()
+                    .w_full()
+                    .max_w(px(composer_width))
+                    .mx_auto()
+                    .pb(px(4.0))
+                    .flex()
+                    .justify_center()
+                    .child(orb),
+            )
+            .into_any_element(),
+        )
+    }
+
     /// Full-window stage: the session's orb over the new-thread hero artwork,
     /// live caption, and the session controls. Escape returns to the chats
     /// without ending voice.
@@ -707,6 +761,72 @@ mod tests {
         cx.simulate_mouse_down(body, MouseButton::Left, gpui::Modifiers::default());
         shell.read_with(cx, |shell, _| assert!(!shell.titlebar_should_move));
         cx.simulate_mouse_up(body, MouseButton::Left, gpui::Modifiers::default());
+    }
+
+    #[gpui::test]
+    fn composer_orb_shows_only_on_the_orchestrator_chat_and_returns_to_the_call(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        struct OrbHost(Entity<Shell>);
+        impl Render for OrbHost {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                self.0.update(cx, |shell, cx| {
+                    div()
+                        .size_full()
+                        .children(shell.render_voice_composer_orb(600.0, cx))
+                })
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::default());
+            crate::app_menus::init(cx);
+            settings::init(settings::UiSettings::default(), dir.path(), cx);
+        });
+        let orchestrator = format!("{}1", zeron_proto::voice::ORCHESTRATOR_CHAT_PREFIX);
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            OrbHost(cx.new(|cx| {
+                let state = cx.new(|_| AppState::new());
+                let shell = Shell::new(
+                    state,
+                    EngineBootConfig {
+                        data_dir: dir.path().into(),
+                        ipc_port: 0,
+                        edge_url: "http://127.0.0.1:1".into(),
+                        edge_token: None,
+                        org_id: None,
+                        workos_client_id: None,
+                        default_harness: HarnessId::Mock,
+                    },
+                    cx,
+                );
+                shell.voice.update(cx, |voice, _| {
+                    voice.phase = VoicePhase::Active;
+                    voice.chat_id = Some(orchestrator.clone());
+                });
+                shell
+            }))
+        });
+        let shell = host.read_with(cx, |host, _| host.0.clone());
+        let select = |chat: &str, cx: &mut gpui::VisualTestContext| {
+            let chat = chat.to_owned();
+            shell.update(cx, |shell, cx| {
+                shell
+                    .state
+                    .update(cx, |state, _| state.selected_chat = Some(chat));
+            });
+            cx.update(|window, cx| window.draw(cx).clear());
+        };
+
+        select("another-chat", cx);
+        assert!(cx.debug_bounds("voice-composer-orb").is_none());
+
+        select(&orchestrator, cx);
+        let orb = cx.debug_bounds("voice-composer-orb").unwrap();
+        cx.simulate_click(orb.center(), gpui::Modifiers::default());
+        shell.read_with(cx, |shell, cx| assert!(shell.voice.read(cx).stage_open));
     }
 
     #[test]

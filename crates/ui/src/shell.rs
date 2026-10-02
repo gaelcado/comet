@@ -1773,6 +1773,8 @@ pub struct Shell {
     /// Sidebar footer orb (session live) and the full-window stage's orb.
     voice_footer_orb: Entity<crate::orb::Orb>,
     voice_stage_orb: Entity<crate::orb::Orb>,
+    /// Above the composer, only while the orchestrator's own chat is open.
+    voice_composer_orb: Entity<crate::orb::Orb>,
     voice_stage_focus: FocusHandle,
     voice_stage_was_open: bool,
     voice_stage_changed_at: Option<std::time::Instant>,
@@ -2125,6 +2127,12 @@ impl Shell {
                 .scale(VOICE_STAGE_ORB_SCALE)
                 .visible(false)
         });
+        let voice_composer_orb = cx.new(|_| {
+            crate::orb::Orb::new()
+                .size(crate::orb::OrbSize::Avatar)
+                .state_transition(Duration::from_millis(300))
+                .visible(false)
+        });
         let voice_observation = cx.observe(&voice, |_: &mut Shell, _, cx| cx.notify());
         let links = Self::session_links(None, cx);
         transcript.update(cx, |transcript, _| {
@@ -2286,6 +2294,7 @@ impl Shell {
             voice,
             voice_footer_orb,
             voice_stage_orb,
+            voice_composer_orb,
             voice_stage_focus: cx.focus_handle(),
             voice_stage_was_open: false,
             voice_stage_changed_at: None,
@@ -10293,6 +10302,7 @@ impl Shell {
                         .absolute()
                         .inset_0(),
                     )
+                    .children(self.render_voice_composer_orb(composer_width, cx))
                     .child(status)
                     .when(has_spaces || no_project || has_appshots, |el| {
                         let composer_opacity = self.composer_dock.borrow().opacity();
