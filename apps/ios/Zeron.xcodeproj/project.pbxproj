@@ -73,11 +73,21 @@
 		A3000000000000000000PR01 /* ZeronUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZeronUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXBuildFile section */
+        B71000000000000000000001 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = B71000000000000000000002 /* WebRTC */; };
+/* End PBXBuildFile section */
+/* Begin XCRemoteSwiftPackageReference section */
+        B71000000000000000000003 /* WebRTC */ = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/stasel/WebRTC.git"; requirement = {kind = exactVersion; version = 150.0.0; }; };
+/* End XCRemoteSwiftPackageReference section */
+/* Begin XCSwiftPackageProductDependency section */
+        B71000000000000000000002 /* WebRTC */ = {isa = XCSwiftPackageProductDependency; package = B71000000000000000000003; productName = WebRTC; };
+/* End XCSwiftPackageProductDependency section */
 /* Begin PBXFrameworksBuildPhase section */
 		A1000000000000000000F001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                B71000000000000000000001 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -125,7 +135,7 @@
 			);
 			name = Zeron;
 			packageProductDependencies = (
-			);
+                B71000000000000000000002 /* WebRTC */,			);
 			productName = Zeron;
 			productReference = A1000000000000000000PR01 /* Zeron.app */;
 			productType = "com.apple.product-type.application";
@@ -177,6 +187,7 @@
 /* Begin PBXProject section */
 		A1000000000000000000PJ01 /* Project object */ = {
 			isa = PBXProject;
+            packageReferences = (B71000000000000000000003);
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2630;
