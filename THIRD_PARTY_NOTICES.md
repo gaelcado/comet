@@ -150,7 +150,7 @@ Native runtime dependencies: parakeet-rs 0.3.8 (MIT OR Apache-2.0), ort/ort-sys 
 
 ## Bezel thinking orbs
 
-`crates/ui/src/orb/` was extracted from Bezel
+`crates/orb/` and `crates/ui/src/orb/` were extracted from Bezel
 (https://github.com/clearloop/bezel), revision
 `6141af9c16f7353cdf36003f7404e0a94566a163`, `crates/agent/src/orbs/`.
 This code is compiled as part of Zeron; Bezel is not a dependency.

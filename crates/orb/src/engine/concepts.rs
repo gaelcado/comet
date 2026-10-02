@@ -4,7 +4,7 @@
 //! These modes deliberately reuse the engine's existing count/radius knobs and
 //! emit dots only, keeping them on the cheapest GPUI paint path.
 
-use crate::orb::engine::{
+use crate::engine::{
     core::{Dot, Frame, frac, make_proj, radius_scale, with_unit_circle},
     profiles::{MAX_LANES, MAX_PARTICLES, MAX_SEGS, ModeOpts, count_usize},
 };

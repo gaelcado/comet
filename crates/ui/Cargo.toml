@@ -50,6 +50,7 @@ required-features = ["compact-picker-fixture"]
 [dependencies]
 zeron-voice-media.workspace = true
 zeron-voice-session.workspace = true
+zeron-orb.workspace = true
 zeron-voice = { path = "../voice" }
 url = "2"
 zeron-proto.workspace = true

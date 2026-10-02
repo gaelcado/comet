@@ -14,14 +14,13 @@ use gpui::{
     px,
 };
 use std::time::Instant;
-
-use crate::orb::{
-    engine::{Frame, draw_mode_into, draw_mode_into_resolved},
-    motion::{AnimationClock, AudioResponse},
-    paint::paint_frame,
-    presets::{Resolved, resolve_preset},
-    types::{OrbSize, OrbState, OrbTheme},
+use zeron_orb::{
+    OrbAnimator, OrbSize, OrbState, OrbTheme,
+    engine::{Frame, draw_mode_into},
+    resolve_preset,
 };
+
+use crate::orb::paint::paint_frame;
 
 /// Frames per second the orb redraws at when no explicit rate is set.
 ///
@@ -37,13 +36,11 @@ pub const DEFAULT_TARGET_FPS: f32 = 30.0;
 /// cx.new(|_| Orb::new().state(OrbState::Searching).size(OrbSize::Avatar))
 /// ```
 pub struct Orb {
-    state: OrbState,
-    size: OrbSize,
+    /// State, size, speed, clock, audio and crossfades — shared with mobile.
+    animator: OrbAnimator,
     /// Uniform magnification of the size preset's painted geometry.
     scale: f32,
     theme: OrbTheme,
-    /// Multiplier on top of the preset's baked speed.
-    speed: f32,
     paused: bool,
     /// When true, freeze on a static representative frame (`t = 0.6`). The
     /// system `reduce_motion` setting forces the same, so hosts only set this
@@ -58,17 +55,6 @@ pub struct Orb {
     /// off-screen (gpui has no intersection observer).
     visible: bool,
 
-    // ---- clock ----
-    clock: AnimationClock,
-    audio: Option<AudioResponse>,
-    transition_duration: Duration,
-    transition: Option<StateTransition>,
-    target_frame: Frame,
-
-    // ---- caches ----
-    /// `(state, size)` the cached `resolved` was computed for.
-    cache_key: (OrbState, OrbSize),
-    resolved: Resolved,
     /// Geometry buffer reused across frames. Behind `Rc<RefCell<_>>` because
     /// the canvas paint callback must be `'static` and so cannot borrow `self`.
     frame: Rc<RefCell<Frame>>,
@@ -84,30 +70,6 @@ pub struct Orb {
     activation: Option<gpui::Subscription>,
 }
 
-struct StateTransition {
-    from: Frame,
-    source: Option<Resolved>,
-    started: f64,
-}
-
-fn crossfade(from: &Frame, to: &Frame, progress: f32, out: &mut Frame) {
-    out.clear();
-    let progress = progress.clamp(0.0, 1.0);
-    let weight = progress * progress * (3.0 - 2.0 * progress);
-    for (frame, opacity) in [(from, 1.0 - weight), (to, weight)] {
-        out.dots.extend(frame.dots.iter().filter_map(|dot| {
-            let mut dot = *dot;
-            dot.a *= opacity;
-            (dot.a >= 0.005).then_some(dot)
-        }));
-        out.lines.extend(frame.lines.iter().filter_map(|line| {
-            let mut line = *line;
-            line.a *= opacity;
-            (line.a >= 0.005).then_some(line)
-        }));
-    }
-}
-
 impl Default for Orb {
     fn default() -> Self {
         Self::new()
@@ -116,26 +78,15 @@ impl Default for Orb {
 
 impl Orb {
     pub fn new() -> Self {
-        let state = OrbState::Working;
-        let size = OrbSize::Avatar;
         Self {
-            state,
-            size,
+            animator: OrbAnimator::new(OrbState::Working, OrbSize::Avatar),
             scale: 1.0,
             theme: OrbTheme::Auto,
-            speed: 1.0,
             paused: false,
             reduced_motion: false,
             target_fps: DEFAULT_TARGET_FPS,
             pause_when_inactive: true,
             visible: true,
-            clock: AnimationClock::default(),
-            audio: None,
-            transition_duration: Duration::ZERO,
-            transition: None,
-            target_frame: Frame::new(),
-            cache_key: (state, size),
-            resolved: resolve_preset(state, size),
             frame: Rc::new(RefCell::new(Frame::new())),
             geometry_dirty: true,
             tick: None,
@@ -144,12 +95,13 @@ impl Orb {
     }
 
     pub fn state(mut self, state: OrbState) -> Self {
-        self.state = state;
+        // Nothing is on screen yet, so there is no frame to fade from.
+        self.animator.set_state(state, &Frame::new());
         self
     }
 
     pub fn size(mut self, size: OrbSize) -> Self {
-        self.size = size;
+        self.animator.set_size(size);
         self
     }
 
@@ -165,7 +117,7 @@ impl Orb {
     }
 
     pub fn speed(mut self, speed: f32) -> Self {
-        self.speed = sanitize_speed(speed);
+        self.animator.set_speed(speed);
         self
     }
 
@@ -177,7 +129,7 @@ impl Orb {
 
     /// Crossfade state geometry without remounting or restarting the clock.
     pub fn state_transition(mut self, duration: Duration) -> Self {
-        self.transition_duration = duration;
+        self.animator.set_transition(duration);
         self
     }
 
@@ -217,29 +169,16 @@ impl Orb {
 
     /// Mutable setters for interactive playgrounds.
     pub fn set_state(&mut self, state: OrbState, cx: &mut Context<Self>) {
-        if self.state != state {
-            let frame = self.frame.borrow();
-            self.transition = (!self.transition_duration.is_zero()
-                && !self.reduced_motion
-                && self.visible
-                && self.clock.is_running()
-                && (!frame.dots.is_empty() || !frame.lines.is_empty()))
-            .then(|| StateTransition {
-                from: frame.clone(),
-                // Animate the outgoing form. If a fade is interrupted,
-                // retain its visible composite instead of jumping back.
-                source: self.transition.is_none().then(|| self.resolved.clone()),
-                started: self.clock.active_seconds,
-            });
-            self.state = state;
+        // A hidden, paused or reduced orb has a stopped clock, so it switches
+        // without a fade.
+        if self.animator.set_state(state, &self.frame.borrow()) {
             self.geometry_dirty = true;
             cx.notify();
         }
     }
 
     pub fn set_size(&mut self, size: OrbSize, cx: &mut Context<Self>) {
-        if self.size != size {
-            self.size = size;
+        if self.animator.set_size(size) {
             self.geometry_dirty = true;
             cx.notify();
         }
@@ -261,9 +200,7 @@ impl Orb {
     }
 
     pub fn set_speed(&mut self, speed: f32, cx: &mut Context<Self>) {
-        let speed = sanitize_speed(speed);
-        if self.speed != speed {
-            self.speed = speed;
+        if self.animator.set_speed(speed) {
             self.geometry_dirty = true;
             cx.notify();
         }
@@ -272,9 +209,10 @@ impl Orb {
     /// Audio affects only visual motion, with independent microphone and
     /// speaker envelopes evaluated at the orb's frame rate.
     pub fn set_audio_levels(&mut self, microphone: f32, speaker: f32, cx: &mut Context<Self>) {
-        let now = Instant::now();
-        let audio = self.audio.get_or_insert_with(|| AudioResponse::new(now));
-        if audio.set(microphone, speaker, now) {
+        if self
+            .animator
+            .set_audio_levels(microphone, speaker, Instant::now())
+        {
             self.geometry_dirty = true;
             cx.notify();
         }
@@ -286,7 +224,7 @@ impl Orb {
         }
         self.paused = paused;
         if paused {
-            self.clock.stop(Instant::now());
+            self.animator.stop(Instant::now());
         }
         self.geometry_dirty = true;
         cx.notify();
@@ -296,8 +234,8 @@ impl Orb {
         if self.reduced_motion != reduced {
             self.reduced_motion = reduced;
             if reduced {
-                self.clock.stop(Instant::now());
-                self.transition = None;
+                self.animator.stop(Instant::now());
+                self.animator.cancel_transition();
             }
             self.geometry_dirty = true;
             cx.notify();
@@ -321,8 +259,8 @@ impl Orb {
         if self.visible != visible {
             self.visible = visible;
             if !visible {
-                self.clock.stop(Instant::now());
-                self.transition = None;
+                self.animator.stop(Instant::now());
+                self.animator.cancel_transition();
             }
             self.geometry_dirty = true;
             cx.notify();
@@ -330,11 +268,11 @@ impl Orb {
     }
 
     pub fn state_value(&self) -> OrbState {
-        self.state
+        self.animator.state()
     }
 
     pub fn size_value(&self) -> OrbSize {
-        self.size
+        self.animator.size()
     }
 
     pub fn theme_value(&self) -> OrbTheme {
@@ -342,7 +280,7 @@ impl Orb {
     }
 
     pub fn speed_value(&self) -> f32 {
-        self.speed
+        self.animator.speed()
     }
 
     pub fn is_paused(&self) -> bool {
@@ -404,22 +342,14 @@ impl Render for Orb {
         if self.activation.is_none() {
             self.activation = Some(cx.observe_window_activation(window, |orb, window, cx| {
                 if orb.pause_when_inactive && !window.is_window_active() {
-                    orb.clock.stop(Instant::now());
+                    orb.animator.stop(Instant::now());
                 }
                 orb.geometry_dirty = true;
                 cx.notify();
             }));
         }
 
-        // Presets are pure functions of (state, size); recompute only when one
-        // of those actually changes rather than on every frame.
-        let key = (self.state, self.size);
-        if self.cache_key != key {
-            self.cache_key = key;
-            self.resolved = resolve_preset(self.state, self.size);
-        }
-
-        let size_px = self.size.pixels();
+        let size_px = self.animator.pixels();
         let scale = self.scale;
         let dark = self.dark(cx);
         let reduced = self.reduced_motion || cx.reduce_motion();
@@ -427,64 +357,14 @@ impl Render for Orb {
             && !self.paused
             && !reduced
             && (!self.pause_when_inactive || window.is_window_active());
-        let now = Instant::now();
-        let audio_speed = self.audio.as_ref().map_or(1.0, |audio| audio.speed(now));
-        let rate = f64::from(self.resolved.speed) * f64::from(self.speed) * audio_speed;
-        self.clock.advance(now, rate, animating);
-        let t = if reduced {
-            0.6
-        } else {
-            self.clock.seconds as f32
-        };
-        if reduced {
-            self.transition = None;
-        }
-        let r_min = self.resolved.opts.r_min.unwrap_or(0.3);
+        self.animator.tick(Instant::now(), animating, reduced);
+        let r_min = self.animator.r_min();
 
         // Only ticks and semantic changes invalidate geometry. A parent can
         // re-render much faster than this orb's target FPS; those extra renders
         // reuse the retained frame rather than running animation math again.
         if self.geometry_dirty {
-            let progress = self.transition.as_ref().map_or(1.0, |transition| {
-                ((self.clock.active_seconds - transition.started)
-                    / self.transition_duration.as_secs_f64()) as f32
-            });
-            if progress >= 1.0 {
-                self.transition = None;
-            }
-            if let Some(transition) = &mut self.transition {
-                draw_mode_into_resolved(
-                    self.resolved.mode,
-                    size_px,
-                    t,
-                    &self.resolved.opts,
-                    &mut self.target_frame,
-                );
-                if let Some(source) = &transition.source {
-                    draw_mode_into_resolved(
-                        source.mode,
-                        size_px,
-                        t,
-                        &source.opts,
-                        &mut transition.from,
-                    );
-                }
-                crossfade(
-                    &transition.from,
-                    &self.target_frame,
-                    progress,
-                    &mut self.frame.borrow_mut(),
-                );
-            } else {
-                // Preserve the original allocation-free path outside a fade.
-                draw_mode_into_resolved(
-                    self.resolved.mode,
-                    size_px,
-                    t,
-                    &self.resolved.opts,
-                    &mut self.frame.borrow_mut(),
-                );
-            }
+            self.animator.draw(&mut self.frame.borrow_mut());
             self.geometry_dirty = false;
         }
 
@@ -554,14 +434,6 @@ pub fn orb_element(
         )
 }
 
-fn sanitize_speed(speed: f32) -> f32 {
-    if speed.is_finite() {
-        speed.clamp(0.0, 100.0)
-    } else {
-        1.0
-    }
-}
-
 fn sanitize_scale(scale: f32) -> f32 {
     if scale.is_finite() {
         scale.clamp(0.25, 8.0)
@@ -575,66 +447,5 @@ fn sanitize_fps(fps: f32) -> f32 {
         fps.clamp(1.0, 30.0)
     } else {
         DEFAULT_TARGET_FPS
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::orb::engine::{Dot, Line};
-
-    #[test]
-    fn state_crossfade_preserves_endpoints_and_blends_dots_and_lines() {
-        let from = Frame {
-            dots: vec![Dot::new(1.0, 2.0, 0.0, 1.0, 0.5)],
-            lines: vec![Line {
-                x1: 0.0,
-                y1: 0.0,
-                x2: 1.0,
-                y2: 1.0,
-                white: 0.5,
-                a: 1.0,
-                w: 1.0,
-            }],
-        };
-        let to = Frame {
-            dots: vec![Dot::new(3.0, 4.0, 0.0, 1.0, 0.5)],
-            lines: vec![],
-        };
-        let mut out = Frame::new();
-        crossfade(&from, &to, 0.0, &mut out);
-        assert_eq!(out.dots.len(), 1);
-        assert_eq!(out.dots[0].x, 1.0);
-        assert_eq!(out.lines[0].a, 1.0);
-        crossfade(&from, &to, 0.5, &mut out);
-        assert_eq!(out.dots.len(), 2);
-        assert_eq!(out.dots[0].a, 0.5);
-        assert_eq!(out.dots[1].a, 0.5);
-        assert_eq!(out.lines[0].a, 0.5);
-        crossfade(&from, &to, 1.0, &mut out);
-        assert_eq!(out.dots.len(), 1);
-        assert_eq!(out.dots[0].x, 3.0);
-        assert!(out.lines.is_empty());
-    }
-
-    #[gpui::test]
-    fn interrupted_state_transition_starts_from_the_visible_frame(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
-        let orb = cx.new(|_| Orb::new().state_transition(Duration::from_millis(300)));
-        orb.update(cx, |orb, cx| {
-            orb.clock.advance(Instant::now(), 1.0, true);
-            orb.frame
-                .borrow_mut()
-                .dots
-                .push(Dot::new(42.0, 0.0, 0.0, 1.0, 0.5).with_a(0.4));
-            orb.set_state(OrbState::Listening, cx);
-            assert_eq!(orb.transition.as_ref().unwrap().from.dots[0].x, 42.0);
-            orb.frame.borrow_mut().dots[0].a = 0.2;
-            orb.set_state(OrbState::Composing, cx);
-            assert_eq!(orb.transition.as_ref().unwrap().from.dots[0].a, 0.2);
-            orb.set_reduced_motion(true, cx);
-            assert!(orb.transition.is_none());
-            assert!(!orb.clock.is_running());
-        });
     }
 }

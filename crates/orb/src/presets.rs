@@ -1,7 +1,7 @@
 // Extracted from Bezel 6141af9c16f7353cdf36003f7404e0a94566a163; MIT. See THIRD_PARTY_NOTICES.md.
 //! Twelve states × four sizes — original ports plus library-native concepts.
 
-use crate::orb::{
+use crate::{
     engine::{ModeOpts, base_profile, scale_counts, scale_radii},
     types::{ModeKey, OrbSize, OrbState},
 };

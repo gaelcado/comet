@@ -1,11 +1,11 @@
 // Extracted from Bezel 6141af9c16f7353cdf36003f7404e0a94566a163; MIT. See THIRD_PARTY_NOTICES.md.
 //! Paint a backend-agnostic [`Frame`] into a GPUI window.
 
-use crate::orb::engine::{Frame, Line};
 use gpui::{
     BorderStyle, Bounds, PathBuilder, Pixels, Point, Window, opaque_grey, point, px, quad, size,
     transparent_black,
 };
+use zeron_orb::engine::{Frame, Line};
 
 /// Map ink `white` + substrate into a grayscale with alpha.
 fn ink_color(white: f32, alpha: f32, dark: bool) -> gpui::Hsla {

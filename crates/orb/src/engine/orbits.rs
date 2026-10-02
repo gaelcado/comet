@@ -1,7 +1,7 @@
 // Extracted from Bezel 6141af9c16f7353cdf36003f7404e0a94566a163; MIT. See THIRD_PARTY_NOTICES.md.
 //! Orbits: particles on tilted orbits — the "working" state.
 
-use crate::orb::engine::{
+use crate::engine::{
     core::{Dot, Frame, hash_d, make_proj, radius_scale, with_unit_circle},
     profiles::{MAX_GHOST_N, MAX_ORBIT_N, MAX_PARTICLES, ModeOpts, count_usize},
 };

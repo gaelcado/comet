@@ -2,7 +2,7 @@
 use std::time::Instant;
 
 #[derive(Default)]
-pub(super) struct AnimationClock {
+pub struct AnimationClock {
     pub seconds: f64,
     pub active_seconds: f64,
     last: Option<Instant>,
@@ -77,7 +77,7 @@ impl Envelope {
     }
 }
 
-pub(super) struct AudioResponse {
+pub struct AudioResponse {
     microphone: Envelope,
     speaker: Envelope,
 }

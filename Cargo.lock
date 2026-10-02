@@ -13128,6 +13128,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeron-orb"
+version = "0.2.101"
+
+[[package]]
 name = "zeron-preview"
 version = "0.2.101"
 dependencies = [
@@ -13335,6 +13339,7 @@ dependencies = [
  "zeron-engine",
  "zeron-harness",
  "zeron-markdown",
+ "zeron-orb",
  "zeron-proto",
  "zeron-rpc",
  "zeron-syntax",

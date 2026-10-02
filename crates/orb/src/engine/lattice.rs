@@ -1,7 +1,7 @@
 // Extracted from Bezel 6141af9c16f7353cdf36003f7404e0a94566a163; MIT. See THIRD_PARTY_NOTICES.md.
 //! Sphere-lattice modes: globe (searching), rubik (solving), wave (listening).
 
-use crate::orb::engine::{
+use crate::engine::{
     core::{Dot, Frame, angle_delta, hash_d, make_proj, radius_scale, with_unit_circle},
     profiles::{MAX_LATTICE_RINGS, MAX_LON_DENSITY, MAX_MOVE_COUNT, ModeOpts, count_usize},
 };

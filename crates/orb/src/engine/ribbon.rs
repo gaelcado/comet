@@ -1,7 +1,7 @@
 // Extracted from Bezel 6141af9c16f7353cdf36003f7404e0a94566a163; MIT. See THIRD_PARTY_NOTICES.md.
 //! Ribbon / ring: undulating sash or face-on breathing ring.
 
-use crate::orb::engine::{
+use crate::engine::{
     core::{Dot, Frame, make_proj, radius_scale, with_fib_dirs},
     profiles::{MAX_GHOST_N, MAX_LANES, MAX_SEGS, ModeOpts, count_usize},
 };

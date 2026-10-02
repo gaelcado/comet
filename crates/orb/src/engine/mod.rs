@@ -17,7 +17,7 @@ pub use profiles::{
     sanitize_mode_opts, sanitize_size, scale_counts, scale_radii,
 };
 
-use crate::orb::types::ModeKey;
+use crate::types::ModeKey;
 use braid::draw_braid_into;
 use concepts::{draw_echo_into, draw_focus_into, draw_gyroscope_into};
 use lattice::{draw_globe_into, draw_rubik_into, draw_wave_into};
@@ -45,16 +45,11 @@ pub fn draw_mode_into(mode: ModeKey, size: f32, t: f32, opts: &ModeOpts, out: &m
 
 /// Fast path for the widget's already-sanitized, size-bounded presets.
 ///
-/// Keeping this crate-private preserves the safety contract of the public
-/// power-user entry point while avoiding a 40-field clone/sanitize pass on
-/// every widget tick.
-pub(crate) fn draw_mode_into_resolved(
-    mode: ModeKey,
-    size: f32,
-    t: f32,
-    opts: &ModeOpts,
-    out: &mut Frame,
-) {
+/// Only for options from [`crate::resolve_preset`], which are already finite
+/// and bounded: it skips the 40-field clone/sanitize pass on every widget
+/// tick. Arbitrary options must go through [`draw_mode_into`].
+#[doc(hidden)]
+pub fn draw_mode_into_resolved(mode: ModeKey, size: f32, t: f32, opts: &ModeOpts, out: &mut Frame) {
     out.clear();
     match mode {
         ModeKey::Orbits => draw_orbits_into(size, t, opts, out),

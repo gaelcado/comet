@@ -17,17 +17,17 @@ pub const MAX_MOVE_COUNT: f32 = 64.0;
 pub const MAX_ICON_D: f32 = 8.0;
 /// Max dots the Morph painter will emit after `icon_d` is applied.
 pub const MAX_MORPH_DOTS: usize = 512;
-/// Logical size (px) accepted by [`crate::orb::engine::draw_mode_into`].
+/// Logical size (px) accepted by [`crate::engine::draw_mode_into`].
 pub const MIN_SIZE: f32 = 1.0;
 pub const MAX_SIZE: f32 = 1024.0;
 
 /// Free-form numeric knobs for mode painters (mirrors upstream `ModeOpts`).
 ///
-/// **Power-user / advanced API.** The normal path is [`crate::orb::Orb`] /
-/// [`crate::orb::resolve_preset`], which only ever pass hand-tuned finite values.
+/// **Power-user / advanced API.** The normal path is the host widget /
+/// [`crate::resolve_preset`], which only ever pass hand-tuned finite values.
 ///
 /// If you build a [`ModeOpts`] yourself and pass it to
-/// [`crate::orb::engine::draw_mode`] / [`crate::orb::engine::draw_mode_into`], every count-like field is
+/// [`crate::engine::draw_mode`] / [`crate::engine::draw_mode_into`], every count-like field is
 /// clamped by [`sanitize_mode_opts`] before geometry runs:
 ///
 /// | Field family | Range after sanitize |
@@ -105,7 +105,7 @@ fn clamp_opt(v: Option<f32>, min: f32, max: f32) -> Option<f32> {
 /// Return a safe copy of `opts` with every count-like / radius-like knob
 /// finite and within the hard ceilings above.
 ///
-/// Called automatically by [`crate::orb::engine::draw_mode_into`]. Safe to call yourself
+/// Called automatically by [`crate::engine::draw_mode_into`]. Safe to call yourself
 /// when composing custom profiles.
 pub fn sanitize_mode_opts(opts: &ModeOpts) -> ModeOpts {
     ModeOpts {
@@ -247,7 +247,7 @@ impl ModeOpts {
     /// power-user tweaks a preset cannot express. The struct is
     /// `#[non_exhaustive]`, so this is the only way to build one outside the
     /// crate.
-    pub fn fill(mode: crate::orb::types::ModeKey, f: impl FnOnce(&mut Self)) -> Self {
+    pub fn fill(mode: crate::types::ModeKey, f: impl FnOnce(&mut Self)) -> Self {
         let mut opts = base_profile(mode);
         f(&mut opts);
         opts
@@ -255,8 +255,8 @@ impl ModeOpts {
 }
 
 /// Base (fine) profiles per mode, before preset multipliers.
-pub fn base_profile(mode: crate::orb::types::ModeKey) -> ModeOpts {
-    use crate::orb::types::ModeKey::*;
+pub fn base_profile(mode: crate::types::ModeKey) -> ModeOpts {
+    use crate::types::ModeKey::*;
     match mode {
         Globe => ModeOpts {
             lat_rings: Some(17.0),
