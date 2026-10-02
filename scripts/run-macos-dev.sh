@@ -61,7 +61,7 @@ if [[ -z "$IDENTITY" ]]; then
   IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Apple Development:[^"]*\)".*/\1/p' | head -1)"
 fi
 if [[ -n "${ZERON_VOICE_RUNTIME_PACKAGE:-}" ]]; then
-  python3 "$ROOT/scripts/package-voice-runtime.py" --package "$ZERON_VOICE_RUNTIME_PACKAGE" --destination "$CONTENTS/Resources/voice" --identity "${IDENTITY:--}"
+  python3 "$ROOT/scripts/package-voice-runtime.py" --package "$ZERON_VOICE_RUNTIME_PACKAGE" --destination "$CONTENTS/Resources/codex-resources/voice"
 fi
 if [[ -n "$IDENTITY" ]]; then
   codesign --entitlements "$ROOT/dist/macos/Dictation.entitlements" --force --sign "$IDENTITY" --identifier "$BUNDLE_ID" "$APP"

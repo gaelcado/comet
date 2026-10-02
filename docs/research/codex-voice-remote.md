@@ -123,9 +123,13 @@ Bundled notice files cover LGPL-2.1, Opus, PCRE2, libffi, proxy-libintl, sljit a
 zlib. The package's `NOTICE.md` identifies the upstream Codex
 `third_party/voice/` build/projection/package scripts and references
 `manifest.json` for the source commit. This inventories existing provenance;
-C02 now verifies the pinned input hashes, projects all runtime resources, adds
-the helper source license, and signs the relocated helper and libraries with the
-bundle identity. A strict signature check passed for the local ARM64 projection.
+C02 now verifies the pinned input hashes, copies all runtime resources
+byte-for-byte into `Contents/Resources/codex-resources/voice` and adds the helper
+source license. The helper only initializes from a `codex-resources/voice`
+directory: anywhere else it exits with code 23 on `initializeRuntime`, which the
+client reports as an unavailable runtime. The runtime is not re-signed: upstream
+already signs the helper and libraries with OpenAI's Developer ID, hardened
+runtime and a secure timestamp, and the packager only verifies those signatures.
 This reuses the pinned upstream binary; it does not claim an independent rebuild
 of every dependency from source.
 No binaries or credentials were copied into this repository.

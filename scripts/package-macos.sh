@@ -49,7 +49,7 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/zeron.icns"
 rm -rf "$ICONSET"
 
 if [[ -n "${ZERON_VOICE_RUNTIME_PACKAGE:-}" ]]; then
-  python3 "$ROOT/scripts/package-voice-runtime.py" --package "$ZERON_VOICE_RUNTIME_PACKAGE" --destination "$APP/Contents/Resources/voice" --identity "${CODESIGN_IDENTITY:--}"
+  python3 "$ROOT/scripts/package-voice-runtime.py" --package "$ZERON_VOICE_RUNTIME_PACKAGE" --destination "$APP/Contents/Resources/codex-resources/voice"
 fi
 
 if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then

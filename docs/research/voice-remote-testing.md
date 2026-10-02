@@ -21,11 +21,13 @@ ZERON_DEV_BUILD_ONLY=1 ./scripts/run-macos-dev.sh
 ```
 
 The package directory contains `codex-package.json` and `codex-resources/voice`.
-The packaging script verifies the pinned artifact, copies the complete media
-subtree and signs it with the app's identity. It does not put the Codex executable
+The packaging script verifies the pinned artifact and copies the complete media
+subtree unmodified, with Codex's own signatures, to
+`Contents/Resources/codex-resources/voice` — the helper refuses to initialize
+from any directory not named `codex-resources/voice`. It does not put the Codex executable
 or credentials in the client bundle. For direct developer runs,
 `ZERON_VOICE_MEDIA_DIR` may explicitly point at a projected runtime containing
-`zeron-runtime.json`. There is no automatic PATH fallback.
+`zeron-runtime.json`; it must also be a `codex-resources/voice` directory. There is no automatic PATH fallback.
 
 Open `target/macos-dev/Zeron Dev.app`, select **Settings → Voice → Codex voice
 device**, choose the registered Fedora host and start voice from the sidebar orb.

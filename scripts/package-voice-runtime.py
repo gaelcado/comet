@@ -13,7 +13,11 @@ VERSION = '0.160.0'
 TARGET = 'aarch64-apple-darwin'
 
 
-def install(package, destination, identity):
+def install(package, destination):
+    # The helper only initializes from a `codex-resources/voice` directory; it
+    # exits with code 23 on initializeRuntime anywhere else.
+    if (destination.parent.name, destination.name) != ('codex-resources', 'voice'):
+        raise ValueError('destination must be <bundle>/Contents/Resources/codex-resources/voice')
     source = package / 'codex-resources/voice'
     manifest = json.loads((source / 'manifest.json').read_text())
     if (manifest['buildCommit'], manifest['appVersion'], manifest['voiceTarget']) != (BUILD, VERSION, TARGET):
@@ -36,14 +40,16 @@ def install(package, destination, identity):
         stage = Path(temporary) / 'voice'
         shutil.copytree(source, stage)
         shutil.copyfile(Path(__file__).resolve().parents[1] / "dist/voice/Codex-LICENSE.txt", stage / "licenses/Codex-LICENSE.txt")
-        # Inside-out signing with the app identity allows hardened library load.
+        # Ship the runtime byte-for-byte: upstream already signs the helper and
+        # every library with OpenAI's Developer ID, hardened runtime and a
+        # secure timestamp, so re-signing would only downgrade them.
+        runtime = json.loads((stage / 'runtime.json').read_text())
+        for library in runtime['libraries']:
+            if hashlib.sha256((stage / library['path']).read_bytes()).hexdigest() != library['sha256']:
+                raise ValueError(f"runtime library does not match runtime.json: {library['path']}")
         for path in sorted(stage.rglob('*')):
             if path.is_file() and (path.suffix == '.dylib' or path.name == 'codex-voice-host'):
-                command = ['codesign', '--force', '--sign', identity]
-                if identity != '-':
-                    command += ['--options', 'runtime', '--timestamp']
-                subprocess.run(command + [str(path)], check=True)
-        # Signatures change hashes. Record the projection actually shipped.
+                subprocess.run(['codesign', '--verify', '--strict', str(path)], check=True)
         hashes = {str(p.relative_to(stage)): hashlib.sha256(p.read_bytes()).hexdigest()
                   for p in sorted(stage.rglob('*')) if p.is_file()}
         (stage / 'zeron-runtime.json').write_text(json.dumps({
@@ -58,6 +64,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', type=Path, required=True)
     parser.add_argument('--destination', type=Path, required=True)
-    parser.add_argument('--identity', default='-')
     args = parser.parse_args()
-    install(args.package.resolve(), args.destination.resolve(), args.identity)
+    install(args.package.resolve(), args.destination.resolve())

@@ -121,14 +121,22 @@ impl NativeHost {
             input,
             output,
         };
+        // A helper that cannot start its runtime (e.g. a library that no longer
+        // matches its runtime.json) exits here; that is the runtime, not the call.
+        let unavailable = |reason| match reason {
+            VoiceRejection::Protocol => VoiceRejection::NativeRuntimeUnavailable,
+            reason => reason,
+        };
         host.expect(
             json!({"type":"hello","protocol":1,"buildCommit":commit}),
             "ready",
             30,
         )
-        .await?;
+        .await
+        .map_err(unavailable)?;
         host.expect(json!({"type":"initializeRuntime"}), "runtimeReady", 30)
-            .await?;
+            .await
+            .map_err(unavailable)?;
         Ok(host)
     }
     pub async fn exchange(
@@ -225,6 +233,11 @@ impl NativeHost {
     }
 }
 
+/// Where the bundle keeps the runtime, relative to `Contents/`. Codex's layout:
+/// the helper only initializes from a `codex-resources/voice` directory and
+/// exits (code 23) on `initializeRuntime` anywhere else.
+pub const BUNDLED_RUNTIME: &str = "Resources/codex-resources/voice";
+
 /// An explicit development runtime or the signed application's resources. Never
 /// searches PATH, resolves Codex, or reads its authentication directory.
 pub fn bundled_helper() -> Result<std::path::PathBuf, VoiceRejection> {
@@ -233,7 +246,7 @@ pub fn bundled_helper() -> Result<std::path::PathBuf, VoiceRejection> {
     } else {
         std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent()?.parent().map(|p| p.join("Resources/voice")))
+            .and_then(|p| p.parent()?.parent().map(|p| p.join(BUNDLED_RUNTIME)))
             .ok_or(VoiceRejection::NativeRuntimeUnavailable)?
     };
     verify_runtime(&root)
@@ -244,6 +257,12 @@ pub const BUILD_COMMIT: &str = "a956835d020762cb2b570053af06f643a11c0ecc";
 pub fn verify_runtime(root: &Path) -> Result<std::path::PathBuf, VoiceRejection> {
     use sha2::{Digest, Sha256};
     let reject = || VoiceRejection::NativeRuntimeUnavailable;
+    // Fail here, clearly, rather than when the helper refuses to start.
+    if root.file_name() != Some("voice".as_ref())
+        || root.parent().and_then(Path::file_name) != Some("codex-resources".as_ref())
+    {
+        return Err(reject());
+    }
     let manifest: Value = serde_json::from_slice(
         &std::fs::read(root.join("zeron-runtime.json")).map_err(|_| reject())?,
     )
@@ -281,12 +300,14 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     #[test]
-    fn runtime_rejects_missing_tampered_and_incompatible_resources() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(verify_runtime(dir.path()).is_err());
+    fn runtime_rejects_missing_tampered_misplaced_and_incompatible_resources() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("Resources/codex-resources/voice");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(verify_runtime(&dir).is_err());
         let mut hashes = serde_json::Map::new();
         for name in ["bin/codex-voice-host", "runtime.json", "NOTICE.md"] {
-            let path = dir.path().join(name);
+            let path = dir.join(name);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, name).unwrap();
             hashes.insert(
@@ -297,29 +318,57 @@ mod tests {
         let mut manifest = json!({"protocol":1,"buildCommit":BUILD_COMMIT,"sha256":hashes});
         let save = |m: &Value| {
             std::fs::write(
-                dir.path().join("zeron-runtime.json"),
+                dir.join("zeron-runtime.json"),
                 serde_json::to_vec(m).unwrap(),
             )
             .unwrap()
         };
         save(&manifest);
         assert_eq!(
-            verify_runtime(dir.path()).unwrap(),
-            dir.path().join("bin/codex-voice-host")
+            verify_runtime(&dir).unwrap(),
+            dir.join("bin/codex-voice-host")
         );
-        std::fs::write(dir.path().join("runtime.json"), "tampered").unwrap();
-        assert!(verify_runtime(dir.path()).is_err());
-        std::fs::write(dir.path().join("runtime.json"), "runtime.json").unwrap();
+        // The helper refuses to start outside `codex-resources/voice`.
+        let elsewhere = temp.path().join("Resources/voice");
+        std::fs::rename(temp.path().join("Resources/codex-resources"), &elsewhere).unwrap();
+        assert!(verify_runtime(&elsewhere.join("voice")).is_err());
+        std::fs::rename(&elsewhere, temp.path().join("Resources/codex-resources")).unwrap();
+        std::fs::write(dir.join("runtime.json"), "tampered").unwrap();
+        assert!(verify_runtime(&dir).is_err());
+        std::fs::write(dir.join("runtime.json"), "runtime.json").unwrap();
         manifest["protocol"] = json!(2);
         save(&manifest);
         assert_eq!(
-            verify_runtime(dir.path()).unwrap_err(),
+            verify_runtime(&dir).unwrap_err(),
             VoiceRejection::Unsupported
         );
         manifest["protocol"] = json!(1);
         manifest["sha256"]["../escape"] = json!("digest");
         save(&manifest);
-        assert!(verify_runtime(dir.path()).is_err());
+        assert!(verify_runtime(&dir).is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn helper_that_cannot_start_its_runtime_is_a_runtime_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let helper = dir.path().join("codex-voice-host");
+        // Answers hello, then exits on initializeRuntime like a helper whose
+        // libraries no longer match its runtime.json (exit 23).
+        std::fs::write(
+            &helper,
+            "#!/usr/bin/env python3\nimport json,struct,sys\n\
+             if sys.argv[1:]==['--build-commit']: print('commit'); sys.exit(0)\n\
+             n=struct.unpack('>I',sys.stdin.buffer.read(4))[0]; sys.stdin.buffer.read(n)\n\
+             b=json.dumps({'type':'ready'}).encode()\n\
+             sys.stdout.buffer.write(struct.pack('>I',len(b))+b); sys.stdout.flush()\n\
+             sys.stdin.buffer.read(4); sys.exit(23)\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let result = NativeHost::open(&helper, Default::default()).await;
+        assert_eq!(result.err(), Some(VoiceRejection::NativeRuntimeUnavailable));
     }
 }
 
