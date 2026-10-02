@@ -50,6 +50,7 @@
 //! handlers stay transport-agnostic. This includes the workspace file surface,
 //! whose checkout always lives on the routed target device.
 
+mod voice_remote;
 use async_trait::async_trait;
 use base64::Engine as _;
 use futures::StreamExt;
@@ -607,6 +608,7 @@ enum MutateParams {
     },
 }
 
+#[derive(Clone)]
 pub struct EngineRpc {
     voice: crate::voice::VoiceManager,
     sessions: SessionsEngine,
@@ -1768,6 +1770,7 @@ impl RpcService for EngineRpc {
         ) {
             self.voice.retire();
         }
+        if voice_remote::handles(method) { return self.voice_remote(method, params).await; }
         if AuthRpc::handles(method) {
             return AuthRpc::new(self.auth()?.clone())
                 .handle(method, params)

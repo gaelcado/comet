@@ -1,4 +1,5 @@
 //! Exclusive, local, ephemeral voice ownership. Native media remains in Codex's helper.
+pub(crate) mod remote;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -36,11 +37,12 @@ pub struct VoiceManager {
 #[derive(Default)]
 struct Inner {
     slot: Mutex<Option<Slot>>,
+    attempts: Mutex<std::collections::HashMap<zeron_proto::voice::remote::AttemptKey, remote::Attempt>>,
     generation: AtomicU64,
     identity_epoch: AtomicU64,
     // A successor waits until the old native stop completes, even after its owner is dropped.
     preparation: tokio::sync::Mutex<()>,
-    native_lifecycle: tokio::sync::Mutex<()>,
+    native_lifecycle: Arc<tokio::sync::Mutex<()>>,
     mute_order: tokio::sync::Mutex<()>,
 }
 struct Slot {
@@ -52,6 +54,7 @@ struct Slot {
     sender: mpsc::Sender<VoiceEvent>,
     cancel: CancellationToken,
     provider: Option<RealtimeHandle>,
+    remote: Option<remote::RemoteSlot>,
 }
 pub struct VoiceOwner {
     manager: VoiceManager,
@@ -93,6 +96,9 @@ impl VoiceManager {
         self.reserve_at(chat, self.identity_epoch())
     }
     pub(crate) fn reserve_at(&self, chat: &str, epoch: u64) -> Result<VoiceLease, VoiceRejection> {
+        self.reserve_with_deadline(chat, epoch, 5)
+    }
+    fn reserve_with_deadline(&self, chat: &str, epoch: u64, seconds: u64) -> Result<VoiceLease, VoiceRejection> {
         let mut state = self.inner.slot.lock().unwrap();
         if self.identity_epoch() != epoch {
             return Err(VoiceRejection::InvalidLease);
@@ -125,18 +131,19 @@ impl VoiceManager {
         *state = Some(Slot {
             lease: lease.clone(),
             snapshot,
-            attach_deadline: Instant::now() + Duration::from_secs(5),
+            attach_deadline: Instant::now() + Duration::from_secs(seconds),
             owner_attached: false,
             events: Some(events),
             sender,
             cancel: CancellationToken::new(),
             provider: None,
+            remote: None,
         });
         drop(state);
         let manager = self.clone();
         let pending = lease.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(seconds)).await;
             manager.expire_unattached(&pending);
         });
         Ok(lease)
@@ -165,6 +172,7 @@ impl VoiceManager {
         }
         let events = slot.events.take().ok_or(VoiceRejection::InvalidLease)?;
         slot.owner_attached = true;
+        if let Some(remote) = &mut slot.remote { remote.last_report = Instant::now(); }
         Ok(VoiceOwner {
             manager: self.clone(),
             lease,
@@ -269,6 +277,7 @@ impl VoiceManager {
         // The same lock covers reservation and identity changes: a pending probe
         // may never create a lease after account/profile retirement.
         self.inner.identity_epoch.fetch_add(1, Ordering::AcqRel);
+        for attempt in self.inner.attempts.lock().unwrap().values() { attempt.cancel.cancel(); }
         self.inner.generation.fetch_add(1, Ordering::AcqRel);
         let old = state.take();
         drop(state);
