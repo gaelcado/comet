@@ -13076,6 +13076,7 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "zeron-proto",
+ "zeron-voice-media",
  "zip",
 ]
 
@@ -13368,6 +13369,18 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "zeron-voice-media"
+version = "0.2.101"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "zeron-proto",
 ]
 
 [[package]]
