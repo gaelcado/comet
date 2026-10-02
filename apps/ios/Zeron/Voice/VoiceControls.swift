@@ -67,10 +67,11 @@ final class VoiceAccessoryView: UIView {
         strip.accessibilityIdentifier = "voice-live"
         strip.isAccessibilityElement = true
         strip.accessibilityTraits = .button
+        // A plain UIControl never sends .primaryActionTriggered (only buttons do).
         strip.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.onOpen?(self.orb)
-        }, for: .primaryActionTriggered)
+        }, for: .touchUpInside)
 
         for v in [orb, labels, mute, end] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
