@@ -42,7 +42,7 @@ fn fixture(cx: &mut TestAppContext) -> (tempfile::TempDir, WindowHandle<Shell>) 
 }
 
 fn tween_length() -> Duration {
-    RESIZE.total().mul_f32(motion::speed_scale())
+    PANEL_RESIZE.total().mul_f32(motion::speed_scale())
 }
 
 /// Advance time by ageing every transition. The frame clock itself stays
@@ -70,7 +70,7 @@ fn age(shell: &mut Shell, by: Duration) {
 fn settle(shell: &mut Shell, cx: &App) {
     for _ in 0..3 {
         shell.render_time = Some(std::time::Instant::now());
-        // Panel tweens run up to 1.5 times the base length (see `WidthTween::panel`).
+        // Panel tweens run up to 4/3 of the base length (see `WidthTween::panel`).
         age(shell, tween_length() * 2);
         shell.track_horizontal_fit(cx);
     }
@@ -211,7 +211,9 @@ fn planned_travel(shell: &Shell) -> f32 {
 /// host together, and the columns never overflow the window.
 fn jumps(frames: &[[f32; 9]], planned: f32, viewport: f32) -> Vec<String> {
     let curve_step = (0..20)
-        .map(|i| RESIZE.progress((i + 1) as f32 / 20.0) - RESIZE.progress(i as f32 / 20.0))
+        .map(|i| {
+            PANEL_RESIZE.progress((i + 1) as f32 / 20.0) - PANEL_RESIZE.progress(i as f32 / 20.0)
+        })
         .fold(0.0f32, f32::max);
     let travel = |column: usize| {
         frames
@@ -385,6 +387,62 @@ fn every_panel_action_moves_continuously_and_settles_on_a_valid_layout(cx: &mut 
 }
 
 #[gpui::test]
+fn panels_accelerate_gently_and_settle_without_overshoot(cx: &mut TestAppContext) {
+    let (_dir, handle) = fixture(cx);
+    handle
+        .update(cx, |shell, window, cx| {
+            for (action, mask, column, destination) in [
+                (0, 0, 0, 300.0),
+                (0, 1, 0, 0.0),
+                (1, 0, 2, 800.0),
+                (1, 2, 2, 0.0),
+                (2, 0, 1, 377.0),
+                (2, 4, 1, 0.0),
+            ] {
+                arrange(shell, 1600.0, mask, cx);
+                let source = columns(shell, cx)[column];
+                act(shell, action, window, cx);
+                let mut elapsed = 0;
+                let mut previous = 0.0;
+                for millis in [0, 16, 40, 75, 110, 150, 180, 210, 240] {
+                    age(
+                        shell,
+                        Duration::from_millis(millis - elapsed).mul_f32(motion::speed_scale()),
+                    );
+                    elapsed = millis;
+                    shell.track_horizontal_fit(cx);
+                    let width = columns(shell, cx)[column];
+                    let progress = (width - source) / (destination - source);
+                    assert!(
+                        progress >= previous - 0.001 && progress <= 1.001,
+                        "{} from {source} at {millis}ms: {progress} after {previous}",
+                        ACTIONS[action]
+                    );
+                    if millis == 0 {
+                        assert!((width - source).abs() < 0.5, "no jump on the click");
+                    } else if millis == 16 {
+                        assert!(
+                            progress > 0.0 && progress <= 0.1,
+                            "the first frame must respond gently, not lurch"
+                        );
+                    } else if millis == 75 {
+                        assert!(
+                            (0.35..=0.8).contains(&progress),
+                            "travel must accelerate progressively while staying responsive"
+                        );
+                    } else if millis == 150 {
+                        assert!(progress >= 0.85, "the remaining travel is a soft landing");
+                    } else if millis == 240 {
+                        assert!((width - destination).abs() < 0.5, "short, exact landing");
+                    }
+                    previous = progress;
+                }
+            }
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn the_content_columns_share_what_the_tools_leave(cx: &mut TestAppContext) {
     let (_dir, handle) = fixture(cx);
     handle
@@ -402,7 +460,7 @@ fn the_content_columns_share_what_the_tools_leave(cx: &mut TestAppContext) {
             // A wide pane takes longer than the sidebar's width would, so it
             // moves at a comparable pace instead of twice as fast.
             let pane = shell.right_tween.unwrap();
-            assert_eq!(pane.duration, tween_length().mul_f32(1.5));
+            assert_eq!(pane.duration, tween_length().mul_f32(4.0 / 3.0));
             assert_eq!(WidthTween::panel(0.0, 256.0).duration, tween_length());
             shell.toggle_files_panel(window, cx);
             settle(shell, cx);

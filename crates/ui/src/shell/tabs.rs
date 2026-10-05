@@ -997,6 +997,7 @@ mod titlebar_geometry_tests {
                         to,
                         started,
                         duration,
+                        curve: RESIZE.curve,
                     });
                 });
                 for progress in [0.0, 0.5, 1.0] {
@@ -1033,6 +1034,7 @@ mod titlebar_geometry_tests {
                     to: 0.0,
                     started,
                     duration,
+                    curve: RESIZE.curve,
                 });
             });
             let mut content = None;

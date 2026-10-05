@@ -384,7 +384,7 @@ impl Shell {
         // A full-screen entry or exit still running restarts with the pane,
         // from the conversation's current layout, so it lands when they do.
         if takeover_running {
-            let mut tween = WidthTween::new(before.conversation_content, 0.0);
+            let mut tween = WidthTween::panel(before.conversation_content, 0.0);
             if let Some(pane) = self
                 .right_tween
                 .filter(|pane| self.tween_active(Some(*pane)))

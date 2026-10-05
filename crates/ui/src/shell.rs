@@ -2,7 +2,7 @@
 //! right "Changes" pane, plus the boot splash and the connection gate.
 //!
 //! Layout is zeron's: collapsible drag-resizable sidebar (224–400px, default
-//! 256) with a 200ms ease-out width transition; main panel with an h-11 header,
+//! 256) with a gentle 180–240ms width transition; main panel with an h-11 header,
 //! content outlet, and a reserved h-6 status strip so later content never
 //! shifts; right pane scaffold (360px floor, default 520), hidden by default.
 //! Widths/collapsed state persist to `ui-settings.json` (debounced).
@@ -32,7 +32,9 @@ use crate::composer::{Composer, ComposerEvent, ComposerInput, ComposerInputEvent
 use crate::files::{FilesCloseDisposition, FilesEvent, FilesSurface, WorkspacePathDrag};
 use crate::icons::{self, icon};
 use crate::loaders;
-use crate::motion::{self, AnimationExt as _, MotionSpec, RESIZE, SPLASH_OUT, TAB_SLIDE};
+use crate::motion::{
+    self, AnimationExt as _, MotionSpec, PANEL_RESIZE, RESIZE, SPLASH_OUT, TAB_SLIDE,
+};
 use crate::popover::{self, Loadable};
 use crate::pull_requests::PullRequestsPage;
 use crate::rail;
@@ -1279,7 +1281,7 @@ impl Render for DragGhost {
     }
 }
 
-/// A oneshot width tween (200ms ease-out), driven MANUALLY from render via
+/// A oneshot width tween, driven MANUALLY from render via
 /// [`Shell::eval_tween`] — never through a `with_animation` wrapper. gpui keys
 /// an animation element's start time by its full global element-id path, so a
 /// wrapper that mounts/remounts (route swap, or an ancestor animation keyed by
@@ -1292,6 +1294,7 @@ struct WidthTween {
     to: f32,
     started: std::time::Instant,
     duration: Duration,
+    curve: motion::CubicBezier,
 }
 
 impl WidthTween {
@@ -1301,18 +1304,23 @@ impl WidthTween {
             to,
             started: std::time::Instant::now(),
             duration: RESIZE.total().mul_f32(motion::speed_scale()),
+            curve: RESIZE.curve,
         }
     }
 
     /// A panel column moving from `from` to `to`. Longer moves take longer,
     /// so a wide pane travels at about the pace of the sidebar instead of
-    /// covering twice the distance in the same time: 200ms up to the
+    /// covering twice the distance in the same time: 180ms up to the
     /// sidebar's width, growing with the square root of the distance to
-    /// 300ms.
+    /// 240ms. The dialog entrance curve eases into the movement and settles
+    /// without overshoot, rather than starting a large column at full speed.
     fn panel(from: f32, to: f32) -> Self {
-        let scale = ((to - from).abs() / SIDEBAR_DEFAULT).sqrt().clamp(1.0, 1.5);
+        let scale = ((to - from).abs() / SIDEBAR_DEFAULT)
+            .sqrt()
+            .clamp(1.0, 4.0 / 3.0);
         Self {
-            duration: RESIZE.total().mul_f32(motion::speed_scale() * scale),
+            duration: PANEL_RESIZE.total().mul_f32(motion::speed_scale() * scale),
+            curve: PANEL_RESIZE.curve,
             ..Self::new(from, to)
         }
     }
@@ -6818,8 +6826,8 @@ impl Shell {
     }
 
     /// Evaluate a width tween at the frame time (see [`WidthTween`]).
-    /// Mid-flight: eased 200ms lerp, and `motion_active` is flagged so render
-    /// schedules the next animation frame. Finished, stale, absent, or under
+    /// Mid-flight: lerp on the tween's curve, flagging `motion_active` so
+    /// render schedules the next frame. Finished, stale, absent, or under
     /// reduced motion: exactly `target`. Honors `ZERON_MOTION_SCALE`.
     fn eval_tween(&self, tween: Option<WidthTween>, target: f32) -> f32 {
         let Some(WidthTween {
@@ -6827,6 +6835,7 @@ impl Shell {
             to,
             started,
             duration,
+            curve,
         }) = tween
         else {
             return target;
@@ -6839,7 +6848,7 @@ impl Shell {
             return target;
         }
         self.motion_active.set(true);
-        motion::lerp(from, to, RESIZE.progress(raw))
+        motion::lerp(from, to, curve.eval(raw))
     }
 
     /// [`Self::eval_tween`] heading for `target` as it is this frame, not
@@ -6915,7 +6924,7 @@ impl Shell {
 
     /// Right-anchored variant for the changes pane. The outer width follows the
     /// existing shell tween, while descendants retain the larger endpoint's
-    /// geometry for that 200ms transition. This mirrors the sidebar's stable
+    /// geometry throughout the transition. This mirrors the sidebar's stable
     /// inner/clipped outer behavior without changing the center column's
     /// upstream flex layout.
     fn right_pane_container(
@@ -15692,6 +15701,7 @@ mod exit_regressions {
                     to: 0.,
                     started,
                     duration,
+                    curve: RESIZE.curve,
                 });
                 shell.reduced_motion = false;
                 // The frame started halfway through the transition but rendering
