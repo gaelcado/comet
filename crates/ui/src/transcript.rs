@@ -878,29 +878,124 @@ fn output_line(line: &str) -> SharedString {
 /// so the budget is sized to fit the narrowest useful transcript pane.
 pub const CALL_WRAP_COLS: usize = 80;
 
-/// Soft-wrap one raw line into [`CALL_WRAP_COLS`]-char chunks so a long
-/// single-line command stays fully readable instead of ellipsizing.
+/// Columns a wrapped continuation line is indented by, inside the budget.
+const WRAP_INDENT: &str = "  ";
+
+/// Soft-wrap one raw line within [`CALL_WRAP_COLS`] so a long single-line
+/// command stays fully readable instead of ellipsizing. Continuation lines
+/// carry the [`WRAP_INDENT`].
 fn wrap_cols(line: &str, cols: usize) -> Vec<SharedString> {
     wrap_ranges(line, cols)
         .into_iter()
-        .map(|range| SharedString::from(line[range].to_owned()))
+        .enumerate()
+        .map(|(ix, range)| {
+            let indent = if ix == 0 { "" } else { WRAP_INDENT };
+            SharedString::from(format!("{indent}{}", &line[range]))
+        })
         .collect()
 }
 
 /// The byte ranges of [`wrap_cols`]'s chunks, so callers holding per-byte
 /// styling (the shell block's tones) can slice it along the same cuts.
+///
+/// A chunk ends at the best boundary that fits: before `&&`, `||` or `|`
+/// (the operator then leads the continuation, as in a hand-wrapped
+/// pipeline), else after `;` or an operator, else at any whitespace.
+/// Operators inside quotes (a `"a|b"` regex) are only whitespace. Only a
+/// single token longer than the budget is cut mid-token. Continuation chunks
+/// get [`WRAP_INDENT`] fewer columns, so every line, indent included, stays
+/// within `cols` and the line count stays the height basis.
 fn wrap_ranges(line: &str, cols: usize) -> Vec<Range<usize>> {
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let byte = |ix: usize| chars.get(ix).map_or(line.len(), |&(byte, _)| byte);
+    let quoted = quoted_chars(&chars);
     let mut ranges = Vec::new();
-    let (mut start, mut count) = (0, 0);
-    for (ix, _) in line.char_indices() {
-        if count == cols {
-            ranges.push(start..ix);
-            (start, count) = (ix, 0);
+    let mut start = 0;
+    let mut budget = cols.max(1);
+    while chars.len() - start > budget {
+        let limit = start + budget;
+        let mut best: Option<(u8, usize)> = None;
+        let mut has_text = false;
+        for at in start + 1..=limit {
+            has_text |= !chars[at - 1].1.is_whitespace();
+            let rank = match wrap_boundary_rank(&chars, at) {
+                rank if quoted[at] => u8::from(rank > 0 && chars[at - 1].1.is_whitespace()),
+                rank => rank,
+            };
+            if has_text && rank > 0 && best.is_none_or(|(top, _)| rank >= top) {
+                best = Some((rank, at));
+            }
         }
-        count += 1;
+        let end = best.map_or(limit, |(_, at)| at);
+        let mut trimmed = end;
+        while trimmed > start && chars[trimmed - 1].1.is_whitespace() {
+            trimmed -= 1;
+        }
+        ranges.push(byte(start)..byte(trimmed));
+        start = end;
+        budget = cols.saturating_sub(WRAP_INDENT.len()).max(1);
     }
-    ranges.push(start..line.len());
+    ranges.push(byte(start)..line.len());
     ranges
+}
+
+/// Whether each char sits inside a shell quote, so its operators are text.
+/// Approximate on purpose: an unbalanced quote only costs operator breaks.
+fn quoted_chars(chars: &[(usize, char)]) -> Vec<bool> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    chars
+        .iter()
+        .map(|&(_, c)| {
+            let inside = quote.is_some();
+            match (quote, c) {
+                _ if escaped => escaped = false,
+                (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+                (Some('"') | None, '\\') => escaped = true,
+                (None, '\'' | '"') => quote = Some(c),
+                _ => {}
+            }
+            inside
+        })
+        .collect()
+}
+
+/// How good a place char `at` is to start a continuation line: 3 before a
+/// `&&`/`||`/`|` operator, 2 after `;` or an operator, 1 after whitespace,
+/// 0 mid-token or on whitespace.
+fn wrap_boundary_rank(chars: &[(usize, char)], at: usize) -> u8 {
+    let char_at = |ix: usize| chars.get(ix).map(|&(_, c)| c);
+    let Some(current) = char_at(at) else {
+        return 0;
+    };
+    if current.is_whitespace() {
+        return 0;
+    }
+    let previous = at.checked_sub(1).and_then(char_at);
+    let before_operator = match current {
+        '&' => char_at(at + 1) == Some('&') && previous != Some('&'),
+        '|' => previous != Some('|'),
+        _ => false,
+    };
+    if before_operator {
+        return 3;
+    }
+    let mut last = at;
+    while last > 0 && chars[last - 1].1.is_whitespace() {
+        last -= 1;
+    }
+    let after_operator = match last.checked_sub(1).and_then(char_at) {
+        Some(';' | '|') => true,
+        Some('&') => last >= 2 && char_at(last - 2) == Some('&'),
+        _ => false,
+    };
+    if after_operator {
+        2
+    } else if previous.is_some_and(char::is_whitespace) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Build a chip's full-invocation block — the complete tool call the header
@@ -15962,6 +16057,23 @@ mod tests {
                 .iter()
                 .all(|l| l.text.chars().count() <= CALL_WRAP_COLS)
         );
+        // A long list wraps at its boundaries, before the operator rather
+        // than mid-token, and the continuation is indented within the budget.
+        let build = "cargo build --release --target aarch64-apple-darwin --features metal";
+        let (lines, _) = shell(&format!("{build} && cargo test --workspace -- --nocapture"));
+        assert_eq!(
+            lines.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
+            vec![
+                format!("$ {build}"),
+                "    && cargo test --workspace -- --nocapture".to_owned(),
+            ]
+        );
+        assert_eq!(lines[1].tones[..2], [(4, Plain), (2, Flag)]);
+        // A quoted `|` is text, not a pipeline: the pattern moves whole.
+        let pattern = format!("\"{}|{}\"", "a".repeat(30), "b".repeat(30));
+        let (lines, _) = shell(&format!("rg --hidden --line-number {pattern} crates/ui"));
+        assert_eq!(lines[1].text.as_ref(), format!("    {pattern} crates/ui"));
+
         // Past the cap, the counted tail covers every hidden visual line.
         let (lines, truncated_by) = shell(&vec!["echo hi"; OUTPUT_DETAIL_MAX_LINES + 5].join("\n"));
         assert_eq!((lines.len(), truncated_by), (OUTPUT_DETAIL_MAX_LINES, 5));

@@ -16,8 +16,8 @@ use zeron_proto::shell_command::{ExecBadge, ExecVerb, summarize};
 use zeron_syntax::{HighlightKind, HighlightSpan};
 
 use super::{
-    CALL_WRAP_COLS, OUTPUT_DETAIL_MAX_LINES, TOOL_LABEL_LINE_HEIGHT, ToolDetail, path_badge,
-    single_line, wrap_ranges,
+    CALL_WRAP_COLS, OUTPUT_DETAIL_MAX_LINES, TOOL_LABEL_LINE_HEIGHT, ToolDetail, WRAP_INDENT,
+    path_badge, single_line, wrap_ranges,
 };
 use crate::theme::Theme;
 
@@ -211,11 +211,11 @@ pub(super) fn shell_block(command: &str) -> Option<ToolDetail> {
             line.len(),
             spans.get(line_ix).map(Vec::as_slice).unwrap_or_default(),
         );
-        for range in ranges.into_iter().take(room) {
-            let (lead, lead_tone) = if lines.is_empty() {
-                (PROMPT, ShellTone::Prompt)
-            } else {
-                (GUTTER, ShellTone::Plain)
+        for (chunk_ix, range) in ranges.into_iter().take(room).enumerate() {
+            let (lead, lead_tone) = match (lines.is_empty(), chunk_ix) {
+                (true, _) => (PROMPT.to_owned(), ShellTone::Prompt),
+                (false, 0) => (GUTTER.to_owned(), ShellTone::Plain),
+                (false, _) => (format!("{GUTTER}{WRAP_INDENT}"), ShellTone::Plain),
             };
             let mut line_tones = vec![(lead.len(), lead_tone)];
             line_tones.extend(slice_tones(&tones, range.clone()));
