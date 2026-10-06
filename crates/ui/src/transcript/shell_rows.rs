@@ -229,6 +229,17 @@ pub(super) fn shell_block(command: &str) -> Option<ToolDetail> {
     })
 }
 
+/// Whether a search's scope path is a folder. The command only names the
+/// path, so this is a cheap guess rather than a filesystem check: a trailing
+/// `/`, `.` or `..`, or a last component without an extension (`src/shell`)
+/// reads as a folder; anything with one (`main.rs`) as a file. A bare file
+/// like `Makefile` is therefore shown as a folder.
+pub(super) fn path_is_directory(path: &str) -> bool {
+    path.ends_with('/')
+        || matches!(path, "." | "..")
+        || std::path::Path::new(path).extension().is_none()
+}
+
 /// The one-line form of a header subject, capped at [`HEADER_MAX_CHARS`].
 fn header_text(text: &str) -> String {
     let line = single_line(text);
@@ -297,12 +308,13 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
                 .filter(|&n| n > 0)
                 .map(ShellTrailer::Lines),
         },
-        (ExecVerb::Ran, _) if summary.extra_segments > 0 => ShellHeader {
+        (ExecVerb::Ran | ExecVerb::Git, _) if summary.extra_segments > 0 => ShellHeader {
             command: Some(ShellLine::highlighted(header_text(&summary.subject))),
             badge: None,
             trailer: Some(ShellTrailer::More(summary.extra_segments)),
         },
-        (ExecVerb::Ran, _) => ShellHeader {
+        // Git reads like any other Ran row: the whole `git …` line.
+        (ExecVerb::Ran | ExecVerb::Git, _) => ShellHeader {
             command: Some(ShellLine::highlighted(header_text(&summary.display))),
             badge: None,
             trailer: None,
@@ -370,6 +382,9 @@ impl ShellHeader {
             }
             let identity = match badge {
                 ExecBadge::Folder(path) => {
+                    crate::file_icons::FileIconIdentity::directory(path, false)
+                }
+                ExecBadge::Path(path) if path_is_directory(path) => {
                     crate::file_icons::FileIconIdentity::directory(path, false)
                 }
                 ExecBadge::File(path) | ExecBadge::Path(path) => {
