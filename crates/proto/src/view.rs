@@ -510,7 +510,7 @@ fn tool_chip_content_raw(call: &crate::ToolCall, running: bool) -> (&'static str
                 }
                 // The whole cleaned list until viewports render the first
                 // command with a "+N" pill.
-                (ExecVerb::Ran, _) => exec.display,
+                (ExecVerb::Ran | ExecVerb::Git, _) => exec.display,
                 _ => exec.subject,
             };
             (exec.verb.label(running), detail)

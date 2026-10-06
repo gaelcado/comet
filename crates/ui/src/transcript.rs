@@ -9684,7 +9684,8 @@ fn path_badge(
 }
 
 /// `+N −M` after a file badge: lines added in the success tone, removed in
-/// the danger tone, in tabular figures so counts line up between rows.
+/// the danger tone, in tabular figures so counts line up between rows. A side
+/// with nothing on it is left out ("+24" for a new file, not "+24 −0").
 fn change_counts_label((added, removed): (u64, u64), theme: &Theme) -> AnyElement {
     div()
         .flex_none()
@@ -9696,16 +9697,20 @@ fn change_counts_label((added, removed): (u64, u64), theme: &Theme) -> AnyElemen
             "tnum".into(),
             1,
         )])))
-        .child(
-            div()
-                .text_color(theme.success)
-                .child(SharedString::from(format!("+{added}"))),
-        )
-        .child(
-            div()
-                .text_color(theme.danger)
-                .child(SharedString::from(format!("−{removed}"))),
-        )
+        .when(added > 0, |row| {
+            row.child(
+                div()
+                    .text_color(theme.success)
+                    .child(SharedString::from(format!("+{added}"))),
+            )
+        })
+        .when(removed > 0, |row| {
+            row.child(
+                div()
+                    .text_color(theme.danger)
+                    .child(SharedString::from(format!("−{removed}"))),
+            )
+        })
         .into_any_element()
 }
 
@@ -16225,6 +16230,13 @@ mod tests {
             vec![(5, Program), (7, Plain), (2, Flag), (3, Plain)]
         );
         assert_eq!(header.trailer, Some(ShellTrailer::More(1)));
+        // A git call reads like any Ran row: the whole line, program included.
+        let header = shell_header("git status --short").unwrap();
+        assert_eq!(header.command.unwrap().text.as_ref(), "git status --short");
+        // A search scoped to a folder shows a folder badge, not a file one.
+        assert!(shell_rows::path_is_directory("src/shell"));
+        assert!(shell_rows::path_is_directory("."));
+        assert!(!shell_rows::path_is_directory("src/main.rs"));
         // A one-file read is just the file badge; a script counts its body.
         let header = shell_header("cat src/main.rs").unwrap();
         assert!(header.command.is_none());

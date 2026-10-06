@@ -42,7 +42,9 @@ impl ExecVerb {
             Self::Searched => ("Searching", "Searched"),
             Self::Listed => ("Listing", "Listed"),
             Self::Tested => ("Testing", "Tested"),
-            Self::Git => ("Running git", "Ran git"),
+            // Reads like any other command: the verb is "Ran" and the subject is
+            // the whole `git …` line, with the program in it.
+            Self::Git => ("Running", "Ran"),
             Self::RanScript => ("Running script", "Ran script"),
         };
         if running { live } else { done }
