@@ -488,46 +488,63 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// Per-kind chip label + one-line detail. Labels match zeron's `describeTool`
-/// (tool-chip.tsx) exactly, so the two viewports name a tool identically.
+/// Settled chip label + one-line detail ("Ran", "Edited", …), the tense of
+/// a call that has finished. Prefer [`tool_row_content`] wherever the
+/// viewport knows whether the call is still running.
 pub fn tool_chip_content(call: &crate::ToolCall) -> (&'static str, String) {
-    let (label, detail) = tool_chip_content_raw(call);
+    tool_row_content(call, false)
+}
+
+/// Per-kind chip label + one-line detail. The label is a verb in the
+/// present participle while the call runs ("Running", "Editing") and in the
+/// past tense once it resolves ("Ran", "Edited"), matching the verbs of
+/// [`tool_group_summary`] so a group's header and its rows agree.
+pub fn tool_row_content(call: &crate::ToolCall, running: bool) -> (&'static str, String) {
+    let (label, detail) = tool_chip_content_raw(call, running);
     (label, single_line(&detail))
 }
 
-fn tool_chip_content_raw(call: &crate::ToolCall) -> (&'static str, String) {
+fn tool_chip_content_raw(call: &crate::ToolCall, running: bool) -> (&'static str, String) {
     use crate::ToolCall;
+    let verb = |live: &'static str, done: &'static str| if running { live } else { done };
     match call {
-        ToolCall::Exec { command } => ("Run", command.clone()),
-        ToolCall::ReadFile { path } => ("Read", path.clone()),
-        ToolCall::WriteFile { path, .. } => ("Write", path.clone()),
-        ToolCall::EditFile { path, .. } => ("Edit", path.clone()),
-        ToolCall::ApplyPatch { path } => {
-            ("Patch", path.clone().unwrap_or_else(|| "workspace".into()))
-        }
+        ToolCall::Exec { command } => (verb("Running", "Ran"), command.clone()),
+        ToolCall::ReadFile { path } => (verb("Reading", "Read"), path.clone()),
+        ToolCall::WriteFile { path, .. } => (verb("Writing", "Wrote"), path.clone()),
+        ToolCall::EditFile { path, .. } => (verb("Editing", "Edited"), path.clone()),
+        ToolCall::ApplyPatch { path } => (
+            verb("Patching", "Patched"),
+            path.clone().unwrap_or_else(|| "workspace".into()),
+        ),
         ToolCall::Search { pattern, path } => (
-            "Search",
+            verb("Searching", "Searched"),
             match path {
                 Some(path) => format!("{pattern} in {path}"),
                 None => pattern.clone(),
             },
         ),
-        ToolCall::Glob { pattern } => ("Glob", pattern.clone()),
-        ToolCall::WebFetch { url, .. } => ("Fetch", url.clone()),
-        ToolCall::WebSearch { query } => ("Web", query.clone()),
+        ToolCall::Glob { pattern } => (verb("Listing", "Listed"), pattern.clone()),
+        ToolCall::WebFetch { url, .. } => (verb("Fetching", "Fetched"), url.clone()),
+        ToolCall::WebSearch { query } => (verb("Searching web", "Searched web"), query.clone()),
         ToolCall::Todo { items } => {
             let done = items.iter().filter(|i| i.done).count();
-            ("Todo", format!("{done}/{} done", items.len()))
+            (
+                verb("Updating todos", "Updated todos"),
+                format!("{done}/{} done", items.len()),
+            )
         }
-        ToolCall::Mcp { server, tool, .. } => ("MCP", format!("{server} · {tool}")),
+        ToolCall::Mcp { server, tool, .. } => {
+            (verb("Calling", "Called"), format!("{server} · {tool}"))
+        }
         // Subagent spawns decode as Unknown named "Agent[: <description>]"
         // (every native driver's convention): label them "Agent" with the
-        // description as the detail — "Tool · Agent: scan repo" read as two
-        // labels fighting.
+        // description as the detail — "Called · Agent: scan repo" read as
+        // two labels fighting. The spawn chip shows its own spinner, so the
+        // noun needs no tense.
         ToolCall::Unknown { name, .. } => match name.strip_prefix("Agent: ") {
             Some(description) => ("Agent", description.to_owned()),
             None if name == "Agent" => ("Agent", String::new()),
-            None => ("Tool", name.clone()),
+            None => (verb("Calling", "Called"), name.clone()),
         },
     }
 }
@@ -542,6 +559,7 @@ pub fn tool_group_summary(tools: &[(crate::ToolCall, bool)]) -> String {
     let mut edited: Vec<&str> = Vec::new();
     let mut reads = 0usize;
     let mut searches = 0usize;
+    let mut listings = 0usize;
     let mut fetches = 0usize;
     let mut todos = 0usize;
     let mut other = 0usize;
@@ -564,9 +582,8 @@ pub fn tool_group_summary(tools: &[(crate::ToolCall, bool)]) -> String {
                 }
             }
             ToolCall::ReadFile { .. } => reads += 1,
-            ToolCall::Search { .. } | ToolCall::Glob { .. } | ToolCall::WebSearch { .. } => {
-                searches += 1
-            }
+            ToolCall::Search { .. } | ToolCall::WebSearch { .. } => searches += 1,
+            ToolCall::Glob { .. } => listings += 1,
             ToolCall::WebFetch { .. } => fetches += 1,
             ToolCall::Todo { .. } => todos += 1,
             ToolCall::Mcp { .. } | ToolCall::Unknown { .. } => other += 1,
@@ -584,6 +601,9 @@ pub fn tool_group_summary(tools: &[(crate::ToolCall, bool)]) -> String {
     }
     if searches > 0 {
         segments.push(format!("searched {}", plural(searches, "time", "times")));
+    }
+    if listings > 0 {
+        segments.push(format!("listed {}", plural(listings, "time", "times")));
     }
     if fetches > 0 {
         segments.push(format!("fetched {}", plural(fetches, "page", "pages")));

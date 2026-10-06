@@ -1149,7 +1149,7 @@ fn tool_fingerprint(tools: &[ToolItem], auto_open: bool) -> u64 {
     for t in tools {
         acc.extend_from_slice(t.part_id.as_bytes());
         acc.push(0);
-        let (label, detail) = tool_chip_content(&t.call);
+        let (label, detail) = tool_row_content(&t.call, tool_running(t));
         acc.extend_from_slice(label.as_bytes());
         acc.extend_from_slice(&(detail.len() as u32).to_le_bytes());
         acc.push(t.is_error as u8 | (t.resolved as u8) << 1);
@@ -2137,7 +2137,18 @@ fn tool_group_title(text: SharedString, shimmer_phase: Option<f32>, theme: &Them
 // surface, and the one-line collapse is needed for the same reason in both (a
 // literal newline breaks gpui's ellipsis logic and would be a cursor move in a
 // cell grid).
-pub use zeron_proto::view::{single_line, tool_chip_content};
+pub use zeron_proto::view::{single_line, tool_row_content};
+
+/// Whether a call chip is still working; its label then reads in the
+/// present participle ("Running"). A spawn chip follows its subagent rather
+/// than `resolved`: under eager-done the spawn call resolves while the
+/// subagent still runs.
+fn tool_running(tool: &ToolItem) -> bool {
+    match tool.subagent_ref {
+        Some(_) => matches!(tool.subagent_status, Some(SubagentStatus::Running)),
+        None => !tool.resolved,
+    }
+}
 
 /// Analytic expanded-chips height — no measurement needed for the fold tween.
 pub fn chips_height(count: usize) -> f32 {
@@ -9355,7 +9366,7 @@ fn chip_header_row(
     let (label, detail) = match tool.kind {
         ToolItemKind::Thought => ("Thought process", String::new()),
         ToolItemKind::Note => ("Wrote", note_chip_detail(tool)),
-        ToolItemKind::Call => tool_chip_content(&tool.call),
+        ToolItemKind::Call => tool_row_content(&tool.call, tool_running(tool)),
     };
     let activity = !is_agent_tool(tool);
     let file_path = match &tool.call {
@@ -15479,7 +15490,10 @@ mod tests {
                 images: Arc::new([]),
             },
         ];
-        assert_eq!(tool_group_summary(&tools), "Read 1 file · searched 2 times");
+        assert_eq!(
+            tool_group_summary(&tools),
+            "Read 1 file · searched 1 time · listed 1 time"
+        );
     }
 
     #[test]
@@ -15533,39 +15547,83 @@ mod tests {
     }
 
     #[test]
-    fn tool_chip_labels_per_kind() {
-        assert_eq!(
-            tool_chip_content(&ToolCall::Exec {
-                command: "cargo test".into()
-            }),
-            ("Run", "cargo test".to_string())
-        );
-        assert_eq!(
-            tool_chip_content(&ToolCall::Search {
-                pattern: "foo".into(),
-                path: Some("src".into())
-            }),
-            ("Search", "foo in src".to_string())
-        );
-        assert_eq!(
-            tool_chip_content(&ToolCall::ApplyPatch { path: None }),
-            ("Patch", "workspace".to_string())
-        );
-        assert_eq!(
-            tool_chip_content(&ToolCall::Mcp {
-                server: "gh".into(),
-                tool: "issues".into(),
-                input: None
-            }),
-            ("MCP", "gh · issues".to_string())
-        );
+    fn tool_chip_labels_follow_the_call_tense() {
         let todo = ToolCall::Todo {
             items: vec![
                 zeron_proto::TodoItem::new("a", zeron_proto::TodoStatus::Completed),
                 zeron_proto::TodoItem::new("b", zeron_proto::TodoStatus::Pending),
             ],
         };
-        assert_eq!(tool_chip_content(&todo), ("Todo", "1/2 done".to_string()));
+        // (call, running label, settled label, detail)
+        let cases = [
+            (
+                ToolCall::Exec {
+                    command: "cargo test".into(),
+                },
+                "Running",
+                "Ran",
+                "cargo test",
+            ),
+            (
+                ToolCall::WriteFile {
+                    path: "a.rs".into(),
+                    content: None,
+                },
+                "Writing",
+                "Wrote",
+                "a.rs",
+            ),
+            (
+                ToolCall::Search {
+                    pattern: "foo".into(),
+                    path: Some("src".into()),
+                },
+                "Searching",
+                "Searched",
+                "foo in src",
+            ),
+            (
+                ToolCall::Glob {
+                    pattern: "*.rs".into(),
+                },
+                "Listing",
+                "Listed",
+                "*.rs",
+            ),
+            (
+                ToolCall::ApplyPatch { path: None },
+                "Patching",
+                "Patched",
+                "workspace",
+            ),
+            (
+                ToolCall::Mcp {
+                    server: "gh".into(),
+                    tool: "issues".into(),
+                    input: None,
+                },
+                "Calling",
+                "Called",
+                "gh · issues",
+            ),
+            (todo, "Updating todos", "Updated todos", "1/2 done"),
+            (
+                ToolCall::Unknown {
+                    name: "Agent: scan repo".into(),
+                    input: None,
+                },
+                "Agent",
+                "Agent",
+                "scan repo",
+            ),
+        ];
+        for (call, running, settled, detail) in cases {
+            assert_eq!(tool_row_content(&call, true), (running, detail.to_string()));
+            assert_eq!(
+                tool_row_content(&call, false),
+                (settled, detail.to_string())
+            );
+        }
     }
 
     #[test]
@@ -15711,18 +15769,24 @@ mod tests {
         // The user's breaker: a multi-line script in a Run chip. The detail
         // must come out as ONE sanitized line — the chip's fixed 30px card
         // then truncates it with an ellipsis like the original's CSS.
-        let (label, detail) = tool_chip_content(&ToolCall::Exec {
-            command: "set -e\nfixture_in_original=0\n\tgrep -c  \"x\"".into(),
-        });
-        assert_eq!(label, "Run");
+        let (label, detail) = tool_row_content(
+            &ToolCall::Exec {
+                command: "set -e\nfixture_in_original=0\n\tgrep -c  \"x\"".into(),
+            },
+            false,
+        );
+        assert_eq!(label, "Ran");
         assert_eq!(detail, "set -e fixture_in_original=0 grep -c \"x\"");
         assert!(!detail.contains('\n'));
         // The chip row height is a constant, independent of content shape.
         assert_eq!(chips_height(1), CHIPS_TOP_PAD + CHIP_HEIGHT);
         // Every detail kind is sanitized (MCP inputs / queries are model text).
-        let (_, q) = tool_chip_content(&ToolCall::WebSearch {
-            query: "line one\nline two".into(),
-        });
+        let (_, q) = tool_row_content(
+            &ToolCall::WebSearch {
+                query: "line one\nline two".into(),
+            },
+            false,
+        );
         assert_eq!(q, "line one line two");
     }
 
