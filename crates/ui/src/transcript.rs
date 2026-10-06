@@ -110,6 +110,8 @@ const ACTIVITY_BEND_RADIUS: f32 = 6.0;
 const ACTIVITY_BRANCH_END_X: f32 = 28.0;
 const ACTIVITY_ICON_LEFT: f32 = 32.0;
 const ACTIVITY_ICON_SIZE: f32 = 16.0;
+/// How visible an expandable activity row's chevron is at rest.
+const ACTIVITY_CHEVRON_REST_OPACITY: f32 = 0.5;
 const TOOL_TEXT_SIZE: f32 = 12.0;
 const TOOL_LABEL_SIZE: f32 = TOOL_TEXT_SIZE;
 const TOOL_LABEL_LINE_HEIGHT: f32 = 18.0;
@@ -9900,14 +9902,39 @@ fn chip_header_row(
                 cx,
             )))
         })
+        .when(failed, |row| {
+            // Failure is not carried by the danger tint alone: a static glyph
+            // in the trailing slot (clear of the verb's left edge) names it
+            // for anyone who cannot tell the tints apart.
+            row.child(
+                div()
+                    .id("tool-failed")
+                    .flex_none()
+                    .h(px(metrics.label_line()))
+                    .flex()
+                    .items_center()
+                    .tooltip(crate::settings::widgets::text_tooltip("Failed"))
+                    .child(
+                        crate::icons::icon(crate::icons::CLOSE_CIRCLE)
+                            .size(crate::typography::ui_rems(14.0))
+                            .text_color(theme.danger),
+                    ),
+            )
+        })
         .when_some(trail, |row, trail| {
             // Trailing tile matching the group header's: a chevron for the
-            // output/diff accordion, or the open-arrow for spawn chips.
+            // output/diff accordion, or the open-arrow for spawn chips. An
+            // expandable activity row rests at a faint chevron — the cue that
+            // it opens — which comes up to full on hover and while open.
             let tile = div()
                 .size(px(18.0))
                 .flex_none()
                 .when(activity, |tile| {
-                    tile.opacity(0.0)
+                    let resting = match trail {
+                        ChipTrail::Chevron { open: true } => 1.0,
+                        _ => ACTIVITY_CHEVRON_REST_OPACITY,
+                    };
+                    tile.opacity(resting)
                         .group_hover("tool-header", |style| style.opacity(1.0))
                 })
                 .when(!activity, |tile| {
@@ -9925,7 +9952,11 @@ fn chip_header_row(
                         crate::icons::ALT_ARROW_RIGHT
                     })
                     .size(px(12.0))
-                    .text_color(theme.text_faint)
+                    .text_color(if activity {
+                        theme.text_muted
+                    } else {
+                        theme.text_faint
+                    })
                     .when(activity, |caret| {
                         caret.group_hover("tool-header", |style| {
                             style.text_color(if failed { theme.danger } else { theme.text })
