@@ -488,13 +488,6 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// Settled chip label + one-line detail ("Ran", "Edited", …), the tense of
-/// a call that has finished. Prefer [`tool_row_content`] wherever the
-/// viewport knows whether the call is still running.
-pub fn tool_chip_content(call: &crate::ToolCall) -> (&'static str, String) {
-    tool_row_content(call, false)
-}
-
 /// Per-kind chip label + one-line detail. The label is a verb in the
 /// present participle while the call runs ("Running", "Editing") and in the
 /// past tense once it resolves ("Ran", "Edited"), matching the verbs of
