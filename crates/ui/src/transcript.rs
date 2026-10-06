@@ -865,6 +865,22 @@ pub enum ToolDetail {
     },
 }
 
+impl ToolDetail {
+    /// Lines added and removed, for the `+N −M` beside a file badge. Only a
+    /// diff or its stats carry them, and `None` when both are zero. A diff's
+    /// counts come from the whole change, not the capped lines it renders.
+    fn change_counts(&self) -> Option<(u64, u64)> {
+        let (added, removed) = match self {
+            Self::Diff { file, .. } => (u64::from(file.additions), u64::from(file.deletions)),
+            Self::Stats { stats } => stats.iter().fold((0, 0), |(a, d), stat| {
+                (a + stat.additions, d + stat.deletions)
+            }),
+            _ => return None,
+        };
+        (added + removed > 0).then_some((added, removed))
+    }
+}
+
 /// Max verbatim output lines per chip before the counted tail row.
 pub const OUTPUT_DETAIL_MAX_LINES: usize = 24;
 
@@ -9667,6 +9683,32 @@ fn path_badge(
     crate::frost::frosted(5.0, 16.0, badge).into_any_element()
 }
 
+/// `+N −M` after a file badge: lines added in the success tone, removed in
+/// the danger tone, in tabular figures so counts line up between rows.
+fn change_counts_label((added, removed): (u64, u64), theme: &Theme) -> AnyElement {
+    div()
+        .flex_none()
+        .flex()
+        .flex_row()
+        .gap(px(6.0))
+        .text_size(crate::typography::ui_rems(TOOL_TEXT_SIZE))
+        .font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
+            "tnum".into(),
+            1,
+        )])))
+        .child(
+            div()
+                .text_color(theme.success)
+                .child(SharedString::from(format!("+{added}"))),
+        )
+        .child(
+            div()
+                .text_color(theme.danger)
+                .child(SharedString::from(format!("−{removed}"))),
+        )
+        .into_any_element()
+}
+
 /// The trailing tile on a chip header, when it has one.
 enum ChipTrail {
     /// Expand/collapse chevron — flipped while the detail body is open.
@@ -9828,24 +9870,35 @@ fn chip_header_row(
                 .when(activity && detail.is_empty(), |detail| detail.hidden())
                 .items_center()
                 .truncate()
+                // The verb is the muted tier; its subject is a step brighter.
                 .text_color(if failed {
                     theme.danger
-                } else if activity {
-                    theme.text_muted
                 } else {
                     theme.text.opacity(0.85)
                 })
                 .child(if let Some(shell) = shell {
                     shell.element(failed, hover_text, metrics, theme)
                 } else if let Some(path) = file_path {
-                    path_badge(
+                    let badge = path_badge(
                         crate::file_icons::FileIconIdentity::file(path),
                         failed,
                         hover_text,
                         open_file,
                         metrics,
                         theme,
-                    )
+                    );
+                    match tool.detail.as_deref().and_then(ToolDetail::change_counts) {
+                        Some(counts) => div()
+                            .min_w_0()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(badge)
+                            .child(change_counts_label(counts, theme))
+                            .into_any_element(),
+                        None => badge,
+                    }
                 } else {
                     div()
                         .min_w_0()
@@ -15663,6 +15716,24 @@ mod tests {
         assert_eq!(add.new_no, Some(10));
         assert_eq!(add.text, "LINE 10");
         assert_eq!((file.additions, file.deletions), (1, 1));
+        assert_eq!(
+            tool_detail(None, Some(&diff), None).and_then(|d| d.change_counts()),
+            Some((1, 1))
+        );
+        let stat = |additions, deletions| zeron_doc::ToolDiffStat {
+            path: "a.rs".into(),
+            additions,
+            deletions,
+        };
+        assert_eq!(
+            tool_detail(None, None, Some(&[stat(3, 0), stat(2, 4)]))
+                .and_then(|d| d.change_counts()),
+            Some((5, 4))
+        );
+        assert_eq!(
+            tool_detail(None, None, Some(&[stat(0, 0)])).and_then(|d| d.change_counts()),
+            None
+        );
         assert_eq!(old_text.as_deref(), diff.old_text.as_deref());
         assert_eq!(new_text.as_deref(), Some(diff.new_text.as_str()));
         // New files carry Added status (and no old numbers).
