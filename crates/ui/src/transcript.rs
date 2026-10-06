@@ -55,6 +55,8 @@ use crate::syntax_cache::{DocumentHighlightKey, SyntaxHighlightCache};
 use crate::theme::Theme;
 use zeron_syntax::LanguageId as Lang;
 
+mod shell_rows;
+
 // ---------------------------------------------------------------------------
 // Constants (mugen ports)
 // ---------------------------------------------------------------------------
@@ -355,6 +357,9 @@ pub struct ToolItem {
     /// to one truncated line. Rendered above `detail` in the open card.
     /// Precomputed for the same reason as `detail`.
     pub invocation: Option<Arc<ToolDetail>>,
+    /// An Exec call's header as shell: the summarized command, tokenized
+    /// once here for the same reason as `detail`.
+    pub(crate) shell: Option<Arc<shell_rows::ShellHeader>>,
     /// Sidecar key of the full output (chat2-sync A3) — the doc carries only
     /// a one-line summary; expanding offers a lazy "Show full output" fetch.
     pub output_ref: Option<SharedString>,
@@ -725,6 +730,7 @@ fn thought_item(part_id: &str, tree: &BlockTree, live: bool) -> ToolItem {
             })
         }),
         invocation: None,
+        shell: None,
         output_ref: None,
         output_bytes: None,
         diff_ref: None,
@@ -1472,6 +1478,12 @@ pub fn rows_for_entry(
                     detail: tool_detail(output.as_deref(), diff.as_ref(), diff_stats.as_deref())
                         .map(Arc::new),
                     invocation: call_block(call).map(Arc::new),
+                    shell: match call {
+                        ToolCall::Exec { command } => {
+                            shell_rows::shell_header(command).map(Arc::new)
+                        }
+                        _ => None,
+                    },
                     output_ref: output_ref.clone().map(SharedString::from),
                     output_bytes: *output_bytes,
                     diff_ref: diff_ref.clone().map(SharedString::from),
@@ -9311,6 +9323,71 @@ fn note_chip_detail(tool: &ToolItem) -> String {
     String::new()
 }
 
+/// The file chip a file action's header shows in place of a bare path: the
+/// file-type icon in its well, then the final path component. Shared by the
+/// file tools and by Exec rows whose command reads, lists, or searches a path.
+fn path_badge(
+    identity: crate::file_icons::FileIconIdentity<'_>,
+    failed: bool,
+    hover_text: bool,
+    open_file: Option<(String, ToolFileOpener)>,
+    theme: &Theme,
+) -> AnyElement {
+    let name = file_badge_name(identity.name).to_owned();
+    let badge = div()
+        .min_w_0()
+        .h(px(22.0))
+        .flex()
+        .items_center()
+        .overflow_hidden()
+        .gap(px(6.0))
+        .rounded(px(5.0))
+        .bg(theme.ink(0.06))
+        .pl(px(1.0))
+        .pr(px(6.0))
+        .text_color(if failed {
+            theme.danger
+        } else {
+            theme.text.opacity(0.85)
+        })
+        .child(
+            div()
+                .size(px(20.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.0))
+                .bg(crate::file_icons::well_bg(theme))
+                .child(crate::file_icons::icon(identity, theme.appearance).size(px(14.0))),
+        )
+        .child(div().min_w_0().truncate().child(SharedString::from(name)))
+        .map(|badge| {
+            if !hover_text && open_file.is_none() {
+                return badge.into_any_element();
+            }
+            badge
+                .id("tool-file-badge")
+                .when(hover_text, |badge| {
+                    badge.group_hover("tool-header", |style| style.text_color(theme.text))
+                })
+                // The badge is its own target: opening the file must not also
+                // toggle the chip's accordion underneath it.
+                .when_some(open_file, |badge, (path, opener)| {
+                    badge
+                        .debug_selector(|| "tool-file-badge".into())
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme.ink(0.1)).text_color(theme.text))
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            opener.open(&path, window, cx);
+                        })
+                })
+                .into_any_element()
+        });
+    crate::frost::frosted(5.0, 16.0, badge).into_any_element()
+}
+
 /// The trailing tile on a chip header, when it has one.
 enum ChipTrail {
     /// Expand/collapse chevron — flipped while the detail body is open.
@@ -9380,6 +9457,10 @@ fn chip_header_row(
         .zip(file_opener)
         .filter(|(path, opener)| opener.opens(path))
         .map(|(path, opener)| (path.to_owned(), opener.clone()));
+    let shell = tool
+        .shell
+        .as_deref()
+        .filter(|_| tool.kind == ToolItemKind::Call);
     let running = tool.subagent_ref.is_some()
         && matches!(tool.subagent_status, Some(SubagentStatus::Running));
     let failed = tool.is_error
@@ -9458,10 +9539,10 @@ fn chip_header_row(
             div()
                 .when(!activity, |detail| detail.flex_1())
                 .min_w_0()
-                .h(px(if file_path.is_some() {
-                    22.0
-                } else {
-                    TOOL_LABEL_LINE_HEIGHT
+                .h(px(match shell {
+                    Some(shell) => shell.slot_height(),
+                    None if file_path.is_some() => 22.0,
+                    None => TOOL_LABEL_LINE_HEIGHT,
                 }))
                 .flex()
                 .when(activity && detail.is_empty(), |detail| detail.hidden())
@@ -9474,75 +9555,16 @@ fn chip_header_row(
                 } else {
                     theme.text.opacity(0.85)
                 })
-                .child(if let Some(path) = file_path {
-                    let badge = div()
-                        .min_w_0()
-                        .h(px(22.0))
-                        .flex()
-                        .items_center()
-                        .overflow_hidden()
-                        .gap(px(6.0))
-                        .rounded(px(5.0))
-                        .bg(theme.ink(0.06))
-                        .pl(px(1.0))
-                        .pr(px(6.0))
-                        .text_color(if failed {
-                            theme.danger
-                        } else {
-                            theme.text.opacity(0.85)
-                        })
-                        .child(
-                            div()
-                                .size(px(20.0))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(4.0))
-                                .bg(crate::file_icons::well_bg(theme))
-                                .child(
-                                    crate::file_icons::icon(
-                                        crate::file_icons::FileIconIdentity::file(path),
-                                        theme.appearance,
-                                    )
-                                    .size(px(14.0)),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .child(SharedString::from(file_badge_name(path).to_owned())),
-                        )
-                        .map(|badge| {
-                            if !hover_text && open_file.is_none() {
-                                return badge.into_any_element();
-                            }
-                            badge
-                                .id("tool-file-badge")
-                                .when(hover_text, |badge| {
-                                    badge.group_hover("tool-header", |style| {
-                                        style.text_color(theme.text)
-                                    })
-                                })
-                                // The badge is its own target: opening the
-                                // file must not also toggle the chip's
-                                // accordion underneath it.
-                                .when_some(open_file, |badge, (path, opener)| {
-                                    badge
-                                        .debug_selector(|| "tool-file-badge".into())
-                                        .cursor_pointer()
-                                        .hover(|style| {
-                                            style.bg(theme.ink(0.1)).text_color(theme.text)
-                                        })
-                                        .on_click(move |_, window, cx| {
-                                            cx.stop_propagation();
-                                            opener.open(&path, window, cx);
-                                        })
-                                })
-                                .into_any_element()
-                        });
-                    crate::frost::frosted(5.0, 16.0, badge).into_any_element()
+                .child(if let Some(shell) = shell {
+                    shell.element(failed, hover_text, theme)
+                } else if let Some(path) = file_path {
+                    path_badge(
+                        crate::file_icons::FileIconIdentity::file(path),
+                        failed,
+                        hover_text,
+                        open_file,
+                        theme,
+                    )
                 } else {
                     div()
                         .min_w_0()
@@ -15394,6 +15416,7 @@ mod tests {
             resolved: true,
             detail: None,
             invocation: None,
+            shell: None,
             output_ref: None,
             output_bytes: None,
             diff_ref: None,
@@ -15414,6 +15437,7 @@ mod tests {
             resolved: true,
             detail: None,
             invocation: None,
+            shell: None,
             output_ref: None,
             output_bytes: None,
             diff_ref: None,
@@ -15450,6 +15474,7 @@ mod tests {
                 resolved: true,
                 detail: None,
                 invocation: None,
+                shell: None,
                 output_ref: None,
                 output_bytes: None,
                 diff_ref: None,
@@ -15468,6 +15493,7 @@ mod tests {
                 resolved: true,
                 detail: None,
                 invocation: None,
+                shell: None,
                 output_ref: None,
                 output_bytes: None,
                 diff_ref: None,
@@ -15484,6 +15510,7 @@ mod tests {
                 resolved: true,
                 detail: None,
                 invocation: None,
+                shell: None,
                 output_ref: None,
                 output_bytes: None,
                 diff_ref: None,
@@ -15695,6 +15722,7 @@ mod tests {
             resolved: true,
             detail: None,
             invocation: None,
+            shell: None,
             output_ref: None,
             output_bytes: None,
             diff_ref: None,
@@ -15800,6 +15828,26 @@ mod tests {
             false,
         );
         assert_eq!(q, "line one line two");
+
+        // Exec headers read as shell: a compound list shows its first
+        // command, tokenized, with the rest counted in a "+N" pill.
+        use shell_rows::{ShellTone::*, ShellTrailer, shell_header};
+        use zeron_proto::shell_command::ExecBadge;
+        let header = shell_header("cd repo && cargo build -p ui && cargo test").unwrap();
+        let command = header.command.unwrap();
+        assert_eq!(command.text.as_ref(), "cargo build -p ui");
+        assert_eq!(
+            command.tones,
+            vec![(5, Program), (7, Plain), (2, Flag), (3, Plain)]
+        );
+        assert_eq!(header.trailer, Some(ShellTrailer::More(1)));
+        // A one-file read is just the file badge; a script counts its body.
+        let header = shell_header("cat src/main.rs").unwrap();
+        assert!(header.command.is_none());
+        assert_eq!(header.badge, Some(ExecBadge::File("src/main.rs".into())));
+        let header = shell_header("python - <<'EOF'\nimport os\nprint(os.sep)\nEOF").unwrap();
+        assert_eq!(header.trailer, Some(ShellTrailer::Lines(2)));
+        assert!(shell_header("  \n ").is_none());
     }
 
     #[test]
