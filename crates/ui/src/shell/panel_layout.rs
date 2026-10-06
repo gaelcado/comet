@@ -59,6 +59,9 @@ pub(super) struct HorizontalPanelFit {
     pub(super) sidebar_limit: f32,
 }
 
+/// Everything [`horizontal_panel_fit`] reads, in its argument order.
+pub(super) type FitInputs = (f32, f32, (bool, u64), (bool, u64), (bool, u64), bool);
+
 pub(super) fn horizontal_panel_fit(
     viewport: f32,
     sidebar_width: f32,
@@ -179,7 +182,7 @@ impl Shell {
             open || (closing
                 && tween.is_some_and(|tween| self.tween_active(Some(tween)) && tween.from > 0.5))
         };
-        horizontal_panel_fit(
+        let inputs: FitInputs = (
             self.viewport_width,
             self.settings.sidebar_width,
             (
@@ -195,7 +198,16 @@ impl Shell {
                 panels.files_opened_at,
             ),
             self.right_pane_expanded,
-        )
+        );
+        if let Some((memo, fit)) = self.fit_memo.get()
+            && memo == inputs
+        {
+            return fit;
+        }
+        let (viewport, sidebar_width, sidebar, right, files, expanded) = inputs;
+        let fit = horizontal_panel_fit(viewport, sidebar_width, sidebar, right, files, expanded);
+        self.fit_memo.set(Some((inputs, fit)));
+        fit
     }
 
     /// Follow the window fit from frame to frame. A column the fit newly
@@ -247,8 +259,12 @@ impl Shell {
             }
             // A column the fit shows again returns from what it painted last
             // frame, toward its live target: its own tween, if any, was
-            // heading for a target the fit had just zeroed.
-            if fit.sidebar && !previous.sidebar && !self.settings.sidebar_collapsed {
+            // heading for a target the fit had just zeroed. One the user just
+            // opened already runs its own open tween; keep it.
+            let opening = [self.sidebar_tween, self.right_tween, self.files_tween].map(|tween| {
+                tween.is_some_and(|tween| self.tween_active(Some(tween)) && tween.to > 0.5)
+            });
+            if fit.sidebar && !previous.sidebar && !self.settings.sidebar_collapsed && !opening[0] {
                 self.sidebar_tween = Some(self.panel_tween(painted[0].0, fit.sidebar_limit));
             }
             // A neighbour opening or closing can squeeze or release an open
@@ -268,13 +284,13 @@ impl Shell {
                     .min(self.sidebar_tween_limit(previous.sidebar_limit));
                 self.sidebar_tween = Some(self.panel_tween(from, fit.sidebar_limit));
             }
-            if fit.right && !previous.right && panels.changes_open {
+            if fit.right && !previous.right && panels.changes_open && !opening[1] {
                 let tween = self.panel_tween(painted[1].0, self.right_settled_target(cx));
                 let (from, to) = panel_content_tween(painted[1].1, tween.from, tween.to);
                 self.right_tween = Some(tween);
                 self.right_content_tween = Some(WidthTween { from, to, ..tween });
             }
-            if fit.files && !previous.files && panels.files_open {
+            if fit.files && !previous.files && panels.files_open && !opening[2] {
                 let (width, content) = painted[2];
                 self.transition_files(width, content, self.files_settled_width(cx));
             }
@@ -579,14 +595,17 @@ impl Shell {
             self.clear_panel_transitions();
         }
         self.viewport_width = viewport;
-        // Re-split directly whenever the window or the panel set changed
-        // since the last split: any resize step (sub-pixel ones included), a
-        // different chat's panels, or a return from Settings.
-        if matches!(self.route, Route::Chat) {
-            let key = self.panel_key(cx);
-            if key != self.split_context.0 || (viewport - self.split_context.1).abs() > 0.01 {
+        // Re-split directly whenever the window or the columns beside the
+        // surface host changed since the last split: any resize step
+        // (sub-pixel ones included), or a chat whose panels differ. Only a
+        // shown surface host outside takeover takes a share, so a visit to a
+        // chat without one, or to Settings, keeps a dragged divider.
+        let (fit, _) = self.settled_fit();
+        if matches!(self.route, Route::Chat) && fit.right && !self.right_pane_expanded {
+            let columns = [fit.sidebar, fit.files];
+            if columns != self.split_context.0 || (viewport - self.split_context.1).abs() > 0.01 {
                 self.split_panel_widths(cx);
-                self.split_context = (key, viewport);
+                self.split_context = (columns, viewport);
             }
         }
     }

@@ -238,6 +238,11 @@ fn panels_share_space_and_keep_rendered_geometry_through_their_lifecycle(cx: &mu
     cx.simulate_mouse_up(dragged, MouseButton::Left, Default::default());
     expect(draw(&shell, cx, 0), [300.0, 377.0, 500.0, 423.0]);
     expect(draw(&shell, cx, 300), [300.0, 377.0, 500.0, 423.0]);
+    // Visiting a chat without the surface host is not a toggle.
+    change(&shell, cx, |s, _, cx| select(s, Some("b"), cx));
+    settled(&shell, cx);
+    change(&shell, cx, |s, _, cx| select(s, Some("a"), cx));
+    expect(settled(&shell, cx), [300.0, 377.0, 500.0, 423.0]);
     change(&shell, cx, |s, _, cx| {
         s.reset_panel_widths(PaneResizeKind::Right, cx)
     });

@@ -75,7 +75,7 @@ mod navigation_focus;
 #[cfg(test)]
 mod navigation_tests;
 mod panel_layout;
-use panel_layout::{AuxiliaryPanel, HorizontalPanelFit, panel_content_tween};
+use panel_layout::{AuxiliaryPanel, FitInputs, HorizontalPanelFit, panel_content_tween};
 #[cfg(test)]
 mod panel_interaction_tests;
 pub(crate) mod project_icon;
@@ -2186,8 +2186,12 @@ pub struct Shell {
     /// they last painted with their content held at its layout width (same
     /// order).
     fit_exits: [Option<(WidthTween, f32)>; 3],
-    /// The panel key and window width the columns were last split for.
-    split_context: (String, f32),
+    /// The settled sidebar and Files columns and the window width the
+    /// surface host's share was last split for.
+    split_context: ([bool; 2], f32),
+    /// The last window fit and the inputs it was computed from: layout
+    /// helpers ask for it many times per frame.
+    fit_memo: std::cell::Cell<Option<(FitInputs, HorizontalPanelFit)>>,
     /// The closed surface host already released its image previews.
     right_images_suspended: bool,
     sidebar_edge_bounce: Option<motion::ResizeEdgeBounce>,
@@ -2613,7 +2617,8 @@ impl Shell {
             files_content_tween: None,
             painted_columns: None,
             fit_exits: [None; 3],
-            split_context: (String::new(), 0.0),
+            split_context: ([false; 2], 0.0),
+            fit_memo: std::cell::Cell::new(None),
             right_images_suspended: false,
             sidebar_edge_bounce: None,
             sidebar_resize_edge: None,
@@ -3172,6 +3177,11 @@ impl Shell {
         !self.active_chat.is_empty() && self.panels.get(&self.panel_key(cx)).changes_open
     }
 
+    /// Open and on screen: the window fit is not hiding it.
+    fn right_pane_shown(&self, cx: &App) -> bool {
+        self.right_pane_open(cx) && self.horizontal_fit().right
+    }
+
     /// The current chat's terminal flag (per-session, in-memory).
     fn terminal_open(&self, cx: &App) -> bool {
         self.panels.get(&self.panel_key(cx)).terminal_open
@@ -3189,7 +3199,7 @@ impl Shell {
     }
 
     fn right_target_for_columns(&self, cx: &App, sidebar: f32, files: f32) -> f32 {
-        if !self.right_pane_open(cx) || !self.horizontal_fit().right {
+        if !self.right_pane_shown(cx) {
             0.0
         } else {
             // Manual sizing preserves a usable conversation column. Takeover
@@ -3280,6 +3290,8 @@ impl Shell {
         let key = self.panel_key(cx);
         if open {
             self.record_panel_open(AuxiliaryPanel::Right, &key);
+            // Its previews load again; the next hide releases them anew.
+            self.right_images_suspended = false;
         } else {
             // Closing always leaves takeover mode — reopening at full bleed
             // with the conversation gone read as a broken chat.
@@ -3515,6 +3527,22 @@ impl Shell {
     fn suspend_file_images(&mut self, cx: &mut Context<Self>) {
         for files in self.files.values().chain(self.file_surfaces.values()) {
             files.update(cx, |files, cx| files.suspend_images(cx));
+        }
+    }
+
+    /// Release image previews once the surface host stops painting: after
+    /// its close mask lands, while the window fit hides it, or off the chat
+    /// route. Once per hide, so a quick reversal never unloads the frame.
+    fn suspend_hidden_right_images(&mut self, cx: &mut Context<Self>) {
+        let painting = matches!(self.route, Route::Chat)
+            && ((self.horizontal_fit().right
+                && (self.right_pane_open(cx) || self.tween_active(self.right_tween)))
+                || self.fit_exit_width(1).is_some());
+        if painting {
+            self.right_images_suspended = false;
+        } else if !self.right_images_suspended {
+            self.suspend_file_images(cx);
+            self.right_images_suspended = true;
         }
     }
 
@@ -4016,9 +4044,7 @@ impl Shell {
             return false;
         };
 
-        if !self.right_pane_open(cx) {
-            self.toggle_right_pane(cx);
-        }
+        self.set_surfaces_open(true, cx);
         self.add_file_surface_at(
             owner,
             link.path,
@@ -4446,7 +4472,7 @@ impl Shell {
     /// active surface while the pane is open, or `None` on the picker empty
     /// state / a closed pane / the new-session canvas.
     fn closable_right_surface(&self, cx: &App) -> Option<RightSurface> {
-        if !self.right_pane_open(cx) {
+        if !self.right_pane_shown(cx) {
             return None;
         }
         match self.resolved_right_active(cx) {
@@ -6885,16 +6911,23 @@ impl Shell {
             return self.fit_exit_width(0).unwrap_or(0.0);
         }
         let limit = self.sidebar_tween_limit(fit.sidebar_limit);
-        (self.ease_toward(self.sidebar_tween, self.sidebar_target())
+        // The edge bounce applies past the limit so the drag cue at the
+        // maximum width stays visible.
+        (self
+            .ease_toward(self.sidebar_tween, self.sidebar_target())
+            .min(limit)
             + self.eval_resize_edge_bounce(
                 self.sidebar_edge_bounce,
                 !self.settings.sidebar_collapsed,
             ))
-        .clamp(0.0, limit)
+        .max(0.0)
     }
 
-    fn right_now(&self, cx: &App) -> f32 {
+    /// The surface host's eased width within `max`, plus its edge bounce,
+    /// which may cross `max` like the sidebar's.
+    fn right_now(&self, max: f32, cx: &App) -> f32 {
         self.ease_toward(self.right_tween, self.right_target(cx))
+            .min(max)
             + self.eval_resize_edge_bounce(
                 self.right_edge_bounce,
                 self.right_pane_open(cx) && !self.right_pane_expanded,
@@ -10298,7 +10331,7 @@ impl Shell {
     }
 
     fn active_changes(&self, cx: &App) -> Option<Entity<Changes>> {
-        if !self.right_pane_open(cx) {
+        if !self.right_pane_shown(cx) {
             return None;
         }
         let RightSurface::Diff(id) = self.resolved_right_active(cx) else {
@@ -11569,16 +11602,6 @@ impl Shell {
     /// page (its options row + the lazy [`Changes`] viewer), workspace Files,
     /// an embedded terminal, or the surface picker when no tabs exist.
     fn render_right_pane(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        if !self.right_pane_open(cx) && !self.tween_active(self.right_tween) {
-            // Let image previews paint through the close mask before releasing
-            // their resources, once. A quick reversal never unloads the frame.
-            if !self.right_images_suspended {
-                self.suspend_file_images(cx);
-                self.right_images_suspended = true;
-            }
-        } else {
-            self.right_images_suspended = false;
-        }
         let exiting = self.fit_exit_width(1).is_some();
         if !self.horizontal_fit().right && !exiting {
             return Empty.into_any_element();
@@ -12481,7 +12504,7 @@ impl Shell {
     fn toggle_right_pane_expand(&mut self, cx: &mut Context<Self>) {
         // The outgoing header stays painted during close, but it must not
         // turn an already closed surface into a zero-width takeover.
-        if !self.right_pane_open(cx) || !self.horizontal_fit().right {
+        if !self.right_pane_shown(cx) {
             return;
         }
         // A second click during the first expansion starts at the painted
@@ -13391,6 +13414,7 @@ impl Render for Shell {
         self.reduced_motion = motion::reduced_motion(cx);
         self.motion_active.set(false);
         self.track_horizontal_fit(cx);
+        self.suspend_hidden_right_images(cx);
 
         if self.activation_sub.is_none() {
             self.activation_sub = Some(cx.observe_window_activation(
@@ -13830,7 +13854,7 @@ impl Render for Shell {
                 // never renders it (zeron __root.tsx `!isSettings && activeChat`
                 // around the diff column) — the per-session open flags stay
                 // intact for the return trip.
-                let right_open = on_chat && self.right_pane_open(cx) && self.horizontal_fit().right;
+                let right_open = on_chat && self.right_pane_shown(cx);
                 // Takeover mode derives its width from the viewport, so a
                 // manual drag handle would fight the expanded target.
                 let right_handle = (right_open
@@ -15692,7 +15716,7 @@ mod exit_regressions {
             )
         });
         window
-            .update(cx, |shell, window, cx| {
+            .update(cx, |shell, _, cx| {
                 let duration = RESIZE.total().mul_f32(motion::speed_scale());
                 let started = std::time::Instant::now() - duration.mul_f32(2.);
                 let tween = Some(WidthTween {
@@ -15750,7 +15774,7 @@ mod exit_regressions {
                 );
                 let frame_time = shell.render_time;
                 shell.render_time = Some(shell.right_tween.unwrap().started + duration);
-                let _ = shell.render_right_pane(window, cx);
+                shell.suspend_hidden_right_images(cx);
                 assert!(
                     !files.read(cx).test_images_visible(),
                     "image resources suspend once the close animation ends"

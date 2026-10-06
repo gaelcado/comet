@@ -176,7 +176,7 @@ impl Shell {
         } else {
             self.surface_max_width(cx)
         };
-        self.right_now(cx).min(available).min(max)
+        self.right_now(max, cx).min(available)
     }
 
     pub(super) fn files_content_width(&self, cx: &App) -> f32 {

@@ -601,7 +601,7 @@ impl Shell {
                                 icons::sidebar_glyph(
                                     motion::state_t(
                                         "toggle-changes",
-                                        self.right_pane_open(cx),
+                                        self.right_pane_open(cx) && fit.right,
                                         motion::GLYPH_STATE,
                                         self.reduced_motion,
                                     ),
