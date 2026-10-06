@@ -92,14 +92,14 @@ const SELECTION_SCROLL_MAX_STEP_PX: f32 = 24.0;
 /// Activity row height / gap — analytic, so fold heights need no measurement.
 /// Ordinary tools place their icon on the rail; subagents retain a 30px card.
 /// Rows stack without a gap so the rail continues alongside expanded output.
+///
+/// These are design sizes at the 16px interface text size. Tool-row labels are
+/// rem text, so layout reads them through [`ToolMetrics`], which scales each
+/// height by the same factor; the fold math and the layout then agree at every
+/// interface text size. Code lines ([`OUTPUT_LINE_HEIGHT`]) stay absolute.
 pub const CHIP_HEIGHT: f32 = 38.0;
 pub const CHIP_GAP: f32 = 0.0;
 pub const CHIP_CARD_HEIGHT: f32 = 30.0;
-/// Inner height of the chip header: [`CHIP_CARD_HEIGHT`] is the card's
-/// border-box (explicit `h` in gpui includes the 1px border), so a 30px
-/// header inside a 30px bordered card clips 2px off the bottom and every
-/// glyph/icon reads high (user report).
-const CHIP_HEADER_HEIGHT: f32 = CHIP_CARD_HEIGHT - 2.0;
 /// Child labels and expanded text share one edge beneath the compact summary.
 /// The child gutter reserves room for
 /// a longer elbow, a 4px break before the icon, and an 8px icon-to-text gap.
@@ -114,8 +114,74 @@ const TOOL_TEXT_SIZE: f32 = 12.0;
 const TOOL_LABEL_SIZE: f32 = TOOL_TEXT_SIZE;
 const TOOL_LABEL_LINE_HEIGHT: f32 = 18.0;
 const TOOL_GROUP_HEADER_HEIGHT: f32 = 26.0;
+/// The file badge's height (design size).
+const BADGE_HEIGHT: f32 = 22.0;
 /// Compact rows retain the analytic heights used by row and group folds.
 const TOOL_TREE_ROW_HEIGHT: f32 = 32.0;
+
+/// Tool-row geometry at the current interface text size: every UI-label
+/// height scaled by `rem / 16`, rounded to whole pixels. The layout and the
+/// analytic fold heights both read this, so they cannot drift apart.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToolMetrics {
+    scale: f32,
+}
+
+impl Default for ToolMetrics {
+    fn default() -> Self {
+        Self { scale: 1.0 }
+    }
+}
+
+impl ToolMetrics {
+    pub fn of(cx: &gpui::App) -> Self {
+        Self {
+            scale: crate::typography::font_size(cx).pixels() / 16.0,
+        }
+    }
+
+    fn px(self, design: f32) -> f32 {
+        (design * self.scale).round()
+    }
+
+    pub fn chip(self) -> f32 {
+        self.px(CHIP_HEIGHT)
+    }
+
+    pub fn card(self) -> f32 {
+        self.px(CHIP_CARD_HEIGHT)
+    }
+
+    /// Inner height of the chip header: the card height is its border-box
+    /// (explicit `h` in gpui includes the 1px border), so a header as tall as
+    /// the bordered card clips 2px off the bottom and every glyph/icon reads
+    /// high (user report).
+    fn header(self) -> f32 {
+        self.card() - 2.0
+    }
+
+    fn label_line(self) -> f32 {
+        self.px(TOOL_LABEL_LINE_HEIGHT)
+    }
+
+    fn group_header(self) -> f32 {
+        self.px(TOOL_GROUP_HEADER_HEIGHT)
+    }
+
+    fn tree_row(self) -> f32 {
+        self.px(TOOL_TREE_ROW_HEIGHT)
+    }
+
+    fn blob_affordance(self) -> f32 {
+        self.px(BLOB_AFFORDANCE_HEIGHT)
+    }
+
+    /// The path badge's height, which a header slot grows to when it has one.
+    fn badge_slot(self) -> f32 {
+        self.px(BADGE_HEIGHT)
+    }
+}
+
 const TOOL_FOLD: motion::MotionSpec = motion::MotionSpec::new(140, motion::EASE_OUT);
 /// BoardUI task-list cadence: a slow light sweep keeps the active summary
 /// legible, while each newly appended row reveals quickly enough to read as a
@@ -2188,6 +2254,7 @@ pub fn tool_group_summary(tools: &[ToolItem]) -> String {
 }
 
 fn tool_group_title(text: SharedString, shimmer_phase: Option<f32>, theme: &Theme) -> AnyElement {
+    let label_size = crate::typography::ui_rems(TOOL_LABEL_SIZE);
     let Some(shimmer_phase) = shimmer_phase else {
         // Keep the ordinary inherited hover color when the group is settled
         // (and when reduced motion turns the active shimmer off).
@@ -2206,7 +2273,7 @@ fn tool_group_title(text: SharedString, shimmer_phase: Option<f32>, theme: &Them
         move |bounds, window, _| {
             let probe = window.text_system().shape_line(
                 overlay_text.clone(),
-                px(TOOL_LABEL_SIZE),
+                label_size.to_pixels(window.rem_size()),
                 &[TextRun {
                     len: overlay_text.len(),
                     font: overlay_font.clone(),
@@ -2230,7 +2297,7 @@ fn tool_group_title(text: SharedString, shimmer_phase: Option<f32>, theme: &Them
                 }
                 let line = window.text_system().shape_line(
                     overlay_text.clone(),
-                    px(TOOL_LABEL_SIZE),
+                    label_size.to_pixels(window.rem_size()),
                     &[TextRun {
                         len: overlay_text.len(),
                         font: overlay_font.clone(),
@@ -2254,7 +2321,9 @@ fn tool_group_title(text: SharedString, shimmer_phase: Option<f32>, theme: &Them
                     },
                 };
                 window.with_content_mask(Some(mask), |window| {
-                    let line_height = px(TOOL_LABEL_LINE_HEIGHT);
+                    let line_height = crate::typography::ui_rems(TOOL_LABEL_LINE_HEIGHT)
+                        .to_pixels(window.rem_size())
+                        .round();
                     let _ = line.paint(
                         bounds.origin,
                         line_height,
@@ -2299,17 +2368,17 @@ fn tool_running(tool: &ToolItem) -> bool {
 }
 
 /// Analytic expanded-chips height — no measurement needed for the fold tween.
-pub fn chips_height(count: usize) -> f32 {
+pub fn chips_height(count: usize, metrics: ToolMetrics) -> f32 {
     if count == 0 {
         return 0.0;
     }
-    CHIPS_TOP_PAD + count as f32 * CHIP_HEIGHT + (count as f32 - 1.0) * CHIP_GAP
+    CHIPS_TOP_PAD + count as f32 * metrics.chip() + (count as f32 - 1.0) * CHIP_GAP
 }
 
 /// Analytic height an open detail adds to its chip's card (separator + body)
 /// — output blocks by line count, diff blocks via the changes pane's own
-/// [`crate::changes::body_height`]. The chip's own [`CHIP_HEIGHT`] is already
-/// counted by [`chips_height`].
+/// [`crate::changes::body_height`]. The chip's own [`ToolMetrics::chip`] is
+/// already counted by [`chips_height`].
 pub fn detail_height(detail: &ToolDetail) -> f32 {
     let body = match detail {
         ToolDetail::Output {
@@ -2489,6 +2558,7 @@ fn compact_work_title(
     worked: SharedString,
     t: f32,
     shimmer_phase: Option<f32>,
+    metrics: ToolMetrics,
     theme: &Theme,
 ) -> AnyElement {
     if t >= 1.0 {
@@ -2501,14 +2571,14 @@ fn compact_work_title(
         .relative()
         .min_w_0()
         .w_full()
-        .h(px(TOOL_LABEL_LINE_HEIGHT))
+        .h(px(metrics.label_line()))
         .child(
             div()
                 .absolute()
                 .left_0()
                 .right_0()
                 .top_0()
-                .h(px(TOOL_LABEL_LINE_HEIGHT))
+                .h(px(metrics.label_line()))
                 .flex()
                 .items_center()
                 .overflow_hidden()
@@ -2519,7 +2589,7 @@ fn compact_work_title(
             div()
                 .relative()
                 .top(px(4.0 * (1.0 - t)))
-                .h(px(TOOL_LABEL_LINE_HEIGHT))
+                .h(px(metrics.label_line()))
                 .flex()
                 .items_center()
                 .overflow_hidden()
@@ -8203,10 +8273,11 @@ impl Transcript {
                     .and_then(|detail| self.tool_diff_highlight_for(row_id, ix, detail, cx))
             })
             .collect();
+        let metrics = ToolMetrics::of(cx);
         let base_row_height = if collapses {
-            TOOL_TREE_ROW_HEIGHT
+            metrics.tree_row()
         } else {
-            CHIP_HEIGHT
+            metrics.chip()
         };
         let mut motion_active = false;
         let row_heights: Vec<f32> = details
@@ -8228,7 +8299,7 @@ impl Transcript {
                             }
                             + detail.as_deref().map_or(0.0, detail_height)
                             + if affordance.is_some() {
-                                BLOB_AFFORDANCE_HEIGHT
+                                metrics.blob_affordance()
                             } else {
                                 0.0
                             }
@@ -8244,7 +8315,7 @@ impl Transcript {
                                 motion_active = true;
                             }
                             return motion::lerp(
-                                fold.from + base_row_height - CHIP_CARD_HEIGHT,
+                                fold.from + base_row_height - metrics.card(),
                                 target,
                                 t,
                             );
@@ -8332,10 +8403,10 @@ impl Transcript {
             .items_center()
             .gap(px(6.0))
             .pr(px(4.0))
-            .h(px(TOOL_GROUP_HEADER_HEIGHT))
+            .h(px(metrics.group_header()))
             .cursor_pointer()
-            .text_size(px(TOOL_LABEL_SIZE))
-            .line_height(px(TOOL_LABEL_LINE_HEIGHT))
+            .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
+            .line_height(px(metrics.label_line()))
             // Quiet even when children failed: agents routinely have failed
             // probes mid-work, and a red HEADER read as "this whole step
             // broke" (user report). Failures still show on the individual
@@ -8352,7 +8423,7 @@ impl Transcript {
                 div()
                     // Keep the title adjacent to its disclosure affordance.
                     .w(px(22.0))
-                    .h(px(18.0))
+                    .h(px(metrics.label_line()))
                     .flex_none()
                     .relative()
                     .child(
@@ -8370,7 +8441,7 @@ impl Transcript {
             .child(
                 div()
                     .min_w_0()
-                    .h(px(TOOL_LABEL_LINE_HEIGHT))
+                    .h(px(metrics.label_line()))
                     .flex()
                     .items_center()
                     .overflow_hidden()
@@ -8380,6 +8451,7 @@ impl Transcript {
                             SharedString::from(worked_for_label(secs)),
                             worked_fade_t,
                             shimmer_phase,
+                            metrics,
                             theme,
                         ),
                         None => rolled_summary.unwrap_or_else(|| {
@@ -8493,7 +8565,7 @@ impl Transcript {
                         .is_some_and(|at| at.elapsed() < FOLD_TWEEN_WINDOW);
                 let toggle_key = key.clone();
                 let mut card = div()
-                    .my(px((base_row_height - CHIP_CARD_HEIGHT) / 2.0))
+                    .my(px((base_row_height - metrics.card()) / 2.0))
                     .when(collapses, |el| el.ml(px(ACTIVITY_TEXT_GAP)))
                     .min_w_0()
                     .flex_1()
@@ -8510,9 +8582,9 @@ impl Transcript {
                         div()
                             .id(key.clone())
                             .h(px(if collapses {
-                                CHIP_CARD_HEIGHT
+                                metrics.card()
                             } else {
-                                CHIP_HEADER_HEIGHT
+                                metrics.header()
                             }))
                             .flex_none()
                             .flex()
@@ -8523,7 +8595,7 @@ impl Transcript {
                                 let entry =
                                     this.tool_details.entry(toggle_key.clone()).or_default();
                                 let currently_open = entry.open.unwrap_or(open);
-                                entry.from = row_height - base_row_height + CHIP_CARD_HEIGHT;
+                                entry.from = row_height - base_row_height + metrics.card();
                                 entry.open = Some(!currently_open);
                                 entry.epoch += 1;
                                 entry.toggled_at = Some(Instant::now());
@@ -8585,11 +8657,11 @@ impl Transcript {
                         );
                         let mut row = div()
                             .id(SharedString::from(format!("{key}-blob")))
-                            .h(px(BLOB_AFFORDANCE_HEIGHT))
+                            .h(px(metrics.blob_affordance()))
                             .flex_none()
                             .flex()
                             .items_center()
-                            .text_size(px(TOOL_TEXT_SIZE))
+                            .text_size(crate::typography::ui_rems(TOOL_TEXT_SIZE))
                             .text_color(theme.text_faint)
                             .child(label);
                         if !loading {
@@ -8605,7 +8677,7 @@ impl Transcript {
                     }
                     card = card.child(panel);
                 }
-                let card = card.h(px(row_height - base_row_height + CHIP_CARD_HEIGHT));
+                let card = card.h(px(row_height - base_row_height + metrics.card()));
                 let card = div().min_w_0().flex_1().child(card);
                 let row = div()
                     .w_full()
@@ -8678,7 +8750,7 @@ impl Transcript {
             .when(collapses, |el| {
                 el.child(reveal_tool_row(
                     header.into_any_element(),
-                    TOOL_GROUP_HEADER_HEIGHT,
+                    metrics.group_header(),
                     header_reveal,
                 ))
             })
@@ -9460,7 +9532,8 @@ fn more_lines_row(truncated_by: usize, theme: &Theme) -> gpui::Div {
         .h(px(OUTPUT_LINE_HEIGHT))
         .flex()
         .items_center()
-        .text_size(px(TOOL_TEXT_SIZE))
+        .text_size(crate::typography::ui_rems(TOOL_TEXT_SIZE))
+        .line_height(px(OUTPUT_LINE_HEIGHT))
         .text_color(theme.text_faint)
         .child(SharedString::from(format!("… {truncated_by} more lines")))
 }
@@ -9534,12 +9607,13 @@ fn path_badge(
     failed: bool,
     hover_text: bool,
     open_file: Option<(String, ToolFileOpener)>,
+    metrics: ToolMetrics,
     theme: &Theme,
 ) -> AnyElement {
     let name = file_badge_name(identity.name).to_owned();
     let badge = div()
         .min_w_0()
-        .h(px(22.0))
+        .h(px(metrics.badge_slot()))
         .flex()
         .items_center()
         .overflow_hidden()
@@ -9672,6 +9746,7 @@ fn chip_header_row(
     // Text resolves its color during layout, so group-hover text needs stable
     // child IDs under the keyed, expandable header to retain hover state.
     let hover_text = activity && trail.is_some() && !failed;
+    let metrics = ToolMetrics::of(cx);
     let tint = if failed {
         theme.danger
     } else {
@@ -9680,9 +9755,9 @@ fn chip_header_row(
     div()
         .group("tool-header")
         .h(px(if activity {
-            CHIP_CARD_HEIGHT
+            metrics.card()
         } else {
-            CHIP_HEADER_HEIGHT
+            metrics.header()
         }))
         .w_full()
         .min_w_0()
@@ -9691,8 +9766,8 @@ fn chip_header_row(
         .items_center()
         .gap(px(8.0))
         .px(px(if activity { 0.0 } else { 8.0 }))
-        .text_size(px(TOOL_LABEL_SIZE))
-        .line_height(px(TOOL_LABEL_LINE_HEIGHT))
+        .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
+        .line_height(px(metrics.label_line()))
         .when(!activity, |row| {
             row.child(
                 // Subagent icon tile (`size-[18px] rounded-[5px] bg-white/[0.08]`,
@@ -9719,7 +9794,7 @@ fn chip_header_row(
         .child(
             div()
                 .flex_none()
-                .h(px(TOOL_LABEL_LINE_HEIGHT))
+                .h(px(metrics.label_line()))
                 .flex()
                 .items_center()
                 .when(!activity, |label| {
@@ -9743,9 +9818,9 @@ fn chip_header_row(
                 .when(!activity, |detail| detail.flex_1())
                 .min_w_0()
                 .h(px(match shell {
-                    Some(shell) => shell.slot_height(),
-                    None if file_path.is_some() => 22.0,
-                    None => TOOL_LABEL_LINE_HEIGHT,
+                    Some(shell) => shell.slot_height(metrics),
+                    None if file_path.is_some() => metrics.badge_slot(),
+                    None => metrics.label_line(),
                 }))
                 .flex()
                 .when(activity && detail.is_empty(), |detail| detail.hidden())
@@ -9759,13 +9834,14 @@ fn chip_header_row(
                     theme.text.opacity(0.85)
                 })
                 .child(if let Some(shell) = shell {
-                    shell.element(failed, hover_text, theme)
+                    shell.element(failed, hover_text, metrics, theme)
                 } else if let Some(path) = file_path {
                     path_badge(
                         crate::file_icons::FileIconIdentity::file(path),
                         failed,
                         hover_text,
                         open_file,
+                        metrics,
                         theme,
                     )
                 } else {
@@ -9802,10 +9878,10 @@ fn chip_header_row(
             row.child(
                 div()
                     .flex_none()
-                    .h(px(18.0))
+                    .h(px(metrics.label_line()))
                     .flex()
                     .items_center()
-                    .text_size(px(11.0))
+                    .text_size(crate::typography::ui_rems(11.0))
                     .text_color(theme.text_faint)
                     .child(SharedString::from(model.to_owned())),
             )
@@ -10078,10 +10154,11 @@ fn tool_chip(
     view: gpui::EntityId,
     cx: &mut gpui::App,
 ) -> AnyElement {
+    let metrics = ToolMetrics::of(cx);
     let row_height = if rail {
-        TOOL_TREE_ROW_HEIGHT
+        metrics.tree_row()
     } else {
-        CHIP_HEIGHT
+        metrics.chip()
     };
     div()
         .h(px(row_height))
@@ -10103,8 +10180,8 @@ fn tool_chip(
         .child(
             div()
                 .when(rail, |el| el.ml(px(ACTIVITY_TEXT_GAP)))
-                .my(px((row_height - CHIP_CARD_HEIGHT) / 2.0))
-                .h(px(CHIP_CARD_HEIGHT))
+                .my(px((row_height - metrics.card()) / 2.0))
+                .h(px(metrics.card()))
                 .min_w_0()
                 .flex_1()
                 .flex()
@@ -10140,8 +10217,9 @@ fn subagent_chip(
     view: gpui::EntityId,
     cx: &mut gpui::App,
 ) -> AnyElement {
+    let metrics = ToolMetrics::of(cx);
     div()
-        .h(px(CHIP_HEIGHT))
+        .h(px(metrics.chip()))
         .w_full()
         .flex_none()
         .flex()
@@ -10161,7 +10239,7 @@ fn subagent_chip(
             div()
                 .id(id)
                 .when(rail, |el| el.ml(px(12.0)))
-                .h(px(CHIP_CARD_HEIGHT))
+                .h(px(metrics.card()))
                 .min_w_0()
                 .flex_1()
                 .flex()
@@ -16022,7 +16100,8 @@ mod tests {
         assert_eq!(detail, "set -e fixture_in_original=0 grep -c \"x\"");
         assert!(!detail.contains('\n'));
         // The chip row height is a constant, independent of content shape.
-        assert_eq!(chips_height(1), CHIPS_TOP_PAD + CHIP_HEIGHT);
+        let m = ToolMetrics::default();
+        assert_eq!(chips_height(1, m), CHIPS_TOP_PAD + CHIP_HEIGHT);
         // Every detail kind is sanitized (MCP inputs / queries are model text).
         let (_, q) = tool_row_content(
             &ToolCall::WebSearch {
@@ -16231,12 +16310,20 @@ mod tests {
 
     #[test]
     fn chips_height_is_analytic() {
-        assert_eq!(chips_height(0), 0.0);
-        assert_eq!(chips_height(1), CHIPS_TOP_PAD + CHIP_HEIGHT);
+        let m = ToolMetrics::default();
+        assert_eq!(chips_height(0, m), 0.0);
+        assert_eq!(chips_height(1, m), CHIPS_TOP_PAD + CHIP_HEIGHT);
         assert_eq!(
-            chips_height(3),
+            chips_height(3, m),
             CHIPS_TOP_PAD + 3.0 * CHIP_HEIGHT + 2.0 * CHIP_GAP
         );
+        // At the largest interface text size every UI-label height scales by
+        // the same factor, and the code line height does not.
+        let large = ToolMetrics { scale: 1.25 };
+        assert_eq!(large.chip(), 48.0);
+        assert_eq!(large.card(), 38.0);
+        assert_eq!(chips_height(1, large), CHIPS_TOP_PAD + large.chip());
+        assert_eq!(large.label_line(), 23.0);
     }
 
     #[test]

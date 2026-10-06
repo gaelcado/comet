@@ -16,18 +16,16 @@ use zeron_proto::shell_command::{ExecBadge, ExecVerb, summarize};
 use zeron_syntax::{HighlightKind, HighlightSpan};
 
 use super::{
-    CALL_WRAP_COLS, OUTPUT_DETAIL_MAX_LINES, TOOL_LABEL_LINE_HEIGHT, ToolDetail, WRAP_INDENT,
+    CALL_WRAP_COLS, OUTPUT_DETAIL_MAX_LINES, TOOL_TEXT_SIZE, ToolDetail, ToolMetrics, WRAP_INDENT,
     path_badge, single_line, wrap_ranges,
 };
-use crate::theme::Theme;
+use crate::{theme::Theme, typography::ui_rems};
 
 /// A one-line header never shows more than this many chars; the cap bounds
 /// tokenizing a pathological one-liner whose tail is ellipsized anyway.
 const HEADER_MAX_CHARS: usize = 320;
 /// Sources above this render in the plain tone rather than tokenizing.
 const HIGHLIGHT_MAX_BYTES: usize = 16 * 1024;
-/// The path badge's height, which the header slot grows to when it has one.
-const BADGE_SLOT_HEIGHT: f32 = 22.0;
 /// The shell block's first line opens with the prompt; every later line takes
 /// a gutter of the same width, so the command text keeps one left edge.
 const PROMPT: &str = "$ ";
@@ -320,22 +318,28 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
 
 impl ShellHeader {
     /// Height of the header's detail slot: the badge is taller than a line.
-    pub(super) fn slot_height(&self) -> f32 {
+    pub(super) fn slot_height(&self, metrics: ToolMetrics) -> f32 {
         if self.badge.is_some() {
-            BADGE_SLOT_HEIGHT
+            metrics.badge_slot()
         } else {
-            TOOL_LABEL_LINE_HEIGHT
+            metrics.label_line()
         }
     }
 
     /// The header's detail slot: mono command, optional "in" + badge, and
     /// the trailer, on one ellipsized line. The command is the slot that
     /// shrinks; the trailer always stays readable.
-    pub(super) fn element(&self, failed: bool, hover_text: bool, theme: &Theme) -> AnyElement {
+    pub(super) fn element(
+        &self,
+        failed: bool,
+        hover_text: bool,
+        metrics: ToolMetrics,
+        theme: &Theme,
+    ) -> AnyElement {
         let tabular = FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]));
         let mut row = div()
             .min_w_0()
-            .h(px(self.slot_height()))
+            .h(px(self.slot_height(metrics)))
             .flex()
             .flex_row()
             .items_center()
@@ -345,6 +349,9 @@ impl ShellHeader {
                 div()
                     .min_w_0()
                     .truncate()
+                    // Code text keeps its absolute size; the row's rem size
+                    // is for the UI labels around it.
+                    .text_size(px(TOOL_TEXT_SIZE))
                     .child(command.element(theme, failed)),
             );
         }
@@ -369,21 +376,23 @@ impl ShellHeader {
                     crate::file_icons::FileIconIdentity::file(path)
                 }
             };
-            row = row.child(path_badge(identity, failed, hover_text, None, theme));
+            row = row.child(path_badge(
+                identity, failed, hover_text, None, metrics, theme,
+            ));
         }
         match self.trailer {
             Some(ShellTrailer::More(n)) => {
                 row = row.child(
                     div()
                         .flex_none()
-                        .h(px(16.0))
+                        .h(ui_rems(16.0))
                         .px(px(5.0))
                         .flex()
                         .items_center()
                         .rounded(px(4.0))
                         .bg(theme.hairline(0.08))
-                        .text_size(px(12.0))
-                        .line_height(px(16.0))
+                        .text_size(ui_rems(12.0))
+                        .line_height(ui_rems(16.0))
                         .font_features(tabular)
                         .text_color(theme.text_muted)
                         .child(SharedString::from(format!("+{n}"))),
