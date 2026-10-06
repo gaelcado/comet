@@ -12028,7 +12028,8 @@ mod tests {
         ));
         let summary = tool_group_summary(&tools);
         assert!(summary.starts_with("Thought 2 times"), "{summary}");
-        assert!(summary.contains("2 commands"), "{summary}");
+        // `ls` reads as a listing, like the Glob tool.
+        assert!(summary.contains("1 command · listed 1 time"), "{summary}");
 
         // A lone thought is still an accordion (with the group tween), named
         // plainly.
@@ -12131,7 +12132,10 @@ mod tests {
         assert!(matches!(visible[1].kind, RowKind::Markdown { .. }));
         let summary = tool_group_summary(tools);
         assert!(summary.contains("wrote a note"), "{summary}");
-        assert!(summary.contains("Ran 2 commands"), "{summary}");
+        assert!(
+            summary.contains("Ran 1 command · listed 1 time"),
+            "{summary}"
+        );
         assert!(summary.contains("Thought process"), "{summary}");
 
         assert!(rows.iter().any(|row| {
@@ -15428,7 +15432,7 @@ mod tests {
         ];
         assert_eq!(
             tool_group_summary(&tools),
-            "Ran 3 commands · edited 2 files"
+            "Ran 2 commands · edited 2 files · listed 1 time"
         );
         // Distinct-path dedupe: editing one file twice counts once.
         let tools = vec![edit("a.rs"), edit("a.rs")];
@@ -15560,9 +15564,17 @@ mod tests {
                 ToolCall::Exec {
                     command: "cargo test".into(),
                 },
-                "Running",
-                "Ran",
+                "Testing",
+                "Tested",
                 "cargo test",
+            ),
+            (
+                ToolCall::Exec {
+                    command: "cd crates && rg -n foo src 2>&1 | head -20".into(),
+                },
+                "Searching",
+                "Searched",
+                "foo in src",
             ),
             (
                 ToolCall::WriteFile {
