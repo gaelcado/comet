@@ -785,7 +785,6 @@ impl RowBuilder {
                 let dkey = row_key(&format!("{id}/{}", part.id()));
                 match part {
                     MessagePart::Tool { call, is_error, resolved, subagent_ref, subagent_status, .. } => {
-                        let (label, detail) = zeron_proto::view::tool_chip_content(call);
                         // Subagent lifecycle is distinct from `resolved`: under
                         // eager-done the spawn call resolves while the subagent
                         // still runs (desktop transcript.rs `running`/`failed`).
@@ -798,6 +797,7 @@ impl RowBuilder {
                         } else {
                             (!*resolved, is_error)
                         };
+                        let (label, detail) = zeron_proto::view::tool_row_content(call, running);
                         let color = if *is_error { ColorRole::Danger } else { ColorRole::TextSecondary };
                         let badge = if agents {
                             None
@@ -1176,8 +1176,9 @@ mod tests {
             (ToolCall::ReadFile { path: "a.rs".into() }, false),
             (ToolCall::Exec { command: "x".into() }, true),
         ];
-        assert_eq!(group_summary(0, &calls), "Ran 2 commands · read 1 file · 1 failed");
-        assert_eq!(group_summary(1, &calls), "Thought process · ran 2 commands · read 1 file · 1 failed");
+        // `ls` counts as a listing, like the desktop row that names it "Listed".
+        assert_eq!(group_summary(0, &calls), "Ran 1 command · read 1 file · listed 1 time · 1 failed");
+        assert_eq!(group_summary(1, &calls), "Thought process · ran 1 command · read 1 file · listed 1 time · 1 failed");
         assert_eq!(group_summary(3, &[]), "Thought 3 times");
     }
 }
