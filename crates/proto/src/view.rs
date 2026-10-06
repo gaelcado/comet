@@ -508,7 +508,20 @@ fn tool_chip_content_raw(call: &crate::ToolCall, running: bool) -> (&'static str
     use crate::ToolCall;
     let verb = |live: &'static str, done: &'static str| if running { live } else { done };
     match call {
-        ToolCall::Exec { command } => (verb("Running", "Ran"), command.clone()),
+        ToolCall::Exec { command } => {
+            use crate::shell_command::{ExecBadge, ExecVerb};
+            let exec = crate::shell_command::summarize(command);
+            let detail = match (exec.verb, exec.badge) {
+                (ExecVerb::Searched, Some(ExecBadge::Path(path))) => {
+                    format!("{} in {path}", exec.subject)
+                }
+                // The whole cleaned list until viewports render the first
+                // command with a "+N" pill.
+                (ExecVerb::Ran, _) => exec.display,
+                _ => exec.subject,
+            };
+            (exec.verb.label(running), detail)
+        }
         ToolCall::ReadFile { path } => (verb("Reading", "Read"), path.clone()),
         ToolCall::WriteFile { path, .. } => (verb("Writing", "Wrote"), path.clone()),
         ToolCall::EditFile { path, .. } => (verb("Editing", "Edited"), path.clone()),
@@ -551,6 +564,10 @@ fn tool_chip_content_raw(call: &crate::ToolCall, running: bool) -> (&'static str
 
 /// The ToolGroup summary line — "Ran 3 commands · edited 2 files".
 ///
+/// A shell command counts under the verb its row shows: one that reads a
+/// file, searches or lists (see [`crate::shell_command`]) counts with the
+/// dedicated Read/Search/Glob tools, and every other command counts as run.
+///
 /// Takes `(call, is_error)` pairs so each viewport can keep its own row model;
 /// the summary itself is one implementation for both.
 pub fn tool_group_summary(tools: &[(crate::ToolCall, bool)]) -> String {
@@ -569,7 +586,15 @@ pub fn tool_group_summary(tools: &[(crate::ToolCall, bool)]) -> String {
             failed += 1;
         }
         match call {
-            ToolCall::Exec { .. } => commands += 1,
+            ToolCall::Exec { command } => {
+                use crate::shell_command::ExecVerb;
+                match crate::shell_command::summarize(command).verb {
+                    ExecVerb::Read => reads += 1,
+                    ExecVerb::Searched => searches += 1,
+                    ExecVerb::Listed => listings += 1,
+                    _ => commands += 1,
+                }
+            }
             ToolCall::WriteFile { path, .. } | ToolCall::EditFile { path, .. } => {
                 if !edited.contains(&path.as_str()) {
                     edited.push(path);
