@@ -9255,14 +9255,17 @@ fn file_badge_name(path: &str) -> &str {
 /// hunk headers, dual line-number gutters, accent bars, row washes, and
 /// syntax runs — so an inline tool diff is indistinguishable from the
 /// checkout diff sidebar. Output renders as a code block: verbatim mono
-/// lines, indentation intact, counted-tail truncation.
+/// lines, indentation intact, counted-tail truncation. Its lines (and a
+/// shell block's) never truncate sideways: they scroll horizontally in a
+/// viewport keyed by `key` (see [`verbatim_scroller`]).
 fn detail_body(
     detail: &ToolDetail,
     diff_highlights: Option<Arc<crate::changes::DiffHighlights>>,
-    selection_key: &str,
+    key: &str,
     theme: &Theme,
 ) -> AnyElement {
     let body = div().w_full().min_w_0().flex().flex_col().overflow_hidden();
+    let line_key = |line_ix: usize| -> Arc<str> { format!("{key}-{line_ix}").into() };
     // Every line joins the transcript's selection, so paths, commands and
     // output can be drag-selected (across lines too) and copied. Lines clip
     // rather than ellipsize: selection maps the pointer onto the full text.
@@ -9273,7 +9276,7 @@ fn detail_body(
             .overflow_hidden()
             .whitespace_nowrap()
             .child(render::selectable_text_element(
-                format!("{selection_key}-{line_ix}").into(),
+                line_key(line_ix),
                 text,
                 runs,
                 theme.selection,
@@ -9348,23 +9351,21 @@ fn detail_body(
             .py(px(6.0))
             .font_family(theme.font_mono.clone())
             .text_size(px(TOOL_TEXT_SIZE))
-            .children(lines.iter().enumerate().map(|(line_ix, line)| {
-                let row = div()
-                    .h(px(OUTPUT_LINE_HEIGHT))
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .text_color(theme.text_faint);
-                if line.is_empty() {
-                    return row;
-                }
-                row.child(selectable(
-                    line_ix,
-                    line.clone(),
-                    plain(line, theme.text_faint),
-                ))
-            }))
+            // In the scroller a line keeps its full width, so the selection
+            // wraps the text directly instead of the clipping `selectable`.
+            .child(verbatim_scroller(
+                key.into(),
+                lines.iter().enumerate().map(|(line_ix, line)| {
+                    verbatim_line().when(!line.is_empty(), |row| {
+                        row.child(render::selectable_text_element(
+                            line_key(line_ix),
+                            line.clone(),
+                            plain(line, theme.text_faint),
+                            theme.selection,
+                        ))
+                    })
+                }),
+            ))
             .when(*truncated_by > 0, |block| {
                 block.child(more_lines_row(*truncated_by, theme))
             })
@@ -9375,21 +9376,19 @@ fn detail_body(
         } => body
             .py(px(6.0))
             .text_size(px(TOOL_TEXT_SIZE))
-            .children(lines.iter().map(|line| {
-                div()
-                    .h(px(OUTPUT_LINE_HEIGHT))
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .truncate()
-                            .child(line.element(theme, false)),
-                    )
-            }))
+            .child(verbatim_scroller(
+                key.into(),
+                lines.iter().enumerate().map(|(line_ix, line)| {
+                    verbatim_line().when(!line.text.is_empty(), |row| {
+                        row.child(render::selectable_text_element(
+                            line_key(line_ix),
+                            line.text.clone(),
+                            line.text_runs(theme, false),
+                            theme.selection,
+                        ))
+                    })
+                }),
+            ))
             .when(*truncated_by > 0, |block| {
                 block.child(more_lines_row(*truncated_by, theme))
             })
@@ -9417,6 +9416,42 @@ fn detail_body(
             })
             .into_any_element(),
     }
+}
+
+/// One fixed-height, unwrapped line of a [`verbatim_scroller`].
+fn verbatim_line() -> gpui::Div {
+    div()
+        .h(px(OUTPUT_LINE_HEIGHT))
+        .flex_none()
+        .flex()
+        .items_center()
+}
+
+/// Verbatim lines as one horizontal viewport: lines keep their full width
+/// and scroll together sideways instead of ellipsizing, while the height
+/// stays the analytic line count (no scrollbar track is laid out). The
+/// offset lives in GPUI element state under `id`, so it costs the row model
+/// nothing and resets when the row leaves the viewport.
+fn verbatim_scroller(id: SharedString, lines: impl Iterator<Item = gpui::Div>) -> AnyElement {
+    let mut scroller = div()
+        .id(id)
+        .w_full()
+        .min_w_0()
+        .flex()
+        .overflow_x_scroll()
+        .child(
+            div()
+                .min_w_full()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .whitespace_nowrap()
+                .children(lines),
+        );
+    // Without this GPUI maps a vertical-only wheel onto x for an x-only
+    // scroller, and the transcript under the pointer would stop scrolling.
+    scroller.style().restrict_scroll_to_axis = Some(true);
+    scroller.into_any_element()
 }
 
 /// The counted-tail row under a truncated Output/Thought detail.
