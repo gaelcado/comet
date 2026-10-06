@@ -134,6 +134,15 @@ pub(super) fn horizontal_panel_fit(
 }
 
 impl Shell {
+    /// Navigation and direct window resizing discard the departing allocation.
+    pub(super) fn clear_panel_transitions(&mut self) {
+        self.files_tween = None;
+        self.files_content_tween = None;
+        self.right_tween = None;
+        self.right_content_tween = None;
+        self.main_takeover_tween = None;
+    }
+
     /// Which columns the window has room for this frame. A closing column
     /// keeps its slot until its mask is gone.
     pub(super) fn horizontal_fit(&self) -> HorizontalPanelFit {
@@ -233,14 +242,14 @@ impl Shell {
                     self.fit_exits[column] = None;
                 } else if was[column] && open[column] && painted[column].0 > 0.5 {
                     let (width, content) = painted[column];
-                    self.fit_exits[column] = Some((WidthTween::panel(width, 0.0), content));
+                    self.fit_exits[column] = Some((self.panel_tween(width, 0.0), content));
                 }
             }
             // A column the fit shows again returns from what it painted last
             // frame, toward its live target: its own tween, if any, was
             // heading for a target the fit had just zeroed.
             if fit.sidebar && !previous.sidebar && !self.settings.sidebar_collapsed {
-                self.sidebar_tween = Some(WidthTween::panel(painted[0].0, fit.sidebar_limit));
+                self.sidebar_tween = Some(self.panel_tween(painted[0].0, fit.sidebar_limit));
             }
             // A neighbour opening or closing can squeeze or release an open
             // sidebar. Ease it between the two limits alongside that panel.
@@ -257,10 +266,10 @@ impl Shell {
                 let from = self
                     .eval_tween(self.sidebar_tween, previous.sidebar_limit)
                     .min(self.sidebar_tween_limit(previous.sidebar_limit));
-                self.sidebar_tween = Some(WidthTween::panel(from, fit.sidebar_limit));
+                self.sidebar_tween = Some(self.panel_tween(from, fit.sidebar_limit));
             }
             if fit.right && !previous.right && panels.changes_open {
-                let tween = WidthTween::panel(painted[1].0, self.right_settled_target(cx));
+                let tween = self.panel_tween(painted[1].0, self.right_settled_target(cx));
                 let (from, to) = panel_content_tween(painted[1].1, tween.from, tween.to);
                 self.right_tween = Some(tween);
                 self.right_content_tween = Some(WidthTween { from, to, ..tween });
@@ -374,7 +383,7 @@ impl Shell {
             && (right_to - before.right).abs() > 0.5
         {
             let resting = !self.tween_active(self.right_tween);
-            let tween = WidthTween::panel(before.right, right_to);
+            let tween = self.panel_tween(before.right, right_to);
             self.right_tween = Some(tween);
             self.right_content_tween = (!resting).then(|| {
                 let (from, to) = panel_content_tween(before.right_content, before.right, right_to);
@@ -384,7 +393,7 @@ impl Shell {
         // A full-screen entry or exit still running restarts with the pane,
         // from the conversation's current layout, so it lands when they do.
         if takeover_running {
-            let mut tween = WidthTween::panel(before.conversation_content, 0.0);
+            let mut tween = self.panel_tween(before.conversation_content, 0.0);
             if let Some(pane) = self
                 .right_tween
                 .filter(|pane| self.tween_active(Some(*pane)))
@@ -405,7 +414,7 @@ impl Shell {
                 let from = self.sidebar_now();
                 self.settings.sidebar_width = SIDEBAR_DEFAULT;
                 self.sidebar_edge_bounce = None;
-                self.sidebar_tween = Some(WidthTween::panel(from, self.sidebar_target()));
+                self.sidebar_tween = Some(self.panel_tween(from, self.sidebar_target()));
             }
             PaneResizeKind::Files => {
                 self.settings.files_panel_width = settings::FILES_PANEL_DEFAULT;
@@ -567,11 +576,7 @@ impl Shell {
     pub(super) fn observe_viewport_width(&mut self, viewport: f32, cx: &App) {
         self.viewport_resized = (self.viewport_width - viewport).abs() > 1.0;
         if self.viewport_resized {
-            self.files_tween = None;
-            self.files_content_tween = None;
-            self.right_tween = None;
-            self.right_content_tween = None;
-            self.main_takeover_tween = None;
+            self.clear_panel_transitions();
         }
         self.viewport_width = viewport;
         // Re-split directly whenever the window or the panel set changed

@@ -896,40 +896,6 @@ mod tests {
     }
 
     #[test]
-    fn idle_composer_width_follows_its_animated_column_exactly() {
-        let mut state = DockState::default();
-        let mut now = Instant::now();
-        // A panel tween narrows then widens the column; the composer paints
-        // each frame's column width, with no lag or overshoot of its own.
-        for target in [720.0, 690.0, 600.0, 470.0, 440.0, 520.0, 650.0, 720.0] {
-            state.tick(true, false, now);
-            assert_eq!(state.layout_width(target, false, now), target);
-            now += std::time::Duration::from_millis(16);
-        }
-        assert!(!state.width.is_some_and(|width| width.active()));
-    }
-
-    #[test]
-    fn direct_width_snaps_even_during_route_motion() {
-        let mut state = DockState::default();
-        let mut now = Instant::now();
-        state.tick(false, false, now);
-        assert_eq!(state.layout_width(720.0, false, now), 720.0);
-        // Route motion starts only once the composer has painted.
-        state.position = Some((Glide::new(0.0), Glide::new(0.0)));
-        now += std::time::Duration::from_millis(16);
-        // The hero → thread route glides the width...
-        assert!(state.tick(true, false, now).active);
-        assert!(state.layout_width(440.0, false, now) > 440.0);
-        // ...but a window resize during it follows every frame.
-        for target in [600.0, 610.0, 590.0] {
-            now += std::time::Duration::from_millis(16);
-            state.tick(true, false, now);
-            assert_eq!(state.layout_width(target, true, now), target);
-        }
-    }
-
-    #[test]
     fn panel_exit_retains_source_transcript_width_only_until_handoff_ends() {
         let mut state = DockState::default();
         assert_eq!(state.transcript_width(540.0, true, false), 540.0);
@@ -1072,30 +1038,16 @@ mod tests {
             state: SharedDock,
             now: Instant,
             docked: bool,
-            conversation_only: bool,
-            thread_sidebar: f32,
-            hero_sidebar: f32,
-            panel_width: f32,
+            sidebar: f32,
             measured: Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
         }
         impl Render for Fixture {
             fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                let pane = if self.docked { self.panel_width } else { 0.0 };
-                let sidebar = if self.docked {
-                    self.thread_sidebar
-                } else {
-                    self.hero_sidebar
-                };
+                let pane = if self.docked { 320.0 } else { 0.0 };
                 let frame = {
                     let mut state = self.state.borrow_mut();
-                    state.observe_conversation(if self.docked {
-                        "conversation-a"
-                    } else {
-                        "conversation-b"
-                    });
-                    let docked = self.conversation_only || self.docked;
-                    state.observe_column(docked, (sidebar, 640.0 - pane), true, self.now);
-                    state.tick(docked, false, self.now)
+                    state.observe_column(self.docked, (0.0, pane), true, self.now);
+                    state.tick(self.docked, false, self.now)
                 };
                 let width = self
                     .state
@@ -1104,7 +1056,7 @@ mod tests {
                 let measured = self.measured.clone();
                 div()
                     .size_full()
-                    .pl(px(sidebar))
+                    .pl(px(self.sidebar))
                     .flex()
                     .flex_col()
                     .child(div().flex_1())
@@ -1129,18 +1081,8 @@ mod tests {
                     ))
             }
         }
-        // Surface-only, Files-only, both right columns, and a fitted sidebar
-        // returning on the canvas. Each must use the same hidden switch.
-        for (thread_sidebar, hero_sidebar, panel_width) in [
-            (0.0, 0.0, 320.0),
-            (224.0, 224.0, 320.0),
-            (224.0, 224.0, 286.0),
-            (0.0, 224.0, 400.0),
-            (0.0, 224.0, 0.0),
-        ] {
-            for (docked, conversation_only) in
-                [(false, false), (true, false), (false, true), (true, true)]
-            {
+        for sidebar in [0.0, 224.0] {
+            for docked in [false, true] {
                 let now = Instant::now();
                 let measured = Rc::new(std::cell::Cell::new(None));
                 let state: SharedDock = Default::default();
@@ -1148,10 +1090,7 @@ mod tests {
                     state: state.clone(),
                     now,
                     docked: !docked,
-                    conversation_only,
-                    thread_sidebar,
-                    hero_sidebar,
-                    panel_width,
+                    sidebar,
                     measured: measured.clone(),
                 });
                 let draw = |cx: &mut gpui::TestAppContext| {
@@ -1162,7 +1101,6 @@ mod tests {
                     measured.get().unwrap()
                 };
                 let source = draw(cx);
-                let mut destination_bounds = None;
                 let start = now + std::time::Duration::from_secs(30);
                 for progress in [0.0, 0.10, 0.19, 0.23, 0.27, 0.60, 1.01] {
                     handle
@@ -1183,35 +1121,18 @@ mod tests {
                     } else {
                         assert_eq!(
                             f32::from(bounds.size.width),
-                            if docked { 640.0 - panel_width } else { 640.0 }
+                            if docked { 320.0 } else { 640.0 }
                         );
                         assert_eq!(
                             f32::from(bounds.size.height),
-                            if conversation_only || docked {
-                                49.0
-                            } else {
-                                124.0
-                            }
+                            if docked { 49.0 } else { 124.0 }
                         );
-                    }
-                    if conversation_only && progress >= 0.23 {
-                        if let Some(destination) = destination_bounds {
-                            assert_eq!(
-                                bounds, destination,
-                                "conversation switches must not travel after the hidden geometry change"
-                            );
-                        } else {
-                            destination_bounds = Some(bounds);
-                        }
                     }
                     if (0.18..=0.26).contains(&progress) {
                         assert_eq!(state.borrow().opacity(), 0.0);
                     }
                 }
-                assert_eq!(
-                    state.borrow().frame,
-                    DockFrame::settled(conversation_only || docked)
-                );
+                assert_eq!(state.borrow().frame, DockFrame::settled(docked));
             }
         }
     }

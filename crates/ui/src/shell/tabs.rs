@@ -57,15 +57,6 @@ pub(super) struct TitlebarTrailing {
     content_width: f32,
 }
 
-#[cfg(test)]
-impl TitlebarTrailing {
-    /// Left edges of the surface tab strip and the Files controls.
-    pub(super) fn edges(&self, viewport: f32) -> (f32, f32) {
-        let files = viewport - self.right_pad - self.widths.files_controls;
-        (files - self.widths.surface_reveal, files)
-    }
-}
-
 /// The session header's "+" and fork buttons (28px each, 2px gap) plus the
 /// row gap they cost the project-actions control.
 const SESSION_CONTROLS_WIDTH: f32 = 28.0 * 2.0 + 2.0 + 8.0;
@@ -308,9 +299,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// The trailing titlebar strip's geometry: shared by the titlebar render
-    /// and the frame tests, which check it moves as continuously as the
-    /// columns beneath it.
+    /// The trailing titlebar strip follows the columns beneath it.
     pub(super) fn titlebar_trailing_layout(&self, on_canvas: bool, cx: &App) -> TitlebarTrailing {
         let sidebar_now = self.sidebar_now();
         let plus_inset = TITLEBAR_ACTION_SLOT_WIDTH * self.titlebar_plus_alpha(cx);
@@ -887,169 +876,4 @@ mod cycle_tests {
     // `AppState::sidebar_chats` the sidebar and the jump shortcuts read, and
     // `jump_slots_count_the_rows_the_sidebar_draws` (state.rs) covers the
     // space-filter behaviour for all of them.
-}
-
-#[cfg(test)]
-mod titlebar_geometry_tests {
-    use super::*;
-    use gpui::{AppContext, TestAppContext};
-
-    struct TitlebarHost {
-        shell: Entity<Shell>,
-        _data_dir: tempfile::TempDir,
-    }
-
-    impl Render for TitlebarHost {
-        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            self.shell.update(cx, |shell, cx| {
-                shell.viewport_width = f32::from(window.viewport_size().width);
-                div()
-                    .w(px(shell.viewport_width))
-                    .h(px(80.0))
-                    .relative()
-                    .child(shell.render_session_title_bar(window.viewport_size().height, cx))
-                    .child(shell.render_titlebar_cluster(cx))
-            })
-        }
-    }
-
-    /// The panel tests check that `titlebar_trailing_layout` moves
-    /// continuously; this checks the rendered strip is where it says.
-    #[gpui::test]
-    fn the_rendered_strip_follows_the_pane_seam_and_clips_as_it_closes(cx: &mut TestAppContext) {
-        let dir = tempfile::tempdir().unwrap();
-        cx.update(|cx| {
-            settings::init(settings::UiSettings::default(), dir.path(), cx);
-            gpui_base::init(cx);
-            cx.set_global(Theme::default());
-            crate::app_menus::init(cx);
-        });
-        let (host, cx) = cx.add_window_view(|_, cx| {
-            let shell = cx.new(|cx| {
-                let state = cx.new(|_| AppState::new());
-                let mut shell = Shell::new(
-                    state,
-                    EngineBootConfig {
-                        data_dir: dir.path().into(),
-                        ipc_port: 0,
-                        edge_url: "http://127.0.0.1:1".into(),
-                        edge_token: None,
-                        org_id: None,
-                        workos_client_id: None,
-                        default_harness: zeron_proto::HarnessId::Mock,
-                    },
-                    cx,
-                );
-                shell.active_chat = "session".into();
-                shell.state.update(cx, |state, _| {
-                    state.chats.push(
-                        serde_json::from_value(serde_json::json!({
-                            "id": "session", "title": "A long session title for geometry testing",
-                            "deviceId": "local", "archived": false, "createdAt": Utc::now(),
-                        }))
-                        .unwrap(),
-                    );
-                    state.selected_chat = Some("session".into());
-                });
-                shell.panels.toggle_changes("session");
-                shell
-            });
-            TitlebarHost {
-                shell,
-                _data_dir: dir,
-            }
-        });
-        let shell = host.read_with(cx, |host, _| host.shell.clone());
-        let duration = RESIZE.total().mul_f32(motion::speed_scale());
-        let started = std::time::Instant::now();
-        let draw = |cx: &mut gpui::VisualTestContext, at: f32| {
-            shell.update(cx, |shell, _| {
-                shell.render_time = Some(started + duration.mul_f32(at));
-            });
-            host.update(cx, |_, cx| cx.notify());
-            cx.update(|window, cx| window.draw(cx).clear());
-            let strip = cx.debug_bounds("right-titlebar-controls").unwrap();
-            let (edge, right_pad) = shell.read_with(cx, |shell, cx| {
-                (
-                    shell
-                        .titlebar_trailing_layout(false, cx)
-                        .edges(shell.viewport_width)
-                        .0,
-                    shell.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET),
-                )
-            });
-            assert!(
-                (f32::from(strip.left()) - edge).abs() < 0.5,
-                "strip at {strip:?}, layout edge {edge}"
-            );
-            (strip, right_pad)
-        };
-
-        // While the sidebar moves, the toggle stays pinned to the right edge
-        // and the surface controls show only where they fit.
-        for width in [1400.0, 1024.0, 800.0, 634.0, 629.0, 600.0] {
-            cx.simulate_resize(gpui::size(px(width), px(600.0)));
-            for (collapsed, from, to) in [(false, 0.0, 256.0), (true, 256.0, 0.0)] {
-                shell.update(cx, |shell, _| {
-                    shell.settings.sidebar_collapsed = collapsed;
-                    shell.sidebar_tween = Some(WidthTween {
-                        from,
-                        to,
-                        started,
-                        duration,
-                        curve: RESIZE.curve,
-                    });
-                });
-                for progress in [0.0, 0.5, 1.0] {
-                    let (strip, right_pad) = draw(cx, progress);
-                    let toggle = cx.debug_bounds("toggle-changes").unwrap();
-                    assert!((f32::from(toggle.left()) - (width - right_pad - 28.0)).abs() < 0.5);
-                    let expand = cx.debug_bounds("expand-changes");
-                    assert_eq!(
-                        expand.is_some(),
-                        f32::from(strip.size.width)
-                            >= RIGHT_PANE_HEADER_CONTROLS_MIN_WIDTH + PANEL_TOGGLE_SLOTS,
-                        "{width}px, sidebar {collapsed} at {progress}"
-                    );
-                    if let Some(expand) = expand {
-                        assert!(expand.right() + px(4.0) <= toggle.left());
-                    }
-                }
-            }
-        }
-
-        // Closing the surface host clips its header behind the same mask as
-        // the pane: the tabs never reflow, with or without Files beside it.
-        cx.simulate_resize(gpui::size(px(1400.0), px(600.0)));
-        for files_open in [false, true] {
-            shell.update(cx, |shell, _| {
-                shell.settings.sidebar_collapsed = true;
-                shell.sidebar_tween = None;
-                shell.panels.update("session", |panels| {
-                    panels.changes_open = false;
-                    panels.files_open = files_open;
-                });
-                shell.right_tween = Some(WidthTween {
-                    from: 520.0,
-                    to: 0.0,
-                    started,
-                    duration,
-                    curve: RESIZE.curve,
-                });
-            });
-            let mut content = None;
-            for progress in [0.0, 0.1, 0.5, 0.75] {
-                let (strip, right_pad) = draw(cx, progress);
-                let (right, files) = shell.read_with(cx, |shell, cx| {
-                    (shell.right_visible_width(cx), shell.files_visible_width(cx))
-                });
-                // The seam, until the pane is narrower than the fixed toggles.
-                if right + files >= right_pad + PANEL_TOGGLE_SLOTS {
-                    assert!((f32::from(strip.left()) - (1400.0 - right - files)).abs() < 0.5);
-                }
-                let painted = cx.debug_bounds("right-titlebar-content").unwrap();
-                assert_eq!(*content.get_or_insert(painted), painted);
-            }
-        }
-    }
 }

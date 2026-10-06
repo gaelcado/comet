@@ -47,9 +47,9 @@ use crate::settings::harnesses::HarnessesPage;
 use crate::settings::notifications::{NotificationsEvent, NotificationsPage};
 use crate::settings::shortcuts::{ShortcutsEvent, ShortcutsPage};
 use crate::settings::{
-    self, CHAT_PANEL_MIN, ComposerSendBehavior, FILES_PANEL_MAX, FILES_PANEL_MIN, JUMP_SLOTS,
-    KeymapConfig, RIGHT_PANE_MIN, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN, SavePolicy,
-    ShortcutId, SidebarOrganization, SidebarSort, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_VH,
+    self, CHAT_PANEL_MIN, ComposerSendBehavior, FILES_PANEL_MIN, JUMP_SLOTS, KeymapConfig,
+    RIGHT_PANE_MIN, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN, SavePolicy, ShortcutId,
+    SidebarOrganization, SidebarSort, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_VH,
     TERMINAL_MIN_HEIGHT, UiSettings, badge_combo, jump_hints_visible, modifier_send_hint_visible,
     platform_combo, sidebar_pin_profile_key,
 };
@@ -2254,6 +2254,9 @@ pub struct Shell {
     /// All pane masks and chrome evaluate animation at the same frame time.
     /// A slow render must not give the native page and its titlebar different widths.
     render_time: Option<std::time::Instant>,
+    /// A deterministic clock for rendered integration tests.
+    #[cfg(test)]
+    test_time: Option<std::time::Instant>,
     splash: SplashPhase,
     splash_task: Option<Task<()>>,
     /// Focus fallback (registered on first paint — [`Shell::new`] has no
@@ -2638,6 +2641,8 @@ impl Shell {
             reduced_motion: false,
             motion_active: std::cell::Cell::new(false),
             render_time: None,
+            #[cfg(test)]
+            test_time: None,
             splash,
             splash_task: None,
             focus_sub: None,
@@ -3077,11 +3082,7 @@ impl Shell {
                     self.nav.push(entry);
                 }
             }
-            self.files_tween = None;
-            self.files_content_tween = None;
-            self.right_tween = None;
-            self.right_content_tween = None;
-            self.main_takeover_tween = None;
+            self.clear_panel_transitions();
             self.terminal_tween = None;
             self.fit_exits = [None; 3];
             let key = self.panel_key(cx);
@@ -3181,8 +3182,8 @@ impl Shell {
     }
 
     /// The surface host's width once every running transition has landed.
-    /// A tween's target is fixed when it starts, so it sizes against where
-    /// the sidebar and Files will rest, not where they are this frame.
+    /// The initial target uses the sidebar and Files' settled allocation;
+    /// the painted pane follows its live target while its neighbours move.
     fn right_settled_target(&self, cx: &App) -> f32 {
         self.right_target_for_columns(cx, self.sidebar_target(), self.files_settled_width(cx))
     }
@@ -3224,7 +3225,7 @@ impl Shell {
         if !self.settings.sidebar_collapsed {
             self.record_panel_open(AuxiliaryPanel::Sidebar, &self.panel_key(cx));
         }
-        self.sidebar_tween = Some(WidthTween::panel(from, self.sidebar_target()));
+        self.sidebar_tween = Some(self.panel_tween(from, self.sidebar_target()));
         self.schedule_save(cx);
         self.resplit_panels(before, None, cx);
         cx.notify();
@@ -3287,15 +3288,15 @@ impl Shell {
         self.panels.update(&key, |p| p.changes_open = open);
         self.resplit_panels(before, Some(AuxiliaryPanel::Right), cx);
         let to = self.right_settled_target(cx);
-        self.right_tween = Some(WidthTween::panel(from, to));
+        let pane = self.panel_tween(from, to);
+        self.right_tween = Some(pane);
         let (content_start, content_end) = panel_content_tween(content_from, from, to);
-        self.right_content_tween = self.right_tween.map(|transition| WidthTween {
+        self.right_content_tween = Some(WidthTween {
             from: content_start,
             to: content_end,
-            ..transition
+            ..pane
         });
         // The conversation's return rides the pane's own tween.
-        let pane = self.right_tween;
         self.main_takeover_tween = was_expanded.then(|| WidthTween {
             from: from_main,
             to: conversation_width(
@@ -3303,7 +3304,7 @@ impl Shell {
                 sidebar_now,
                 to,
             ),
-            ..pane.unwrap_or_else(|| WidthTween::new(0.0, 0.0))
+            ..pane
         });
         if open
             && let RightSurface::Diff(id) = self.resolved_right_active(cx)
@@ -3629,28 +3630,6 @@ impl Shell {
         cx.notify();
     }
 
-    fn collapsed_explorer_sections(&self) -> crate::files::CollapsedSections {
-        crate::files::CollapsedSections {
-            subagents: self.settings.files_subagents_collapsed,
-            chats: self.settings.files_chats_collapsed,
-        }
-    }
-
-    fn set_collapsed_explorer_sections(
-        &mut self,
-        collapsed: crate::files::CollapsedSections,
-        cx: &mut Context<Self>,
-    ) {
-        self.settings.files_subagents_collapsed = collapsed.subagents;
-        self.settings.files_chats_collapsed = collapsed.chats;
-        for explorer in self.files.values().cloned().collect::<Vec<_>>() {
-            explorer.update(cx, |explorer, cx| {
-                explorer.set_collapsed_sections(collapsed, cx)
-            });
-        }
-        self.schedule_save(cx);
-    }
-
     fn set_files_show_all(&mut self, show_all_files: bool, cx: &mut Context<Self>) {
         self.settings.files_show_all = show_all_files;
         if let Some(page) = self.files_settings_page.clone() {
@@ -3963,8 +3942,7 @@ impl Shell {
                     | FilesEvent::RenameChildChat(_)
                     | FilesEvent::ChildChatContextMenu { .. }
                     | FilesEvent::NewChildChat
-                    | FilesEvent::ForkChat
-                    | FilesEvent::SectionsCollapsedChanged(_) => {}
+                    | FilesEvent::ForkChat => {}
                     FilesEvent::CloseCancelled => {
                         this.cancel_file_close(RightSurface::File(id), cx)
                     }
@@ -6819,9 +6797,24 @@ impl Shell {
 
     // ---- render pieces ----
 
+    fn motion_time(&self) -> std::time::Instant {
+        #[cfg(test)]
+        if let Some(now) = self.test_time {
+            return now;
+        }
+        std::time::Instant::now()
+    }
+
+    fn panel_tween(&self, from: f32, to: f32) -> WidthTween {
+        WidthTween {
+            started: self.render_time.unwrap_or_else(|| self.motion_time()),
+            ..WidthTween::panel(from, to)
+        }
+    }
+
     fn tween_elapsed(&self, started: std::time::Instant) -> Duration {
         self.render_time
-            .unwrap_or_else(std::time::Instant::now)
+            .unwrap_or_else(|| self.motion_time())
             .saturating_duration_since(started)
     }
 
@@ -6936,6 +6929,8 @@ impl Shell {
     ) -> AnyElement {
         let content_width = self.right_content_width(target) + edge_offset;
         div()
+            .id("right-panel")
+            .debug_selector(|| "right-panel".into())
             .h_full()
             .flex_none()
             .relative()
@@ -7591,6 +7586,8 @@ impl Shell {
         // full window height (the titlebar overlays it), so the column pads
         // itself below the chrome.
         div()
+            .id("sidebar-column")
+            .debug_selector(|| "sidebar-column".into())
             .h_full()
             .flex_none()
             .overflow_hidden()
@@ -12498,7 +12495,7 @@ impl Shell {
         let from_main = self.main_content_width(self.main_target_width(from, cx), cx);
         self.right_pane_expanded = !self.right_pane_expanded;
         let to = self.right_target(cx);
-        let right_transition = WidthTween::panel(from, to);
+        let right_transition = self.panel_tween(from, to);
         self.right_tween = Some(right_transition);
         self.right_content_tween = Some(WidthTween {
             from: content_from,
@@ -13256,7 +13253,7 @@ impl Render for Shell {
         }
         self.focus_rename_chat(window, cx);
 
-        self.render_time = Some(std::time::Instant::now());
+        self.render_time = Some(self.motion_time());
         if self.all_file_edits_flushed(cx)
             && let Some(action) = self.pending_exit.take()
         {
@@ -13880,6 +13877,8 @@ impl Render for Shell {
                     main
                 };
                 let card: AnyElement = div()
+                    .id("conversation-column")
+                    .debug_selector(|| "conversation-column".into())
                     .flex_1()
                     .min_w_0()
                     .flex()

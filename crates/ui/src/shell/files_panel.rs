@@ -126,9 +126,8 @@ impl Shell {
         self.files_visible_width(cx)
     }
 
-    /// Files' width once every running open/close has landed. Surface
-    /// targets are fixed when their tween starts, so they must size against
-    /// this final allocation, not the frame Files happens to be at.
+    /// Files' width once every running open/close has landed. Initial surface
+    /// targets use this allocation; painted widths follow the live layout.
     pub(super) fn files_settled_width(&self, cx: &App) -> f32 {
         let (fit, sidebar) = self.settled_fit();
         self.files_width_for(fit, sidebar, cx)
@@ -219,7 +218,7 @@ impl Shell {
     /// `content`) to `to`, both read before the action changed anything.
     pub(super) fn transition_files(&mut self, from: f32, content: f32, to: f32) {
         let (content_from, content_to) = panel_content_tween(content, from, to);
-        let mask = WidthTween::panel(from, to);
+        let mask = self.panel_tween(from, to);
         self.files_tween = Some(mask);
         self.files_content_tween = Some(WidthTween {
             from: content_from,
@@ -274,16 +273,13 @@ impl Shell {
         }
         let key = self.panel_key(cx);
         if !self.files.contains_key(&key) {
-            let collapsed = self.collapsed_explorer_sections();
             let files = cx.new(|cx| {
-                let mut explorer = FilesSurface::new_explorer(
+                FilesSurface::new_explorer(
                     self.state.clone(),
                     self.active_chat.clone(),
                     self.settings.files_show_all,
                     cx,
-                );
-                explorer.set_collapsed_sections(collapsed, cx);
-                explorer
+                )
             });
             let owner = key.clone();
             let sub = cx.subscribe_in(
@@ -364,9 +360,6 @@ impl Shell {
                     }
                     FilesEvent::NewChildChat => this.create_child_chat(None, cx),
                     FilesEvent::ForkChat => this.create_side_chat(cx),
-                    FilesEvent::SectionsCollapsedChanged(collapsed) => {
-                        this.set_collapsed_explorer_sections(*collapsed, cx)
-                    }
                     _ => cx.notify(),
                 },
             );
@@ -500,6 +493,7 @@ impl Shell {
             .children(content);
         div()
             .id("files-panel")
+            .debug_selector(|| "files-panel".into())
             .h_full()
             .flex_none()
             .relative()
