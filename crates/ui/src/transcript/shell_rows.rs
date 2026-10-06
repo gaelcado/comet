@@ -107,7 +107,7 @@ impl ShellLine {
     }
 
     /// Mono text runs; a failed call paints in the danger tint instead.
-    fn text_runs(&self, theme: &Theme, failed: bool) -> Vec<TextRun> {
+    pub(super) fn text_runs(&self, theme: &Theme, failed: bool) -> Vec<TextRun> {
         let font = gpui::font(theme.font_mono.clone());
         self.tones
             .iter()
