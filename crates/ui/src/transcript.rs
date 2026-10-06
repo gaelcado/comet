@@ -56,6 +56,7 @@ use crate::theme::Theme;
 use zeron_syntax::LanguageId as Lang;
 
 mod shell_rows;
+pub use shell_rows::ShellLine;
 
 // ---------------------------------------------------------------------------
 // Constants (mugen ports)
@@ -766,6 +767,13 @@ pub enum ToolDetail {
         lines: Vec<SharedString>,
         truncated_by: usize,
     },
+    /// An Exec invocation as a shell block: `$ `-prompted, bash-toned lines,
+    /// pre-wrapped like [`call_block`]'s, so the height is line-counted
+    /// exactly like `Output`.
+    Shell {
+        lines: Vec<ShellLine>,
+        truncated_by: usize,
+    },
     /// A thought's markdown, pre-flattened into wrapped STYLED lines — one
     /// fixed-height row each, so the height stays analytic like `Output`
     /// while inline markers render as real styling ([`thought_lines`]).
@@ -873,14 +881,26 @@ pub const CALL_WRAP_COLS: usize = 80;
 /// Soft-wrap one raw line into [`CALL_WRAP_COLS`]-char chunks so a long
 /// single-line command stays fully readable instead of ellipsizing.
 fn wrap_cols(line: &str, cols: usize) -> Vec<SharedString> {
-    if line.chars().count() <= cols {
-        return vec![SharedString::from(line.to_owned())];
-    }
-    line.chars()
-        .collect::<Vec<_>>()
-        .chunks(cols)
-        .map(|chunk| SharedString::from(chunk.iter().collect::<String>()))
+    wrap_ranges(line, cols)
+        .into_iter()
+        .map(|range| SharedString::from(line[range].to_owned()))
         .collect()
+}
+
+/// The byte ranges of [`wrap_cols`]'s chunks, so callers holding per-byte
+/// styling (the shell block's tones) can slice it along the same cuts.
+fn wrap_ranges(line: &str, cols: usize) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let (mut start, mut count) = (0, 0);
+    for (ix, _) in line.char_indices() {
+        if count == cols {
+            ranges.push(start..ix);
+            (start, count) = (ix, 0);
+        }
+        count += 1;
+    }
+    ranges.push(start..line.len());
+    ranges
 }
 
 /// Build a chip's full-invocation block — the complete tool call the header
@@ -889,7 +909,7 @@ fn wrap_cols(line: &str, cols: usize) -> Vec<SharedString> {
 /// code-block payload so rendering and height stay one implementation.
 pub fn call_block(call: &ToolCall) -> Option<ToolDetail> {
     let text: String = match call {
-        ToolCall::Exec { command } => command.clone(),
+        ToolCall::Exec { command } => return shell_rows::shell_block(command),
         ToolCall::ReadFile { path } => path.clone(),
         ToolCall::WriteFile { path, content } => match content {
             Some(content) => format!("{path}\n{content}"),
@@ -1177,6 +1197,16 @@ fn tool_fingerprint(tools: &[ToolItem], auto_open: bool) -> u64 {
                 let bytes: usize = lines.iter().map(|l| l.len()).sum();
                 acc.extend_from_slice(&(bytes as u32).to_le_bytes());
             }
+            Some(ToolDetail::Shell {
+                lines,
+                truncated_by,
+            }) => {
+                acc.push(5);
+                for line in lines {
+                    acc.extend_from_slice(line.text.as_bytes());
+                }
+                acc.extend_from_slice(&(*truncated_by as u32).to_le_bytes());
+            }
             Some(ToolDetail::Thought {
                 lines,
                 truncated_by,
@@ -1220,15 +1250,26 @@ fn tool_fingerprint(tools: &[ToolItem], auto_open: bool) -> u64 {
         // The invocation block is pure over `call`, which the one-line hash
         // above only covers by length — hash its bytes so an in-place call
         // update (a streaming MCP input, a growing todo list) re-splices.
-        if let Some(ToolDetail::Output {
-            lines,
-            truncated_by,
-        }) = t.invocation.as_deref()
-        {
-            for line in lines {
-                acc.extend_from_slice(line.as_bytes());
+        match t.invocation.as_deref() {
+            Some(ToolDetail::Output {
+                lines,
+                truncated_by,
+            }) => {
+                for line in lines {
+                    acc.extend_from_slice(line.as_bytes());
+                }
+                acc.extend_from_slice(&(*truncated_by as u32).to_le_bytes());
             }
-            acc.extend_from_slice(&(*truncated_by as u32).to_le_bytes());
+            Some(ToolDetail::Shell {
+                lines,
+                truncated_by,
+            }) => {
+                for line in lines {
+                    acc.extend_from_slice(line.text.as_bytes());
+                }
+                acc.extend_from_slice(&(*truncated_by as u32).to_le_bytes());
+            }
+            _ => {}
         }
         // Sidecar refs arriving after the resolve tick must re-splice too —
         // they add the fetch affordance without changing the detail payload.
@@ -2177,6 +2218,13 @@ pub fn chips_height(count: usize) -> f32 {
 pub fn detail_height(detail: &ToolDetail) -> f32 {
     let body = match detail {
         ToolDetail::Output {
+            lines,
+            truncated_by,
+        } => {
+            let rows = lines.len() + usize::from(*truncated_by > 0);
+            rows as f32 * OUTPUT_LINE_HEIGHT + OUTPUT_BODY_PAD
+        }
+        ToolDetail::Shell {
             lines,
             truncated_by,
         } => {
@@ -9226,6 +9274,31 @@ fn detail_body(
                 block.child(more_lines_row(*truncated_by, theme))
             })
             .into_any_element(),
+        ToolDetail::Shell {
+            lines,
+            truncated_by,
+        } => body
+            .py(px(6.0))
+            .text_size(px(TOOL_TEXT_SIZE))
+            .children(lines.iter().map(|line| {
+                div()
+                    .h(px(OUTPUT_LINE_HEIGHT))
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .truncate()
+                            .child(line.element(theme, false)),
+                    )
+            }))
+            .when(*truncated_by > 0, |block| {
+                block.child(more_lines_row(*truncated_by, theme))
+            })
+            .into_any_element(),
         ToolDetail::Thought {
             lines,
             truncated_by,
@@ -15852,30 +15925,46 @@ mod tests {
 
     #[test]
     fn call_block_carries_the_full_invocation() {
-        // Multi-line command: verbatim lines, not the flattened chip line.
-        let Some(ToolDetail::Output {
-            lines,
-            truncated_by,
-        }) = call_block(&ToolCall::Exec {
-            command: "set -e\ncargo test".into(),
-        })
-        else {
-            panic!("expected an output block")
+        // A command is a shell block: verbatim lines (plumbing kept, not the
+        // flattened chip line) behind a `$ ` prompt, later lines in a gutter
+        // of the same width, bash-toned.
+        use shell_rows::ShellTone::*;
+        let shell = |command: &str| {
+            let Some(ToolDetail::Shell {
+                lines,
+                truncated_by,
+            }) = call_block(&ToolCall::Exec {
+                command: command.into(),
+            })
+            else {
+                panic!("expected a shell block")
+            };
+            (lines, truncated_by)
         };
+        let (lines, truncated_by) = shell("cd repo && set -e\ncargo test -p ui");
         assert_eq!(truncated_by, 0);
         assert_eq!(
-            lines.iter().map(|l| l.as_ref()).collect::<Vec<_>>(),
-            vec!["set -e", "cargo test"]
+            lines.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
+            vec!["$ cd repo && set -e", "  cargo test -p ui"]
         );
+        assert_eq!(
+            lines[1].tones,
+            vec![(2, Plain), (5, Program), (6, Plain), (2, Flag), (3, Plain)]
+        );
+        assert_eq!(lines[0].tones[0], (2, Prompt));
 
-        // A long single-line command soft-wraps instead of ellipsizing.
-        let Some(ToolDetail::Output { lines, .. }) = call_block(&ToolCall::Exec {
-            command: "x".repeat(CALL_WRAP_COLS * 2 + 10),
-        }) else {
-            panic!("expected an output block")
-        };
+        // A long single-line command soft-wraps instead of ellipsizing, the
+        // gutter counted inside the column budget.
+        let (lines, _) = shell(&"x".repeat(CALL_WRAP_COLS * 2 + 10));
         assert_eq!(lines.len(), 3);
-        assert!(lines.iter().all(|l| l.chars().count() <= CALL_WRAP_COLS));
+        assert!(
+            lines
+                .iter()
+                .all(|l| l.text.chars().count() <= CALL_WRAP_COLS)
+        );
+        // Past the cap, the counted tail covers every hidden visual line.
+        let (lines, truncated_by) = shell(&vec!["echo hi"; OUTPUT_DETAIL_MAX_LINES + 5].join("\n"));
+        assert_eq!((lines.len(), truncated_by), (OUTPUT_DETAIL_MAX_LINES, 5));
 
         // MCP input pretty-prints under the `server · tool` line.
         let Some(ToolDetail::Output { lines, .. }) = call_block(&ToolCall::Mcp {

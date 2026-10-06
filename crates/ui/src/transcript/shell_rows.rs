@@ -1,9 +1,12 @@
 //! Exec tool rows read as shell: the chip header shows the command in mono
-//! with bash syntax tones instead of a flat sentence.
+//! with bash syntax tones instead of a flat sentence, and the expanded
+//! invocation is a `$ `-prompted shell block in the same tones.
 //!
 //! Tones are tokenized once, when the row model is built (rows are cached by
 //! fingerprint, and built off the UI thread), and resolved to theme colors
 //! only at paint, so a theme switch never re-tokenizes.
+
+use std::ops::Range;
 
 use gpui::{
     AnyElement, FontFeatures, IntoElement as _, ParentElement as _, SharedString, Styled as _,
@@ -12,7 +15,10 @@ use gpui::{
 use zeron_proto::shell_command::{ExecBadge, ExecVerb, summarize};
 use zeron_syntax::{HighlightKind, HighlightSpan};
 
-use super::{TOOL_LABEL_LINE_HEIGHT, path_badge, single_line};
+use super::{
+    CALL_WRAP_COLS, OUTPUT_DETAIL_MAX_LINES, TOOL_LABEL_LINE_HEIGHT, ToolDetail, path_badge,
+    single_line, wrap_ranges,
+};
 use crate::theme::Theme;
 
 /// A one-line header never shows more than this many chars; the cap bounds
@@ -22,6 +28,10 @@ const HEADER_MAX_CHARS: usize = 320;
 const HIGHLIGHT_MAX_BYTES: usize = 16 * 1024;
 /// The path badge's height, which the header slot grows to when it has one.
 const BADGE_SLOT_HEIGHT: f32 = 22.0;
+/// The shell block's first line opens with the prompt; every later line takes
+/// a gutter of the same width, so the command text keeps one left edge.
+const PROMPT: &str = "$ ";
+const GUTTER: &str = "  ";
 
 /// The paint role of one shell token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +43,8 @@ pub(super) enum ShellTone {
     /// Quoted strings, and single-argument subjects (a search pattern).
     String,
     Comment,
+    /// The shell block's `$ ` prompt.
+    Prompt,
     /// Everything else, one step below the program.
     Plain,
 }
@@ -53,7 +65,7 @@ impl ShellTone {
     fn color(self, theme: &Theme) -> gpui::Hsla {
         match self {
             Self::Program => theme.text,
-            Self::Flag => theme.text_muted,
+            Self::Flag | Self::Prompt => theme.text_muted,
             Self::String => theme.syntax.string,
             Self::Comment => theme.syntax.comment,
             Self::Plain => theme.text.opacity(0.85),
@@ -63,7 +75,7 @@ impl ShellTone {
 
 /// One line of shell text with its tones.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct ShellLine {
+pub struct ShellLine {
     pub(super) text: SharedString,
     /// Contiguous `(byte len, tone)` runs covering `text`.
     pub(super) tones: Vec<(usize, ShellTone)>,
@@ -114,7 +126,7 @@ impl ShellLine {
             .collect()
     }
 
-    fn element(&self, theme: &Theme, failed: bool) -> StyledText {
+    pub(super) fn element(&self, theme: &Theme, failed: bool) -> StyledText {
         StyledText::new(self.text.clone()).with_runs(self.text_runs(theme, failed))
     }
 }
@@ -157,6 +169,66 @@ fn tones_for(len: usize, spans: &[HighlightSpan]) -> Vec<(usize, ShellTone)> {
     }
     push(len - cursor, ShellTone::Plain);
     tones
+}
+
+/// `tones` restricted to the byte `range` of the text they cover.
+fn slice_tones(tones: &[(usize, ShellTone)], range: Range<usize>) -> Vec<(usize, ShellTone)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for &(len, tone) in tones {
+        let end = start + len;
+        let overlap = end.min(range.end).saturating_sub(start.max(range.start));
+        if overlap > 0 {
+            out.push((overlap, tone));
+        }
+        start = end;
+    }
+    out
+}
+
+/// The expanded invocation of an Exec call: the raw command verbatim (no
+/// plumbing stripped), tokenized as one bash document so multi-line
+/// constructs tone correctly, then cut into visual lines within
+/// [`CALL_WRAP_COLS`] including the prompt gutter. `None` for a blank
+/// command.
+pub(super) fn shell_block(command: &str) -> Option<ToolDetail> {
+    let source = command.trim_start_matches(['\n', '\r']).trim_end();
+    if source.is_empty() {
+        return None;
+    }
+    let spans = highlight_lines(source).unwrap_or_default();
+    let cols = CALL_WRAP_COLS - PROMPT.len();
+    let mut lines = Vec::new();
+    let mut truncated_by = 0;
+    for (line_ix, line) in source.lines().enumerate() {
+        let ranges = wrap_ranges(line, cols);
+        let room = OUTPUT_DETAIL_MAX_LINES - lines.len();
+        truncated_by += ranges.len().saturating_sub(room);
+        if room == 0 {
+            continue;
+        }
+        let tones = tones_for(
+            line.len(),
+            spans.get(line_ix).map(Vec::as_slice).unwrap_or_default(),
+        );
+        for range in ranges.into_iter().take(room) {
+            let (lead, lead_tone) = if lines.is_empty() {
+                (PROMPT, ShellTone::Prompt)
+            } else {
+                (GUTTER, ShellTone::Plain)
+            };
+            let mut line_tones = vec![(lead.len(), lead_tone)];
+            line_tones.extend(slice_tones(&tones, range.clone()));
+            lines.push(ShellLine {
+                text: format!("{lead}{}", &line[range]).into(),
+                tones: line_tones,
+            });
+        }
+    }
+    Some(ToolDetail::Shell {
+        lines,
+        truncated_by,
+    })
 }
 
 /// The one-line form of a header subject, capped at [`HEADER_MAX_CHARS`].
