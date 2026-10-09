@@ -199,14 +199,15 @@ impl Shell {
             ),
             self.right_pane_expanded,
         );
-        if let Some((memo, fit)) = self.fit_memo.get()
+        let memo = &self.fit_memo[usize::from(closing)];
+        if let Some((memo, fit)) = memo.get()
             && memo == inputs
         {
             return fit;
         }
         let (viewport, sidebar_width, sidebar, right, files, expanded) = inputs;
         let fit = horizontal_panel_fit(viewport, sidebar_width, sidebar, right, files, expanded);
-        self.fit_memo.set(Some((inputs, fit)));
+        memo.set(Some((inputs, fit)));
         fit
     }
 
@@ -226,10 +227,11 @@ impl Shell {
             .as_ref()
             .filter(|(chat, ..)| *chat == self.active_chat)
             .map(|(_, fit, columns)| (*fit, *columns));
-        // A live window resize is direct manipulation: a column the fit
-        // hides or brings back, and the sidebar's allowance, follow the
-        // window edge at once instead of easing behind it.
-        let direct = self.viewport_resized;
+        // A live window resize or divider drag is direct manipulation: a
+        // column the fit hides or brings back, and the sidebar's allowance,
+        // follow the window edge or the pointer at once instead of easing
+        // behind it.
+        let direct = self.viewport_resized || self.pane_resize_dragging.is_some();
         if direct {
             self.fit_exits = [None; 3];
             if self
@@ -330,6 +332,14 @@ impl Shell {
         self.fit_exits[column]
             .filter(|(exit, _)| self.tween_active(Some(*exit)))
             .map(|(_, content)| content)
+    }
+
+    /// The width the sidebar lays its content out at: the fit's allowance,
+    /// or what it had while the fit slides it out. Below the saved width
+    /// when the window squeezes it.
+    pub(super) fn sidebar_content_width(&self) -> f32 {
+        self.fit_exit_content(0)
+            .unwrap_or(self.horizontal_fit().sidebar_limit)
     }
 
     pub(super) fn painted_panels(&self, cx: &App) -> PaintedPanels {
@@ -461,8 +471,13 @@ impl Shell {
             return false;
         }
         let before = self.painted_panels(cx);
-        self.record_panel_open(panel, &self.panel_key(cx));
+        let key = self.panel_key(cx);
+        let rank = (self.panel_open_sequence, self.panel_opened_at(panel, &key));
+        self.record_panel_open(panel, &key);
         if !shown(self.horizontal_fit()) {
+            // Still hidden: the caller closes it instead, so keep its rank.
+            self.panel_open_sequence = rank.0;
+            self.set_panel_opened_at(panel, &key, rank.1);
             return false;
         }
         self.resplit_panels(before, Some(panel), cx);
@@ -472,7 +487,19 @@ impl Shell {
 
     pub(super) fn record_panel_open(&mut self, panel: AuxiliaryPanel, key: &str) {
         self.panel_open_sequence += 1;
-        let opened_at = self.panel_open_sequence;
+        self.set_panel_opened_at(panel, key, self.panel_open_sequence);
+    }
+
+    fn panel_opened_at(&self, panel: AuxiliaryPanel, key: &str) -> u64 {
+        let panels = self.panels.get(key);
+        match panel {
+            AuxiliaryPanel::Sidebar => self.sidebar_opened_at,
+            AuxiliaryPanel::Right => panels.changes_opened_at,
+            AuxiliaryPanel::Files => panels.files_opened_at,
+        }
+    }
+
+    fn set_panel_opened_at(&mut self, panel: AuxiliaryPanel, key: &str, opened_at: u64) {
         match panel {
             AuxiliaryPanel::Sidebar => self.sidebar_opened_at = opened_at,
             AuxiliaryPanel::Right => self
@@ -549,41 +576,51 @@ impl Shell {
     }
 
     pub(super) fn right_content_width(&self, target: f32) -> f32 {
-        if !self.horizontal_fit().right
-            && let Some(width) = self.fit_exit_content(1)
-        {
+        self.column_content_width(
+            (1, self.horizontal_fit().right),
+            self.right_tween,
+            self.right_content_tween,
+            target,
+        )
+    }
+
+    /// The width a column lays its content out at while its mask eases
+    /// toward `target`. `column` is its fit slot and whether the fit shows
+    /// it. Shared by the surface host and Files, so a reversal behaves the
+    /// same in both.
+    pub(super) fn column_content_width(
+        &self,
+        (column, shown): (usize, bool),
+        mask: Option<WidthTween>,
+        content: Option<WidthTween>,
+        target: f32,
+    ) -> f32 {
+        if !shown && let Some(width) = self.fit_exit_content(column) {
             return width;
         }
-        let mask = self.right_tween;
-        let content_tween = self
-            .right_content_tween
-            .filter(|content| mask.is_some_and(|mask| mask.started == content.started))
-            // Content bound for the pane's destination heads for where the
-            // pane is going now, like the pane itself (see `right_now`).
-            .map(|content| match mask {
-                Some(mask) if mask.to == content.to => WidthTween {
-                    to: target,
-                    ..content
-                },
-                _ => content,
-            });
+        let content =
+            content.filter(|content| mask.is_some_and(|mask| mask.started == content.started));
         // A resize between two open widths (a re-split) has no content tween:
-        // the content follows the pane instead of relaying out twice.
-        if content_tween.is_none()
+        // the content follows the column instead of relaying out twice.
+        if content.is_none()
             && let Some((from, to)) = self.active_tween_endpoints(mask)
             && from > 0.5
             && to > 0.5
         {
             return self.ease_toward(mask, target);
         }
-        let takeover_width = self
-            .active_tween_endpoints(content_tween)
-            .map(|_| self.eval_tween(content_tween, target));
-        right_panel_content_width(
-            target,
-            self.active_tween_endpoints(self.right_tween),
-            takeover_width,
-        )
+        // Content bound for the column's destination heads for where the
+        // column is going now, like the column itself (see `right_now`).
+        let moving = content
+            .filter(|content| self.tween_active(Some(*content)))
+            .map(|content| {
+                if mask.is_some_and(|mask| mask.to == content.to) {
+                    self.ease_toward(Some(content), target)
+                } else {
+                    self.eval_tween(Some(content), target)
+                }
+            });
+        right_panel_content_width(target, self.active_tween_endpoints(mask), moving)
     }
 
     /// Record this frame's window width. A change is direct manipulation:
@@ -595,18 +632,20 @@ impl Shell {
             self.clear_panel_transitions();
         }
         self.viewport_width = viewport;
-        // Re-split directly whenever the window or the columns beside the
-        // surface host changed since the last split: any resize step
-        // (sub-pixel ones included), or a chat whose panels differ. Only a
-        // shown surface host outside takeover takes a share, so a visit to a
-        // chat without one, or to Settings, keeps a dragged divider.
+        // Re-split directly whenever the window changed since the last
+        // split, sub-pixel steps included. Only a shown surface host outside
+        // takeover takes a share, so a chat switch, a visit to Settings or a
+        // relaunch keeps a dragged divider; panel toggles re-split on their
+        // own (see `Self::resplit_panels`).
+        let last = *self.split_viewport.get_or_insert(viewport);
         let (fit, _) = self.settled_fit();
-        if matches!(self.route, Route::Chat) && fit.right && !self.right_pane_expanded {
-            let columns = [fit.sidebar, fit.files];
-            if columns != self.split_context.0 || (viewport - self.split_context.1).abs() > 0.01 {
-                self.split_panel_widths(cx);
-                self.split_context = (columns, viewport);
-            }
+        if matches!(self.route, Route::Chat)
+            && fit.right
+            && !self.right_pane_expanded
+            && (viewport - last).abs() > 0.01
+        {
+            self.split_panel_widths(cx);
+            self.split_viewport = Some(viewport);
         }
     }
 }

@@ -2186,12 +2186,14 @@ pub struct Shell {
     /// they last painted with their content held at its layout width (same
     /// order).
     fit_exits: [Option<(WidthTween, f32)>; 3],
-    /// The settled sidebar and Files columns and the window width the
-    /// surface host's share was last split for.
-    split_context: ([bool; 2], f32),
-    /// The last window fit and the inputs it was computed from: layout
-    /// helpers ask for it many times per frame.
-    fit_memo: std::cell::Cell<Option<(FitInputs, HorizontalPanelFit)>>,
+    /// The window width the surface host's share was last split for. Seeded
+    /// by the first frame, so a saved divider survives a relaunch.
+    split_viewport: Option<f32>,
+    /// The last window fit and the inputs it was computed from, one slot
+    /// per `closing` flag of `fit`: layout helpers ask for both many times
+    /// per frame while a close runs. Not a per-frame value, since handlers
+    /// re-read the fit right after changing what it depends on.
+    fit_memo: [std::cell::Cell<Option<(FitInputs, HorizontalPanelFit)>>; 2],
     /// The closed surface host already released its image previews.
     right_images_suspended: bool,
     sidebar_edge_bounce: Option<motion::ResizeEdgeBounce>,
@@ -2617,8 +2619,8 @@ impl Shell {
             files_content_tween: None,
             painted_columns: None,
             fit_exits: [None; 3],
-            split_context: ([false; 2], 0.0),
-            fit_memo: std::cell::Cell::new(None),
+            split_viewport: None,
+            fit_memo: Default::default(),
             right_images_suspended: false,
             sidebar_edge_bounce: None,
             sidebar_resize_edge: None,
@@ -4709,7 +4711,7 @@ impl Shell {
         let pointer_x = f32::from(event.event.position.x);
         let sidebar_left = f32::from(event.bounds.left());
         let inside_sidebar =
-            pointer_x >= sidebar_left && pointer_x <= sidebar_left + self.settings.sidebar_width;
+            pointer_x >= sidebar_left && pointer_x <= sidebar_left + self.sidebar_now();
         if !inside_window || !inside_sidebar {
             if let Some(transfer) = self.sidebar_session_transfer.as_mut() {
                 transfer.preview = None;
@@ -7236,7 +7238,7 @@ impl Shell {
     /// back over the control cluster on a narrow sidebar.
     fn render_sidebar_options_titlebar(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sidebar = self.sidebar_now();
-        let reveal = (sidebar / self.settings.sidebar_width.max(1.0)).clamp(0.0, 1.0);
+        let reveal = (sidebar / self.sidebar_content_width().max(1.0)).clamp(0.0, 1.0);
         if reveal <= 0.01 {
             return None;
         }
@@ -7608,9 +7610,7 @@ impl Shell {
         // activity/glyph personality independently of the selected variant.
         let inner = self.sidebar_pane.clone().cached(
             gpui::StyleRefinement::default()
-                .w(px(self
-                    .fit_exit_content(0)
-                    .unwrap_or(self.horizontal_fit().sidebar_limit)))
+                .w(px(self.sidebar_content_width()))
                 .h_full()
                 .flex_none(),
         );
@@ -9222,7 +9222,7 @@ impl Shell {
         let github_star_banner = self.render_github_star_banner(update_strip.is_some(), theme, cx);
 
         div()
-            .w(px(self.settings.sidebar_width))
+            .w(px(self.sidebar_content_width()))
             .h_full()
             .flex()
             .flex_col()
@@ -9772,7 +9772,7 @@ impl Shell {
             let closing = self.user_menu.closing_since();
 
             let menu = popover::popover_card(theme)
-                .w(px(self.settings.sidebar_width
+                .w(px(self.sidebar_content_width()
                     - 2.0 * Theme::SPACE_SM
                     - SIDEBAR_FOOTER_ACTION_SIZE
                     - SIDEBAR_FOOTER_ACTION_GAP))
@@ -13349,10 +13349,17 @@ impl Render for Shell {
             }
             self.browser_profile = browser_profile;
         }
+        // Manual tween drive bookkeeping for this pass (see [`WidthTween`]).
+        self.reduced_motion = motion::reduced_motion(cx);
+        self.motion_active.set(false);
+        self.track_horizontal_fit(cx);
+        self.suspend_hidden_right_images(cx);
+        // After the fit tracking, which starts a fit exit this frame.
         let browser_active = matches!(gate, GatePhase::Ready)
             && !restart_required
             && matches!(self.route, Route::Chat)
-            && self.horizontal_fit().right
+            // A pane the fit evicts keeps painting while it slides out.
+            && (self.horizontal_fit().right || self.fit_exit_width(1).is_some())
             && (self.right_pane_open(cx) || self.tween_active(self.right_tween));
         // Native clipping follows the animated GPUI mask. Drags only transfer
         // pointer ownership; the browser continues rendering and reflowing.
@@ -13410,11 +13417,6 @@ impl Render for Shell {
             self.button_layout_sub =
                 Some(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         }
-        // Manual tween drive bookkeeping for this pass (see [`WidthTween`]).
-        self.reduced_motion = motion::reduced_motion(cx);
-        self.motion_active.set(false);
-        self.track_horizontal_fit(cx);
-        self.suspend_hidden_right_images(cx);
 
         if self.activation_sub.is_none() {
             self.activation_sub = Some(cx.observe_window_activation(

@@ -150,8 +150,9 @@ impl Shell {
         if key == self.panel_key(cx) {
             // Programmatic, so an already-open pane is left alone.
             self.set_surfaces_open(true, cx);
-        } else if !self.panels.get(key).changes_open {
-            // Rank the pane most recent so a narrow window shows it.
+        } else {
+            // Rank the pane most recent, open or fit-hidden, so a narrow
+            // window shows it on the next visit.
             self.panels.update(key, |p| p.changes_open = true);
             self.record_panel_open(AuxiliaryPanel::Right, key);
         }

@@ -180,37 +180,11 @@ impl Shell {
     }
 
     pub(super) fn files_content_width(&self, cx: &App) -> f32 {
-        if !self.horizontal_fit().files
-            && let Some(width) = self.fit_exit_content(2)
-        {
-            return width;
-        }
-        let target = self.files_target(cx);
-        let mask = self.files_tween;
-        let content = self
-            .files_content_tween
-            .filter(|content| mask.is_some_and(|mask| mask.started == content.started));
-        // A resize between two open widths (a re-split) has no content tween:
-        // the content follows the column instead of relaying out twice.
-        if content.is_none()
-            && let Some((from, to)) = self.active_tween_endpoints(mask)
-            && from > 0.5
-            && to > 0.5
-        {
-            return self.ease_toward(mask, target);
-        }
-        if let Some(content) = content.filter(|content| self.tween_active(Some(*content))) {
-            // Content bound for the column's destination heads for where the
-            // column is going now, like the column itself.
-            return if mask.is_some_and(|mask| mask.to == content.to) {
-                self.ease_toward(Some(content), target)
-            } else {
-                self.eval_tween(Some(content), target)
-            };
-        }
-        stable_panel_content_width(
+        self.column_content_width(
+            (2, self.horizontal_fit().files),
+            self.files_tween,
+            self.files_content_tween,
             self.files_target(cx),
-            self.active_tween_endpoints(self.files_tween),
         )
     }
 

@@ -238,10 +238,16 @@ fn panels_share_space_and_keep_rendered_geometry_through_their_lifecycle(cx: &mu
     cx.simulate_mouse_up(dragged, MouseButton::Left, Default::default());
     expect(draw(&shell, cx, 0), [300.0, 377.0, 500.0, 423.0]);
     expect(draw(&shell, cx, 300), [300.0, 377.0, 500.0, 423.0]);
-    // Visiting a chat without the surface host is not a toggle.
-    change(&shell, cx, |s, _, cx| select(s, Some("b"), cx));
-    settled(&shell, cx);
-    change(&shell, cx, |s, _, cx| select(s, Some("a"), cx));
+    // Visiting a chat with other panels open is not a toggle.
+    change(&shell, cx, |s, _, cx| {
+        s.panels.update("b", |p| p.changes_open = true);
+        select(s, Some("b"), cx);
+    });
+    expect(settled(&shell, cx), [300.0, 0.0, 500.0, 800.0]);
+    change(&shell, cx, |s, _, cx| {
+        s.panels.update("b", |p| p.changes_open = false);
+        select(s, Some("a"), cx);
+    });
     expect(settled(&shell, cx), [300.0, 377.0, 500.0, 423.0]);
     change(&shell, cx, |s, _, cx| {
         s.reset_panel_widths(PaneResizeKind::Right, cx)
@@ -266,6 +272,29 @@ fn panels_share_space_and_keep_rendered_geometry_through_their_lifecycle(cx: &mu
     change(&shell, cx, |s, window, cx| s.toggle_files_panel(window, cx));
     let ordinary = settled(&shell, cx);
     expect(ordinary, [300.0, 286.0, 507.0, 507.0]);
+    // The sidebar's seam follows the pointer, not a tween behind it.
+    let sidebar_seam = |x| gpui::point(px(x), px(400.0));
+    cx.simulate_mouse_down(sidebar_seam(300.0), MouseButton::Left, Default::default());
+    // The first move starts the drag; the following ones move the seam.
+    for x in [310.0, 320.0, 340.0] {
+        cx.simulate_mouse_move(sidebar_seam(x), Some(MouseButton::Left), Default::default());
+        let width = draw(&shell, cx, 16).widths[0];
+        if x > 310.0 {
+            near(width, x);
+        }
+    }
+    cx.simulate_mouse_move(
+        sidebar_seam(300.0),
+        Some(MouseButton::Left),
+        Default::default(),
+    );
+    cx.simulate_mouse_up(sidebar_seam(300.0), MouseButton::Left, Default::default());
+    // A squeezed sidebar lays its rows and menus out within its column.
+    cx.simulate_resize(gpui::size(px(1130.0), px(900.0)));
+    near(draw(&shell, cx, 0).widths[0], 250.0);
+    near(shell.read_with(cx, |s, _| s.sidebar_content_width()), 250.0);
+    cx.simulate_resize(gpui::size(px(1600.0), px(900.0)));
+    expect(settled(&shell, cx), ordinary.widths);
 
     // Fullscreen clips the conversation, retaining its composer layout.
     change(&shell, cx, |s, _, cx| s.toggle_right_pane_expand(cx));
@@ -330,7 +359,10 @@ fn panels_share_space_and_keep_rendered_geometry_through_their_lifecycle(cx: &mu
         draw(&shell, cx, 75);
         let moving = side_composer(cx);
         near(f32::from(moving.size.width), f32::from(resting.size.width));
-        near(f32::from(moving.size.height), f32::from(resting.size.height));
+        near(
+            f32::from(moving.size.height),
+            f32::from(resting.size.height),
+        );
         settled(&shell, cx);
     }
     change(&shell, cx, |s, _, cx| s.toggle_right_pane(cx));
