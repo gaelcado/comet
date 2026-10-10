@@ -73,6 +73,7 @@ mod navigation_focus;
 #[cfg(test)]
 mod navigation_tests;
 pub(crate) mod project_icon;
+mod session_info;
 mod side_chats;
 mod sidebar_pins;
 mod sidebar_sections;
@@ -2142,6 +2143,8 @@ pub struct Shell {
     debug_upload: Option<String>,
     sidebar_tween: Option<WidthTween>,
     files_tween: Option<WidthTween>,
+    /// The session card's reveal (0 closed → 1 open).
+    session_info_tween: Option<WidthTween>,
     sidebar_edge_bounce: Option<motion::ResizeEdgeBounce>,
     /// Boundary currently held during a sidebar drag. Cleared on re-entry or
     /// release so the next genuine edge crossing can acknowledge the limit.
@@ -2553,6 +2556,7 @@ impl Shell {
             debug_upload,
             sidebar_tween: None,
             files_tween: None,
+            session_info_tween: None,
             sidebar_edge_bounce: None,
             sidebar_resize_edge: None,
             pane_resize_active: None,
@@ -6832,9 +6836,9 @@ impl Shell {
 
     /// The session titlebar, or on the Pull requests route the open pull
     /// request's own bar.
-    fn render_title_bar(&mut self, viewport_height: Pixels, cx: &mut Context<Self>) -> AnyElement {
+    fn render_title_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if !matches!(self.route, Route::PullRequests) {
-            return self.render_session_title_bar(viewport_height, cx);
+            return self.render_session_title_bar(cx);
         }
         let plus_inset = TITLEBAR_ACTION_SLOT_WIDTH * self.titlebar_plus_alpha(cx);
         let inner = div()
@@ -10779,9 +10783,32 @@ impl Shell {
         }
         self.composer
             .update(cx, |composer, cx| composer.set_dock_frame(dock_frame, cx));
+        // The session card: docked, the transcript holds its room free on
+        // the right and the composer follows the column left by half of it,
+        // so column and card center together.
+        let session_reveal = if has_selection {
+            self.session_info_reveal()
+        } else {
+            0.0
+        };
+        // The column's LIVE width: while the sidebar or a pane animates,
+        // `main_content_width` already holds the end width, and a reserve or
+        // card placed from it would jump ahead of the column and wait.
+        let live_main_width = (self.viewport_width
+            - self.sidebar_now()
+            - self.right_visible_width(cx)
+            - self.files_visible_width(cx))
+        .max(0.0);
+        let session_layout = session_info::session_card_layout(
+            live_main_width,
+            ui_settings.transcript_width,
+        );
+        let session_reserve = session_layout.reserve * session_reveal;
+        self.transcript
+            .update(cx, |transcript, cx| transcript.set_right_reserve(session_reserve, cx));
         let composer_width = self.composer_dock.borrow_mut().layout_width(
             composer_target_width(
-                main_content_width,
+                main_content_width - session_reserve,
                 ui_settings.transcript_width,
                 has_selection,
             ),
@@ -10931,7 +10958,19 @@ impl Shell {
         } else {
             None
         };
-        let status = self.render_status_strip(composer_width, cx);
+        let status = div()
+            .relative()
+            .left(px(-session_reserve / 2.0))
+            .child(self.render_status_strip(composer_width, cx));
+        let session_card = self.render_session_info(
+            session_layout,
+            session_reveal,
+            self.viewport_height
+                - Theme::TITLEBAR_HEIGHT
+                - self.bottom_stack.get()
+                - 24.0,
+            cx,
+        );
         self.chat_dropzone("chat-dropzone", self.composer.clone(), cx)
             .debug_selector(|| "chat-dropzone".into())
             .track_focus(&self.navigation_focus.main)
@@ -10995,6 +11034,7 @@ impl Shell {
                         ))
                 },
             )
+            .children(session_card)
             .when_some(harness_update_card, |column, chip| {
                 // Home notices stay anchored to the window bottom, behind the
                 // dock. Clip paint and hitboxes at the same measured terminal
@@ -11070,6 +11110,7 @@ impl Shell {
                                 div()
                                     .id("persistent-composer")
                                     .relative()
+                                    .left(px(-session_reserve / 2.0))
                                     .w(px(composer_width))
                                     .opacity(composer_opacity)
                                     .mx_auto()
@@ -13746,7 +13787,7 @@ impl Render for Shell {
                 } else {
                     Empty.into_any_element()
                 };
-                let title_bar = self.render_title_bar(window.viewport_size().height, cx);
+                let title_bar = self.render_title_bar(cx);
                 // Sidebar tone: a slightly lighter column behind the sidebar.
                 // Its width rides the same tween as the sidebar, so the tone
                 // melts away with the collapse instead of vanishing in a frame.
