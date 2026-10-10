@@ -13844,13 +13844,18 @@ impl Render for Shell {
                 });
 
                 let sidebar = self.render_sidebar(cx);
-                let sidebar_handle = self.resize_handle(
-                    "sidebar-resize",
-                    PaneResizeKind::Sidebar,
-                    || SidebarResize,
-                    |shell, cx| shell.reset_panel_widths(PaneResizeKind::Sidebar, cx),
-                    cx,
-                );
+                // A collapsed or fit-hidden sidebar has no seam: the window's
+                // own left edge sits there, and a press must resize the window
+                // rather than drag the sidebar open.
+                let sidebar_handle = (self.sidebar_now() > 0.5).then(|| {
+                    self.resize_handle(
+                        "sidebar-resize",
+                        PaneResizeKind::Sidebar,
+                        || SidebarResize,
+                        |shell, cx| shell.reset_panel_widths(PaneResizeKind::Sidebar, cx),
+                        cx,
+                    )
+                });
                 let main = self.render_main(window, main_content_width, transcript_width, cx);
                 // The Changes pane is chat-scoped chrome: the Settings route
                 // never renders it (zeron __root.tsx `!isSettings && activeChat`
@@ -13926,7 +13931,10 @@ impl Render for Shell {
                     .h_full()
                     .flex_none()
                     .relative()
-                    .child(sidebar_handle.left(px(-PANE_RESIZE_HITBOX_HALF_WIDTH)));
+                    .children(
+                        sidebar_handle
+                            .map(|handle| handle.left(px(-PANE_RESIZE_HITBOX_HALF_WIDTH))),
+                    );
                 // Keep the right resize target outside the pane's
                 // overflow-hidden width container. This mirrors the sidebar
                 // seam and lets the target straddle both adjacent panes.

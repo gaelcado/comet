@@ -217,6 +217,14 @@ fn panels_share_space_and_keep_rendered_geometry_through_their_lifecycle(cx: &mu
     let wide = settled(&shell, cx);
     expect(wide, [0.0, 377.0, 611.5, 611.5]);
     near(f32::from(wide.strip.unwrap().left()), 611.5);
+    // A collapsed sidebar leaves the left edge to the window's own resize.
+    let edge = |x| gpui::point(px(x), px(400.0));
+    cx.simulate_mouse_down(edge(3.0), MouseButton::Left, Default::default());
+    for x in [40.0, 80.0] {
+        cx.simulate_mouse_move(edge(x), Some(MouseButton::Left), Default::default());
+    }
+    cx.simulate_mouse_up(edge(80.0), MouseButton::Left, Default::default());
+    expect(settled(&shell, cx), wide.widths);
 
     // Mid-flight reversal, then a different panel interrupting the return.
     change(&shell, cx, |s, _, cx| s.toggle_right_pane(cx));
