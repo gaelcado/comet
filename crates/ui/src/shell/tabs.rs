@@ -6,6 +6,8 @@
 
 use super::*;
 
+const RIGHT_PANE_HEADER_CONTROLS_MIN_WIDTH: f32 = 8.0 + 4.0 + 4.0 + 28.0;
+
 /// The chat one step from `selected` in the sidebar `order`, wrapping at both
 /// ends. Pure.
 ///
@@ -42,6 +44,17 @@ pub(super) fn right_pane_expand_icon(expanded: bool) -> &'static str {
 struct PanelTitlebarWidths {
     surface_reveal: f32,
     files_controls: f32,
+}
+
+pub(super) struct TitlebarTrailing {
+    fit: HorizontalPanelFit,
+    right_pane_visible: bool,
+    takeover: bool,
+    row_left: f32,
+    row_gap: f32,
+    right_pad: f32,
+    widths: PanelTitlebarWidths,
+    content_width: f32,
 }
 
 /// The two fixed right-edge anchors: the explorer toggle and the pane toggle
@@ -282,33 +295,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// The unified titlebar in chat mode:
-    /// `[new-session +] [harness icon + session title] … [toggle-changes]`.
-    /// Replaces the tab strip; inherits its titlebar duties (drag region,
-    /// animated left inset, the toggle-changes button on git projects).
-    pub(super) fn render_session_title_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        // The canvas titles as NOTHING (user request — a "New session"
-        // header over the empty canvas was noise); the bar keeps its height,
-        // drag region, and buttons. Where a session runs, and its side-chat
-        // and project actions, live in the session card.
-        let (title, harness, on_canvas): (SharedString, Option<zeron_proto::HarnessId>, bool) = {
-            let state = self.state.read(cx);
-            match state.selected_chat_row() {
-                Some(chat) => (
-                    SharedString::from(transcript::single_line(
-                        &chat.title.clone().unwrap_or_else(|| "New session".into()),
-                    )),
-                    chat.config.as_ref().map(|c| c.harness),
-                    false,
-                ),
-                None => (SharedString::from(""), None, true),
-            }
-        };
-
-        // The new-session `+` renders in the WINDOW-CONTROL CLUSTER whenever a
-        // session is selected (`render_titlebar_cluster`) — this row budgets
-        // one button slot so the title never sits under it.
+    /// The trailing titlebar strip follows the columns beneath it.
+    pub(super) fn titlebar_trailing_layout(&self, on_canvas: bool, cx: &App) -> TitlebarTrailing {
         let sidebar_now = self.sidebar_now();
         let plus_inset = TITLEBAR_ACTION_SLOT_WIDTH * self.titlebar_plus_alpha(cx);
 
@@ -326,8 +314,12 @@ impl Shell {
         // the pane itself would sit under the drag region and never see a
         // click. Closed, it is just the stable open/close toggle. Hidden on
         // the new-session canvas (user request) — nothing to diff yet.
-        let right_pane_open = !on_canvas && self.right_pane_open(cx);
-        let takeover = right_pane_open && self.right_pane_expanded;
+        let fit = self.horizontal_fit();
+        let right_pane_visible = !on_canvas
+            && ((fit.right && (self.right_pane_open(cx) || self.tween_active(self.right_tween)))
+                || self.fit_exit_width(1).is_some());
+        let takeover = right_pane_visible
+            && (self.right_pane_expanded || self.tween_active(self.main_takeover_tween));
         // In takeover the title hides and the strip owns the whole band, so
         // the row's left inset pulls back to the sidebar seam — the title
         // inset would push the scope dropdown off the pane's own left gutter
@@ -358,6 +350,8 @@ impl Shell {
         let right_pad = self.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET);
         // The title row's gaps are outside the fixed-width panel controls.
         let gap_budget = if takeover { row_gap } else { row_gap * 3.0 };
+        // Match the surface's visible width, including its resize bounce,
+        // so the header follows the pane seam as the sidebar moves.
         let right_visible = self.right_visible_width(cx);
         let widths = panel_titlebar_widths(
             right_visible,
@@ -365,6 +359,66 @@ impl Shell {
             self.viewport_width - row_left - right_pad - gap_budget,
             right_pad,
         );
+        // Match the pane's stable inner width during open/close. Reflowing
+        // the scroller on every masked frame clamps its scroll offset and
+        // makes the tabs jump when the close is reversed.
+        let content_width = panel_titlebar_widths(
+            self.right_content_width(self.right_target(cx)),
+            files_width,
+            self.viewport_width - row_left - right_pad - gap_budget,
+            right_pad,
+        )
+        .surface_reveal
+        .max(widths.surface_reveal);
+        TitlebarTrailing {
+            fit,
+            right_pane_visible,
+            takeover,
+            row_left,
+            row_gap,
+            right_pad,
+            widths,
+            content_width,
+        }
+    }
+
+    /// The unified titlebar in chat mode:
+    /// `[new-session +] [harness icon + session title] … [toggle-changes]`.
+    /// Replaces the tab strip; inherits its titlebar duties (drag region,
+    /// animated left inset, the toggle-changes button on git projects).
+    pub(super) fn render_session_title_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        // The canvas titles as NOTHING (user request — a "New session"
+        // header over the empty canvas was noise); the bar keeps its height,
+        // drag region, and buttons. Where a session runs, and its side-chat
+        // and project actions, live in the session card.
+        let (title, harness, on_canvas): (SharedString, Option<zeron_proto::HarnessId>, bool) = {
+            let state = self.state.read(cx);
+            match state.selected_chat_row() {
+                Some(chat) => (
+                    SharedString::from(transcript::single_line(
+                        &chat.title.clone().unwrap_or_else(|| "New session".into()),
+                    )),
+                    chat.config.as_ref().map(|c| c.harness),
+                    false,
+                ),
+                None => (SharedString::from(""), None, true),
+            }
+        };
+
+        // The new-session `+` renders in the WINDOW-CONTROL CLUSTER whenever a
+        // session is selected (`render_titlebar_cluster`) — this row budgets
+        // one button slot so the title never sits under it.
+        let TitlebarTrailing {
+            fit,
+            right_pane_visible,
+            takeover,
+            row_left,
+            row_gap,
+            right_pad,
+            widths,
+            content_width,
+        } = self.titlebar_trailing_layout(on_canvas, cx);
 
         let running_subagents = {
             let state = self.state.read(cx);
@@ -378,6 +432,7 @@ impl Shell {
         } else {
             let mut controls = div()
                 .id("right-titlebar-controls")
+                .debug_selector(|| "right-titlebar-controls".into())
                 .flex_none()
                 .h_full()
                 .flex()
@@ -387,11 +442,12 @@ impl Shell {
                 // the tab strip); a wheel over the tabs must scroll the
                 // strip, never the surface behind it.
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
-            if right_pane_open {
+            if right_pane_visible {
                 // The right pane's SURFACE TABS (t3 RightPanelTabs) — the diff
                 // options that used to live here moved into the pane's own
                 // second row; expand stays in this band (user request).
-                let tabs = self.render_right_tab_strip(cx);
+                let show_pane_controls =
+                    widths.surface_reveal >= RIGHT_PANE_HEADER_CONTROLS_MIN_WIDTH;
                 // The toggle is the fixed right-edge anchor, like the left
                 // sidebar control. Only the tabs + expand section reveals to
                 // its left; including the toggle in this animated width
@@ -401,38 +457,53 @@ impl Shell {
                         .w(px(widths.surface_reveal))
                         .h_full()
                         .flex_none()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(4.0))
+                        .relative()
                         .overflow_hidden()
-                        // 8 + the trigger's own 8px pad = the pane's 16px
-                        // text gutter. The 4px right padding is the stable
-                        // gap before the fixed toggle.
-                        .pl(px(8.0))
-                        .pr(px(4.0))
                         .child(
                             div()
-                                .flex_1()
-                                .min_w_0()
+                                .debug_selector(|| "right-titlebar-content".into())
+                                .absolute()
+                                .right_0()
+                                .top_0()
+                                .w(px(content_width))
                                 .h_full()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(4.0))
                                 .overflow_hidden()
-                                .child(tabs),
-                        )
-                        .child(header_icon_button(
-                            "expand-changes",
-                            right_pane_expand_icon(self.right_pane_expanded),
-                            if self.right_pane_expanded {
-                                "Collapse panel"
-                            } else {
-                                "Expand panel"
-                            },
-                            &theme,
-                            cx.listener(|this, _, _, cx| this.toggle_right_pane_expand(cx)),
-                        )),
+                                // 8 + the trigger's own 8px pad = the pane's 16px
+                                // text gutter. The 4px right padding is the stable
+                                // gap before the fixed toggle.
+                                .when(show_pane_controls, |el| {
+                                    el.pl(px(8.0))
+                                        .pr(px(4.0))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .h_full()
+                                                .overflow_hidden()
+                                                .child(self.render_right_tab_strip(cx)),
+                                        )
+                                        .child(header_icon_button(
+                                            "expand-changes",
+                                            right_pane_expand_icon(self.right_pane_expanded),
+                                            if self.right_pane_expanded {
+                                                "Collapse panel"
+                                            } else {
+                                                "Expand panel"
+                                            },
+                                            &theme,
+                                            cx.listener(|this, _, _, cx| {
+                                                this.toggle_right_pane_expand(cx)
+                                            }),
+                                        ))
+                                }),
+                        ),
                 );
             }
-            let files_panel_label = if self.files_panel_open(cx) {
+            let files_panel_label = if self.files_panel_open(cx) && fit.files {
                 "Hide files panel"
             } else {
                 "Show files panel"
@@ -471,7 +542,7 @@ impl Shell {
                                 )
                                 .role(gpui::Role::Button)
                                 .aria_label(files_panel_label)
-                                .when(self.files_panel_open(cx), |button| {
+                                .when(self.files_panel_open(cx) && fit.files, |button| {
                                     button.bg(crate::theme::wash(0.09))
                                 })
                                 // Running subagents live in this panel: mark the
@@ -489,7 +560,7 @@ impl Shell {
                                 icons::sidebar_glyph(
                                     motion::state_t(
                                         "toggle-changes",
-                                        right_pane_open,
+                                        self.right_pane_open(cx) && fit.right,
                                         motion::GLYPH_STATE,
                                         self.reduced_motion,
                                     ),
@@ -571,8 +642,7 @@ impl Shell {
                                     theme.text.opacity(0.85)
                                 })
                                 .child(title),
-                        )
-
+                        ),
                 )
             })
             .child(div().flex_1())
