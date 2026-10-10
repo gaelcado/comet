@@ -533,7 +533,7 @@ impl Shell {
                             .child(
                                 header_icon_button(
                                     "toggle-files-panel",
-                                    icons::FILE_TREE,
+                                    icons::FOLDER_TREE,
                                     files_panel_label,
                                     &theme,
                                     cx.listener(|this, _, window, cx| {
@@ -585,11 +585,10 @@ impl Shell {
             } else {
                 "Show session details"
             };
-            header_icon_button(
+            header_icon_button_with(
                 "toggle-session-info",
-                icons::LIST_ROWS,
+                icons::corner_card_glyph(16.0, theme.text_muted),
                 label,
-                &theme,
                 cx.listener(|this, _, _, cx| this.toggle_session_info(cx)),
             )
             .role(gpui::Role::Button)
