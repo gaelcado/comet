@@ -30,8 +30,11 @@ pub mod wallpaper;
 pub mod wallpaper_colors;
 pub mod widgets;
 
-/// Sidebar drag-resize bounds (px).
-pub const SIDEBAR_MIN: f32 = 224.0;
+/// Sidebar drag-resize bounds (px). The minimum keeps the sidebar options
+/// button inside the sidebar beside the titlebar controls: 88 (past the
+/// traffic lights) + 82 (toggle, back, forward) + 32 (new session) + 8 gap
+/// + 24 (options) + 8 inset.
+pub const SIDEBAR_MIN: f32 = 242.0;
 pub const SIDEBAR_MAX: f32 = 400.0;
 pub const SIDEBAR_DEFAULT: f32 = 256.0;
 
@@ -972,6 +975,9 @@ pub struct UiSettings {
     pub files_word_wrap: bool,
     /// Include hidden and ignored entries in workspace file trees.
     pub files_show_all: bool,
+    /// The session card (project, device, side chats, actions) beside the
+    /// transcript.
+    pub session_info_open: bool,
     /// Interactive identity overlay; imported themes default to their own accent.
     pub accent: zeron_theme::AccentSelection,
     /// Glass policy, independent from the selected appearance, theme, and accent.
@@ -1079,6 +1085,7 @@ impl Default for UiSettings {
             files_autosave_delay_ms: FILES_AUTOSAVE_DELAY_DEFAULT_MS,
             files_word_wrap: false,
             files_show_all: false,
+            session_info_open: false,
             accent: zeron_theme::AccentSelection::default(),
             surface: zeron_theme::SurfacePreference::default(),
             new_thread_composer_background: None,
@@ -1721,6 +1728,7 @@ impl UiSettings {
             files_autosave_delay_ms,
             files_word_wrap,
             files_show_all,
+            session_info_open,
             accent,
             surface,
             new_thread_composer_background,
@@ -2795,6 +2803,7 @@ mod tests {
             code_font_family: crate::typography::UiFontFamily::Geist,
             code_font_size: 11.0,
             files_show_all: true,
+            session_info_open: true,
             accent: zeron_theme::AccentSelection::Preset(zeron_theme::AccentPreset::Cyan),
             surface: zeron_theme::SurfacePreference::Frosted,
             new_thread_composer_background: Some(NewThreadComposerBackground {

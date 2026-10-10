@@ -82,6 +82,7 @@ icon_assets![
     (CLOCK_CIRCLE, "clock-circle"),
     (CALENDAR, "calendar"),
     (LIST, "list"),
+    (LIST_ROWS, "list-rows"),
     (FOLDER_WITH_FILES, "folder-with-files"),
     // Original tree glyph with compact nodes for the independent Files panel.
     (FILE_TREE, "file-tree"),
@@ -331,6 +332,7 @@ mod tests {
             CHAT_ROUND_LINE,
             GIT_BRANCH,
             CLOSE_CIRCLE,
+            LIST_ROWS,
         ] {
             let bytes = Assets.load(path).unwrap().unwrap();
             let image = renderer.render_single_frame(&bytes, 1.0).unwrap();
