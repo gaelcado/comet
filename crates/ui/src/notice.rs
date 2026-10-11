@@ -44,12 +44,14 @@ pub fn notice_chip(
     let message = message.into();
     let copy_message = message.clone();
     let tile = matches!(icon, NoticeChipIcon::Tile);
-    let frame = |inset: f32| {
+    // Concentric: the tile variant's 10px corner is its 4px tiles plus the
+    // 6px they sit inside.
+    let frame = |radius: f32, inset: f32| {
         div()
             .flex()
             .flex_col()
             .gap(px(6.0))
-            .rounded(px(inset))
+            .rounded(px(radius))
             .border_1()
             .border_color(accent.opacity(0.16))
             .bg(accent.opacity(0.05))
@@ -57,9 +59,9 @@ pub fn notice_chip(
             .py(px(8.0))
     };
     let chip = if tile {
-        frame(10.0).text_size(crate::typography::ui_rems(12.0))
+        frame(10.0, 6.0).text_size(crate::typography::ui_rems(12.0))
     } else {
-        frame(12.0)
+        frame(12.0, 12.0)
             .text_size(crate::typography::ui_rems(12.0))
             .line_height(px(16.0))
             .text_color(muted.opacity(0.9))
@@ -68,7 +70,7 @@ pub fn notice_chip(
         div()
             .flex_none()
             .size(px(20.0))
-            .rounded(px(6.0))
+            .rounded(px(4.0))
             .bg(accent.opacity(0.12))
             .flex()
             .items_center()
@@ -105,7 +107,7 @@ pub fn notice_chip(
                     .id("notice-copy")
                     .flex_none()
                     .size(px(20.0))
-                    .rounded(px(6.0))
+                    .rounded(px(4.0))
                     .flex()
                     .items_center()
                     .justify_center()
