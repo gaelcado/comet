@@ -48,21 +48,25 @@ const CODE_SCROLLBAR_HIT_HEIGHT: f32 = 10.0;
 // resolved md theme. The design is frameless ("flat hairline"): 1px horizontal
 // rules under the header and between rows are the only chrome — no outer box,
 // no header fill, no corner radius (theme: headerBackground transparent,
-// radius 0). Cells use the body scale (14/22) with a uniform 12px padding;
-// the header row is weight-700 per `table.headerWeight`.
-/// Uniform cell padding in px (zeron `table.cellPadding`).
+// radius 0). Cells use the body scale (14/22); the outer columns sit flush
+// with the text column, and the header row takes the heading weight. Every
+// length below is at the default interface size and scales with it.
+/// Horizontal cell padding in px (zeron `table.cellPadding`); a column gap is
+/// twice this. The table's outer edges have none.
 pub const TABLE_CELL_PADDING: f32 = 12.0;
+/// Vertical cell padding in px: rows read as one list, not as boxed cards.
+pub const TABLE_CELL_PADDING_Y: f32 = 8.0;
 /// Hairline between rows in px (zeron `table.gap`).
 pub const TABLE_DIVIDER: f32 = 1.0;
-/// Header row font weight (zeron `table.headerWeight` = 700).
-pub const TABLE_HEADER_WEIGHT: FontWeight = FontWeight::BOLD;
-/// Floor for a column's max-content share, so a short column ("1k") beside a
-/// prose column keeps a readable width (mugen `MIN_COLUMN_CONTENT`).
-pub const TABLE_MIN_COLUMN_CONTENT: f32 = 48.0;
+/// Header row font weight — a column label never outweighs a heading.
+pub const TABLE_HEADER_WEIGHT: FontWeight = FontWeight::SEMIBOLD;
 /// Minimum rendered column width in px, padding included (zeron
 /// `table.minColumnWidth`). Naturally narrower columns keep their content
 /// width; wider ones wrap down to this floor, then the table scrolls.
 pub const TABLE_MIN_COLUMN_WIDTH: f32 = 96.0;
+/// Cap on the unbreakable word a column must fit, so one long path or URL
+/// wraps inside its cell instead of widening the whole column.
+pub const TABLE_MAX_WORD_WIDTH: f32 = 180.0;
 /// Hairline tone (zeron md theme `table.borderColor`: rgba(255,255,255,0.1)).
 pub fn table_hairline() -> Hsla {
     crate::theme::hairline(0.10)
@@ -775,33 +779,86 @@ fn heading_metrics(level: u8) -> (f32, f32) {
     }
 }
 
-/// Shared per-column table geometry (port of mugen `tableColumns`).
+/// Measured extent of one column's content, before padding.
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct ColumnContent {
+    /// The widest unbreakable word in any of its cells.
+    pub word: f32,
+    /// The widest cell laid out on one line.
+    pub line: f32,
+}
+
+/// Shared per-column table geometry, in px at the current interface size.
 pub struct TableColumns {
+    /// Per-column horizontal padding: (leading, trailing).
+    pub padding: Vec<(f32, f32)>,
     /// Per-column max-content width, padding included.
     pub naturals: Vec<f32>,
-    /// Per-column minimum width, padding included = `min(natural, minColumnWidth)`.
+    /// Per-column minimum width, padding included: the longest word (capped),
+    /// and no narrower than `minColumnWidth` unless the column is naturally so.
     pub minimums: Vec<f32>,
     /// Σ minimums — the width below which the table stops shrinking and scrolls.
     pub min_table_width: f32,
+    /// Σ naturals — the table never stretches past its content.
+    pub natural_table_width: f32,
 }
 
-/// Resolve column geometry from measured per-column max-content widths
-/// (content only — padding is added here, as the source adds `2 * cellPadding`).
-pub fn table_columns(content_widths: &[f32]) -> TableColumns {
-    let naturals: Vec<f32> = content_widths
-        .iter()
-        .map(|w| w.max(TABLE_MIN_COLUMN_CONTENT) + 2.0 * TABLE_CELL_PADDING)
+/// Resolve column geometry the way a browser lays out an auto-width table:
+/// each column spans from its longest word to its unwrapped width, and the
+/// space between `min_table_width` and `natural_table_width` goes to the
+/// columns in proportion to how much wrapping they would otherwise need.
+/// `scale` is the interface size over its default.
+pub fn table_columns(content: &[ColumnContent], scale: f32) -> TableColumns {
+    let cols = content.len();
+    let pad = TABLE_CELL_PADDING * scale;
+    let padding: Vec<(f32, f32)> = (0..cols)
+        .map(|c| {
+            (
+                if c == 0 { 0.0 } else { pad },
+                if c + 1 == cols { 0.0 } else { pad },
+            )
+        })
         .collect();
-    let minimums: Vec<f32> = naturals
+    let naturals: Vec<f32> = content
         .iter()
-        .map(|n| n.min(TABLE_MIN_COLUMN_WIDTH))
+        .zip(&padding)
+        .map(|(content, (lead, trail))| content.line + lead + trail)
         .collect();
-    let min_table_width = minimums.iter().sum();
+    let minimums: Vec<f32> = content
+        .iter()
+        .zip(&padding)
+        .zip(&naturals)
+        .map(|((content, (lead, trail)), natural)| {
+            let word = content.word.min(TABLE_MAX_WORD_WIDTH * scale) + lead + trail;
+            word.max(natural.min(TABLE_MIN_COLUMN_WIDTH * scale))
+                .min(*natural)
+        })
+        .collect();
     TableColumns {
+        min_table_width: minimums.iter().sum(),
+        natural_table_width: naturals.iter().sum(),
+        padding,
         naturals,
         minimums,
-        min_table_width,
     }
+}
+
+/// Widest whitespace-separated word of a shaped single line.
+fn widest_word(line: &gpui::ShapedLine) -> f32 {
+    let text = line.text.as_ref();
+    let mut widest = 0.0f32;
+    let mut start = None;
+    for (ix, ch) in text.char_indices().chain([(text.len(), ' ')]) {
+        match (ch.is_whitespace(), start) {
+            (false, None) => start = Some(ix),
+            (true, Some(from)) => {
+                widest = widest.max(f32::from(line.x_for_index(ix) - line.x_for_index(from)));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    widest
 }
 
 /// Element/cache discriminator for a table cell (row-major under the block ix).
@@ -843,10 +900,13 @@ fn render_table(
     }
     let has_header = !header.is_empty();
 
-    // Flatten every cell (cache-aware) and take per-column max-content widths.
+    // Flatten every cell (cache-aware) and measure each column's longest word
+    // and unwrapped width at the size the cells will actually render.
     let text_system = window.text_system();
+    let font_size = crate::typography::ui_rems(MD_TEXT_SIZE).to_pixels(window.rem_size());
+    let scale = f32::from(font_size) / MD_TEXT_SIZE;
     let mut flats: Vec<Vec<Option<Rc<FlatText>>>> = Vec::with_capacity(all.len());
-    let mut content = vec![0.0f32; cols];
+    let mut content = vec![ColumnContent::default(); cols];
     for (r, row) in all.iter().enumerate() {
         let weight = if has_header && r == 0 {
             TABLE_HEADER_WEIGHT
@@ -854,7 +914,7 @@ fn render_table(
             FontWeight::NORMAL
         };
         let mut out: Vec<Option<Rc<FlatText>>> = Vec::with_capacity(cols);
-        for (c, natural) in content.iter_mut().enumerate() {
+        for (c, measured_column) in content.iter_mut().enumerate() {
             let Some(runs) = row.get(c) else {
                 out.push(None);
                 continue;
@@ -868,13 +928,7 @@ fn render_table(
                     .as_ref()
                     .filter(|ui| ui.source_session.is_some())
                     .map(|_| {
-                        super::link_presentation::present(
-                            &flat,
-                            px(560.),
-                            px(MD_TEXT_SIZE),
-                            window,
-                            opts,
-                        )
+                        super::link_presentation::present(&flat, px(560.), font_size, window, opts)
                     });
                 let flat = measured.as_ref().unwrap_or(&flat);
                 // Cell sources are single-line; guard anyway (same byte count,
@@ -884,43 +938,50 @@ fn render_table(
                 } else {
                     flat.text.clone()
                 };
-                let width = f32::from(
-                    text_system
-                        .shape_line(line, px(MD_TEXT_SIZE), &flat.runs, None)
-                        .width(),
-                );
-                if width > *natural {
-                    *natural = width;
-                }
+                let shaped = text_system.shape_line(line, font_size, &flat.runs, None);
+                // The wrapper sums per-glyph advances, which can exceed the
+                // kerned shaped width; the slack keeps a fitting line whole.
+                let slack = 2.0 * scale;
+                measured_column.line = measured_column
+                    .line
+                    .max(f32::from(shaped.width()).ceil() + slack);
+                measured_column.word = measured_column
+                    .word
+                    .max(widest_word(&shaped).ceil() + slack);
             }
             out.push(Some(flat));
         }
         flats.push(out);
     }
-    let geo = table_columns(&content);
+    let geo = table_columns(&content, scale);
 
     // Frameless flat-hairline chrome: 1px rules under the header and between
     // rows are the only paint (`table.gap` = 1, borderColor white@10%); the
     // theme's headerBackground is transparent and its radius 0, so there is no
-    // header fill, outer box, or rounding.
+    // header fill, outer box, or rounding. A table of short values keeps its
+    // natural width rather than spreading them across the column.
     let hairline = table_hairline();
     let mut inner = div()
         .flex()
         .flex_col()
         .w_full()
-        .min_w(px(geo.min_table_width));
+        .min_w(px(geo.min_table_width))
+        .max_w(px(geo.natural_table_width.max(geo.min_table_width)));
     for (r, row) in flats.iter().enumerate() {
         if r > 0 {
             inner = inner.child(div().flex_none().h(px(TABLE_DIVIDER)).w_full().bg(hairline));
         }
         let mut row_el = div().flex().flex_row();
         for (c, cell_flat) in row.iter().enumerate() {
+            let (lead, trail) = geo.padding[c];
             let mut cell = div()
-                .flex_grow(geo.naturals[c])
-                .flex_shrink(geo.naturals[c])
-                .flex_basis(px(0.0))
+                .flex_grow(geo.naturals[c] - geo.minimums[c])
+                .flex_shrink(0.0)
+                .flex_basis(px(geo.minimums[c]))
                 .min_w(px(geo.minimums[c]))
-                .p(px(TABLE_CELL_PADDING))
+                .pl(px(lead))
+                .pr(px(trail))
+                .py(px(TABLE_CELL_PADDING_Y * scale))
                 .text_size(crate::typography::ui_rems(MD_TEXT_SIZE))
                 .line_height(crate::typography::ui_rems(MD_LINE_HEIGHT));
             cell = match align.get(c).copied().unwrap_or_default() {
@@ -2727,6 +2788,62 @@ mod tests {
             + point(px(0.1), layout.line_height() / 2.0)
     }
 
+    struct MarkdownTableHarness;
+
+    impl Render for MarkdownTableHarness {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::of(cx).clone();
+            let source = "Audit of the rows.\n\n\
+                | Severity | Location | Why |\n\
+                | --- | --- | --- |\n\
+                | MEDIUM | `transcript.rs:10130` | Truncate without losing content: the fact being cut was the one that mattered most. |\n\
+                | LOW | `notice.rs` | Concentric radius. |\n\n\
+                | Key | Value |\n\
+                | --- | --- |\n\
+                | a | 1 |";
+            div()
+                .size_full()
+                .child(selection_frame_reset())
+                .child(render_tree(
+                    &parse_full(source),
+                    &RenderOptions::settled("markdown-table-test".into()),
+                    &theme,
+                    window,
+                    &|_| None,
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn table_columns_fit_their_words_at_a_larger_interface_size(cx: &mut TestAppContext) {
+        let _selection = super::super::selection::test_state_lock();
+        cx.update(|cx| cx.set_global(Theme::dark()));
+        let (_, cx) = cx.add_window_view(|_, _| MarkdownTableHarness);
+        cx.simulate_resize(size(px(520.0), px(800.0)));
+        cx.update(|window, cx| {
+            window.set_rem_size(px(18.0));
+            window.refresh();
+            window.draw(cx).clear();
+        });
+        let bounds = |text: &str| selection_test_bounds(&selection_key_for_text(text));
+        let one_line = px(MD_LINE_HEIGHT * 18.0 / 16.0 + 0.5);
+
+        // Short labels and code words stay whole while the prose column wraps.
+        for text in ["Severity", "MEDIUM", "transcript.rs:10130", "Location"] {
+            assert!(bounds(text).size.height <= one_line, "{text} wrapped");
+        }
+        let why =
+            "Truncate without losing content: the fact being cut was the one that mattered most.";
+        assert!(bounds(why).size.height > one_line);
+        // The outer columns sit flush with the text column.
+        assert_eq!(
+            bounds("Severity").left(),
+            bounds("Audit of the rows.").left()
+        );
+        // A table of short values keeps its natural width.
+        assert!(bounds("1").right() < px(200.0));
+    }
+
     #[gpui::test]
     fn markdown_drag_tracks_each_table_column_and_wrapped_cell(cx: &mut TestAppContext) {
         let _selection = super::super::selection::test_state_lock();
@@ -3681,46 +3798,6 @@ mod tests {
         assert_eq!(flat.runs[1].color, theme.text);
         assert!(flat.runs[1].underline.is_some());
         assert_eq!(flat.runs[2].font.weight, FontWeight::SEMIBOLD);
-    }
-
-    #[test]
-    fn table_columns_floor_and_padding() {
-        // A short column keeps its content width (floored at MIN_COLUMN_CONTENT
-        // + padding); a wide one may wrap but no narrower than minColumnWidth.
-        let geo = table_columns(&[10.0, 200.0]);
-        assert_eq!(geo.naturals, vec![72.0, 224.0]); // 48+24, 200+24
-        assert_eq!(geo.minimums, vec![72.0, 96.0]);
-        assert_eq!(geo.min_table_width, 168.0);
-    }
-
-    #[test]
-    fn table_columns_are_content_proportional_not_equal() {
-        let geo = table_columns(&[300.0, 60.0, 60.0]);
-        // Flex grow factors are the naturals — a prose column gets a larger
-        // share than short ones (not equal thirds).
-        assert!(geo.naturals[0] > 3.0 * geo.naturals[1] * 0.9);
-        assert_eq!(geo.naturals[1], geo.naturals[2]);
-    }
-
-    #[test]
-    fn table_header_flattens_at_weight_700() {
-        let theme = Theme::dark();
-        let runs = vec![InlineRun {
-            text: "Header".into(),
-            style: InlineStyle::default(),
-        }];
-        let flat = flatten_runs_weighted(&runs, &theme, TABLE_HEADER_WEIGHT);
-        assert_eq!(flat.runs[0].font.weight, FontWeight::BOLD);
-        // Strong runs inside a 700 header stay 700 (never drop to semibold).
-        let bold_runs = vec![InlineRun {
-            text: "Strong".into(),
-            style: InlineStyle {
-                bold: true,
-                ..Default::default()
-            },
-        }];
-        let flat = flatten_runs_weighted(&bold_runs, &theme, TABLE_HEADER_WEIGHT);
-        assert_eq!(flat.runs[0].font.weight, FontWeight::BOLD);
     }
 
     #[test]
