@@ -100,6 +100,12 @@ const SELECTION_SCROLL_MAX_STEP_PX: f32 = 24.0;
 pub const CHIP_HEIGHT: f32 = 38.0;
 pub const CHIP_GAP: f32 = 0.0;
 pub const CHIP_CARD_HEIGHT: f32 = 30.0;
+/// A passive card's corner, its horizontal inset, and its icon tile: the
+/// corner is the tile's radius plus the inset, so the two stay concentric.
+const CARD_TILE: f32 = 18.0;
+const CARD_TILE_RADIUS: f32 = 5.0;
+const CARD_INSET: f32 = 4.0;
+const CARD_RADIUS: f32 = CARD_TILE_RADIUS + CARD_INSET;
 /// Child labels and expanded text share one edge beneath the compact summary.
 /// The child gutter reserves room for
 /// a longer elbow, a 4px break before the icon, and an 8px icon-to-text gap.
@@ -1278,6 +1284,9 @@ pub enum RowKind {
         /// up until the user answers, and the engine delivers a dead run's
         /// answer as a resumed turn).
         header: SharedString,
+        /// The first question itself, after the header: what was asked is
+        /// what a reader scanning the turn wants, not just its title.
+        question: SharedString,
         resolved: bool,
     },
     ErrorChip {
@@ -1888,12 +1897,18 @@ pub fn rows_for_entry(
                                 .unwrap_or_else(|| "Question".to_string()),
                         )
                         .into();
+                        let question: SharedString = single_line(
+                            questions.first().map(|q| q.question.as_str()).unwrap_or(""),
+                        )
+                        .into();
                         rows.push(Row {
                             id: format!("{}#{}", entry.id, part_id).into(),
-                            version: fnv1a(header.as_bytes()) << 1 | *resolved as u64,
+                            version: fnv1a(format!("{header}\0{question}").as_bytes()) << 1
+                                | *resolved as u64,
                             turn_start: false,
                             kind: RowKind::InputChip {
                                 header,
+                                question,
                                 resolved: *resolved,
                             },
                             entry_id: entry_id.clone(),
@@ -7153,7 +7168,7 @@ impl Transcript {
                     AttachmentSnapshot::Loading => card.child(
                         image_frame.child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(crate::typography::ui_rems(12.0))
                                 .text_color(theme.text_muted)
                                 .child(if sending {
                                     "Uploading Appshot…"
@@ -7165,7 +7180,7 @@ impl Transcript {
                     AttachmentSnapshot::Error { .. } => card.child(
                         image_frame.child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(crate::typography::ui_rems(12.0))
                                 .text_color(theme.text_muted)
                                 .child(if sending {
                                     "Uploading Appshot…"
@@ -7204,7 +7219,7 @@ impl Transcript {
                             .child(
                                 div()
                                     .truncate()
-                                    .text_size(px(11.0))
+                                    .text_size(crate::typography::ui_rems(12.0))
                                     .text_color(theme.text_muted)
                                     .child(SharedString::from(format!(
                                         "{} · Appshot",
@@ -7217,14 +7232,14 @@ impl Transcript {
                             .w_full()
                             .truncate()
                             .text_center()
-                            .text_size(px(12.0))
+                            .text_size(crate::typography::ui_rems(12.0))
                             .text_color(theme.text)
                             .child(SharedString::from(appshot.title().to_string())),
                     );
                 if sending && (has_image || uploading.is_some()) {
                     card = card.child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(crate::typography::ui_rems(12.0))
                             .text_color(theme.text_muted)
                             .child(SharedString::from(
                                 uploading
@@ -7524,7 +7539,7 @@ impl Transcript {
                 .items_center()
                 .gap(px(Theme::SPACE_SM))
                 .pt(px(Theme::SPACE_LG))
-                .text_size(crate::typography::ui_rems(11.0))
+                .text_size(crate::typography::ui_rems(12.0))
                 .child(crate::loaders::gradient_spinner(
                     "working-indicator",
                     &theme,
@@ -7844,9 +7859,17 @@ impl Transcript {
                 &theme,
                 cx,
             ),
-            RowKind::InputChip { header, resolved } => {
-                input_chip(header.clone(), *resolved, &theme)
-            }
+            RowKind::InputChip {
+                header,
+                question,
+                resolved,
+            } => input_chip(
+                header.clone(),
+                question.clone(),
+                *resolved,
+                ToolMetrics::of(cx),
+                &theme,
+            ),
             RowKind::GeneratedImage {
                 owner,
                 path,
@@ -8775,7 +8798,7 @@ impl Transcript {
                     .flex_col()
                     .overflow_hidden()
                     .when(!collapses, |card| {
-                        card.rounded(px(9.0))
+                        card.rounded(px(CARD_RADIUS))
                             .border_1()
                             .border_color(crate::theme::hairline(0.07))
                             .bg(crate::theme::ink(0.03))
@@ -9342,7 +9365,7 @@ fn user_file_pill(name: &str, theme: &Theme) -> AnyElement {
         .bg(theme.ink(0.06))
         .pl(px(2.0))
         .pr(px(10.0))
-        .text_size(px(13.0))
+        .text_size(crate::typography::ui_rems(13.0))
         .text_color(theme.text.opacity(0.85))
         .child(
             div()
@@ -9433,50 +9456,25 @@ fn fork_marker(source_title: SharedString, theme: &Theme) -> AnyElement {
 }
 
 /// A passive one-line chip marking a question the agent asked — the
-/// interactive controls live in the composer (chat-view.tsx `InputChip`):
-/// 34px row, `rounded-[10px] border-white/[0.08] bg-white/[0.045] px-2
-/// text-[12px]`, a 20px `bg-white/[0.09]` icon tile with a 12px
-/// ChatRoundLine, the medium "Question" label, then the truncating value —
-/// the first question's header once resolved, "Awaiting your answer…" while
-/// pending. Neutral tones throughout; resolution never recolors the chip.
-fn input_chip(header: SharedString, resolved: bool, theme: &Theme) -> AnyElement {
-    let value: SharedString = if resolved {
-        header
-    } else {
-        "Awaiting your answer…".into()
-    };
+/// interactive controls live in the composer. The tool card's chrome
+/// ([`passive_card`]): tile, the medium "Question" label, the question's
+/// header, then the question itself truncating; "Awaiting your answer…"
+/// trails while unanswered (which stays TRUE across a run death: the
+/// composer keeps its panel up until the user answers). Neutral tones
+/// throughout; resolution never recolors the chip.
+fn input_chip(
+    header: SharedString,
+    question: SharedString,
+    resolved: bool,
+    metrics: ToolMetrics,
+    theme: &Theme,
+) -> AnyElement {
     div()
-        .py(px(4.0))
+        .py(px((metrics.chip() - metrics.card()) / 2.0))
         .w_full()
         .child(
-            div()
-                .h(px(34.0))
-                .w_full()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .overflow_hidden()
-                .rounded(px(10.0))
-                .border_1()
-                .border_color(crate::theme::hairline(0.08))
-                .bg(crate::theme::ink(0.045))
-                .px(px(8.0))
-                .text_size(px(12.0))
-                .child(
-                    div()
-                        .flex_none()
-                        .size(px(20.0))
-                        .rounded(px(6.0))
-                        .bg(crate::theme::ink(0.09))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            crate::icons::icon(crate::icons::CHAT_ROUND_LINE)
-                                .size(px(12.0))
-                                .text_color(theme.text_muted),
-                        ),
-                )
+            passive_card(metrics)
+                .child(card_tile(crate::icons::CHAT_ROUND_LINE, theme))
                 .child(
                     div()
                         .flex_none()
@@ -9486,14 +9484,69 @@ fn input_chip(header: SharedString, resolved: bool, theme: &Theme) -> AnyElement
                 )
                 .child(
                     div()
-                        .min_w_0()
-                        .flex_1()
-                        .truncate()
+                        .flex_none()
                         .text_color(theme.text.opacity(0.9))
-                        .child(value),
-                ),
+                        .child(header),
+                )
+                .when(!question.is_empty(), |card| {
+                    card.child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .truncate()
+                            .text_color(theme.text_muted)
+                            .child(question),
+                    )
+                })
+                .when(!resolved, |card| {
+                    card.child(div().flex_1()).child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.text_faint)
+                            .child(SharedString::from("Awaiting your answer…")),
+                    )
+                }),
         )
         .into_any_element()
+}
+
+/// The one-line card every passive chip shares — spawn, question, and a
+/// plain tool chip outside the task tree: card height, 9px corners
+/// concentric with the 5px tiles 4px inside them, hairline border over the
+/// faint ink wash, the row's label size and line height.
+fn passive_card(metrics: ToolMetrics) -> gpui::Div {
+    div()
+        .h(px(metrics.card()))
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .overflow_hidden()
+        .rounded(px(CARD_RADIUS))
+        .border_1()
+        .border_color(crate::theme::hairline(0.07))
+        .bg(crate::theme::ink(0.03))
+        .px(px(CARD_INSET))
+        .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
+        .line_height(px(metrics.label_line()))
+}
+
+/// A passive card's 18px icon tile, 5px corners.
+fn card_tile(icon: &'static str, theme: &Theme) -> gpui::Div {
+    div()
+        .size(px(CARD_TILE))
+        .flex_none()
+        .rounded(px(CARD_TILE_RADIUS))
+        .bg(crate::theme::ink(0.08))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            crate::icons::icon(icon)
+                .size(px(12.0))
+                .text_color(theme.text_muted),
+        )
 }
 
 /// A small glyph standing in for the tool's icon (zeron uses an icon set; a
@@ -9965,7 +10018,10 @@ impl GroupHeaderTail {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(10.0))
+            // Its own group: 8px within, and the header's 6px plus this
+            // 6px between it and the summary.
+            .gap(px(8.0))
+            .ml(px(6.0))
             .when_some(self.changes, |tail, counts| {
                 tail.child(change_counts_label(counts, theme))
             })
@@ -9983,7 +10039,7 @@ impl GroupHeaderTail {
                         .text_color(theme.danger)
                         .child(
                             crate::icons::icon(crate::icons::CLOSE_CIRCLE)
-                                .size(crate::typography::ui_rems(13.0))
+                                .size(crate::typography::ui_rems(14.0))
                                 .text_color(theme.danger),
                         )
                         .child(SharedString::from(format!("{} failed", self.failed))),
@@ -10125,27 +10181,11 @@ fn chip_header_row(
         .flex_row()
         .items_center()
         .gap(px(8.0))
-        .px(px(if activity { 0.0 } else { 8.0 }))
+        .px(px(if activity { 0.0 } else { CARD_INSET }))
         .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
         .line_height(px(metrics.label_line()))
         .when(!activity, |row| {
-            row.child(
-                // Subagent icon tile (`size-[18px] rounded-[5px] bg-white/[0.08]`,
-                // icon size-3).
-                div()
-                    .size(px(18.0))
-                    .flex_none()
-                    .rounded(px(5.0))
-                    .bg(crate::theme::ink(0.08))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        crate::icons::icon(tool_item_icon(tool))
-                            .size(px(12.0))
-                            .text_color(theme.text_muted),
-                    ),
-            )
+            row.child(card_tile(tool_item_icon(tool), theme))
         })
         .child(
             div()
@@ -10248,7 +10288,7 @@ fn chip_header_row(
                     .h(px(metrics.label_line()))
                     .flex()
                     .items_center()
-                    .text_size(crate::typography::ui_rems(11.0))
+                    .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
                     .text_color(theme.text_faint)
                     .child(SharedString::from(model.to_owned())),
             )
@@ -10285,7 +10325,7 @@ fn chip_header_row(
                         .h(px(metrics.label_line()))
                         .flex()
                         .items_center()
-                        .text_size(crate::typography::ui_rems(11.0))
+                        .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
                         .font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
                             "tnum".into(),
                             1,
@@ -10635,7 +10675,7 @@ fn tool_chip(
                 .items_center()
                 .overflow_hidden()
                 .when(!rail, |card| {
-                    card.rounded(px(9.0))
+                    card.rounded(px(CARD_RADIUS))
                         .border_1()
                         .border_color(crate::theme::hairline(0.07))
                         .bg(crate::theme::ink(0.03))
@@ -10700,7 +10740,7 @@ fn subagent_chip(
                 .flex()
                 .items_center()
                 .overflow_hidden()
-                .rounded(px(9.0))
+                .rounded(px(CARD_RADIUS))
                 .border_1()
                 .border_color(crate::theme::hairline(0.07))
                 .bg(crate::theme::ink(0.03))

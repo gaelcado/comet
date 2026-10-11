@@ -57,7 +57,7 @@ pub fn notice_chip(
             .py(px(8.0))
     };
     let chip = if tile {
-        frame(10.0).text_size(px(12.0))
+        frame(10.0).text_size(crate::typography::ui_rems(12.0))
     } else {
         frame(12.0)
             .text_size(crate::typography::ui_rems(12.0))
