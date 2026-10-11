@@ -115,7 +115,9 @@ const ACTIVITY_TRUNK_X: f32 = 12.5;
 const ACTIVITY_BEND_RADIUS: f32 = 6.0;
 const ACTIVITY_BRANCH_END_X: f32 = 28.0;
 const ACTIVITY_ICON_LEFT: f32 = 32.0;
-const ACTIVITY_ICON_SIZE: f32 = 16.0;
+/// One glyph size beside the 12px label, at the branch tip and in a card's
+/// tile alike.
+const ACTIVITY_ICON_SIZE: f32 = 14.0;
 /// How visible an expandable activity row's chevron is at rest.
 const ACTIVITY_CHEVRON_REST_OPACITY: f32 = 0.5;
 const TOOL_TEXT_SIZE: f32 = 12.0;
@@ -9544,7 +9546,7 @@ fn card_tile(icon: &'static str, theme: &Theme) -> gpui::Div {
         .justify_center()
         .child(
             crate::icons::icon(icon)
-                .size(px(12.0))
+                .size(px(ACTIVITY_ICON_SIZE))
                 .text_color(theme.text_muted),
         )
 }
@@ -10197,7 +10199,18 @@ fn chip_header_row(
                     label.font_weight(gpui::FontWeight::MEDIUM)
                 })
                 .text_color(tint)
-                .child(SharedString::from(label))
+                // The verb rolls as the call settles ("Running" → "Ran"),
+                // like the group summary: the static cue that the row changed
+                // state, next to the spinner's fade.
+                .child(if activity && tool.kind == ToolItemKind::Call {
+                    crate::roll_text::roll_text(
+                        format!("tool-verb-{}", tool.part_id),
+                        SharedString::from(label),
+                        cx.reduce_motion(),
+                    )
+                } else {
+                    SharedString::from(label).into_any_element()
+                })
                 .map(|label| {
                     if hover_text {
                         label
