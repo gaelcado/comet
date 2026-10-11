@@ -49,7 +49,6 @@ use crate::markdown::parser::{
 use crate::markdown::render::{self, RenderCache, RenderOptions};
 use crate::markdown::veil::RowVeil;
 use crate::motion::{self, AnimationExt as _};
-use crate::notice::{NoticeChipIcon::Tile, notice_chip};
 use crate::state::AppState;
 use crate::syntax_cache::{DocumentHighlightKey, SyntaxHighlightCache};
 use crate::theme::Theme;
@@ -1281,7 +1280,7 @@ pub enum RowKind {
     },
     InputChip {
         /// First question's header (chat-view.tsx `InputChip`: the resolved
-        /// chip shows it; unresolved shows "Awaiting your answer…" — which
+        /// chip shows it; unresolved shows "Waiting for your answer" — which
         /// stays TRUE even across a run death: the composer keeps the panel
         /// up until the user answers, and the engine delivers a dead run's
         /// answer as a resumed turn).
@@ -1289,11 +1288,32 @@ pub enum RowKind {
         /// The first question itself, after the header: what was asked is
         /// what a reader scanning the turn wants, not just its title.
         question: SharedString,
+        /// Further questions asked in the same request.
+        more: usize,
         resolved: bool,
     },
     ErrorChip {
+        /// What the row shows: a harness's JSON error unwrapped to its
+        /// message, and the error code after it.
         message: SharedString,
+        /// What the copy action copies: the error exactly as it arrived.
+        copy: SharedString,
+        /// How many times in a row the same error arrived.
+        repeat: usize,
     },
+    /// Consecutive "Reconnecting…" errors folded into one row: a dropped
+    /// connection the run usually recovers from is not an error.
+    Connection {
+        /// Retry messages the run went through.
+        tries: usize,
+        /// The last retry's own words after "Reconnecting", e.g. "3/5" or
+        /// "waiting for network".
+        last: SharedString,
+        state: ConnectionState,
+    },
+    /// The turn ended before it finished: stopped by the user, or cut off
+    /// when the engine restarted.
+    Interrupted,
     /// The fork seam: a labeled divider between copied history and the
     /// chat's own turns.
     ForkMarker {
@@ -1310,6 +1330,65 @@ fn generated_image_devices(owner: &str, fallback: &[String]) -> Vec<String> {
         }
     }
     devices
+}
+
+/// Where a run of reconnect attempts ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionState {
+    /// Still trying: nothing has arrived since, and the turn streams on.
+    Retrying,
+    /// The run went on after the last attempt.
+    Recovered,
+    /// The turn ended on the last attempt.
+    Lost,
+}
+
+/// The words after "Reconnecting" in a harness retry notice ("2/5",
+/// "waiting for network"), or `None` when `message` is not one.
+fn reconnect_attempt(message: &str) -> Option<&str> {
+    let rest = message.trim().strip_prefix("Reconnecting")?;
+    Some(rest.trim_start_matches(['.', '…']).trim())
+}
+
+/// An error as the row shows it. Harnesses sometimes pass an API's JSON body
+/// through verbatim; the row shows its message with the type and status
+/// after it, and the copy action keeps the original.
+fn error_display(message: &str) -> String {
+    let message = message.trim();
+    let Ok(serde_json::Value::Object(body)) = serde_json::from_str::<serde_json::Value>(message)
+    else {
+        return single_line(message);
+    };
+    let error = body
+        .get("error")
+        .and_then(|e| e.as_object())
+        .unwrap_or(&body);
+    let text = error
+        .get("message")
+        .or_else(|| body.get("message"))
+        .and_then(|m| m.as_str());
+    let Some(text) = text else {
+        return single_line(message);
+    };
+    let code: Vec<String> = [
+        error
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map(str::to_owned),
+        body.get("status")
+            .or_else(|| error.get("status"))
+            .and_then(|s| s.as_u64())
+            .map(|s| s.to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|part| part != "error")
+    .collect();
+    if code.is_empty() {
+        single_line(text)
+    } else {
+        format!("{} ({})", single_line(text), code.join(", "))
+    }
 }
 
 /// A transcript row: stable id + content version (diff key) + block payload.
@@ -1903,14 +1982,16 @@ pub fn rows_for_entry(
                             questions.first().map(|q| q.question.as_str()).unwrap_or(""),
                         )
                         .into();
+                        let more = questions.len().saturating_sub(1);
                         rows.push(Row {
                             id: format!("{}#{}", entry.id, part_id).into(),
-                            version: fnv1a(format!("{header}\0{question}").as_bytes()) << 1
+                            version: fnv1a(format!("{header}\0{question}\0{more}").as_bytes()) << 1
                                 | *resolved as u64,
                             turn_start: false,
                             kind: RowKind::InputChip {
                                 header,
                                 question,
+                                more,
                                 resolved: *resolved,
                             },
                             entry_id: entry_id.clone(),
@@ -1923,13 +2004,65 @@ pub fn rows_for_entry(
                         id: part_id,
                         message,
                     } => {
+                        // Errors arriving back to back fold into the row the
+                        // previous one made: retries into one connection row,
+                        // a repeated error into a count on its first row.
+                        let follows_error = part_ix > 0
+                            && matches!(entry.parts[part_ix - 1], MessagePart::Error { .. });
+                        let previous = rows.last_mut().filter(|_| follows_error);
+                        if let Some(attempt) = reconnect_attempt(message) {
+                            let resumed = entry.parts[part_ix + 1..]
+                                .iter()
+                                .any(|part| !matches!(part, MessagePart::Error { .. }));
+                            let state = if resumed {
+                                ConnectionState::Recovered
+                            } else if streaming {
+                                ConnectionState::Retrying
+                            } else {
+                                ConnectionState::Lost
+                            };
+                            let kind = |tries| RowKind::Connection {
+                                tries,
+                                last: attempt.to_owned().into(),
+                                state,
+                            };
+                            match previous {
+                                Some(row) if matches!(row.kind, RowKind::Connection { .. }) => {
+                                    let RowKind::Connection { tries, .. } = row.kind else {
+                                        unreachable!()
+                                    };
+                                    row.kind = kind(tries + 1);
+                                    row.version = fnv1a(format!("{part_id}\0{state:?}").as_bytes());
+                                }
+                                _ => rows.push(Row {
+                                    id: format!("{}#{}", entry.id, part_id).into(),
+                                    version: fnv1a(format!("{part_id}\0{state:?}").as_bytes()),
+                                    turn_start: false,
+                                    kind: kind(1),
+                                    entry_id: entry_id.clone(),
+                                    timestamp: None,
+                                    copy_text: None,
+                                    compact_fold: None,
+                                }),
+                            }
+                            continue;
+                        }
+                        if let Some(row) = previous
+                            && let RowKind::ErrorChip { copy, repeat, .. } = &mut row.kind
+                            && copy.as_ref() == message.as_str()
+                        {
+                            *repeat += 1;
+                            row.version = fnv1a(format!("{part_id}\0{repeat}").as_bytes());
+                            continue;
+                        }
                         rows.push(Row {
                             id: format!("{}#{}", entry.id, part_id).into(),
-                            version: message.len() as u64,
+                            version: fnv1a(message.as_bytes()),
                             turn_start: false,
                             kind: RowKind::ErrorChip {
-                                // Harness-generated; the chip is one line.
-                                message: single_line(message).into(),
+                                message: error_display(message).into(),
+                                copy: message.clone().into(),
+                                repeat: 1,
                             },
                             entry_id: entry_id.clone(),
                             timestamp: None,
@@ -2031,6 +2164,18 @@ pub fn rows_for_entry(
         );
     }
 
+    if entry.status == Some(MessageStatus::Aborted) {
+        rows.push(Row {
+            id: format!("{}#interrupted", entry.id).into(),
+            version: 0,
+            turn_start: false,
+            kind: RowKind::Interrupted,
+            entry_id: entry_id.clone(),
+            timestamp: None,
+            copy_text: None,
+            compact_fold: None,
+        });
+    }
     if let Some(first) = rows.first_mut() {
         first.turn_start = true;
     }
@@ -7864,10 +8009,12 @@ impl Transcript {
             RowKind::InputChip {
                 header,
                 question,
+                more,
                 resolved,
             } => input_chip(
                 header.clone(),
                 question.clone(),
+                *more,
                 *resolved,
                 ToolMetrics::of(cx),
                 &theme,
@@ -7878,7 +8025,21 @@ impl Transcript {
                 name,
                 mime_type,
             } => self.render_generated_image(&row.id, owner, path, name, mime_type, cx),
-            RowKind::ErrorChip { message } => error_chip(message.clone(), &theme),
+            RowKind::ErrorChip {
+                message,
+                copy,
+                repeat,
+            } => error_chip(message.clone(), copy.clone(), *repeat, &theme),
+            RowKind::Connection { tries, last, state } => connection_row(
+                *tries,
+                last.clone(),
+                *state,
+                ToolMetrics::of(cx),
+                &theme,
+                cx.entity_id(),
+                cx,
+            ),
+            RowKind::Interrupted => interrupted_row(ToolMetrics::of(cx), &theme),
             RowKind::ForkMarker { source_title, .. } => fork_marker(source_title.clone(), &theme),
         };
         // Diagram fences this row just requested start rendering after layout.
@@ -8800,10 +8961,9 @@ impl Transcript {
                     .flex_col()
                     .overflow_hidden()
                     .when(!collapses, |card| {
-                        card.rounded(px(CARD_RADIUS))
-                            .border_1()
-                            .border_color(crate::theme::hairline(0.07))
-                            .bg(crate::theme::ink(0.03))
+                        card_bleed(card)
+                            .rounded(px(CARD_RADIUS))
+                            .hover(|s| s.bg(crate::theme::ink(0.04)))
                     })
                     .child(
                         div()
@@ -8921,6 +9081,7 @@ impl Transcript {
                             connector_reveal,
                             continuation_reveal,
                             base_row_height,
+                            activities[ix],
                             theme,
                         ))
                     })
@@ -9395,22 +9556,175 @@ fn user_file_pill(name: &str, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// The transcript ErrorChip — the shared [`notice_chip`] in its tile
-/// treatment (a port of zeron chat-view.tsx `ErrorChip`, restacked for long
-/// payloads: header row with the red-washed tile and the medium "Error"
-/// label, then the human message below). Unlike the web port, the message
-/// WRAPS instead of truncating: startup-crash errors carry the agent's exit
-/// status and stderr, and a one-line ellipsis was exactly what made
-/// zeronsh/comet#95 undiagnosable from the screenshot.
-fn error_chip(message: SharedString, theme: &Theme) -> AnyElement {
+/// An error the run hit. The message itself leads, beside the danger tile,
+/// in the transcript's text tone: the tile already says "error", so neither
+/// a label nor red text has to. A faint danger wash sets it apart from the
+/// rows around it without a border. The message WRAPS rather than
+/// truncating: startup crashes carry the agent's exit status and stderr, and
+/// a one-line ellipsis was exactly what made zeronsh/comet#95 undiagnosable
+/// from a screenshot. The copy action copies the error as it arrived.
+fn error_chip(
+    message: SharedString,
+    copy: SharedString,
+    repeat: usize,
+    theme: &Theme,
+) -> AnyElement {
+    let copy_button = div()
+        .id("error-copy")
+        .flex_none()
+        .size(px(CARD_TILE))
+        .rounded(px(CARD_TILE_RADIUS))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .opacity(0.6)
+        .group_hover("error-row", |s| s.opacity(1.0))
+        .hover(|s| s.bg(crate::theme::ink(0.08)))
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.to_string()));
+        })
+        .tooltip(crate::settings::widgets::text_tooltip("Copy error"))
+        .child(
+            crate::icons::icon(crate::icons::COPY)
+                .size(px(12.0))
+                .text_color(theme.text_muted),
+        );
     div()
         .py(px(4.0))
         .w_full()
         .child(
-            notice_chip(theme, false, "Error", message, Tile)
+            div()
+                .group("error-row")
+                .mx(px(-ERROR_INSET))
+                .p(px(ERROR_INSET))
+                .rounded(px(CARD_TILE_RADIUS + ERROR_INSET))
+                .bg(theme.danger.opacity(0.06))
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap(px(8.0))
                 .overflow_hidden()
-                .w_full(),
+                .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
+                .line_height(px(CARD_TILE))
+                .child(
+                    status_tile().bg(theme.danger.opacity(0.12)).child(
+                        crate::icons::icon(crate::icons::DANGER_TRIANGLE)
+                            .size(px(12.0))
+                            .text_color(theme.danger),
+                    ),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .text_color(theme.text.opacity(0.9))
+                        .child(message),
+                )
+                .when(repeat > 1, |row| {
+                    // The same error again and again is one row with a count.
+                    row.child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.text_faint)
+                            .font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
+                                "tnum".into(),
+                                1,
+                            )])))
+                            .child(SharedString::from(format!("×{repeat}"))),
+                    )
+                })
+                .child(copy_button),
         )
+        .into_any_element()
+}
+
+/// Inset of the error row's wash around its content, which stays on the
+/// text column; its corner is the tile's plus this inset.
+const ERROR_INSET: f32 = 8.0;
+
+/// A run of reconnect attempts as one passive row. The usual outcome — the
+/// run carried on — is a quiet note; while it retries the tile spins; only a
+/// turn that ended on the retries reads as an error.
+fn connection_row(
+    tries: usize,
+    last: SharedString,
+    state: ConnectionState,
+    metrics: ToolMetrics,
+    theme: &Theme,
+    view: gpui::EntityId,
+    cx: &mut gpui::App,
+) -> AnyElement {
+    let attempts = if tries == 1 {
+        "after 1 retry".to_owned()
+    } else {
+        format!("after {tries} retries")
+    };
+    if state == ConnectionState::Lost {
+        return error_chip(
+            format!("Connection lost {attempts}").into(),
+            format!("Reconnecting... {last}").into(),
+            1,
+            theme,
+        );
+    }
+    let (tile, label, detail) = match state {
+        ConnectionState::Retrying => (
+            status_tile().child(crate::loaders::mini_glyph_spinner(
+                "connection-retrying",
+                TILE_SPINNER_CELL,
+                theme.glyph,
+                view,
+                cx,
+            )),
+            "Reconnecting",
+            match last.split_once('/') {
+                Some((n, of)) => format!("attempt {n} of {of}"),
+                None => last.to_string(),
+            },
+        ),
+        _ => (
+            card_tile(crate::icons::WIFI_OFF, theme),
+            "Reconnected",
+            attempts,
+        ),
+    };
+    div()
+        .py(px((metrics.chip() - metrics.card()) / 2.0))
+        .w_full()
+        .child(
+            passive_card(metrics)
+                .child(tile)
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.text_muted)
+                        .child(SharedString::from(label)),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.text_faint)
+                        .child(SharedString::from(detail)),
+                ),
+        )
+        .into_any_element()
+}
+
+/// The marker under a turn that ended before it finished: a faint line of
+/// text on the text column, the turn's last word rather than another row of
+/// its work.
+fn interrupted_row(metrics: ToolMetrics, theme: &Theme) -> AnyElement {
+    div()
+        .h(px(metrics.chip()))
+        .w_full()
+        .flex()
+        .items_center()
+        .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
+        .text_color(theme.text_faint)
+        .child(SharedString::from("Interrupted"))
         .into_any_element()
 }
 
@@ -9457,16 +9771,17 @@ fn fork_marker(source_title: SharedString, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// A passive one-line chip marking a question the agent asked — the
-/// interactive controls live in the composer. The tool card's chrome
-/// ([`passive_card`]): tile, the medium "Question" label, the question's
-/// header, then the question itself truncating; "Awaiting your answer…"
-/// trails while unanswered (which stays TRUE across a run death: the
-/// composer keeps its panel up until the user answers). Neutral tones
-/// throughout; resolution never recolors the chip.
+/// A passive one-line row marking a question the agent asked — the
+/// interactive controls live in the composer. The tool rows' grammar: the
+/// tile, then the question's header in the muted tier and the question
+/// itself a step brighter, truncating; how many more questions the request
+/// held; "Waiting for your answer" trailing while unanswered (which stays
+/// TRUE across a run death: the composer keeps its panel up until the user
+/// answers). Resolution never recolors the row.
 fn input_chip(
     header: SharedString,
     question: SharedString,
+    more: usize,
     resolved: bool,
     metrics: ToolMetrics,
     theme: &Theme,
@@ -9477,65 +9792,78 @@ fn input_chip(
         .child(
             passive_card(metrics)
                 .child(card_tile(crate::icons::CHAT_ROUND_LINE, theme))
-                .child(
-                    div()
-                        .flex_none()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(theme.text_muted)
-                        .child(SharedString::from("Question")),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_color(theme.text.opacity(0.9))
-                        .child(header),
-                )
+                .child(div().flex_none().text_color(theme.text_muted).child(header))
                 .when(!question.is_empty(), |card| {
                     card.child(
                         div()
                             .min_w_0()
-                            .flex_1()
                             .truncate()
-                            .text_color(theme.text_muted)
+                            .text_color(theme.text.opacity(0.85))
                             .child(question),
                     )
                 })
-                .when(!resolved, |card| {
-                    card.child(div().flex_1()).child(
+                .when(more > 0, |card| {
+                    card.child(
                         div()
                             .flex_none()
                             .text_color(theme.text_faint)
-                            .child(SharedString::from("Awaiting your answer…")),
+                            .child(SharedString::from(format!("+{more} more"))),
+                    )
+                })
+                .child(div().flex_1())
+                .when(!resolved, |card| {
+                    card.child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.text_faint)
+                            .child(SharedString::from("Waiting for your answer")),
                     )
                 }),
         )
         .into_any_element()
 }
 
-/// The one-line card every passive chip shares — spawn, question, and a
-/// plain tool chip outside the task tree: card height, 9px corners
-/// concentric with the 5px tiles 4px inside them, hairline border over the
-/// faint ink wash, the row's label size and line height.
+/// The one-line row every passive chip shares — spawn, question, and a
+/// plain tool chip outside the task tree: card height, the tile leading, the
+/// row's label size and line height. No border and no fill: the tile groups
+/// it, and a stack of them reads as one list. The frame bleeds its inset past
+/// the text column ([`card_bleed`]), so the tile's edge lines up with the
+/// text above while a hover wash still has room around it.
 fn passive_card(metrics: ToolMetrics) -> gpui::Div {
-    div()
+    card_bleed(div())
         .h(px(metrics.card()))
-        .w_full()
         .min_w_0()
         .flex()
         .items_center()
         .gap(px(8.0))
         .overflow_hidden()
         .rounded(px(CARD_RADIUS))
-        .border_1()
-        .border_color(crate::theme::hairline(0.07))
-        .bg(crate::theme::ink(0.03))
         .px(px(CARD_INSET))
         .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
         .line_height(px(metrics.label_line()))
 }
 
+/// Pull a card frame out by its inset on both sides, so the content inside
+/// the inset sits on the text column.
+fn card_bleed<E: Styled>(frame: E) -> E {
+    frame.mx(px(-CARD_INSET))
+}
+
 /// A passive card's 18px icon tile, 5px corners.
 fn card_tile(icon: &'static str, theme: &Theme) -> gpui::Div {
+    status_tile().child(
+        crate::icons::icon(icon)
+            .size(px(ACTIVITY_ICON_SIZE))
+            .text_color(theme.text_muted),
+    )
+}
+
+/// Cell size of the working spinner inside a tile: a size up from the
+/// trailing-slot spinner, so it fills the tile the way a glyph does.
+const TILE_SPINNER_CELL: f32 = 3.0;
+
+/// The empty 18px tile, for a card that shows its status in it.
+fn status_tile() -> gpui::Div {
     div()
         .size(px(CARD_TILE))
         .flex_none()
@@ -9544,11 +9872,15 @@ fn card_tile(icon: &'static str, theme: &Theme) -> gpui::Div {
         .flex()
         .items_center()
         .justify_center()
-        .child(
-            crate::icons::icon(icon)
-                .size(px(ACTIVITY_ICON_SIZE))
-                .text_color(theme.text_muted),
-        )
+}
+
+/// A failed card's tile: the activity rows' cross on a faint danger wash.
+fn failed_tile(theme: &Theme) -> gpui::Div {
+    status_tile().bg(theme.danger.opacity(0.12)).child(
+        crate::icons::icon(crate::icons::CLOSE)
+            .size(px(ACTIVITY_ICON_SIZE))
+            .text_color(theme.danger),
+    )
 }
 
 /// A small glyph standing in for the tool's icon (zeron uses an icon set; a
@@ -9731,7 +10063,7 @@ fn detail_body(
                         row.child(render::selectable_text_element(
                             line_key(line_ix),
                             line.text.clone(),
-                            line.text_runs(theme, false),
+                            line.text_runs(theme),
                             theme.selection,
                         ))
                     })
@@ -9880,7 +10212,6 @@ fn note_chip_detail(tool: &ToolItem) -> String {
 /// file tools and by Exec rows whose command reads, lists, or searches a path.
 fn path_badge(
     identity: crate::file_icons::FileIconIdentity<'_>,
-    failed: bool,
     hover_text: bool,
     open_file: Option<(String, ToolFileOpener)>,
     metrics: ToolMetrics,
@@ -9890,31 +10221,17 @@ fn path_badge(
     let icon = crate::file_icons::icon(identity, theme.appearance)
         .size(px(14.0))
         .into_any_element();
-    header_badge(icon, name, failed, hover_text, open_file, metrics, theme)
+    header_badge(icon, name, hover_text, open_file, metrics, theme)
 }
 
 /// The host chip a web call's header shows: the globe in the file icons'
 /// well, then the host, so a fetch reads like a file read of its site.
-fn host_badge(
-    host: &str,
-    failed: bool,
-    hover_text: bool,
-    metrics: ToolMetrics,
-    theme: &Theme,
-) -> AnyElement {
+fn host_badge(host: &str, hover_text: bool, metrics: ToolMetrics, theme: &Theme) -> AnyElement {
     let icon = crate::icons::icon(crate::icons::GLOBAL)
         .size(px(14.0))
         .text_color(theme.text_muted)
         .into_any_element();
-    header_badge(
-        icon,
-        host.to_owned(),
-        failed,
-        hover_text,
-        None,
-        metrics,
-        theme,
-    )
+    header_badge(icon, host.to_owned(), hover_text, None, metrics, theme)
 }
 
 /// The chip behind [`path_badge`] and [`host_badge`]: an icon in its well,
@@ -9923,7 +10240,6 @@ fn host_badge(
 fn header_badge(
     icon: AnyElement,
     name: String,
-    failed: bool,
     hover_text: bool,
     open_file: Option<(String, ToolFileOpener)>,
     metrics: ToolMetrics,
@@ -9940,11 +10256,7 @@ fn header_badge(
         .bg(theme.ink(0.06))
         .pl(px(1.0))
         .pr(px(6.0))
-        .text_color(if failed {
-            theme.danger
-        } else {
-            theme.text.opacity(0.85)
-        })
+        .text_color(theme.text.opacity(0.85))
         .child(
             div()
                 .size(px(20.0))
@@ -10028,8 +10340,8 @@ impl GroupHeaderTail {
                 tail.child(change_counts_label(counts, theme))
             })
             .when(self.failed > 0, |tail| {
-                // The row's own failed glyph, so the header and the row it
-                // summarizes read as the same signal.
+                // The rows' own cross, so the header and the rows it
+                // summarizes read as the same signal; the words stay neutral.
                 tail.child(
                     div()
                         .id("group-failed")
@@ -10038,10 +10350,10 @@ impl GroupHeaderTail {
                         .flex_row()
                         .items_center()
                         .gap(px(4.0))
-                        .text_color(theme.danger)
+                        .text_color(theme.text_muted)
                         .child(
-                            crate::icons::icon(crate::icons::CLOSE_CIRCLE)
-                                .size(crate::typography::ui_rems(14.0))
+                            crate::icons::icon(crate::icons::CLOSE)
+                                .size(crate::typography::ui_rems(ACTIVITY_ICON_SIZE))
                                 .text_color(theme.danger),
                         )
                         .child(SharedString::from(format!("{} failed", self.failed))),
@@ -10051,35 +10363,90 @@ impl GroupHeaderTail {
     }
 }
 
-/// `+N −M` after a file badge: lines added in the success tone, removed in
-/// the danger tone, in tabular figures so counts line up between rows. A side
-/// with nothing on it is left out ("+24" for a new file, not "+24 −0").
+/// `+N −M` after a file badge, in the row's muted text and tabular figures,
+/// then a five-cell bar of how the change splits. The numbers say how much;
+/// the bar says whether it added or removed at a glance, in color the text
+/// never has to carry. A side with nothing on it is left out ("+24" for a
+/// new file, not "+24 −0").
 fn change_counts_label((added, removed): (u64, u64), theme: &Theme) -> AnyElement {
+    let figures = match (added, removed) {
+        (0, removed) => format!("−{removed}"),
+        (added, 0) => format!("+{added}"),
+        (added, removed) => format!("+{added} −{removed}"),
+    };
+    let cell = |color: gpui::Hsla| {
+        div()
+            .size(px(DIFFSTAT_CELL))
+            .flex_none()
+            .rounded(px(1.5))
+            .bg(color)
+    };
     div()
         .flex_none()
         .flex()
         .flex_row()
+        .items_center()
         .gap(px(6.0))
         .text_size(crate::typography::ui_rems(TOOL_TEXT_SIZE))
         .font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
             "tnum".into(),
             1,
         )])))
-        .when(added > 0, |row| {
-            row.child(
-                div()
-                    .text_color(theme.success)
-                    .child(SharedString::from(format!("+{added}"))),
-            )
-        })
-        .when(removed > 0, |row| {
-            row.child(
-                div()
-                    .text_color(theme.danger)
-                    .child(SharedString::from(format!("−{removed}"))),
-            )
-        })
+        .text_color(theme.text_muted)
+        .child(SharedString::from(figures))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(2.0))
+                .children(
+                    diffstat_cells(added, removed).map(|cell_kind| match cell_kind {
+                        DiffstatCell::Added => cell(theme.success.opacity(0.8)),
+                        DiffstatCell::Removed => cell(theme.danger.opacity(0.8)),
+                        DiffstatCell::Neutral => cell(crate::theme::ink(0.14)),
+                    }),
+                ),
+        )
         .into_any_element()
+}
+
+/// One cell of the diffstat bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiffstatCell {
+    Added,
+    Removed,
+    Neutral,
+}
+
+/// Side of a diffstat cell, in px.
+const DIFFSTAT_CELL: f32 = 6.0;
+
+/// Five cells, GitHub's way: a change of fewer than five lines colors only as
+/// many cells as it has lines, the colored cells split by the added/removed
+/// ratio, and a side with any lines keeps at least one cell.
+fn diffstat_cells(added: u64, removed: u64) -> [DiffstatCell; 5] {
+    let total = added + removed;
+    let colored = total.min(5) as usize;
+    let mut added_cells = if total == 0 {
+        0
+    } else {
+        ((added as f64 / total as f64) * colored as f64).round() as usize
+    };
+    if added > 0 {
+        added_cells = added_cells.max(1);
+    }
+    if removed > 0 {
+        added_cells = added_cells.min(colored.saturating_sub(1));
+    }
+    std::array::from_fn(|ix| {
+        if ix < added_cells {
+            DiffstatCell::Added
+        } else if ix < colored {
+            DiffstatCell::Removed
+        } else {
+            DiffstatCell::Neutral
+        }
+    })
 }
 
 /// The trailing tile on a chip header, when it has one.
@@ -10163,13 +10530,8 @@ fn chip_header_row(
             && matches!(tool.subagent_status, Some(SubagentStatus::Failed)));
     // Text resolves its color during layout, so group-hover text needs stable
     // child IDs under the keyed, expandable header to retain hover state.
-    let hover_text = activity && trail.is_some() && !failed;
+    let hover_text = activity && trail.is_some();
     let metrics = ToolMetrics::of(cx);
-    let tint = if failed {
-        theme.danger
-    } else {
-        theme.text_muted
-    };
     div()
         .group("tool-header")
         .h(px(if activity {
@@ -10187,7 +10549,24 @@ fn chip_header_row(
         .text_size(crate::typography::ui_rems(TOOL_LABEL_SIZE))
         .line_height(px(metrics.label_line()))
         .when(!activity, |row| {
-            row.child(card_tile(tool_item_icon(tool), theme))
+            // A card's tile carries its status, where the eye lands first:
+            // the working spinner while it runs, the cross once it failed.
+            row.child(if running {
+                status_tile().child(crate::loaders::mini_glyph_spinner(
+                    format!(
+                        "subagent-chip-{}",
+                        tool.subagent_ref.as_deref().unwrap_or_default()
+                    ),
+                    TILE_SPINNER_CELL,
+                    theme.glyph,
+                    view,
+                    cx,
+                ))
+            } else if failed {
+                failed_tile(theme)
+            } else {
+                card_tile(tool_item_icon(tool), theme)
+            })
         })
         .child(
             div()
@@ -10195,10 +10574,11 @@ fn chip_header_row(
                 .h(px(metrics.label_line()))
                 .flex()
                 .items_center()
-                .when(!activity, |label| {
-                    label.font_weight(gpui::FontWeight::MEDIUM)
-                })
-                .text_color(tint)
+                // An agent's bot tile already names it, so its row leads with
+                // the task itself; the word "Agent" stays only for a task
+                // with no description.
+                .when(!activity && !detail.is_empty(), |label| label.hidden())
+                .text_color(theme.text_muted)
                 // The verb rolls as the call settles ("Running" → "Ran"),
                 // like the group summary: the static cue that the row changed
                 // state, next to the spinner's fade.
@@ -10236,17 +10616,16 @@ fn chip_header_row(
                 .items_center()
                 .truncate()
                 // The verb is the muted tier; its subject is a step brighter.
-                .text_color(if failed {
-                    theme.danger
-                } else {
+                .text_color(if activity {
                     theme.text.opacity(0.85)
+                } else {
+                    theme.text
                 })
                 .child(if let Some(shell) = shell {
-                    shell.element(failed, hover_text, metrics, theme)
+                    shell.element(hover_text, metrics, theme)
                 } else if let Some(path) = file_path {
                     let badge = path_badge(
                         crate::file_icons::FileIconIdentity::file(path),
-                        failed,
                         hover_text,
                         open_file,
                         metrics,
@@ -10306,20 +10685,6 @@ fn chip_header_row(
                     .child(SharedString::from(model.to_owned())),
             )
         })
-        .when(running, |row| {
-            // The sidebar working-row spinner, in the chip's trailing slot —
-            // paint-local (fixed footprint), so it never moves the layout.
-            row.child(div().flex_none().child(crate::loaders::mini_glyph_spinner(
-                format!(
-                    "subagent-chip-{}",
-                    tool.subagent_ref.as_deref().unwrap_or_default()
-                ),
-                2.0,
-                theme.glyph,
-                view,
-                cx,
-            )))
-        })
         .when_some(activity_state, |row, state| {
             // An ordinary running call: the same spinner, with the elapsed
             // time before it in the model label's bare faint style. Tabular
@@ -10362,35 +10727,6 @@ fn chip_header_row(
                     )),
             )
         })
-        .when(failed, |row| {
-            // Failure is not carried by the danger tint alone: a static glyph
-            // in the trailing slot (clear of the verb's left edge) names it
-            // for anyone who cannot tell the tints apart. Fresh from a run it
-            // scales in as the spinner fades, so the change is seen.
-            let reveal = match activity_state {
-                Some(RowActivity::Settling(t)) => t,
-                _ => 1.0,
-            };
-            let scale = motion::lerp(0.25, 1.0, reveal);
-            row.child(
-                div()
-                    .id("tool-failed")
-                    .flex_none()
-                    .h(px(metrics.label_line()))
-                    .flex()
-                    .items_center()
-                    .opacity(reveal)
-                    .tooltip(crate::settings::widgets::text_tooltip("Failed"))
-                    .child(
-                        crate::icons::icon(crate::icons::CLOSE_CIRCLE)
-                            .size(crate::typography::ui_rems(14.0))
-                            .text_color(theme.danger)
-                            .with_transformation(gpui::Transformation::scale(gpui::size(
-                                scale, scale,
-                            ))),
-                    ),
-            )
-        })
         .when_some(trail, |row, trail| {
             // Trailing tile matching the group header's: a chevron for the
             // output/diff accordion, or the open-arrow for spawn chips. An
@@ -10428,9 +10764,7 @@ fn chip_header_row(
                         theme.text_faint
                     })
                     .when(activity, |caret| {
-                        caret.group_hover("tool-header", |style| {
-                            style.text_color(if failed { theme.danger } else { theme.text })
-                        })
+                        caret.group_hover("tool-header", |style| style.text_color(theme.text))
                     }),
                 ),
                 ChipTrail::OpenArrow => tile.child(
@@ -10551,15 +10885,29 @@ fn activity_rail(
     reveal: f32,
     continuation_reveal: f32,
     row_height: f32,
+    activity_state: Option<RowActivity>,
     theme: &Theme,
 ) -> gpui::Div {
     let color = theme.hairline(0.12);
-    let tint = if tool.is_error {
-        theme.danger
-    } else {
-        theme.text_muted
-    };
     let (incoming_reveal, branch_reveal) = tool_connector_parts(reveal, has_predecessor);
+    // A failed call trades its glyph for the cross, so failure reads at the
+    // tip where every row's glyph lines up, by shape as well as tone. Fresh
+    // from a run the cross scales in over the glyph it replaces.
+    let failed = tool.kind == ToolItemKind::Call && tool.is_error;
+    let settle = match activity_state {
+        Some(RowActivity::Settling(t)) if failed => t,
+        _ => 1.0,
+    };
+    let tip = |icon: &'static str, opacity: f32, scale: f32, tint: gpui::Hsla| {
+        crate::icons::icon(icon)
+            .absolute()
+            .left(px(ACTIVITY_ICON_LEFT))
+            .top(px(row_height / 2.0 - ACTIVITY_ICON_SIZE / 2.0))
+            .size(px(ACTIVITY_ICON_SIZE))
+            .opacity(branch_reveal * opacity)
+            .text_color(tint)
+            .with_transformation(gpui::Transformation::scale(gpui::size(scale, scale)))
+    };
     div()
         .relative()
         .w(px(ACTIVITY_GUTTER_WIDTH))
@@ -10606,15 +10954,22 @@ fn activity_rail(
             .absolute()
             .inset_0(),
         )
-        .child(
-            crate::icons::icon(tool_item_icon(tool))
-                .absolute()
-                .left(px(ACTIVITY_ICON_LEFT))
-                .top(px(row_height / 2.0 - ACTIVITY_ICON_SIZE / 2.0))
-                .size(px(ACTIVITY_ICON_SIZE))
-                .opacity(branch_reveal)
-                .text_color(tint),
-        )
+        .when(!failed || settle < 1.0, |rail| {
+            rail.child(tip(
+                tool_item_icon(tool),
+                1.0 - if failed { settle } else { 0.0 },
+                1.0,
+                theme.text_muted,
+            ))
+        })
+        .when(failed, |rail| {
+            rail.child(tip(
+                crate::icons::CLOSE,
+                settle,
+                motion::lerp(0.25, 1.0, settle),
+                theme.danger,
+            ))
+        })
 }
 
 /// A clockwise ribbon contour. Nonzero fill unions intersecting contours,
@@ -10674,6 +11029,7 @@ fn tool_chip(
                 connector_reveal,
                 continuation_reveal,
                 row_height,
+                activity_state,
                 theme,
             ))
         })
@@ -10687,12 +11043,7 @@ fn tool_chip(
                 .flex()
                 .items_center()
                 .overflow_hidden()
-                .when(!rail, |card| {
-                    card.rounded(px(CARD_RADIUS))
-                        .border_1()
-                        .border_color(crate::theme::hairline(0.07))
-                        .bg(crate::theme::ink(0.03))
-                })
+                .when(!rail, card_bleed)
                 .when(rail && content_reveal < 1.0, |card| {
                     card.relative()
                         .top(px(4.0 * (1.0 - content_reveal)))
@@ -10753,12 +11104,10 @@ fn subagent_chip(
                 .flex()
                 .items_center()
                 .overflow_hidden()
+                .map(|card| if rail { card } else { card_bleed(card) })
                 .rounded(px(CARD_RADIUS))
-                .border_1()
-                .border_color(crate::theme::hairline(0.07))
-                .bg(crate::theme::ink(0.03))
                 .cursor_pointer()
-                .hover(|s| s.bg(crate::theme::ink(0.05)))
+                .hover(|s| s.bg(crate::theme::ink(0.04)))
                 .on_click(on_open)
                 .child(chip_header_row(
                     tool,
@@ -12332,6 +12681,8 @@ mod tests {
             turn_start: true,
             kind: RowKind::ErrorChip {
                 message: SharedString::default(),
+                copy: SharedString::default(),
+                repeat: 1,
             },
             entry_id: entry_id.into(),
             timestamp: None,
@@ -13255,6 +13606,67 @@ mod tests {
             unreachable!();
         };
         assert_eq!(tools.len(), 2, "the error didn't split the work group");
+    }
+
+    #[test]
+    fn error_runs_fold_into_one_row_each() {
+        let error = |id: &str, message: &str| MessagePart::Error {
+            id: id.into(),
+            message: message.into(),
+        };
+        let json = r#"{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"Model not supported."}}"#;
+        let entry = assistant(
+            "a1",
+            MessageStatus::Complete,
+            vec![
+                error("r2", "Reconnecting... 2/5"),
+                error("r3", "Reconnecting... 3/5"),
+                error("r4", "Reconnecting... 4/5"),
+                text_part("t1", "carried on"),
+                error("o1", "io: Too many open files"),
+                error("o2", "io: Too many open files"),
+                error("j1", json),
+                error("l1", "Reconnecting... 2/2"),
+            ],
+        );
+        let rows = rows_for_entry(&entry, false, false, &mut parse);
+        let kinds: Vec<&RowKind> = rows.iter().map(|row| &row.kind).collect();
+        assert_eq!(kinds.len(), 5);
+        assert!(matches!(
+            kinds[0],
+            RowKind::Connection {
+                tries: 3,
+                state: ConnectionState::Recovered,
+                ..
+            }
+        ));
+        assert!(matches!(kinds[1], RowKind::Markdown { .. }));
+        assert!(matches!(kinds[2], RowKind::ErrorChip { repeat: 2, .. }));
+        let RowKind::ErrorChip { message, copy, .. } = kinds[3] else {
+            panic!("the JSON error keeps its own row");
+        };
+        assert_eq!(
+            message.as_ref(),
+            "Model not supported. (invalid_request_error, 400)"
+        );
+        assert_eq!(copy.as_ref(), json, "copy keeps the error as it arrived");
+        assert!(matches!(
+            kinds[4],
+            RowKind::Connection {
+                tries: 1,
+                state: ConnectionState::Lost,
+                ..
+            }
+        ));
+
+        // A turn cut short ends on the interrupted marker.
+        let stopped = assistant(
+            "a2",
+            MessageStatus::Aborted,
+            vec![text_part("t1", "starting")],
+        );
+        let rows = rows_for_entry(&stopped, false, false, &mut parse);
+        assert!(matches!(rows.last().unwrap().kind, RowKind::Interrupted));
     }
 
     #[test]
@@ -15181,6 +15593,8 @@ mod tests {
                     let mut row = viewport_row("prompt", "prompt");
                     row.kind = RowKind::ErrorChip {
                         message: "line\n".repeat(12).into(),
+                        copy: SharedString::default(),
+                        repeat: 1,
                     };
                     this.rows = vec![row];
                     this.list.reset(1);
@@ -15206,6 +15620,8 @@ mod tests {
                     // Simulate completion removing content from the last row.
                     this.rows[0].kind = RowKind::ErrorChip {
                         message: "done".into(),
+                        copy: SharedString::default(),
+                        repeat: 1,
                     };
                     this.list.remeasure_items(0..1);
                     cx.notify();
@@ -15225,6 +15641,8 @@ mod tests {
                 transcript.update(cx, |this, cx| {
                     this.rows[0].kind = RowKind::ErrorChip {
                         message: "line\n".repeat(100).into(),
+                        copy: SharedString::default(),
+                        repeat: 1,
                     };
                     this.list.remeasure_items(0..1);
                     cx.notify();

@@ -60,12 +60,24 @@ impl ShellTone {
         }
     }
 
+    /// The tone's color in the expanded shell block, which is code and
+    /// takes the syntax palette.
     fn color(self, theme: &Theme) -> gpui::Hsla {
         match self {
-            Self::Program => theme.text,
-            Self::Flag | Self::Prompt => theme.text_muted,
             Self::String => theme.syntax.string,
             Self::Comment => theme.syntax.comment,
+            tone => tone.header_color(theme),
+        }
+    }
+
+    /// The tone's color on a row header, which stays in the transcript's
+    /// text tones: a string or a pattern is the call's subject, so it takes
+    /// the program's full ink rather than a syntax hue.
+    fn header_color(self, theme: &Theme) -> gpui::Hsla {
+        match self {
+            Self::Program | Self::String => theme.text,
+            Self::Flag | Self::Prompt => theme.text_muted,
+            Self::Comment => theme.text_faint,
             Self::Plain => theme.text.opacity(0.85),
         }
     }
@@ -104,19 +116,19 @@ impl ShellLine {
         }
     }
 
-    /// Mono text runs; a failed call paints in the danger tint instead.
-    pub(super) fn text_runs(&self, theme: &Theme, failed: bool) -> Vec<TextRun> {
+    /// Mono text runs in their syntax tones, for the expanded shell block.
+    pub(super) fn text_runs(&self, theme: &Theme) -> Vec<TextRun> {
+        self.runs(theme, ShellTone::color)
+    }
+
+    fn runs(&self, theme: &Theme, color: fn(ShellTone, &Theme) -> gpui::Hsla) -> Vec<TextRun> {
         let font = gpui::font(theme.font_mono.clone());
         self.tones
             .iter()
             .map(|&(len, tone)| TextRun {
                 len,
                 font: font.clone(),
-                color: if failed {
-                    theme.danger
-                } else {
-                    tone.color(theme)
-                },
+                color: color(tone, theme),
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -124,8 +136,9 @@ impl ShellLine {
             .collect()
     }
 
-    pub(super) fn element(&self, theme: &Theme, failed: bool) -> StyledText {
-        StyledText::new(self.text.clone()).with_runs(self.text_runs(theme, failed))
+    /// The line on a row header, in text tones.
+    pub(super) fn element(&self, theme: &Theme) -> StyledText {
+        StyledText::new(self.text.clone()).with_runs(self.runs(theme, ShellTone::header_color))
     }
 }
 
@@ -433,7 +446,6 @@ impl ShellHeader {
     /// shrinks; the trailer always stays readable.
     pub(super) fn element(
         &self,
-        failed: bool,
         hover_text: bool,
         metrics: ToolMetrics,
         theme: &Theme,
@@ -453,7 +465,7 @@ impl ShellHeader {
                 // Code text keeps its absolute size; the row's rem size
                 // is for the UI labels around it.
                 .text_size(px(TOOL_TEXT_SIZE))
-                .child(command.element(theme, failed))
+                .child(command.element(theme))
         });
         let badge = self.badge.as_ref().map(|badge| match badge {
             HeaderBadge::Path(path) => {
@@ -468,9 +480,9 @@ impl ShellHeader {
                         crate::file_icons::FileIconIdentity::file(path)
                     }
                 };
-                path_badge(identity, failed, hover_text, None, metrics, theme)
+                path_badge(identity, hover_text, None, metrics, theme)
             }
-            HeaderBadge::Host(host) => host_badge(host, failed, hover_text, metrics, theme),
+            HeaderBadge::Host(host) => host_badge(host, hover_text, metrics, theme),
         });
         match (&self.badge, command, badge) {
             // A host leads; its page follows with no joiner.
@@ -486,16 +498,7 @@ impl ShellHeader {
                     row = row.child(command);
                 }
                 if joined {
-                    row = row.child(
-                        div()
-                            .flex_none()
-                            .text_color(if failed {
-                                theme.danger
-                            } else {
-                                theme.text_muted
-                            })
-                            .child("in"),
-                    );
+                    row = row.child(div().flex_none().text_color(theme.text_muted).child("in"));
                 }
                 if let Some(badge) = badge {
                     row = row.child(badge);

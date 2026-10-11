@@ -35,7 +35,7 @@ use crate::appshots::{self, CapturedAppshot};
 use crate::attachments::{self, StagedAttachment};
 use crate::composer_markdown::{self, in_code};
 use crate::motion;
-use crate::notice::{NoticeChipIcon, notice_chip};
+use crate::notice::notice_chip;
 use crate::pickers::Pickers;
 use crate::settings::{ComposerSendBehavior, platform_combo};
 use crate::state::{AppState, Indicator};
@@ -10859,7 +10859,6 @@ impl Render for Composer {
                         offline,
                         if offline { "Warning" } else { "Error" },
                         message,
-                        NoticeChipIcon::Plain,
                     )
                     .id("composer-failure")
                     .mx(px(4.0))
