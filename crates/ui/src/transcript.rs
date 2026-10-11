@@ -9685,7 +9685,7 @@ fn connection_row(
             },
         ),
         _ => (
-            card_tile(crate::icons::WIFI_OFF, theme),
+            card_tile(crate::icons::WIFI, theme),
             "Reconnected",
             attempts,
         ),
@@ -17013,6 +17013,35 @@ mod tests {
                 "Agent",
                 "Agent",
                 "scan repo",
+            ),
+            // Harness-native tools get a verb; the detail follows the input
+            // when the host kept it and is empty once the doc stripped it.
+            (
+                ToolCall::Unknown {
+                    name: "Skill".into(),
+                    input: Some(serde_json::json!({ "skill": "better-ui" })),
+                },
+                "Loading skill",
+                "Loaded skill",
+                "better-ui",
+            ),
+            (
+                ToolCall::Unknown {
+                    name: "Wait for agents".into(),
+                    input: None,
+                },
+                "Waiting for agents",
+                "Waited for agents",
+                "",
+            ),
+            (
+                ToolCall::Unknown {
+                    name: "ToolSearch".into(),
+                    input: None,
+                },
+                "Searching tools",
+                "Searched tools",
+                "",
             ),
         ];
         for (call, running, settled, detail) in cases {

@@ -547,12 +547,60 @@ fn tool_chip_content_raw(call: &crate::ToolCall, running: bool) -> (&'static str
         // description as the detail — "Called · Agent: scan repo" read as
         // two labels fighting. The spawn chip shows its own spinner, so the
         // noun needs no tense.
-        ToolCall::Unknown { name, .. } => match name.strip_prefix("Agent: ") {
+        ToolCall::Unknown { name, input } => match name.strip_prefix("Agent: ") {
             Some(description) => ("Agent", description.to_owned()),
             None if name == "Agent" => ("Agent", String::new()),
-            None => (verb("Calling", "Called"), name.clone()),
+            None => match named_tool_content(name, input.as_ref(), running) {
+                Some(content) => content,
+                None => (verb("Calling", "Called"), name.clone()),
+            },
         },
     }
+}
+
+/// Verbs for the harness-native tools that decode as [`ToolCall::Unknown`]
+/// but turn up in every real session (claude's Skill, ToolSearch, Monitor,
+/// image generation and the agent fan-out helpers): "Loaded skill" says what
+/// happened where "Called Skill" only named the lever. The detail is read
+/// off the input when the host kept it, and stays empty otherwise — the doc
+/// strips every non-spawn input, so the verb must carry the row on its own.
+fn named_tool_content(
+    name: &str,
+    input: Option<&serde_json::Value>,
+    running: bool,
+) -> Option<(&'static str, String)> {
+    let verb = |live: &'static str, done: &'static str| if running { live } else { done };
+    let field = |key: &str| -> String {
+        input
+            .and_then(|input| input.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let key: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    Some(match key.as_str() {
+        "skill" => (verb("Loading skill", "Loaded skill"), field("skill")),
+        "toolsearch" => (verb("Searching tools", "Searched tools"), field("query")),
+        "generateimage" => (verb("Generating image", "Generated image"), field("prompt")),
+        "monitor" => (verb("Monitoring", "Monitored"), field("command")),
+        "waitforagents" => (
+            verb("Waiting for agents", "Waited for agents"),
+            String::new(),
+        ),
+        "sendmessage" => (verb("Messaging", "Messaged"), field("to")),
+        "taskstop" => (verb("Stopping agent", "Stopped agent"), String::new()),
+        "notebookedit" => (
+            verb("Editing notebook", "Edited notebook"),
+            field("notebook_path"),
+        ),
+        "askuserquestion" => (verb("Asking", "Asked"), String::new()),
+        _ => return None,
+    })
 }
 
 /// The ToolGroup summary line — "Ran 3 commands · edited 2 files".
@@ -596,6 +644,7 @@ fn summary_segments(tools: &[(crate::ToolCall, bool)]) -> (Vec<String>, usize) {
     let mut listings = 0usize;
     let mut fetches = 0usize;
     let mut todos = 0usize;
+    let mut waits = 0usize;
     let mut other = 0usize;
     let mut failed = 0usize;
     for (call, is_error) in tools {
@@ -628,6 +677,11 @@ fn summary_segments(tools: &[(crate::ToolCall, bool)]) -> (Vec<String>, usize) {
             ToolCall::Glob { .. } => listings += 1,
             ToolCall::WebFetch { .. } => fetches += 1,
             ToolCall::Todo { .. } => todos += 1,
+            // A turn that stops to wait on its fan-out says so in the
+            // summary; "called 1 tool" hid the one thing the turn was doing.
+            ToolCall::Unknown { name, .. } if name.eq_ignore_ascii_case("wait for agents") => {
+                waits += 1
+            }
             ToolCall::Mcp { .. } | ToolCall::Unknown { .. } => other += 1,
         }
     }
@@ -655,6 +709,9 @@ fn summary_segments(tools: &[(crate::ToolCall, bool)]) -> (Vec<String>, usize) {
     }
     if other > 0 {
         segments.push(format!("called {}", plural(other, "tool", "tools")));
+    }
+    if waits > 0 {
+        segments.push("waited for agents".to_string());
     }
     if segments.is_empty() {
         segments.push(plural(tools.len(), "tool", "tools"));

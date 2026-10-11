@@ -168,6 +168,9 @@ icon_assets![
     (CHECKLIST, "checklist"),
     (WIDGET, "widget"),
     (MAGIC_STICK_3, "magic-stick-3"),
+    // wifi-off without its slash: the arcs the strike was drawn over, for
+    // the transcript's "Reconnected" row — the set only ships the off state.
+    (WIFI, "wifi"),
     (WIFI_OFF, "wifi-off"),
     (CLOSE_CIRCLE, "close-circle"),
     // Hand-drawn info glyph in the Solar Linear style (like the terminal/
