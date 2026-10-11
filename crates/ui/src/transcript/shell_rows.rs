@@ -328,6 +328,22 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
     Some(header)
 }
 
+/// The native Search and Glob tools' header, in the shell search's form:
+/// the pattern in the string tone, then "in" and the scope's badge. The same
+/// action reads the same whether the agent ran `rg` or its search tool.
+pub(super) fn pattern_header(pattern: &str, scope: Option<&str>) -> Option<ShellHeader> {
+    if pattern.trim().is_empty() {
+        return None;
+    }
+    Some(ShellHeader {
+        command: Some(ShellLine::plain(header_text(pattern), ShellTone::String)),
+        badge: scope
+            .filter(|scope| !scope.trim().is_empty())
+            .map(|scope| ExecBadge::Path(scope.to_owned())),
+        trailer: None,
+    })
+}
+
 impl ShellHeader {
     /// Height of the header's detail slot: the badge is taller than a line.
     pub(super) fn slot_height(&self, metrics: ToolMetrics) -> f32 {

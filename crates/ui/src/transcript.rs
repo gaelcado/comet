@@ -427,7 +427,8 @@ pub struct ToolItem {
     /// Precomputed for the same reason as `detail`.
     pub invocation: Option<Arc<ToolDetail>>,
     /// An Exec call's header as shell: the summarized command, tokenized
-    /// once here for the same reason as `detail`.
+    /// once here for the same reason as `detail`. Search and Glob calls take
+    /// the shell search's form (pattern, then the scope's badge).
     pub(crate) shell: Option<Arc<shell_rows::ShellHeader>>,
     /// Sidecar key of the full output (chat2-sync A3) — the doc carries only
     /// a one-line summary; expanding offers a lazy "Show full output" fetch.
@@ -1701,6 +1702,12 @@ pub fn rows_for_entry(
                     shell: match call {
                         ToolCall::Exec { command } => {
                             shell_rows::shell_header(command).map(Arc::new)
+                        }
+                        ToolCall::Search { pattern, path } => {
+                            shell_rows::pattern_header(pattern, path.as_deref()).map(Arc::new)
+                        }
+                        ToolCall::Glob { pattern } => {
+                            shell_rows::pattern_header(pattern, None).map(Arc::new)
                         }
                         _ => None,
                     },
@@ -16599,6 +16606,17 @@ mod tests {
         let header = shell_header("python - <<'EOF'\nimport os\nprint(os.sep)\nEOF").unwrap();
         assert_eq!(header.trailer, Some(ShellTrailer::Lines(2)));
         assert!(shell_header("  \n ").is_none());
+        // The native Search tool reads like `rg`: pattern, then its scope.
+        let header = shell_rows::pattern_header("fn render", Some("crates/ui/src")).unwrap();
+        assert_eq!(header.command.unwrap().text.as_ref(), "fn render");
+        assert_eq!(header.badge, Some(ExecBadge::Path("crates/ui/src".into())));
+        assert!(
+            shell_rows::pattern_header("**/*.rs", None)
+                .unwrap()
+                .badge
+                .is_none()
+        );
+        assert!(shell_rows::pattern_header(" ", None).is_none());
     }
 
     #[test]
