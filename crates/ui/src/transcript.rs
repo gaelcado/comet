@@ -1715,6 +1715,10 @@ pub fn rows_for_entry(
                             None,
                         )
                         .map(Arc::new),
+                        ToolCall::WebFetch { url, .. } => shell_rows::web_header(url).map(Arc::new),
+                        ToolCall::WebSearch { query } => {
+                            shell_rows::query_header(query).map(Arc::new)
+                        }
                         _ => None,
                     },
                     output_ref: output_ref.clone().map(SharedString::from),
@@ -9773,6 +9777,48 @@ fn path_badge(
     theme: &Theme,
 ) -> AnyElement {
     let name = file_badge_name(identity.name).to_owned();
+    let icon = crate::file_icons::icon(identity, theme.appearance)
+        .size(px(14.0))
+        .into_any_element();
+    header_badge(icon, name, failed, hover_text, open_file, metrics, theme)
+}
+
+/// The host chip a web call's header shows: the globe in the file icons'
+/// well, then the host, so a fetch reads like a file read of its site.
+fn host_badge(
+    host: &str,
+    failed: bool,
+    hover_text: bool,
+    metrics: ToolMetrics,
+    theme: &Theme,
+) -> AnyElement {
+    let icon = crate::icons::icon(crate::icons::GLOBAL)
+        .size(px(14.0))
+        .text_color(theme.text_muted)
+        .into_any_element();
+    header_badge(
+        icon,
+        host.to_owned(),
+        failed,
+        hover_text,
+        None,
+        metrics,
+        theme,
+    )
+}
+
+/// The chip behind [`path_badge`] and [`host_badge`]: an icon in its well,
+/// then a name. Concentric: the 5px corner is the well's 4px plus its 1px
+/// inset.
+fn header_badge(
+    icon: AnyElement,
+    name: String,
+    failed: bool,
+    hover_text: bool,
+    open_file: Option<(String, ToolFileOpener)>,
+    metrics: ToolMetrics,
+    theme: &Theme,
+) -> AnyElement {
     let badge = div()
         .min_w_0()
         .h(px(metrics.badge_slot()))
@@ -9798,7 +9844,7 @@ fn path_badge(
                 .justify_center()
                 .rounded(px(4.0))
                 .bg(crate::file_icons::well_bg(theme))
-                .child(crate::file_icons::icon(identity, theme.appearance).size(px(14.0))),
+                .child(icon),
         )
         .child(div().min_w_0().truncate().child(SharedString::from(name)))
         .map(|badge| {
@@ -9827,9 +9873,6 @@ fn path_badge(
     crate::frost::frosted(5.0, 16.0, badge).into_any_element()
 }
 
-/// `+N −M` after a file badge: lines added in the success tone, removed in
-/// the danger tone, in tabular figures so counts line up between rows. A side
-/// with nothing on it is left out ("+24" for a new file, not "+24 −0").
 /// What a group header shows after its summary, never truncated: the lines
 /// the group changed and how many of its calls failed. The summary says what
 /// was done; these say how much and whether it went wrong, which is what a
@@ -9895,6 +9938,9 @@ impl GroupHeaderTail {
     }
 }
 
+/// `+N −M` after a file badge: lines added in the success tone, removed in
+/// the danger tone, in tabular figures so counts line up between rows. A side
+/// with nothing on it is left out ("+24" for a new file, not "+24 −0").
 fn change_counts_label((added, removed): (u64, u64), theme: &Theme) -> AnyElement {
     div()
         .flex_none()
@@ -16598,7 +16644,7 @@ mod tests {
 
         // Exec headers read as shell: a compound list shows its first
         // command, tokenized, with the rest counted in a "+N" pill.
-        use shell_rows::{ShellTone::*, ShellTrailer, shell_header};
+        use shell_rows::{HeaderBadge, ShellTone::*, ShellTrailer, shell_header};
         use zeron_proto::shell_command::ExecBadge;
         let header = shell_header("cd repo && cargo build -p ui && cargo test").unwrap();
         let command = header.command.unwrap();
@@ -16618,7 +16664,10 @@ mod tests {
         // A one-file read is just the file badge; a script counts its body.
         let header = shell_header("cat src/main.rs").unwrap();
         assert!(header.command.is_none());
-        assert_eq!(header.badge, Some(ExecBadge::File("src/main.rs".into())));
+        assert_eq!(
+            header.badge,
+            Some(HeaderBadge::Path(ExecBadge::File("src/main.rs".into())))
+        );
         let header = shell_header("python - <<'EOF'\nimport os\nprint(os.sep)\nEOF").unwrap();
         assert_eq!(header.trailer, Some(ShellTrailer::Lines(2)));
         assert!(shell_header("  \n ").is_none());
@@ -16628,7 +16677,10 @@ mod tests {
             shell_rows::pattern_header(ExecVerb::Searched, "fn render", Some("crates/ui/src"))
                 .unwrap();
         assert_eq!(header.command.unwrap().text.as_ref(), "fn render");
-        assert_eq!(header.badge, Some(ExecBadge::Path("crates/ui/src".into())));
+        assert_eq!(
+            header.badge,
+            Some(HeaderBadge::Path(ExecBadge::Path("crates/ui/src".into())))
+        );
         assert!(
             shell_rows::pattern_header(ExecVerb::Listed, "**/*.rs", None)
                 .unwrap()
@@ -16662,6 +16714,17 @@ mod tests {
             crate::icons::DOCUMENT
         );
         assert_eq!(tool_item_icon(&item("make")), crate::icons::TERMINAL);
+        // A fetch leads with its host; the page follows, the root is left out.
+        let header = shell_rows::web_header("https://www.docs.rs/gpui?q=list").unwrap();
+        assert_eq!(header.badge, Some(HeaderBadge::Host("docs.rs".into())));
+        assert_eq!(header.command.unwrap().text.as_ref(), "/gpui?q=list");
+        assert!(
+            shell_rows::web_header("https://zeron.sh/")
+                .unwrap()
+                .command
+                .is_none()
+        );
+        assert!(shell_rows::web_header("not a url").unwrap().badge.is_none());
     }
 
     #[test]

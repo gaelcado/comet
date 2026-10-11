@@ -17,7 +17,7 @@ use zeron_syntax::{HighlightKind, HighlightSpan};
 
 use super::{
     CALL_WRAP_COLS, OUTPUT_DETAIL_MAX_LINES, TOOL_TEXT_SIZE, ToolDetail, ToolMetrics, WRAP_INDENT,
-    path_badge, single_line, wrap_ranges,
+    host_badge, path_badge, single_line, wrap_ranges,
 };
 use crate::{theme::Theme, typography::ui_rems};
 
@@ -258,6 +258,16 @@ pub(super) enum ShellTrailer {
     Lines(usize),
 }
 
+/// The badge a header shows for its subject's place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum HeaderBadge {
+    /// A file or folder, with its file-type icon.
+    Path(ExecBadge),
+    /// A web host, behind the globe. Leads the header: the host is the
+    /// fact, the page after it the detail.
+    Host(String),
+}
+
 /// What an Exec chip header shows after its verb.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ShellHeader {
@@ -268,8 +278,8 @@ pub(crate) struct ShellHeader {
     /// (a Read of one file, a listing of one folder).
     pub(super) command: Option<ShellLine>,
     /// The file or folder the command acts on, after the command (joined by
-    /// "in") or alone.
-    pub(super) badge: Option<ExecBadge>,
+    /// "in") or alone; or the host a web call reached, before its page.
+    pub(super) badge: Option<HeaderBadge>,
     pub(super) trailer: Option<ShellTrailer>,
 }
 
@@ -285,7 +295,7 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
         (ExecVerb::Read, Some(badge @ ExecBadge::File(_))) => ShellHeader {
             verb: summary.verb,
             command: None,
-            badge: Some(badge),
+            badge: Some(HeaderBadge::Path(badge)),
             trailer: None,
         },
         (ExecVerb::Listed, Some(ExecBadge::Folder(folder))) => ShellHeader {
@@ -293,13 +303,13 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
             command: (summary.subject != folder)
                 .then(|| argument(&summary.subject))
                 .flatten(),
-            badge: Some(ExecBadge::Folder(folder)),
+            badge: Some(HeaderBadge::Path(ExecBadge::Folder(folder))),
             trailer: None,
         },
         (ExecVerb::Searched, badge) => ShellHeader {
             verb: summary.verb,
             command: argument(&summary.subject),
-            badge,
+            badge: badge.map(HeaderBadge::Path),
             trailer: None,
         },
         // A script's first line is the script's language, not bash.
@@ -354,7 +364,56 @@ pub(super) fn pattern_header(
         command: Some(ShellLine::plain(header_text(pattern), ShellTone::String)),
         badge: scope
             .filter(|scope| !scope.trim().is_empty())
-            .map(|scope| ExecBadge::Path(scope.to_owned())),
+            .map(|scope| HeaderBadge::Path(ExecBadge::Path(scope.to_owned()))),
+        trailer: None,
+    })
+}
+
+/// A WebFetch header: the host as a badge, then the page it reached (path
+/// and query, in the string tone) when there is more than the root. The
+/// verb is Ran so the row keeps the call's own globe.
+pub(super) fn web_header(url: &str) -> Option<ShellHeader> {
+    let url = url.trim();
+    if url.is_empty() {
+        return None;
+    }
+    let Some(parsed) = url::Url::parse(url).ok().filter(|u| u.host_str().is_some()) else {
+        // Not a URL the parser accepts: show it as written.
+        return Some(ShellHeader {
+            verb: ExecVerb::Ran,
+            command: Some(ShellLine::plain(header_text(url), ShellTone::String)),
+            badge: None,
+            trailer: None,
+        });
+    };
+    let host = parsed
+        .host_str()
+        .unwrap_or_default()
+        .trim_start_matches("www.")
+        .to_owned();
+    let mut page = parsed.path().to_owned();
+    if let Some(query) = parsed.query() {
+        page.push('?');
+        page.push_str(query);
+    }
+    Some(ShellHeader {
+        verb: ExecVerb::Ran,
+        command: (page != "/" && !page.is_empty())
+            .then(|| ShellLine::plain(header_text(&page), ShellTone::String)),
+        badge: Some(HeaderBadge::Host(host)),
+        trailer: None,
+    })
+}
+
+/// A WebSearch header: the query in the string tone, like a search pattern.
+pub(super) fn query_header(query: &str) -> Option<ShellHeader> {
+    if query.trim().is_empty() {
+        return None;
+    }
+    Some(ShellHeader {
+        verb: ExecVerb::Ran,
+        command: Some(ShellLine::plain(header_text(query), ShellTone::String)),
+        badge: None,
         trailer: None,
     })
 }
@@ -387,44 +446,61 @@ impl ShellHeader {
             .flex_row()
             .items_center()
             .gap(px(6.0));
-        if let Some(command) = &self.command {
-            row = row.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    // Code text keeps its absolute size; the row's rem size
-                    // is for the UI labels around it.
-                    .text_size(px(TOOL_TEXT_SIZE))
-                    .child(command.element(theme, failed)),
-            );
-        }
-        if let Some(badge) = &self.badge {
-            if self.command.is_some() {
-                row = row.child(
-                    div()
-                        .flex_none()
-                        .text_color(if failed {
-                            theme.danger
-                        } else {
-                            theme.text_muted
-                        })
-                        .child("in"),
-                );
+        let command = self.command.as_ref().map(|command| {
+            div()
+                .min_w_0()
+                .truncate()
+                // Code text keeps its absolute size; the row's rem size
+                // is for the UI labels around it.
+                .text_size(px(TOOL_TEXT_SIZE))
+                .child(command.element(theme, failed))
+        });
+        let badge = self.badge.as_ref().map(|badge| match badge {
+            HeaderBadge::Path(path) => {
+                let identity = match path {
+                    ExecBadge::Folder(path) => {
+                        crate::file_icons::FileIconIdentity::directory(path, false)
+                    }
+                    ExecBadge::Path(path) if path_is_directory(path) => {
+                        crate::file_icons::FileIconIdentity::directory(path, false)
+                    }
+                    ExecBadge::File(path) | ExecBadge::Path(path) => {
+                        crate::file_icons::FileIconIdentity::file(path)
+                    }
+                };
+                path_badge(identity, failed, hover_text, None, metrics, theme)
             }
-            let identity = match badge {
-                ExecBadge::Folder(path) => {
-                    crate::file_icons::FileIconIdentity::directory(path, false)
+            HeaderBadge::Host(host) => host_badge(host, failed, hover_text, metrics, theme),
+        });
+        match (&self.badge, command, badge) {
+            // A host leads; its page follows with no joiner.
+            (Some(HeaderBadge::Host(_)), command, Some(badge)) => {
+                row = row.child(badge);
+                if let Some(command) = command {
+                    row = row.child(command);
                 }
-                ExecBadge::Path(path) if path_is_directory(path) => {
-                    crate::file_icons::FileIconIdentity::directory(path, false)
+            }
+            (_, command, badge) => {
+                let joined = command.is_some() && badge.is_some();
+                if let Some(command) = command {
+                    row = row.child(command);
                 }
-                ExecBadge::File(path) | ExecBadge::Path(path) => {
-                    crate::file_icons::FileIconIdentity::file(path)
+                if joined {
+                    row = row.child(
+                        div()
+                            .flex_none()
+                            .text_color(if failed {
+                                theme.danger
+                            } else {
+                                theme.text_muted
+                            })
+                            .child("in"),
+                    );
                 }
-            };
-            row = row.child(path_badge(
-                identity, failed, hover_text, None, metrics, theme,
-            ));
+                if let Some(badge) = badge {
+                    row = row.child(badge);
+                }
+            }
         }
         match self.trailer {
             Some(ShellTrailer::More(n)) => {
