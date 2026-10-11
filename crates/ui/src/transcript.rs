@@ -10195,16 +10195,13 @@ fn detail_body(
                 block.child(more_lines_row(*truncated_by, theme))
             })
             .into_any_element(),
-        // A thought reads as an aside: a hairline rail down its left edge,
-        // and its own air above and below.
+        // A thought reads as an aside by tone and air alone: no rail, which
+        // read as one more tree line beside the group's elbows (user report).
         ToolDetail::Thought {
             lines,
             truncated_by,
         } => body
             .py(px(8.0))
-            .pl(px(10.0))
-            .border_l_1()
-            .border_color(crate::theme::ink(0.12))
             .text_size(px(TOOL_TEXT_SIZE))
             .children(lines.iter().enumerate().map(|(line_ix, line)| {
                 let row = div()
