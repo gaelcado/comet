@@ -1703,12 +1703,18 @@ pub fn rows_for_entry(
                         ToolCall::Exec { command } => {
                             shell_rows::shell_header(command).map(Arc::new)
                         }
-                        ToolCall::Search { pattern, path } => {
-                            shell_rows::pattern_header(pattern, path.as_deref()).map(Arc::new)
-                        }
-                        ToolCall::Glob { pattern } => {
-                            shell_rows::pattern_header(pattern, None).map(Arc::new)
-                        }
+                        ToolCall::Search { pattern, path } => shell_rows::pattern_header(
+                            zeron_proto::shell_command::ExecVerb::Searched,
+                            pattern,
+                            path.as_deref(),
+                        )
+                        .map(Arc::new),
+                        ToolCall::Glob { pattern } => shell_rows::pattern_header(
+                            zeron_proto::shell_command::ExecVerb::Listed,
+                            pattern,
+                            None,
+                        )
+                        .map(Arc::new),
                         _ => None,
                     },
                     output_ref: output_ref.clone().map(SharedString::from),
@@ -9433,13 +9439,31 @@ fn input_chip(header: SharedString, resolved: bool, theme: &Theme) -> AnyElement
 
 /// A small glyph standing in for the tool's icon (zeron uses an icon set; a
 /// quiet monochrome character keeps the tile without shipping SVGs).
+/// A row's glyph names what it DID, not which tool it went through: a `cat`
+/// carries the Read tool's document and an `rg` the magnifier, so one action
+/// reads the same whether the agent reached it by shell or by tool; a patch
+/// is an edit and takes the pen.
+fn tool_item_icon(tool: &ToolItem) -> &'static str {
+    use zeron_proto::shell_command::ExecVerb;
+    match tool.kind {
+        ToolItemKind::Thought => crate::icons::CHAT_ROUND_LINE,
+        ToolItemKind::Note => crate::icons::PEN,
+        ToolItemKind::Call => match tool.shell.as_deref().map(|shell| shell.verb) {
+            Some(ExecVerb::Read) => crate::icons::DOCUMENT,
+            Some(ExecVerb::Searched) => crate::icons::MAGNIFER,
+            Some(ExecVerb::Listed) => crate::icons::FOLDER_WITH_FILES,
+            _ => tool_icon_path(&tool.call),
+        },
+    }
+}
+
 /// The glyph for a tool call (zeron tool-chip.tsx `toolIcon`, Solar set).
 fn tool_icon_path(call: &ToolCall) -> &'static str {
     match call {
         ToolCall::Exec { .. } => crate::icons::TERMINAL,
-        ToolCall::ReadFile { .. } | ToolCall::ApplyPatch { .. } => crate::icons::DOCUMENT,
+        ToolCall::ReadFile { .. } => crate::icons::DOCUMENT,
         ToolCall::WriteFile { .. } => crate::icons::DOCUMENT_ADD,
-        ToolCall::EditFile { .. } => crate::icons::PEN,
+        ToolCall::EditFile { .. } | ToolCall::ApplyPatch { .. } => crate::icons::PEN,
         ToolCall::Search { .. } => crate::icons::MAGNIFER,
         ToolCall::Glob { .. } => crate::icons::FOLDER_WITH_FILES,
         ToolCall::WebFetch { .. } | ToolCall::WebSearch { .. } => crate::icons::GLOBAL,
@@ -10016,13 +10040,9 @@ fn chip_header_row(
                     .items_center()
                     .justify_center()
                     .child(
-                        crate::icons::icon(match tool.kind {
-                            ToolItemKind::Thought => crate::icons::CHAT_ROUND_LINE,
-                            ToolItemKind::Note => crate::icons::PEN,
-                            ToolItemKind::Call => tool_icon_path(&tool.call),
-                        })
-                        .size(px(12.0))
-                        .text_color(theme.text_muted),
+                        crate::icons::icon(tool_item_icon(tool))
+                            .size(px(12.0))
+                            .text_color(theme.text_muted),
                     ),
             )
         })
@@ -10417,17 +10437,13 @@ fn activity_rail(
             .inset_0(),
         )
         .child(
-            crate::icons::icon(match tool.kind {
-                ToolItemKind::Thought => crate::icons::CHAT_ROUND_LINE,
-                ToolItemKind::Note => crate::icons::PEN,
-                ToolItemKind::Call => tool_icon_path(&tool.call),
-            })
-            .absolute()
-            .left(px(ACTIVITY_ICON_LEFT))
-            .top(px(row_height / 2.0 - ACTIVITY_ICON_SIZE / 2.0))
-            .size(px(ACTIVITY_ICON_SIZE))
-            .opacity(branch_reveal)
-            .text_color(tint),
+            crate::icons::icon(tool_item_icon(tool))
+                .absolute()
+                .left(px(ACTIVITY_ICON_LEFT))
+                .top(px(row_height / 2.0 - ACTIVITY_ICON_SIZE / 2.0))
+                .size(px(ACTIVITY_ICON_SIZE))
+                .opacity(branch_reveal)
+                .text_color(tint),
         )
 }
 
@@ -16607,16 +16623,45 @@ mod tests {
         assert_eq!(header.trailer, Some(ShellTrailer::Lines(2)));
         assert!(shell_header("  \n ").is_none());
         // The native Search tool reads like `rg`: pattern, then its scope.
-        let header = shell_rows::pattern_header("fn render", Some("crates/ui/src")).unwrap();
+        use zeron_proto::shell_command::ExecVerb;
+        let header =
+            shell_rows::pattern_header(ExecVerb::Searched, "fn render", Some("crates/ui/src"))
+                .unwrap();
         assert_eq!(header.command.unwrap().text.as_ref(), "fn render");
         assert_eq!(header.badge, Some(ExecBadge::Path("crates/ui/src".into())));
         assert!(
-            shell_rows::pattern_header("**/*.rs", None)
+            shell_rows::pattern_header(ExecVerb::Listed, "**/*.rs", None)
                 .unwrap()
                 .badge
                 .is_none()
         );
-        assert!(shell_rows::pattern_header(" ", None).is_none());
+        assert!(shell_rows::pattern_header(ExecVerb::Searched, " ", None).is_none());
+        // The icon follows the verb: a `cat` row carries the Read tool's
+        // document, not the terminal.
+        let item = |command: &str| ToolItem {
+            part_id: "fixture".into(),
+            call: ToolCall::Exec {
+                command: command.into(),
+            },
+            is_error: false,
+            resolved: true,
+            detail: None,
+            invocation: None,
+            shell: shell_header(command).map(Arc::new),
+            output_ref: None,
+            output_bytes: None,
+            diff_ref: None,
+            subagent_ref: None,
+            subagent_status: None,
+            subagent_tail: None,
+            kind: ToolItemKind::Call,
+            images: Arc::new([]),
+        };
+        assert_eq!(
+            tool_item_icon(&item("cat src/main.rs")),
+            crate::icons::DOCUMENT
+        );
+        assert_eq!(tool_item_icon(&item("make")), crate::icons::TERMINAL);
     }
 
     #[test]

@@ -261,6 +261,9 @@ pub(super) enum ShellTrailer {
 /// What an Exec chip header shows after its verb.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ShellHeader {
+    /// What the command did, so the row's icon can follow it: a `cat` row
+    /// carries the Read tool's document, an `rg` row the magnifier.
+    pub(super) verb: ExecVerb,
     /// The mono one-liner; `None` when the badge alone names the subject
     /// (a Read of one file, a listing of one folder).
     pub(super) command: Option<ShellLine>,
@@ -280,11 +283,13 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
     let argument = |text: &str| Some(ShellLine::plain(header_text(text), ShellTone::String));
     let header = match (summary.verb, summary.badge) {
         (ExecVerb::Read, Some(badge @ ExecBadge::File(_))) => ShellHeader {
+            verb: summary.verb,
             command: None,
             badge: Some(badge),
             trailer: None,
         },
         (ExecVerb::Listed, Some(ExecBadge::Folder(folder))) => ShellHeader {
+            verb: summary.verb,
             command: (summary.subject != folder)
                 .then(|| argument(&summary.subject))
                 .flatten(),
@@ -292,12 +297,14 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
             trailer: None,
         },
         (ExecVerb::Searched, badge) => ShellHeader {
+            verb: summary.verb,
             command: argument(&summary.subject),
             badge,
             trailer: None,
         },
         // A script's first line is the script's language, not bash.
         (ExecVerb::RanScript, _) => ShellHeader {
+            verb: summary.verb,
             command: Some(ShellLine::plain(
                 header_text(&summary.subject),
                 ShellTone::Plain,
@@ -309,17 +316,20 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
                 .map(ShellTrailer::Lines),
         },
         (ExecVerb::Ran | ExecVerb::Git, _) if summary.extra_segments > 0 => ShellHeader {
+            verb: summary.verb,
             command: Some(ShellLine::highlighted(header_text(&summary.subject))),
             badge: None,
             trailer: Some(ShellTrailer::More(summary.extra_segments)),
         },
         // Git reads like any other Ran row: the whole `git …` line.
         (ExecVerb::Ran | ExecVerb::Git, _) => ShellHeader {
+            verb: summary.verb,
             command: Some(ShellLine::highlighted(header_text(&summary.display))),
             badge: None,
             trailer: None,
         },
         (_, _) => ShellHeader {
+            verb: summary.verb,
             command: Some(ShellLine::highlighted(header_text(&summary.subject))),
             badge: None,
             trailer: None,
@@ -331,11 +341,16 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
 /// The native Search and Glob tools' header, in the shell search's form:
 /// the pattern in the string tone, then "in" and the scope's badge. The same
 /// action reads the same whether the agent ran `rg` or its search tool.
-pub(super) fn pattern_header(pattern: &str, scope: Option<&str>) -> Option<ShellHeader> {
+pub(super) fn pattern_header(
+    verb: ExecVerb,
+    pattern: &str,
+    scope: Option<&str>,
+) -> Option<ShellHeader> {
     if pattern.trim().is_empty() {
         return None;
     }
     Some(ShellHeader {
+        verb,
         command: Some(ShellLine::plain(header_text(pattern), ShellTone::String)),
         badge: scope
             .filter(|scope| !scope.trim().is_empty())
