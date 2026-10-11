@@ -293,6 +293,8 @@ pub(crate) struct ShellHeader {
     /// The file or folder the command acts on, after the command (joined by
     /// "in") or alone; or the host a web call reached, before its page.
     pub(super) badge: Option<HeaderBadge>,
+    /// The lines a read covered ("65–170", "first 40"), after the badge.
+    pub(super) window: Option<String>,
     pub(super) trailer: Option<ShellTrailer>,
 }
 
@@ -304,61 +306,59 @@ pub(super) fn shell_header(command: &str) -> Option<ShellHeader> {
     }
     let summary = summarize(command);
     let argument = |text: &str| Some(ShellLine::plain(header_text(text), ShellTone::String));
-    let header = match (summary.verb, summary.badge) {
-        (ExecVerb::Read, Some(badge @ ExecBadge::File(_))) => ShellHeader {
-            verb: summary.verb,
-            command: None,
-            badge: Some(HeaderBadge::Path(badge)),
-            trailer: None,
-        },
-        (ExecVerb::Listed, Some(ExecBadge::Folder(folder))) => ShellHeader {
-            verb: summary.verb,
-            command: (summary.subject != folder)
+    // Further commands after the first always show as the "+N" pill,
+    // whatever the first was; a script's line count fills the slot otherwise.
+    let trailer = if summary.extra_segments > 0 {
+        Some(ShellTrailer::More(summary.extra_segments))
+    } else if summary.verb == ExecVerb::RanScript {
+        summary
+            .script_lines
+            .filter(|&n| n > 0)
+            .map(ShellTrailer::Lines)
+    } else {
+        None
+    };
+    let (command, badge) = match (summary.verb, summary.badge) {
+        (ExecVerb::Read, Some(badge @ ExecBadge::File(_))) => {
+            (None, Some(HeaderBadge::Path(badge)))
+        }
+        (ExecVerb::Listed, Some(ExecBadge::Folder(folder))) => (
+            (summary.subject != folder)
                 .then(|| argument(&summary.subject))
                 .flatten(),
-            badge: Some(HeaderBadge::Path(ExecBadge::Folder(folder))),
-            trailer: None,
-        },
-        (ExecVerb::Searched, badge) => ShellHeader {
-            verb: summary.verb,
-            command: argument(&summary.subject),
-            badge: badge.map(HeaderBadge::Path),
-            trailer: None,
-        },
+            Some(HeaderBadge::Path(ExecBadge::Folder(folder))),
+        ),
+        (ExecVerb::Searched, badge) => (argument(&summary.subject), badge.map(HeaderBadge::Path)),
         // A script's first line is the script's language, not bash.
-        (ExecVerb::RanScript, _) => ShellHeader {
-            verb: summary.verb,
-            command: Some(ShellLine::plain(
+        (ExecVerb::RanScript, _) => (
+            Some(ShellLine::plain(
                 header_text(&summary.subject),
                 ShellTone::Plain,
             )),
-            badge: None,
-            trailer: summary
-                .script_lines
-                .filter(|&n| n > 0)
-                .map(ShellTrailer::Lines),
-        },
-        (ExecVerb::Ran | ExecVerb::Git, _) if summary.extra_segments > 0 => ShellHeader {
-            verb: summary.verb,
-            command: Some(ShellLine::highlighted(header_text(&summary.subject))),
-            badge: None,
-            trailer: Some(ShellTrailer::More(summary.extra_segments)),
-        },
-        // Git reads like any other Ran row: the whole `git …` line.
-        (ExecVerb::Ran | ExecVerb::Git, _) => ShellHeader {
-            verb: summary.verb,
-            command: Some(ShellLine::highlighted(header_text(&summary.display))),
-            badge: None,
-            trailer: None,
-        },
-        (_, _) => ShellHeader {
-            verb: summary.verb,
-            command: Some(ShellLine::highlighted(header_text(&summary.subject))),
-            badge: None,
-            trailer: None,
-        },
+            None,
+        ),
+        // A chain shows its first command and the pill; a lone Ran (or
+        // Git) row the whole line.
+        (ExecVerb::Ran | ExecVerb::Git, _) if summary.extra_segments > 0 => (
+            Some(ShellLine::highlighted(header_text(&summary.subject))),
+            None,
+        ),
+        (ExecVerb::Ran | ExecVerb::Git, _) => (
+            Some(ShellLine::highlighted(header_text(&summary.display))),
+            None,
+        ),
+        (_, _) => (
+            Some(ShellLine::highlighted(header_text(&summary.subject))),
+            None,
+        ),
     };
-    Some(header)
+    Some(ShellHeader {
+        verb: summary.verb,
+        command,
+        badge,
+        window: summary.window,
+        trailer,
+    })
 }
 
 /// The native Search and Glob tools' header, in the shell search's form:
@@ -378,6 +378,7 @@ pub(super) fn pattern_header(
         badge: scope
             .filter(|scope| !scope.trim().is_empty())
             .map(|scope| HeaderBadge::Path(ExecBadge::Path(scope.to_owned()))),
+        window: None,
         trailer: None,
     })
 }
@@ -396,6 +397,7 @@ pub(super) fn web_header(url: &str) -> Option<ShellHeader> {
             verb: ExecVerb::Ran,
             command: Some(ShellLine::plain(header_text(url), ShellTone::String)),
             badge: None,
+            window: None,
             trailer: None,
         });
     };
@@ -414,6 +416,7 @@ pub(super) fn web_header(url: &str) -> Option<ShellHeader> {
         command: (page != "/" && !page.is_empty())
             .then(|| ShellLine::plain(header_text(&page), ShellTone::String)),
         badge: Some(HeaderBadge::Host(host)),
+        window: None,
         trailer: None,
     })
 }
@@ -427,6 +430,7 @@ pub(super) fn query_header(query: &str) -> Option<ShellHeader> {
         verb: ExecVerb::Ran,
         command: Some(ShellLine::plain(header_text(query), ShellTone::String)),
         badge: None,
+        window: None,
         trailer: None,
     })
 }
@@ -504,6 +508,15 @@ impl ShellHeader {
                     row = row.child(badge);
                 }
             }
+        }
+        if let Some(window) = &self.window {
+            row = row.child(
+                div()
+                    .flex_none()
+                    .font_features(tabular.clone())
+                    .text_color(theme.text_faint)
+                    .child(SharedString::from(window.clone())),
+            );
         }
         match self.trailer {
             Some(ShellTrailer::More(n)) => {

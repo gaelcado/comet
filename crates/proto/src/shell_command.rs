@@ -84,6 +84,12 @@ pub struct ExecSummary {
     pub extra_segments: usize,
     /// Line count of the script body, for [`ExecVerb::RanScript`].
     pub script_lines: Option<usize>,
+    /// The slice of the file a [`ExecVerb::Read`] printed, as the row shows
+    /// it: "65–170" for `sed -n '65,170p'`, "first 40" for `head -n 40`,
+    /// "last 20" for `tail -n 20`. Agents read big files by window far more
+    /// often than whole, so the window is the fact that tells one read of a
+    /// file from the next.
+    pub window: Option<String>,
 }
 
 /// Summarizes `command` for display. Pure and cheap enough to run per frame.
@@ -96,6 +102,7 @@ pub fn summarize(command: &str) -> ExecSummary {
         display: trimmed.to_owned(),
         extra_segments: 0,
         script_lines: None,
+        window: None,
     };
     let Some(mut list) = parse(command) else {
         return opaque();
@@ -103,7 +110,14 @@ pub fn summarize(command: &str) -> ExecSummary {
     if list.cmds.is_empty() {
         return opaque();
     }
-    strip_noise(command, &mut list);
+    // A shell wrapping the real command (codex runs everything as
+    // `/bin/zsh -lc '…'`): the wrapper is plumbing; summarize what it wraps.
+    if let [cmd] = list.cmds.as_slice()
+        && let Some(inner) = wrapped_script(command, cmd)
+    {
+        return summarize(&inner);
+    }
+    let window = strip_noise(command, &mut list);
     let first = &list.cmds[0];
     let last = &list.cmds[list.cmds.len() - 1];
     let mut end = last.end();
@@ -111,19 +125,49 @@ pub fn summarize(command: &str) -> ExecSummary {
         end = end.max(amp);
     }
     let display = command[first.start()..end].to_owned();
-    if let [cmd] = list.cmds.as_slice()
-        && let Some(summary) = classify(command, cmd, &display)
-    {
-        return summary;
+    let first_display = command[first.start()..first.end()].to_owned();
+    // A chain reads by its first command: `sed -n '65,170p' a.rs && sed -n
+    // '1070,1130p' a.rs` is a read of a.rs with one more to it, not an
+    // opaque "Ran sed". The "+N" counts the commands after it.
+    let mut summary = match classify(command, first, &first_display) {
+        Some(summary) => summary,
+        None => ExecSummary {
+            verb: ExecVerb::Ran,
+            subject: first_display,
+            badge: None,
+            display: String::new(),
+            extra_segments: 0,
+            script_lines: None,
+            window: None,
+        },
+    };
+    summary.display = display;
+    summary.extra_segments = list.cmds.len() - 1;
+    if summary.verb == ExecVerb::Read && summary.window.is_none() {
+        summary.window = window;
     }
-    ExecSummary {
-        verb: ExecVerb::Ran,
-        subject: command[first.start()..first.end()].to_owned(),
-        badge: None,
-        extra_segments: list.cmds.len() - 1,
-        display,
-        script_lines: None,
+    summary
+}
+
+/// The script a shell wrapper runs: `sh`/`bash`/`zsh` with only flags before
+/// one script argument, one of the flags carrying `c` (`-c`, `-lc`, `-ic`).
+fn wrapped_script(src: &str, cmd: &Cmd) -> Option<String> {
+    let words: Vec<String> = cmd
+        .words
+        .iter()
+        .map(|span| unquote(&src[span.clone()]))
+        .collect();
+    let program = words[0].rsplit('/').next().unwrap_or_default();
+    if !matches!(program, "sh" | "bash" | "zsh" | "dash") || cmd.heredoc.is_some() {
+        return None;
     }
+    let (script, flags) = words[1..].split_last()?;
+    let flags_only = flags.iter().all(|f| {
+        f.strip_prefix('-')
+            .is_some_and(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_alphabetic()))
+    });
+    let runs_script = flags.iter().any(|f| f.contains('c'));
+    (flags_only && runs_script && !script.trim().is_empty()).then(|| script.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +459,10 @@ fn unquote(word: &str) -> String {
 // Noise stripping
 // ---------------------------------------------------------------------------
 
-fn strip_noise(src: &str, list: &mut List) {
+/// Strips the plumbing. Returns the line window a stripped trailing
+/// `| head -n N`, `| tail -n N` or `| sed -n 'A,Bp'` cut the output to.
+fn strip_noise(src: &str, list: &mut List) -> Option<String> {
+    let mut window = None;
     let word = |cmd: &Cmd, ix: usize| unquote(&src[cmd.words[ix].clone()]);
     // Leading `cd <dir> &&` (or `;`): the agent re-entering its own cwd.
     while list.cmds.len() > 1
@@ -431,10 +478,15 @@ fn strip_noise(src: &str, list: &mut List) {
         let last = &list.cmds[n - 1];
         let words: Vec<String> = (0..last.words.len()).map(|ix| word(last, ix)).collect();
         let joined_by = n.checked_sub(2).map(|ix| list.ops[ix]);
-        let line_limit = joined_by == Some(Op::Pipe) && is_line_limit(&words);
+        let line_limit = joined_by
+            .filter(|op| *op == Op::Pipe)
+            .and_then(|_| line_window(&words));
         let exit_echo =
             matches!(joined_by, Some(Op::Semi | Op::Newline)) && words == ["echo", "$?"];
-        if line_limit || exit_echo {
+        if line_limit.is_some() || exit_echo {
+            if window.is_none() {
+                window = line_limit;
+            }
             list.cmds.pop();
             list.ops.pop();
         } else if last.heredoc.is_none() && words.len() > 1 && words[words.len() - 1] == "2>&1" {
@@ -453,20 +505,52 @@ fn strip_noise(src: &str, list: &mut List) {
     if assignments < first.words.len() {
         first.words.drain(..assignments);
     }
+    window
 }
 
-/// `head`/`tail` that only caps the line count of a pipe.
-fn is_line_limit(words: &[String]) -> bool {
-    let count = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if !matches!(words[0].as_str(), "head" | "tail") {
-        return false;
+fn is_count(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// A `head`/`tail`/`sed -n` that only windows the lines of a pipe (no file
+/// of its own), and the window it keeps.
+fn line_window(words: &[String]) -> Option<String> {
+    match words[0].as_str() {
+        "head" | "tail" => {
+            let count = match &words[1..] {
+                [flag] => flag
+                    .strip_prefix('-')
+                    .map(|n| n.strip_prefix('n').unwrap_or(n))
+                    .filter(|n| is_count(n))?,
+                [flag, n] if flag == "-n" && is_count(n) => n,
+                _ => return None,
+            };
+            Some(head_tail_window(&words[0], count))
+        }
+        "sed" => match &words[1..] {
+            [flag, script] if flag == "-n" => sed_window(script),
+            _ => None,
+        },
+        _ => None,
     }
-    match &words[1..] {
-        [flag] => flag
-            .strip_prefix('-')
-            .is_some_and(|n| count(n) || n.strip_prefix('n').is_some_and(count)),
-        [flag, n] => flag == "-n" && count(n),
-        _ => false,
+}
+
+fn head_tail_window(program: &str, count: &str) -> String {
+    if program == "head" {
+        format!("first {count}")
+    } else {
+        format!("last {count}")
+    }
+}
+
+/// The window of a print-only sed script: `A,Bp` → "A–B", `Np` → "N".
+/// `None` for any other script (a substitution, `$`, several commands).
+fn sed_window(script: &str) -> Option<String> {
+    let range = script.strip_suffix('p')?;
+    match range.split_once(',') {
+        Some((a, b)) if is_count(a) && is_count(b) => Some(format!("{a}–{b}")),
+        None if is_count(range) => Some(range.to_owned()),
+        _ => None,
     }
 }
 
@@ -572,6 +656,7 @@ fn classify(src: &str, cmd: &Cmd, display: &str) -> Option<ExecSummary> {
         display: display.to_owned(),
         extra_segments: 0,
         script_lines: None,
+        window: None,
     };
     // The raw text from word `ix` to the end, quotes as written.
     let tail_from = |ix: usize| src[cmd.words[ix].start..cmd.end()].trim().to_owned();
@@ -609,7 +694,6 @@ fn classify(src: &str, cmd: &Cmd, display: &str) -> Option<ExecSummary> {
         p if p.starts_with("python") => &["-c"],
         "node" | "deno" => &["-e", "--eval", "-p", "--print"],
         "ruby" | "perl" => &["-e", "-E"],
-        "bash" | "sh" | "zsh" => &["-c"],
         _ => &[],
     };
     if let Some(ix) = rest.iter().position(|w| inline_flag.contains(&w.as_str()))
@@ -633,6 +717,21 @@ fn classify(src: &str, cmd: &Cmd, display: &str) -> Option<ExecSummary> {
                 return None;
             }
             let mut files = parsed.operands.as_slice();
+            let mut window = None;
+            if matches!(program, "head" | "tail") {
+                let count = parsed
+                    .value_of(&["-n", "--lines"])
+                    .first()
+                    .map(|n| (*n).to_owned())
+                    .or_else(|| {
+                        rest.iter()
+                            .find_map(|w| w.strip_prefix('-').filter(|n| is_count(n)))
+                            .map(str::to_owned)
+                    });
+                window = count
+                    .filter(|n| is_count(n))
+                    .map(|n| head_tail_window(program, &n));
+            }
             if program == "sed" {
                 if !parsed.has(&["-n", "--quiet", "--silent"]) || parsed.has(&["-i", "--in-place"])
                 {
@@ -655,16 +754,20 @@ fn classify(src: &str, cmd: &Cmd, display: &str) -> Option<ExecSummary> {
                 if !prints_only {
                     return None;
                 }
+                window = sed_window(script);
             }
             let [file] = files else { return None };
             if file == "-" {
                 return None;
             }
-            Some(summary(
-                ExecVerb::Read,
-                file.clone(),
-                Some(ExecBadge::File(file.clone())),
-            ))
+            Some(ExecSummary {
+                window,
+                ..summary(
+                    ExecVerb::Read,
+                    file.clone(),
+                    Some(ExecBadge::File(file.clone())),
+                )
+            })
         }
         "rg" | "grep" | "egrep" | "fgrep" => {
             let parsed = args(
@@ -799,16 +902,27 @@ fn test_summary(display: &str, target: Option<String>) -> ExecSummary {
         display: display.to_owned(),
         extra_segments: 0,
         script_lines: None,
+        window: None,
     }
 }
 
-/// An inline or heredoc script: its first line that is neither blank nor a
-/// comment names it.
+/// An inline or heredoc script: its first line that is neither blank, a
+/// comment nor an import names it — a script that opens `import json, sys`
+/// is named by what it does with them.
 fn script(body: &str, display: &str, badge: Option<ExecBadge>) -> ExecSummary {
-    let subject = body
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))
+    let meaningful = |line: &&str| !line.is_empty() && !line.starts_with('#');
+    let is_import = |line: &&str| {
+        line.starts_with("import ")
+            || (line.starts_with("from ") && line.contains(" import "))
+            || line.starts_with("use ")
+            || line.starts_with("require(")
+    };
+    let mut lines = body.lines().map(str::trim);
+    let subject = lines
+        .clone()
+        .filter(meaningful)
+        .find(|line| !is_import(line))
+        .or_else(|| lines.find(meaningful))
         .unwrap_or(display)
         .to_owned();
     ExecSummary {
@@ -818,6 +932,7 @@ fn script(body: &str, display: &str, badge: Option<ExecBadge>) -> ExecSummary {
         display: display.to_owned(),
         extra_segments: 0,
         script_lines: Some(body.lines().count()),
+        window: None,
     }
 }
 
@@ -830,7 +945,7 @@ mod tests {
         use ExecBadge::{File, Folder, Path};
         use ExecVerb::*;
         let path = |p: &str| Some(Path(p.into()));
-        // (command, verb, subject, badge, display, extra segments, script lines)
+        // (command, verb, subject, badge, display, extra segments, script lines, window)
         type Case = (
             &'static str,
             ExecVerb,
@@ -839,39 +954,50 @@ mod tests {
             &'static str,
             usize,
             Option<usize>,
+            Option<&'static str>,
         );
         #[rustfmt::skip]
         let cases: &[Case] = &[
-            ("make", Ran, "make", None, "make", 0, None),
-            ("cd /repo && make build", Ran, "make build", None, "make build", 0, None),
-            ("make 2>&1", Ran, "make", None, "make", 0, None),
-            ("cd crates/ui && rg -n 'fn render' src 2>&1 | head -n 40", Searched, "fn render", path("src"), "rg -n 'fn render' src", 0, None),
-            ("cargo build 2>&1 | tail -20", Ran, "cargo build", None, "cargo build", 0, None),
-            ("make check; echo $?", Ran, "make check", None, "make check", 0, None),
-            ("RUST_LOG=debug FOO=1 cargo run", Ran, "cargo run", None, "cargo run", 0, None),
-            ("cat src/main.rs", Read, "src/main.rs", Some(File("src/main.rs".into())), "cat src/main.rs", 0, None),
-            ("sed -n '1,40p' crates/proto/src/view.rs", Read, "crates/proto/src/view.rs", Some(File("crates/proto/src/view.rs".into())), "sed -n '1,40p' crates/proto/src/view.rs", 0, None),
-            ("sed -i 's/a/b/' file.rs", Ran, "sed -i 's/a/b/' file.rs", None, "sed -i 's/a/b/' file.rs", 0, None),
-            ("grep -rn \"TODO\" .", Searched, "TODO", path("."), "grep -rn \"TODO\" .", 0, None),
-            ("rg -A 3 -e needle", Searched, "needle", None, "rg -A 3 -e needle", 0, None),
-            ("ls -la crates", Listed, "crates", Some(Folder("crates".into())), "ls -la crates", 0, None),
-            ("find . -name '*.rs' -type f", Listed, "*.rs", Some(Folder(".".into())), "find . -name '*.rs' -type f", 0, None),
-            ("find . -name '*.tmp' -delete", Ran, "find . -name '*.tmp' -delete", None, "find . -name '*.tmp' -delete", 0, None),
-            ("cargo test -p zeron-proto -- --nocapture", Tested, "zeron-proto", None, "cargo test -p zeron-proto -- --nocapture", 0, None),
-            ("pytest tests/test_x.py -q", Tested, "tests/test_x.py -q", None, "pytest tests/test_x.py -q", 0, None),
-            ("npm test", Tested, "npm test", None, "npm test", 0, None),
-            ("go test ./...", Tested, "./...", None, "go test ./...", 0, None),
-            ("git status --short", Git, "status --short", None, "git status --short", 0, None),
-            ("git -C repo commit -m 'a && b | c'", Git, "commit -m 'a && b | c'", None, "git -C repo commit -m 'a && b | c'", 0, None),
-            ("python3 - <<'EOF'\n# probe\nimport sys\nprint(sys.version)\nEOF", RanScript, "import sys", None, "python3 - <<'EOF'\n# probe\nimport sys\nprint(sys.version)\nEOF", 0, Some(3)),
-            ("cat <<EOF > notes.md\nhello\nEOF", RanScript, "hello", Some(File("notes.md".into())), "cat <<EOF > notes.md\nhello\nEOF", 0, Some(1)),
-            ("node -e 'console.log(1)'", RanScript, "console.log(1)", None, "node -e 'console.log(1)'", 0, Some(1)),
-            ("cd x && make && make test && ./run", Ran, "make", None, "make && make test && ./run", 2, None),
-            ("echo 'a | b && c' | wc -l", Ran, "echo 'a | b && c'", None, "echo 'a | b && c' | wc -l", 1, None),
-            ("for f in *.rs; do wc -l $f; done", Ran, "for f in *.rs; do wc -l $f; done", None, "for f in *.rs; do wc -l $f; done", 0, None),
-            ("echo \"unterminated", Ran, "echo \"unterminated", None, "echo \"unterminated", 0, None),
+            ("make", Ran, "make", None, "make", 0, None, None),
+            ("cd /repo && make build", Ran, "make build", None, "make build", 0, None, None),
+            ("make 2>&1", Ran, "make", None, "make", 0, None, None),
+            ("cd crates/ui && rg -n 'fn render' src 2>&1 | head -n 40", Searched, "fn render", path("src"), "rg -n 'fn render' src", 0, None, None),
+            ("cargo build 2>&1 | tail -20", Ran, "cargo build", None, "cargo build", 0, None, None),
+            ("make check; echo $?", Ran, "make check", None, "make check", 0, None, None),
+            ("RUST_LOG=debug FOO=1 cargo run", Ran, "cargo run", None, "cargo run", 0, None, None),
+            ("cat src/main.rs", Read, "src/main.rs", Some(File("src/main.rs".into())), "cat src/main.rs", 0, None, None),
+            ("sed -n '1,40p' crates/proto/src/view.rs", Read, "crates/proto/src/view.rs", Some(File("crates/proto/src/view.rs".into())), "sed -n '1,40p' crates/proto/src/view.rs", 0, None,Some("1–40")),
+            ("sed -i 's/a/b/' file.rs", Ran, "sed -i 's/a/b/' file.rs", None, "sed -i 's/a/b/' file.rs", 0, None, None),
+            ("grep -rn \"TODO\" .", Searched, "TODO", path("."), "grep -rn \"TODO\" .", 0, None, None),
+            ("rg -A 3 -e needle", Searched, "needle", None, "rg -A 3 -e needle", 0, None, None),
+            ("ls -la crates", Listed, "crates", Some(Folder("crates".into())), "ls -la crates", 0, None, None),
+            ("find . -name '*.rs' -type f", Listed, "*.rs", Some(Folder(".".into())), "find . -name '*.rs' -type f", 0, None, None),
+            ("find . -name '*.tmp' -delete", Ran, "find . -name '*.tmp' -delete", None, "find . -name '*.tmp' -delete", 0, None, None),
+            ("cargo test -p zeron-proto -- --nocapture", Tested, "zeron-proto", None, "cargo test -p zeron-proto -- --nocapture", 0, None, None),
+            ("pytest tests/test_x.py -q", Tested, "tests/test_x.py -q", None, "pytest tests/test_x.py -q", 0, None, None),
+            ("npm test", Tested, "npm test", None, "npm test", 0, None, None),
+            ("go test ./...", Tested, "./...", None, "go test ./...", 0, None, None),
+            ("git status --short", Git, "status --short", None, "git status --short", 0, None, None),
+            ("git -C repo commit -m 'a && b | c'", Git, "commit -m 'a && b | c'", None, "git -C repo commit -m 'a && b | c'", 0, None, None),
+            ("python3 - <<'EOF'\n# probe\nimport sys\nprint(sys.version)\nEOF", RanScript, "print(sys.version)", None, "python3 - <<'EOF'\n# probe\nimport sys\nprint(sys.version)\nEOF", 0, Some(3), None),
+            ("cat <<EOF > notes.md\nhello\nEOF", RanScript, "hello", Some(File("notes.md".into())), "cat <<EOF > notes.md\nhello\nEOF", 0, Some(1), None),
+            ("node -e 'console.log(1)'", RanScript, "console.log(1)", None, "node -e 'console.log(1)'", 0, Some(1), None),
+            ("cd x && make && make test && ./run", Ran, "make", None, "make && make test && ./run", 2, None, None),
+            ("echo 'a | b && c' | wc -l", Ran, "echo 'a | b && c'", None, "echo 'a | b && c' | wc -l", 1, None, None),
+            ("for f in *.rs; do wc -l $f; done", Ran, "for f in *.rs; do wc -l $f; done", None, "for f in *.rs; do wc -l $f; done", 0, None, None),
+            ("echo \"unterminated", Ran, "echo \"unterminated", None, "echo \"unterminated", 0, None, None),
+            ("sed -n 65,170p a.rs && sed -n '1070,1130p' a.rs", Read, "a.rs", Some(File("a.rs".into())), "sed -n 65,170p a.rs && sed -n '1070,1130p' a.rs", 1, None, Some("65–170")),
+            ("nl -ba src/lib.rs | sed -n '1,300p'", Read, "src/lib.rs", Some(File("src/lib.rs".into())), "nl -ba src/lib.rs", 0, None, Some("1–300")),
+            ("head -n 40 README.md", Read, "README.md", Some(File("README.md".into())), "head -n 40 README.md", 0, None, Some("first 40")),
+            ("tail -20 build.log", Read, "build.log", Some(File("build.log".into())), "tail -20 build.log", 0, None, Some("last 20")),
+            ("grep -n \"pub struct Theme\" -A40 crates/ui/src/theme.rs | grep -n \"pub\" | head -50", Searched, "pub struct Theme", path("crates/ui/src/theme.rs"), "grep -n \"pub struct Theme\" -A40 crates/ui/src/theme.rs | grep -n \"pub\"", 1, None, None),
+            ("/bin/zsh -lc 'git diff --stat'", Git, "diff --stat", None, "git diff --stat", 0, None, None),
+            ("/bin/zsh -lc \"nl -ba crates/x/src/lib.rs | sed -n '1,300p'\"", Read, "crates/x/src/lib.rs", Some(File("crates/x/src/lib.rs".into())), "nl -ba crates/x/src/lib.rs", 0, None, Some("1–300")),
+            ("bash -c 'make && make test'", Ran, "make", None, "make && make test", 1, None, None),
+            ("python3 - <<'EOF'\nimport json, sys\nfor line in sys.stdin:\n    print(json.loads(line))\nEOF", RanScript, "for line in sys.stdin:", None, "python3 - <<'EOF'\nimport json, sys\nfor line in sys.stdin:\n    print(json.loads(line))\nEOF", 0, Some(3), None),
         ];
-        for (command, verb, subject, badge, display, extra_segments, script_lines) in cases {
+        for (command, verb, subject, badge, display, extra_segments, script_lines, window) in cases
+        {
             let summary = summarize(command);
             assert_eq!(
                 summary,
@@ -882,6 +1008,7 @@ mod tests {
                     display: display.to_string(),
                     extra_segments: *extra_segments,
                     script_lines: *script_lines,
+                    window: window.map(str::to_owned),
                 },
                 "{command}"
             );
