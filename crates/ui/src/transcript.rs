@@ -2385,6 +2385,38 @@ fn tool_running(tool: &ToolItem) -> bool {
     }
 }
 
+/// An ordinary call still running under a live session: its row carries the
+/// working spinner in the trailing slot, and the elapsed time once this view
+/// has watched it run for a second. Dead runs leave their last call
+/// unresolved in the doc forever, so liveness gates the spinner the way it
+/// gates the working trailer — the verb alone says "Running" there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RowActivity {
+    elapsed_secs: Option<i64>,
+}
+
+/// The row's elapsed label starts here: "0s" says nothing a spinner does not.
+const ROW_ELAPSED_FROM_SECS: i64 = 1;
+
+fn row_activity(
+    tool: &ToolItem,
+    live: bool,
+    since: Option<Instant>,
+    now: Instant,
+) -> Option<RowActivity> {
+    if !live || tool.resolved || tool.kind != ToolItemKind::Call || is_agent_tool(tool) {
+        return None;
+    }
+    let elapsed_secs = since
+        .map(|since| {
+            now.checked_duration_since(since)
+                .unwrap_or_default()
+                .as_secs() as i64
+        })
+        .filter(|secs| *secs >= ROW_ELAPSED_FROM_SECS);
+    Some(RowActivity { elapsed_secs })
+}
+
 /// Analytic expanded-chips height — no measurement needed for the fold tween.
 pub fn chips_height(count: usize, metrics: ToolMetrics) -> f32 {
     if count == 0 {
@@ -2900,6 +2932,10 @@ struct ToolGroupReveal {
     /// reveal as its steps. Replayed headers leave this unset.
     header_started_at: Option<Instant>,
     starts: Vec<Option<Instant>>,
+    /// When this view saw each unresolved call begin, for the row's elapsed
+    /// label. A call already running when the transcript attached has no
+    /// honest start, so it stays `None` and the row shows the spinner alone.
+    running_since: Vec<Option<Instant>>,
     /// A title sweep begins with this group instead of inheriting the shared
     /// loader clock at an arbitrary point midway across the label.
     shimmer_started_at: Option<Instant>,
@@ -5174,7 +5210,11 @@ impl Transcript {
                 fold.disclosure_at = None;
             }
         }
-        let previous_tools: HashMap<SharedString, HashMap<String, Option<Instant>>> = self
+        // Per row: (reveal start, running-since) carried over by part id.
+        let previous_tools: HashMap<
+            SharedString,
+            HashMap<String, (Option<Instant>, Option<Instant>)>,
+        > = self
             .rows
             .iter()
             .filter(|row| !fully_historical.contains(&row.entry_id))
@@ -5189,7 +5229,12 @@ impl Transcript {
                             .map(|(ix, tool)| {
                                 (
                                     tool.part_id.clone(),
-                                    reveal.and_then(|r| r.starts.get(ix).copied().flatten()),
+                                    (
+                                        reveal.and_then(|r| r.starts.get(ix).copied().flatten()),
+                                        reveal.and_then(|r| {
+                                            r.running_since.get(ix).copied().flatten()
+                                        }),
+                                    ),
                                 )
                             })
                             .collect(),
@@ -5243,15 +5288,30 @@ impl Transcript {
             if whole_group_historical {
                 reveal.starts.clear();
                 reveal.starts.resize(tools.len(), None);
+                reveal.running_since = vec![None; tools.len()];
                 continue;
             }
+            // An unresolved call keeps the instant this view first saw it;
+            // resolution (or a historical origin) drops it.
+            reveal.running_since = tools
+                .iter()
+                .map(|tool| {
+                    if tool.resolved || is_historical(tool) {
+                        return None;
+                    }
+                    previous
+                        .and_then(|tools| tools.get(&tool.part_id))
+                        .and_then(|(_, since)| *since)
+                        .or(Some(now))
+                })
+                .collect();
             reveal.starts = tools
                 .iter()
                 .map(|tool| {
                     if is_historical(tool) {
                         return None;
                     }
-                    if let Some(start) = previous.and_then(|tools| tools.get(&tool.part_id)) {
+                    if let Some((start, _)) = previous.and_then(|tools| tools.get(&tool.part_id)) {
                         return *start;
                     }
                     let start = now
@@ -7264,6 +7324,29 @@ impl Transcript {
         }
     }
 
+    /// Whether this transcript's session is still producing: the same test
+    /// the working trailer applies. A subagent doc is live while its sink
+    /// entry streams; a chat while its indicator reads Working. Rows gate
+    /// their running affordances on it so a dead run cannot spin forever.
+    fn session_live(&self, cx: &gpui::App) -> bool {
+        if let Some(doc_id) = &self.doc_override {
+            return self.doc_live
+                && self
+                    .state
+                    .read(cx)
+                    .sub_transcript(doc_id)
+                    .last()
+                    .is_some_and(|last| last.status == Some(MessageStatus::Streaming));
+        }
+        let Some(chat_id) = &self.chat_id else {
+            return false;
+        };
+        self.state
+            .read(cx)
+            .indicator_for(chat_id, chrono::Utc::now())
+            == crate::state::Indicator::Working
+    }
+
     fn render_working_trailer(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let now = chrono::Utc::now();
         // `turn` (the turn's start, ms) keys the rolling word and timer, so a
@@ -8345,6 +8428,20 @@ impl Transcript {
             .collect();
         let reduce_motion = cx.reduce_motion();
         let now = Instant::now();
+        let live = self.session_live(cx);
+        let activities: Vec<Option<RowActivity>> = tools
+            .iter()
+            .enumerate()
+            .map(|(ix, tool)| {
+                let since = self
+                    .tool_group_reveals
+                    .get(row_id)
+                    .and_then(|reveal| reveal.running_since.get(ix))
+                    .copied()
+                    .flatten();
+                row_activity(tool, live, since, now)
+            })
+            .collect();
         let reveal_progress: Vec<f32> = (0..tools.len())
             .map(|ix| {
                 let start = self
@@ -8562,6 +8659,7 @@ impl Transcript {
                             connector_reveal,
                             continuation_reveal,
                             file_opener.as_ref(),
+                            activities[ix],
                             theme,
                             cx.entity_id(),
                             cx,
@@ -8623,6 +8721,7 @@ impl Transcript {
                                 tool,
                                 open,
                                 file_opener.as_ref(),
+                                activities[ix],
                                 theme,
                                 cx.entity_id(),
                                 cx,
@@ -9762,6 +9861,7 @@ fn chip_header_row(
     tool: &ToolItem,
     trail: Option<ChipTrail>,
     file_opener: Option<&ToolFileOpener>,
+    activity_state: Option<RowActivity>,
     theme: &Theme,
     view: gpui::EntityId,
     cx: &mut gpui::App,
@@ -9960,6 +10060,42 @@ fn chip_header_row(
                 cx,
             )))
         })
+        .when_some(activity_state, |row, state| {
+            // An ordinary running call: the same spinner, with the elapsed
+            // time before it in the model label's bare faint style. Tabular
+            // figures keep the spinner still as the seconds roll.
+            row.when_some(state.elapsed_secs, |row, secs| {
+                row.child(
+                    div()
+                        .id("tool-running-elapsed")
+                        .debug_selector(|| "tool-running-elapsed".into())
+                        .flex_none()
+                        .h(px(metrics.label_line()))
+                        .flex()
+                        .items_center()
+                        .text_size(crate::typography::ui_rems(11.0))
+                        .font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
+                            "tnum".into(),
+                            1,
+                        )])))
+                        .text_color(theme.text_faint)
+                        .child(SharedString::from(format_elapsed(secs))),
+                )
+            })
+            .child(
+                div()
+                    .id("tool-running")
+                    .debug_selector(|| "tool-running".into())
+                    .flex_none()
+                    .child(crate::loaders::mini_glyph_spinner(
+                        format!("tool-running-{}", tool.part_id),
+                        2.0,
+                        theme.glyph,
+                        view,
+                        cx,
+                    )),
+            )
+        })
         .when(failed, |row| {
             // Failure is not carried by the danger tint alone: a static glyph
             // in the trailing slot (clear of the verb's left edge) names it
@@ -10035,6 +10171,7 @@ fn chip_header(
     tool: &ToolItem,
     open: bool,
     file_opener: Option<&ToolFileOpener>,
+    activity_state: Option<RowActivity>,
     theme: &Theme,
     view: gpui::EntityId,
     cx: &mut gpui::App,
@@ -10043,6 +10180,7 @@ fn chip_header(
         tool,
         Some(ChipTrail::Chevron { open }),
         file_opener,
+        activity_state,
         theme,
         view,
         cx,
@@ -10239,6 +10377,7 @@ fn tool_chip(
     connector_reveal: f32,
     continuation_reveal: f32,
     file_opener: Option<&ToolFileOpener>,
+    activity_state: Option<RowActivity>,
     theme: &Theme,
     view: gpui::EntityId,
     cx: &mut gpui::App,
@@ -10287,7 +10426,15 @@ fn tool_chip(
                         .top(px(4.0 * (1.0 - content_reveal)))
                         .opacity(content_reveal)
                 })
-                .child(chip_header_row(tool, None, file_opener, theme, view, cx)),
+                .child(chip_header_row(
+                    tool,
+                    None,
+                    file_opener,
+                    activity_state,
+                    theme,
+                    view,
+                    cx,
+                )),
         )
         .into_any_element()
 }
@@ -10344,6 +10491,7 @@ fn subagent_chip(
                 .child(chip_header_row(
                     tool,
                     Some(ChipTrail::OpenArrow),
+                    None,
                     None,
                     theme,
                     view,
@@ -11161,6 +11309,112 @@ mod tests {
             );
             assert!(tail.starts[1].is_some(), "new live tool must still animate");
         });
+    }
+
+    #[gpui::test]
+    fn running_rows_spin_and_count_only_under_a_live_session(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, transcript) = cx.update(|cx| {
+            gpui_base::init(cx);
+            cx.set_global(Theme::dark());
+            crate::settings::init(crate::settings::UiSettings::default(), dir.path(), cx);
+            let state = cx.new(|_| AppState::new());
+            let transcript = cx.new(|cx| Transcript::new(state.clone(), cx));
+            (state, transcript)
+        });
+        struct Host(Entity<Transcript>);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(self.0.clone())
+            }
+        }
+        let (_host, window) = cx.add_window_view(|_, _| Host(transcript.clone()));
+        let unresolved = {
+            let mut part = tool_part("t1", "cargo test");
+            if let MessagePart::Tool { resolved, .. } = &mut part {
+                *resolved = false;
+            }
+            part
+        };
+        let prompt = {
+            let mut entry = assistant(
+                "prompt",
+                MessageStatus::Complete,
+                vec![text_part("text", "Run the tests.")],
+            );
+            entry.role = MessageRole::User;
+            entry
+        };
+        let feed = |entries: Vec<SessionMessageEntry>, cx: &mut gpui::App| {
+            state.update(cx, |state, _| {
+                state.selected_chat = Some("chat".into());
+                state.transcript_replayed = true;
+                state.transcript = entries;
+                state.transcript_revision += 1;
+            });
+            transcript.update(cx, |this, cx| this.sync(cx));
+        };
+        let turn = |part: MessagePart| {
+            vec![
+                prompt.clone(),
+                assistant("reply", MessageStatus::Streaming, vec![part]),
+            ]
+        };
+        let draw = |window: &mut gpui::VisualTestContext| {
+            for _ in 0..2 {
+                window.update(|window, cx| window.draw(cx).clear());
+            }
+        };
+
+        // Attach on the prompt alone, so the call below ARRIVES rather than
+        // being history this view never saw start.
+        window.update(|_, cx| feed(vec![prompt.clone()], cx));
+        draw(window);
+        // The doc streams, but no session is Working: a dead run's last call
+        // stays unresolved and must not spin.
+        window.update(|_, cx| feed(turn(unresolved.clone()), cx));
+        draw(window);
+        assert!(
+            window.debug_bounds("tool-running").is_none(),
+            "an unresolved call under a dead session shows no spinner"
+        );
+
+        window.update(|_, cx| {
+            state.update(cx, |state, _| {
+                state.sessions.push(zeron_proto::Session {
+                    last_completed_turn: None,
+                    running_subagents: 0,
+                    chat_id: "chat".into(),
+                    device_id: "test".into(),
+                    status: zeron_proto::SessionStatus::Working,
+                    started_at: Some(chrono::Utc::now()),
+                    updated_at: chrono::Utc::now(),
+                })
+            })
+        });
+        draw(window);
+        assert!(
+            window.debug_bounds("tool-running").is_some(),
+            "a live unresolved call spins"
+        );
+        assert!(
+            window.debug_bounds("tool-running-elapsed").is_none(),
+            "the elapsed label waits out the first second"
+        );
+        std::thread::sleep(Duration::from_millis(1100));
+        draw(window);
+        assert!(
+            window.debug_bounds("tool-running-elapsed").is_some(),
+            "a call running past a second shows its elapsed time"
+        );
+
+        window.update(|_, cx| feed(turn(tool_part("t1", "cargo test")), cx));
+        draw(window);
+        assert!(
+            window.debug_bounds("tool-running").is_none()
+                && window.debug_bounds("tool-running-elapsed").is_none(),
+            "resolution clears the spinner and the label"
+        );
     }
 
     #[gpui::test]
@@ -16139,6 +16393,7 @@ mod tests {
                             &self.tool,
                             false,
                             Some(&self.opener),
+                            None,
                             &theme,
                             cx.entity_id(),
                             cx,
