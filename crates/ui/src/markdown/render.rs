@@ -29,6 +29,11 @@ use super::veil::{RowVeil, apply_veil, slice_spans};
 
 /// Gap between markdown blocks inside one message (zeron mdBlockGap).
 pub const MD_BLOCK_GAP: f32 = 12.0;
+/// A list marker's column and the gap to its item: a 5px disc or a two-digit
+/// number, then one word-space of air — any more and the bullet floats free
+/// of the line it marks.
+const LIST_MARKER_WIDTH: f32 = 14.0;
+const LIST_MARKER_GAP: f32 = 6.0;
 /// Body text size / line height (zeron: 14px / 22px).
 pub const MD_TEXT_SIZE: f32 = 14.0;
 pub const MD_LINE_HEIGHT: f32 = 22.0;
@@ -645,7 +650,7 @@ pub fn render_block(
                     };
                     div()
                         .flex_none()
-                        .min_w(px(18.0))
+                        .min_w(px(LIST_MARKER_WIDTH))
                         .h(px(MD_LINE_HEIGHT))
                         .flex()
                         .items_center()
@@ -698,7 +703,7 @@ pub fn render_block(
                     match ordered_start {
                         Some(start) => div()
                             .flex_none()
-                            .min_w(px(18.0))
+                            .min_w(px(LIST_MARKER_WIDTH))
                             .text_size(crate::typography::ui_rems(MD_TEXT_SIZE))
                             .line_height(crate::typography::ui_rems(MD_LINE_HEIGHT))
                             .text_color(theme.accent)
@@ -706,7 +711,7 @@ pub fn render_block(
                             .into_any_element(),
                         None => div()
                             .flex_none()
-                            .min_w(px(18.0))
+                            .min_w(px(LIST_MARKER_WIDTH))
                             // Center the disc on the first text line's cap band.
                             .h(px(MD_LINE_HEIGHT))
                             .flex()
@@ -722,37 +727,42 @@ pub fn render_block(
                             .into_any_element(),
                     }
                 };
-                div().flex().flex_row().gap(px(8.0)).child(marker).child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .children(item.iter().enumerate().map(|(ci, child)| {
-                            let task_body;
-                            let child = if ci == 0 && task.is_some() {
-                                let Block::Paragraph { runs } = child else {
-                                    unreachable!()
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(LIST_MARKER_GAP))
+                    .child(marker)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .children(item.iter().enumerate().map(|(ci, child)| {
+                                let task_body;
+                                let child = if ci == 0 && task.is_some() {
+                                    let Block::Paragraph { runs } = child else {
+                                        unreachable!()
+                                    };
+                                    task_body = Block::Paragraph {
+                                        runs: runs.iter().skip(1).cloned().collect(),
+                                    };
+                                    &task_body
+                                } else {
+                                    child
                                 };
-                                task_body = Block::Paragraph {
-                                    runs: runs.iter().skip(1).cloned().collect(),
-                                };
-                                &task_body
-                            } else {
-                                child
-                            };
-                            render_block(
-                                child,
-                                top_ix,
-                                list_child_ix(ix, item_ix, ci),
-                                opts,
-                                theme,
-                                window,
-                                None,
-                            )
-                        })),
-                )
+                                render_block(
+                                    child,
+                                    top_ix,
+                                    list_child_ix(ix, item_ix, ci),
+                                    opts,
+                                    theme,
+                                    window,
+                                    None,
+                                )
+                            })),
+                    )
             }))
             .into_any_element(),
         Block::Table {

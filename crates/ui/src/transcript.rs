@@ -2366,11 +2366,29 @@ pub fn top_gap_for(prev: Option<&Row>, row: &Row) -> f32 {
         render::MD_BLOCK_GAP
     } else if matches!(row.kind, RowKind::ToolGroup { .. })
         || prev.is_some_and(|row| matches!(row.kind, RowKind::ToolGroup { .. }))
+        || is_aside(&row.kind)
+        || prev.is_some_and(|row| is_aside(&row.kind))
     {
         Theme::SPACE_MD
     } else {
         Theme::SPACE_SM
     }
+}
+
+/// Rows that stand apart from the prose: a question, an error, a connection
+/// notice, an image, a fork or interruption marker. They take the tool
+/// group's larger step on both sides, so they never sit tighter against a
+/// paragraph than the paragraphs sit against each other.
+fn is_aside(kind: &RowKind) -> bool {
+    matches!(
+        kind,
+        RowKind::InputChip { .. }
+            | RowKind::ErrorChip { .. }
+            | RowKind::Connection { .. }
+            | RowKind::GeneratedImage { .. }
+            | RowKind::ForkMarker { .. }
+            | RowKind::Interrupted
+    )
 }
 
 /// Minimal splice for a row-set change: `Some((old_range, new_count))`, or
@@ -9916,7 +9934,25 @@ fn tool_icon_path(call: &ToolCall) -> &'static str {
         ToolCall::Todo { .. } => crate::icons::CHECKLIST,
         call if is_agent_call(call) => crate::icons::BOT,
         ToolCall::Unknown { name, .. } if name == "Wait for agents" => crate::icons::BOT,
+        // A call back into Zeron itself (its MCP server: chats, devices,
+        // messages between sessions) carries the mark, not the generic plug.
+        ToolCall::Mcp { server, .. } if is_zeron_mcp(server) => crate::icons::ZERON_LOGO,
         ToolCall::Mcp { .. } | ToolCall::Unknown { .. } => crate::icons::WIDGET,
+    }
+}
+
+/// Zeron's own MCP server, as the harnesses name it.
+fn is_zeron_mcp(server: &str) -> bool {
+    server.eq_ignore_ascii_case("zeron")
+}
+
+/// The tint of a row's glyph at the branch tip: Zeron's mark takes the
+/// accent, so a session talking to Zeron reads at a glance; everything else
+/// stays muted.
+fn tool_glyph_tint(tool: &ToolItem, theme: &Theme) -> gpui::Hsla {
+    match &tool.call {
+        ToolCall::Mcp { server, .. } if is_zeron_mcp(server) => theme.accent,
+        _ => theme.text_muted,
     }
 }
 
@@ -10073,11 +10109,16 @@ fn detail_body(
                 block.child(more_lines_row(*truncated_by, theme))
             })
             .into_any_element(),
+        // A thought reads as an aside: a hairline rail down its left edge,
+        // and its own air above and below.
         ToolDetail::Thought {
             lines,
             truncated_by,
         } => body
-            .py(px(6.0))
+            .py(px(8.0))
+            .pl(px(10.0))
+            .border_l_1()
+            .border_color(crate::theme::ink(0.12))
             .text_size(px(TOOL_TEXT_SIZE))
             .children(lines.iter().enumerate().map(|(line_ix, line)| {
                 let row = div()
@@ -10503,7 +10544,17 @@ fn chip_header_row(
     cx: &mut gpui::App,
 ) -> gpui::Div {
     let (label, detail) = match tool.kind {
-        ToolItemKind::Thought => ("Thought process", String::new()),
+        // A settled thought leads with its first line: the gist without
+        // opening the fold. While it streams the body is open and shows the
+        // live tail, so the header stays still.
+        ToolItemKind::Thought => (
+            if tool.resolved { "Thought" } else { "Thinking" },
+            if tool.resolved {
+                note_chip_detail(tool)
+            } else {
+                String::new()
+            },
+        ),
         ToolItemKind::Note => ("Wrote", note_chip_detail(tool)),
         ToolItemKind::Call => tool_row_content(&tool.call, tool_running(tool)),
     };
@@ -10735,6 +10786,9 @@ fn chip_header_row(
             let tile = div()
                 .size(px(18.0))
                 .flex_none()
+                // The caret belongs to the row's text: pull it in past the
+                // slot gap so it reads as the row's end, not a stray mark.
+                .when(activity, |tile| tile.ml(px(-5.0)))
                 .when(activity, |tile| {
                     let resting = match trail {
                         ChipTrail::Chevron { open: true } => 1.0,
@@ -10959,7 +11013,7 @@ fn activity_rail(
                 tool_item_icon(tool),
                 1.0 - if failed { settle } else { 0.0 },
                 1.0,
-                theme.text_muted,
+                tool_glyph_tint(tool, theme),
             ))
         })
         .when(failed, |rail| {
