@@ -564,6 +564,30 @@ fn tool_chip_content_raw(call: &crate::ToolCall, running: bool) -> (&'static str
 /// Takes `(call, is_error)` pairs so each viewport can keep its own row model;
 /// the summary itself is one implementation for both.
 pub fn tool_group_summary(tools: &[(crate::ToolCall, bool)]) -> String {
+    let (mut segments, failed) = summary_segments(tools);
+    if failed > 0 {
+        segments.push(format!("{failed} failed"));
+    }
+    capitalize_summary(segments.join(" · "))
+}
+
+/// [`tool_group_summary`] without its trailing "N failed": what the group
+/// did, for a viewport that shows the failure count on its own (the desktop
+/// header keeps it visible when the summary truncates).
+pub fn tool_group_work_summary(tools: &[(crate::ToolCall, bool)]) -> String {
+    capitalize_summary(summary_segments(tools).0.join(" · "))
+}
+
+/// Capitalize the first segment only (zeron's style).
+fn capitalize_summary(mut summary: String) -> String {
+    if let Some(first) = summary.get(0..1) {
+        let upper = first.to_uppercase();
+        summary.replace_range(0..1, &upper);
+    }
+    summary
+}
+
+fn summary_segments(tools: &[(crate::ToolCall, bool)]) -> (Vec<String>, usize) {
     use crate::ToolCall;
     let mut commands = 0usize;
     let mut edited: Vec<&str> = Vec::new();
@@ -635,16 +659,7 @@ pub fn tool_group_summary(tools: &[(crate::ToolCall, bool)]) -> String {
     if segments.is_empty() {
         segments.push(plural(tools.len(), "tool", "tools"));
     }
-    if failed > 0 {
-        segments.push(format!("{failed} failed"));
-    }
-    let mut summary = segments.join(" · ");
-    // Capitalize the first segment only (zeron's style).
-    if let Some(first) = summary.get(0..1) {
-        let upper = first.to_uppercase();
-        summary.replace_range(0..1, &upper);
-    }
-    summary
+    (segments, failed)
 }
 
 /// The status-dot palette, as oklch triples (L, C, H°).

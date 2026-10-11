@@ -2221,7 +2221,9 @@ pub fn diff_rows(old: &[Row], new: &[Row]) -> Option<(Range<usize>, usize)> {
 /// The ToolGroup summary line — "Ran 3 commands · edited 2 files".
 ///
 /// The rule lives in `zeron_proto::view` so the terminal viewport reports the
-/// same summary; this only adapts the row model's [`ToolItem`] to it.
+/// same summary; this only adapts the row model's [`ToolItem`] to it. The
+/// failure count is left out: the header shows it beside the summary
+/// ([`group_header_tail`]), where truncation cannot cut it off.
 pub fn tool_group_summary(tools: &[ToolItem]) -> String {
     #[cfg(test)]
     FORBID_ROW_PREPARATION
@@ -2244,7 +2246,7 @@ pub fn tool_group_summary(tools: &[ToolItem]) -> String {
     let base = if pairs.is_empty() {
         String::new()
     } else {
-        zeron_proto::view::tool_group_summary(&pairs)
+        zeron_proto::view::tool_group_work_summary(&pairs)
     };
     // Thought and note chips ride the group (they are UI-synthesized, so the
     // shared view summary never sees them): name them on the collapsed line.
@@ -8201,6 +8203,11 @@ impl Transcript {
         // collapsed-body skip, which may empty `tools`.
         let active =
             collapses && (auto_open || (self.compact_mode && tools.iter().any(|t| !t.resolved)));
+        // The header's trailing facts, also before the skip: they must read
+        // on a collapsed group, which is where they matter most.
+        let header_tail = collapses
+            .then(|| GroupHeaderTail::of(&tools))
+            .filter(|tail| !tail.is_empty());
         if self.compact_mode && active {
             self.compact_live_entries.insert(row_id.clone());
         }
@@ -8560,7 +8567,11 @@ impl Transcript {
                     .flex()
                     .items_center()
                     .overflow_hidden()
-                    .child(match worked_secs {
+                    // Ellipsize, not clip: a long summary used to stop
+                    // mid-word at the column edge ("1 failec"). A flex item
+                    // keeps its text's full width, so the ellipsis needs this
+                    // block wrapper to shrink into.
+                    .child(div().min_w_0().truncate().child(match worked_secs {
                         Some(secs) => compact_work_title(
                             summary.clone(),
                             SharedString::from(worked_for_label(secs)),
@@ -8572,8 +8583,11 @@ impl Transcript {
                         None => rolled_summary.unwrap_or_else(|| {
                             tool_group_title(summary.clone(), shimmer_phase, theme)
                         }),
-                    }),
-            );
+                    })),
+            )
+            .when_some(header_tail, |header, tail| {
+                header.child(tail.element(metrics, theme))
+            });
 
         if compact_shell {
             let view = cx.entity_id();
@@ -9785,6 +9799,71 @@ fn path_badge(
 /// `+N −M` after a file badge: lines added in the success tone, removed in
 /// the danger tone, in tabular figures so counts line up between rows. A side
 /// with nothing on it is left out ("+24" for a new file, not "+24 −0").
+/// What a group header shows after its summary, never truncated: the lines
+/// the group changed and how many of its calls failed. The summary says what
+/// was done; these say how much and whether it went wrong, which is what a
+/// reader scanning collapsed groups is looking for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct GroupHeaderTail {
+    changes: Option<(u64, u64)>,
+    failed: usize,
+}
+
+impl GroupHeaderTail {
+    fn of(tools: &[ToolItem]) -> Self {
+        let changes = tools
+            .iter()
+            .filter_map(|tool| tool.detail.as_deref().and_then(ToolDetail::change_counts))
+            .fold(None, |sum: Option<(u64, u64)>, (added, removed)| {
+                let (a, r) = sum.unwrap_or_default();
+                Some((a + added, r + removed))
+            });
+        let failed = tools
+            .iter()
+            .filter(|tool| tool.kind == ToolItemKind::Call && tool.is_error)
+            .count();
+        Self { changes, failed }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.changes.is_none() && self.failed == 0
+    }
+
+    fn element(self, metrics: ToolMetrics, theme: &Theme) -> AnyElement {
+        div()
+            .flex_none()
+            .h(px(metrics.label_line()))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.0))
+            .when_some(self.changes, |tail, counts| {
+                tail.child(change_counts_label(counts, theme))
+            })
+            .when(self.failed > 0, |tail| {
+                // The row's own failed glyph, so the header and the row it
+                // summarizes read as the same signal.
+                tail.child(
+                    div()
+                        .id("group-failed")
+                        .debug_selector(|| "group-failed".into())
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.0))
+                        .text_color(theme.danger)
+                        .child(
+                            crate::icons::icon(crate::icons::CLOSE_CIRCLE)
+                                .size(crate::typography::ui_rems(13.0))
+                                .text_color(theme.danger),
+                        )
+                        .child(SharedString::from(format!("{} failed", self.failed))),
+                )
+            })
+            .into_any_element()
+    }
+}
+
 fn change_counts_label((added, removed): (u64, u64), theme: &Theme) -> AnyElement {
     div()
         .flex_none()
@@ -16103,10 +16182,31 @@ mod tests {
         // Distinct-path dedupe: editing one file twice counts once.
         let tools = vec![edit("a.rs"), edit("a.rs")];
         assert_eq!(tool_group_summary(&tools), "Edited 1 file");
-        // Failures append.
+        // Failures leave the summary for the header's own tail, where
+        // truncation cannot cut them off; the shared summary still appends.
         let mut failing = exec("boom");
         failing.is_error = true;
-        assert_eq!(tool_group_summary(&[failing]), "Ran 1 command · 1 failed");
+        assert_eq!(tool_group_summary(&[failing.clone()]), "Ran 1 command");
+        assert_eq!(
+            zeron_proto::view::tool_group_summary(&[(failing.call.clone(), true)]),
+            "Ran 1 command · 1 failed"
+        );
+        let mut edited = edit("a.rs");
+        edited.detail = Some(Arc::new(ToolDetail::Stats {
+            stats: Arc::new(vec![zeron_doc::ToolDiffStat {
+                path: "a.rs".into(),
+                additions: 5,
+                deletions: 2,
+            }]),
+        }));
+        assert_eq!(
+            GroupHeaderTail::of(&[edited.clone(), edited, failing, exec("ls")]),
+            GroupHeaderTail {
+                changes: Some((10, 4)),
+                failed: 1,
+            }
+        );
+        assert!(GroupHeaderTail::of(&[exec("ls")]).is_empty());
         // Reads / searches / misc.
         let tools = vec![
             ToolItem {
