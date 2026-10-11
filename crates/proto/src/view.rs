@@ -570,36 +570,55 @@ fn named_tool_content(
     running: bool,
 ) -> Option<(&'static str, String)> {
     let verb = |live: &'static str, done: &'static str| if running { live } else { done };
-    let field = |key: &str| -> String {
-        input
-            .and_then(|input| input.get(key))
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    let key: String = name
-        .chars()
+    let key = named_tool_key(name);
+    let detail = named_tool_detail(&key, input).unwrap_or_default();
+    Some(match key.as_str() {
+        "skill" => (verb("Loading skill", "Loaded skill"), detail),
+        "toolsearch" => (verb("Searching tools", "Searched tools"), detail),
+        "generateimage" => (verb("Generating image", "Generated image"), detail),
+        "monitor" => (verb("Monitoring", "Monitored"), detail),
+        "waitforagents" => (verb("Waiting for agents", "Waited for agents"), detail),
+        "sendmessage" => (verb("Messaging", "Messaged"), detail),
+        "taskstop" => (verb("Stopping agent", "Stopped agent"), detail),
+        "notebookedit" => (verb("Editing notebook", "Edited notebook"), detail),
+        "askuserquestion" => (verb("Asking", "Asked"), detail),
+        _ => return None,
+    })
+}
+
+/// A harness-native tool name reduced to its lookup key: letters and digits,
+/// lowercased ("Generate image" → "generateimage").
+pub fn named_tool_key(name: &str) -> String {
+    name.chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .map(|c| c.to_ascii_lowercase())
-        .collect();
-    Some(match key.as_str() {
-        "skill" => (verb("Loading skill", "Loaded skill"), field("skill")),
-        "toolsearch" => (verb("Searching tools", "Searched tools"), field("query")),
-        "generateimage" => (verb("Generating image", "Generated image"), field("prompt")),
-        "monitor" => (verb("Monitoring", "Monitored"), field("command")),
-        "waitforagents" => (
-            verb("Waiting for agents", "Waited for agents"),
-            String::new(),
-        ),
-        "sendmessage" => (verb("Messaging", "Messaged"), field("to")),
-        "taskstop" => (verb("Stopping agent", "Stopped agent"), String::new()),
-        "notebookedit" => (
-            verb("Editing notebook", "Edited notebook"),
-            field("notebook_path"),
-        ),
-        "askuserquestion" => (verb("Asking", "Asked"), String::new()),
-        _ => return None,
+        .collect()
+}
+
+/// The one short input field a harness-native tool's row shows, by
+/// [`named_tool_key`], in precedence order: the first present wins. Shared
+/// with the doc's sanitizer, which keeps exactly these so the row can name
+/// the skill or the search without the rest of the input leaving the host.
+pub const NAMED_TOOL_INPUT_KEEP: &[(&str, &[&str])] = &[
+    ("skill", &["skill"]),
+    ("toolsearch", &["query"]),
+    ("generateimage", &["prompt"]),
+    ("monitor", &["description", "command"]),
+    ("sendmessage", &["summary", "to"]),
+    ("notebookedit", &["notebook_path"]),
+];
+
+/// Longest a kept named-tool field may be in the doc; a prompt or a monitor
+/// command beyond this is cut, since the row ellipsizes anyway.
+pub const NAMED_TOOL_FIELD_MAX: usize = 160;
+
+/// The detail a named tool shows, read off its (possibly sanitized) input.
+pub fn named_tool_detail(key: &str, input: Option<&serde_json::Value>) -> Option<String> {
+    let input = input?;
+    let (_, fields) = NAMED_TOOL_INPUT_KEEP.iter().find(|(k, _)| *k == key)?;
+    fields.iter().find_map(|field| {
+        let value = input.get(field)?.as_str()?.trim();
+        (!value.is_empty()).then(|| value.to_owned())
     })
 }
 
@@ -645,6 +664,7 @@ fn summary_segments(tools: &[(crate::ToolCall, bool)]) -> (Vec<String>, usize) {
     let mut fetches = 0usize;
     let mut todos = 0usize;
     let mut waits = 0usize;
+    let mut skills = 0usize;
     let mut other = 0usize;
     let mut failed = 0usize;
     for (call, is_error) in tools {
@@ -682,6 +702,7 @@ fn summary_segments(tools: &[(crate::ToolCall, bool)]) -> (Vec<String>, usize) {
             ToolCall::Unknown { name, .. } if name.eq_ignore_ascii_case("wait for agents") => {
                 waits += 1
             }
+            ToolCall::Unknown { name, .. } if name.eq_ignore_ascii_case("skill") => skills += 1,
             ToolCall::Mcp { .. } | ToolCall::Unknown { .. } => other += 1,
         }
     }
@@ -706,6 +727,9 @@ fn summary_segments(tools: &[(crate::ToolCall, bool)]) -> (Vec<String>, usize) {
     }
     if todos > 0 {
         segments.push("updated todos".to_string());
+    }
+    if skills > 0 {
+        segments.push(format!("loaded {}", plural(skills, "skill", "skills")));
     }
     if other > 0 {
         segments.push(format!("called {}", plural(other, "tool", "tools")));

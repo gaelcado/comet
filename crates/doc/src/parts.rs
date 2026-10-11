@@ -586,9 +586,9 @@ pub fn sanitize_tool_call(call: &ToolCall) -> ToolCall {
             tool: tool.clone(),
             input: spawn_badge(call),
         },
-        ToolCall::Unknown { name, .. } => ToolCall::Unknown {
+        ToolCall::Unknown { name, input } => ToolCall::Unknown {
             name: name.clone(),
-            input: spawn_badge(call),
+            input: spawn_badge(call).or_else(|| named_tool_badge(name, input.as_ref())),
         },
         other => other.clone(),
     }
@@ -619,6 +619,26 @@ fn spawn_badge(call: &ToolCall) -> Option<serde_json::Value> {
         })
         .collect();
     (!kept.is_empty()).then(|| serde_json::Value::Object(kept))
+}
+
+/// The one short field a harness-native tool (Skill, ToolSearch, Monitor…)
+/// keeps, so its row can say WHICH skill loaded or WHAT was searched. The
+/// table lives with the verbs in [`zeron_proto::view`]; values are cut at
+/// [`NAMED_TOOL_FIELD_MAX`] chars. Idempotent: a cut value cuts to itself.
+fn named_tool_badge(name: &str, input: Option<&serde_json::Value>) -> Option<serde_json::Value> {
+    use zeron_proto::view::{NAMED_TOOL_FIELD_MAX, NAMED_TOOL_INPUT_KEEP, named_tool_key};
+    let input = input?;
+    let key = named_tool_key(name);
+    let (_, fields) = NAMED_TOOL_INPUT_KEEP.iter().find(|(k, _)| *k == key)?;
+    let (field, value) = fields.iter().find_map(|field| {
+        let value = input.get(field)?.as_str()?.trim();
+        (!value.is_empty()).then_some((*field, value))
+    })?;
+    let cut = value
+        .char_indices()
+        .nth(NAMED_TOOL_FIELD_MAX)
+        .map_or(value, |(end, _)| &value[..end]);
+    Some(serde_json::json!({ field: cut }))
 }
 
 /// Deterministic continuation id: `"{root}#c{n}"`.
@@ -922,6 +942,21 @@ mod tests {
             }
         );
         assert_eq!(clean.subagent_model(), Some("haiku"));
+        assert_eq!(sanitize_tool_call(&clean), clean);
+
+        // A harness-native tool keeps the one field its row is named by.
+        let skill = ToolCall::Unknown {
+            name: "Skill".into(),
+            input: Some(serde_json::json!({ "skill": "better-ui", "args": "a long argument" })),
+        };
+        let clean = sanitize_tool_call(&skill);
+        assert_eq!(
+            clean,
+            ToolCall::Unknown {
+                name: "Skill".into(),
+                input: Some(serde_json::json!({ "skill": "better-ui" })),
+            }
+        );
         assert_eq!(sanitize_tool_call(&clean), clean);
     }
 

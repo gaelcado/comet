@@ -125,6 +125,8 @@ const TOOL_LABEL_LINE_HEIGHT: f32 = 18.0;
 const TOOL_GROUP_HEADER_HEIGHT: f32 = 26.0;
 /// The file badge's height (design size).
 const BADGE_HEIGHT: f32 = 22.0;
+/// The least of a badge's name that survives a squeeze (design size).
+const BADGE_NAME_MIN_WIDTH: f32 = 44.0;
 /// Compact rows retain the analytic heights used by row and group folds.
 const TOOL_TREE_ROW_HEIGHT: f32 = 32.0;
 
@@ -1353,11 +1355,25 @@ fn reconnect_attempt(message: &str) -> Option<&str> {
 /// An error as the row shows it. Harnesses sometimes pass an API's JSON body
 /// through verbatim; the row shows its message with the type and status
 /// after it, and the copy action keeps the original.
+/// An error's text with its line breaks kept and each line's whitespace
+/// collapsed: a panic trace reads as a trace, not one run-on sentence.
+fn error_lines(message: &str) -> String {
+    message
+        .lines()
+        .map(|line| single_line(line))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn error_display(message: &str) -> String {
     let message = message.trim();
+    if message.is_empty() {
+        return "Unknown error".to_owned();
+    }
     let Ok(serde_json::Value::Object(body)) = serde_json::from_str::<serde_json::Value>(message)
     else {
-        return single_line(message);
+        return error_lines(message);
     };
     let error = body
         .get("error")
@@ -1368,7 +1384,7 @@ fn error_display(message: &str) -> String {
         .or_else(|| body.get("message"))
         .and_then(|m| m.as_str());
     let Some(text) = text else {
-        return single_line(message);
+        return error_lines(message);
     };
     let code: Vec<String> = [
         error
@@ -10309,7 +10325,14 @@ fn header_badge(
                 .bg(crate::file_icons::well_bg(theme))
                 .child(icon),
         )
-        .child(div().min_w_0().truncate().child(SharedString::from(name)))
+        // A floor under the name: squeezed, the badge keeps "transc…" rather
+        // than shrinking to a bare icon that no longer names the file.
+        .child(
+            div()
+                .min_w(px(BADGE_NAME_MIN_WIDTH))
+                .truncate()
+                .child(SharedString::from(name)),
+        )
         .map(|badge| {
             if !hover_text && open_file.is_none() {
                 return badge.into_any_element();
@@ -10628,7 +10651,10 @@ fn chip_header_row(
                 // An agent's bot tile already names it, so its row leads with
                 // the task itself; the word "Agent" stays only for a task
                 // with no description.
-                .when(!activity && !detail.is_empty(), |label| label.hidden())
+                .when(
+                    (!activity || tool.kind == ToolItemKind::Thought) && !detail.is_empty(),
+                    |label| label.hidden(),
+                )
                 .text_color(theme.text_muted)
                 // The verb rolls as the call settles ("Running" → "Ran"),
                 // like the group summary: the static cue that the row changed
