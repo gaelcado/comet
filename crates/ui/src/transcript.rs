@@ -119,6 +119,11 @@ const ACTIVITY_ICON_LEFT: f32 = 32.0;
 const ACTIVITY_ICON_SIZE: f32 = 14.0;
 /// How visible an expandable activity row's chevron is at rest.
 const ACTIVITY_CHEVRON_REST_OPACITY: f32 = 0.5;
+/// The working glow under a running row's glyph: a round wash this much
+/// wider than the glyph on every side, breathing between the two opacities.
+const TIP_GLOW_PAD: f32 = 4.0;
+const TIP_GLOW_FLOOR: f32 = 0.10;
+const TIP_GLOW_PEAK: f32 = 0.40;
 const TOOL_TEXT_SIZE: f32 = 12.0;
 const TOOL_LABEL_SIZE: f32 = TOOL_TEXT_SIZE;
 const TOOL_LABEL_LINE_HEIGHT: f32 = 18.0;
@@ -2607,11 +2612,14 @@ fn tool_running(tool: &ToolItem) -> bool {
 /// gates the working trailer — the verb alone says "Running" there.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum RowActivity {
-    /// Still running: the spinner, and the elapsed time once known.
+    /// Still running: the glow at the tip, and the elapsed time once known.
     Running { elapsed_secs: Option<i64> },
-    /// Just came back: the spinner fades out while the settled state —
+    /// Just came back: the glow fades out while the settled state —
     /// the failed glyph, or nothing — scales in. `0.0..1.0` of [`ROW_SETTLE`].
     Settling(f32),
+    /// Settled, and this view watched it run: how long it took. Thoughts
+    /// keep their duration ("Thought for 8s"); a call's goes with the glow.
+    Done { secs: i64 },
 }
 
 /// The row's elapsed label starts here: "0s" says nothing a spinner does not.
@@ -2626,21 +2634,34 @@ fn row_activity(
     live: bool,
     since: Option<Instant>,
     settled_at: Option<Instant>,
+    ran_for: Option<f32>,
     now: Instant,
     reduce_motion: bool,
 ) -> Option<RowActivity> {
-    if tool.kind != ToolItemKind::Call || is_agent_tool(tool) {
+    let thought = tool.kind == ToolItemKind::Thought;
+    if (tool.kind != ToolItemKind::Call && !thought) || is_agent_tool(tool) {
         return None;
     }
     if tool.resolved {
-        let settled = settled_at.filter(|_| !reduce_motion)?;
+        let done = ran_for
+            .filter(|_| thought)
+            .map(|secs| secs.round() as i64)
+            .filter(|secs| *secs >= ROW_ELAPSED_FROM_SECS)
+            .map(|secs| RowActivity::Done { secs });
+        let Some(settled) = settled_at.filter(|_| !reduce_motion) else {
+            return done;
+        };
         let t = ROW_SETTLE.progress(
             now.checked_duration_since(settled)
                 .unwrap_or_default()
                 .as_secs_f32()
                 / ROW_SETTLE.total().as_secs_f32(),
         );
-        return (t < 1.0).then_some(RowActivity::Settling(t));
+        return if t < 1.0 {
+            Some(RowActivity::Settling(t))
+        } else {
+            done
+        };
     }
     if !live {
         return None;
@@ -3177,6 +3198,9 @@ struct ToolGroupReveal {
     /// When a call this view watched run came back, for the trailing slot's
     /// crossfade from spinner to its settled state.
     settled_at: Vec<Option<Instant>>,
+    /// How long a call this view watched run took, in seconds, once it came
+    /// back: a settled thought says "8s" where its clock was.
+    ran_for: Vec<Option<f32>>,
     /// A title sweep begins with this group instead of inheriting the shared
     /// loader clock at an arbitrary point midway across the label.
     shimmer_started_at: Option<Instant>,
@@ -5455,7 +5479,15 @@ impl Transcript {
         // part id.
         let previous_tools: HashMap<
             SharedString,
-            HashMap<String, (Option<Instant>, Option<Instant>, Option<Instant>)>,
+            HashMap<
+                String,
+                (
+                    Option<Instant>,
+                    Option<Instant>,
+                    Option<Instant>,
+                    Option<f32>,
+                ),
+            >,
         > = self
             .rows
             .iter()
@@ -5478,6 +5510,7 @@ impl Transcript {
                                         }),
                                         reveal
                                             .and_then(|r| r.settled_at.get(ix).copied().flatten()),
+                                        reveal.and_then(|r| r.ran_for.get(ix).copied().flatten()),
                                     ),
                                 )
                             })
@@ -5534,6 +5567,7 @@ impl Transcript {
                 reveal.starts.resize(tools.len(), None);
                 reveal.running_since = vec![None; tools.len()];
                 reveal.settled_at = vec![None; tools.len()];
+                reveal.ran_for = vec![None; tools.len()];
                 continue;
             }
             // An unresolved call keeps the instant this view first saw it;
@@ -5546,8 +5580,29 @@ impl Transcript {
                     }
                     previous
                         .and_then(|tools| tools.get(&tool.part_id))
-                        .and_then(|(_, since, _)| *since)
+                        .and_then(|(_, since, _, _)| *since)
                         .or(Some(now))
+                })
+                .collect();
+            // The duration of a call seen both start and finish here. Kept
+            // across commits; a call never seen running has none.
+            reveal.ran_for = tools
+                .iter()
+                .map(|tool| {
+                    let (_, since, _, ran_for) = previous
+                        .and_then(|tools| tools.get(&tool.part_id))
+                        .copied()
+                        .unwrap_or_default();
+                    if !tool.resolved {
+                        return None;
+                    }
+                    ran_for.or_else(|| {
+                        since.map(|since| {
+                            now.checked_duration_since(since)
+                                .unwrap_or_default()
+                                .as_secs_f32()
+                        })
+                    })
                 })
                 .collect();
             // A call seen running that has now come back settles from this
@@ -5555,7 +5610,7 @@ impl Transcript {
             reveal.settled_at = tools
                 .iter()
                 .map(|tool| {
-                    let (_, since, settled) = previous
+                    let (_, since, settled, _) = previous
                         .and_then(|tools| tools.get(&tool.part_id))
                         .copied()
                         .unwrap_or_default();
@@ -5571,7 +5626,8 @@ impl Transcript {
                     if is_historical(tool) {
                         return None;
                     }
-                    if let Some((start, _, _)) = previous.and_then(|tools| tools.get(&tool.part_id))
+                    if let Some((start, _, _, _)) =
+                        previous.and_then(|tools| tools.get(&tool.part_id))
                     {
                         return *start;
                     }
@@ -8732,7 +8788,11 @@ impl Transcript {
                     .and_then(|reveal| reveal.settled_at.get(ix))
                     .copied()
                     .flatten();
-                row_activity(tool, live, since, settled_at, now, reduce_motion)
+                let ran_for = reveal
+                    .and_then(|reveal| reveal.ran_for.get(ix))
+                    .copied()
+                    .flatten();
+                row_activity(tool, live, since, settled_at, ran_for, now, reduce_motion)
             })
             .collect();
         if activities
@@ -9687,8 +9747,8 @@ fn connection_row(
     state: ConnectionState,
     metrics: ToolMetrics,
     theme: &Theme,
-    view: gpui::EntityId,
-    cx: &mut gpui::App,
+    _view: gpui::EntityId,
+    _cx: &mut gpui::App,
 ) -> AnyElement {
     let attempts = if tries == 1 {
         "after 1 retry".to_owned()
@@ -9705,13 +9765,7 @@ fn connection_row(
     }
     let (tile, label, detail) = match state {
         ConnectionState::Retrying => (
-            status_tile().child(crate::loaders::mini_glyph_spinner(
-                "connection-retrying",
-                TILE_SPINNER_CELL,
-                theme.glyph,
-                view,
-                cx,
-            )),
+            working_tile(crate::icons::WIFI_OFF, "connection-retrying", theme),
             "Reconnecting",
             match last.split_once('/') {
                 Some((n, of)) => format!("attempt {n} of {of}"),
@@ -9892,9 +9946,25 @@ fn card_tile(icon: &'static str, theme: &Theme) -> gpui::Div {
     )
 }
 
-/// Cell size of the working spinner inside a tile: a size up from the
-/// trailing-slot spinner, so it fills the tile the way a glyph does.
-const TILE_SPINNER_CELL: f32 = 3.0;
+/// A card's tile while its work runs: the glyph over a breathing accent
+/// wash, the same cue as the glow at an activity row's tip.
+fn working_tile(icon: &'static str, key: impl Into<SharedString>, theme: &Theme) -> gpui::Div {
+    status_tile()
+        .relative()
+        .overflow_hidden()
+        .child(div().absolute().inset_0().child(crate::loaders::pulse_glow(
+            key,
+            CARD_TILE_RADIUS,
+            theme.accent,
+            TIP_GLOW_FLOOR,
+            TIP_GLOW_PEAK,
+        )))
+        .child(
+            crate::icons::icon(icon)
+                .size(px(ACTIVITY_ICON_SIZE))
+                .text_color(theme.text),
+        )
+}
 
 /// The empty 18px tile, for a card that shows its status in it.
 fn status_tile() -> gpui::Div {
@@ -10563,7 +10633,7 @@ fn chip_header_row(
     file_opener: Option<&ToolFileOpener>,
     activity_state: Option<RowActivity>,
     theme: &Theme,
-    view: gpui::EntityId,
+    _view: gpui::EntityId,
     cx: &mut gpui::App,
 ) -> gpui::Div {
     let (label, detail) = match tool.kind {
@@ -10626,16 +10696,14 @@ fn chip_header_row(
             // A card's tile carries its status, where the eye lands first:
             // the working spinner while it runs, the cross once it failed.
             row.child(if running {
-                status_tile().child(crate::loaders::mini_glyph_spinner(
+                working_tile(
+                    tool_item_icon(tool),
                     format!(
                         "subagent-chip-{}",
                         tool.subagent_ref.as_deref().unwrap_or_default()
                     ),
-                    TILE_SPINNER_CELL,
-                    theme.glyph,
-                    view,
-                    cx,
-                ))
+                    theme,
+                )
             } else if failed {
                 failed_tile(theme)
             } else {
@@ -10763,15 +10831,17 @@ fn chip_header_row(
             )
         })
         .when_some(activity_state, |row, state| {
-            // An ordinary running call: the same spinner, with the elapsed
-            // time before it in the model label's bare faint style. Tabular
-            // figures keep the spinner still as the seconds roll. Once the
-            // call is back the spinner fades out under the settled state.
-            let (elapsed_secs, spinner_opacity) = match state {
-                RowActivity::Running { elapsed_secs } => (elapsed_secs, 1.0),
-                RowActivity::Settling(t) => (None, 1.0 - t),
+            // A running call's clock, and a settled thought's duration, in
+            // the model label's bare faint style with tabular figures so the
+            // caret stays still as the seconds roll. The working cue itself
+            // is the glow under the glyph at the branch tip, not another
+            // element crowding the trailing edge.
+            let label = match state {
+                RowActivity::Running { elapsed_secs } => elapsed_secs.map(format_elapsed),
+                RowActivity::Settling(_) => None,
+                RowActivity::Done { secs } => Some(format_elapsed(secs)),
             };
-            row.when_some(elapsed_secs, |row, secs| {
+            row.when_some(label, |row, label| {
                 row.child(
                     div()
                         .id("tool-running-elapsed")
@@ -10786,23 +10856,9 @@ fn chip_header_row(
                             1,
                         )])))
                         .text_color(theme.text_faint)
-                        .child(SharedString::from(format_elapsed(secs))),
+                        .child(SharedString::from(label)),
                 )
             })
-            .child(
-                div()
-                    .id("tool-running")
-                    .debug_selector(|| "tool-running".into())
-                    .flex_none()
-                    .opacity(spinner_opacity)
-                    .child(crate::loaders::mini_glyph_spinner(
-                        format!("tool-running-{}", tool.part_id),
-                        2.0,
-                        theme.glyph,
-                        view,
-                        cx,
-                    )),
-            )
         })
         .when_some(trail, |row, trail| {
             // Trailing tile matching the group header's: a chevron for the
@@ -10978,6 +11034,14 @@ fn activity_rail(
         Some(RowActivity::Settling(t)) if failed => t,
         _ => 1.0,
     };
+    // Working reads at the tip: a soft accent glow breathes under the glyph
+    // while the call runs, and fades as it settles. Nothing is added to the
+    // trailing edge, and nothing moves.
+    let working = match activity_state {
+        Some(RowActivity::Running { .. }) => 1.0,
+        Some(RowActivity::Settling(t)) => 1.0 - t,
+        _ => 0.0,
+    };
     let tip = |icon: &'static str, opacity: f32, scale: f32, tint: gpui::Hsla| {
         crate::icons::icon(icon)
             .absolute()
@@ -11034,6 +11098,27 @@ fn activity_rail(
             .absolute()
             .inset_0(),
         )
+        .when(working > 0.0, |rail| {
+            rail.child(
+                div()
+                    .id("tool-running")
+                    .debug_selector(|| "tool-running".into())
+                    .absolute()
+                    .left(px(ACTIVITY_ICON_LEFT - TIP_GLOW_PAD))
+                    .top(px(row_height / 2.0
+                        - ACTIVITY_ICON_SIZE / 2.0
+                        - TIP_GLOW_PAD))
+                    .size(px(ACTIVITY_ICON_SIZE + 2.0 * TIP_GLOW_PAD))
+                    .opacity(branch_reveal * working)
+                    .child(crate::loaders::pulse_glow(
+                        format!("tool-glow-{}", tool.part_id),
+                        (ACTIVITY_ICON_SIZE + 2.0 * TIP_GLOW_PAD) / 2.0,
+                        theme.accent,
+                        TIP_GLOW_FLOOR,
+                        TIP_GLOW_PEAK,
+                    )),
+            )
+        })
         .when(!failed || settle < 1.0, |rail| {
             rail.child(tip(
                 tool_item_icon(tool),
