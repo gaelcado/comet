@@ -2409,21 +2409,44 @@ fn tool_running(tool: &ToolItem) -> bool {
 /// has watched it run for a second. Dead runs leave their last call
 /// unresolved in the doc forever, so liveness gates the spinner the way it
 /// gates the working trailer — the verb alone says "Running" there.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct RowActivity {
-    elapsed_secs: Option<i64>,
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum RowActivity {
+    /// Still running: the spinner, and the elapsed time once known.
+    Running { elapsed_secs: Option<i64> },
+    /// Just came back: the spinner fades out while the settled state —
+    /// the failed glyph, or nothing — scales in. `0.0..1.0` of [`ROW_SETTLE`].
+    Settling(f32),
 }
 
 /// The row's elapsed label starts here: "0s" says nothing a spinner does not.
 const ROW_ELAPSED_FROM_SECS: i64 = 1;
 
+/// The spinner-to-settled crossfade: the contextual icon transition (scale
+/// 0.25 → 1, opacity 0 → 1) on the soft ease-out, 300ms.
+const ROW_SETTLE: motion::MotionSpec = motion::MotionSpec::new(300, motion::EASE_OUT_SOFT);
+
 fn row_activity(
     tool: &ToolItem,
     live: bool,
     since: Option<Instant>,
+    settled_at: Option<Instant>,
     now: Instant,
+    reduce_motion: bool,
 ) -> Option<RowActivity> {
-    if !live || tool.resolved || tool.kind != ToolItemKind::Call || is_agent_tool(tool) {
+    if tool.kind != ToolItemKind::Call || is_agent_tool(tool) {
+        return None;
+    }
+    if tool.resolved {
+        let settled = settled_at.filter(|_| !reduce_motion)?;
+        let t = ROW_SETTLE.progress(
+            now.checked_duration_since(settled)
+                .unwrap_or_default()
+                .as_secs_f32()
+                / ROW_SETTLE.total().as_secs_f32(),
+        );
+        return (t < 1.0).then_some(RowActivity::Settling(t));
+    }
+    if !live {
         return None;
     }
     let elapsed_secs = since
@@ -2433,7 +2456,7 @@ fn row_activity(
                 .as_secs() as i64
         })
         .filter(|secs| *secs >= ROW_ELAPSED_FROM_SECS);
-    Some(RowActivity { elapsed_secs })
+    Some(RowActivity::Running { elapsed_secs })
 }
 
 /// Analytic expanded-chips height — no measurement needed for the fold tween.
@@ -2955,6 +2978,9 @@ struct ToolGroupReveal {
     /// label. A call already running when the transcript attached has no
     /// honest start, so it stays `None` and the row shows the spinner alone.
     running_since: Vec<Option<Instant>>,
+    /// When a call this view watched run came back, for the trailing slot's
+    /// crossfade from spinner to its settled state.
+    settled_at: Vec<Option<Instant>>,
     /// A title sweep begins with this group instead of inheriting the shared
     /// loader clock at an arbitrary point midway across the label.
     shimmer_started_at: Option<Instant>,
@@ -5229,10 +5255,11 @@ impl Transcript {
                 fold.disclosure_at = None;
             }
         }
-        // Per row: (reveal start, running-since) carried over by part id.
+        // Per row: (reveal start, running-since, settled-at) carried over by
+        // part id.
         let previous_tools: HashMap<
             SharedString,
-            HashMap<String, (Option<Instant>, Option<Instant>)>,
+            HashMap<String, (Option<Instant>, Option<Instant>, Option<Instant>)>,
         > = self
             .rows
             .iter()
@@ -5253,6 +5280,8 @@ impl Transcript {
                                         reveal.and_then(|r| {
                                             r.running_since.get(ix).copied().flatten()
                                         }),
+                                        reveal
+                                            .and_then(|r| r.settled_at.get(ix).copied().flatten()),
                                     ),
                                 )
                             })
@@ -5308,6 +5337,7 @@ impl Transcript {
                 reveal.starts.clear();
                 reveal.starts.resize(tools.len(), None);
                 reveal.running_since = vec![None; tools.len()];
+                reveal.settled_at = vec![None; tools.len()];
                 continue;
             }
             // An unresolved call keeps the instant this view first saw it;
@@ -5320,8 +5350,23 @@ impl Transcript {
                     }
                     previous
                         .and_then(|tools| tools.get(&tool.part_id))
-                        .and_then(|(_, since)| *since)
+                        .and_then(|(_, since, _)| *since)
                         .or(Some(now))
+                })
+                .collect();
+            // A call seen running that has now come back settles from this
+            // commit; one that was never seen running has nothing to fade.
+            reveal.settled_at = tools
+                .iter()
+                .map(|tool| {
+                    let (_, since, settled) = previous
+                        .and_then(|tools| tools.get(&tool.part_id))
+                        .copied()
+                        .unwrap_or_default();
+                    if !tool.resolved {
+                        return None;
+                    }
+                    settled.or_else(|| since.map(|_| now))
                 })
                 .collect();
             reveal.starts = tools
@@ -5330,7 +5375,8 @@ impl Transcript {
                     if is_historical(tool) {
                         return None;
                     }
-                    if let Some((start, _)) = previous.and_then(|tools| tools.get(&tool.part_id)) {
+                    if let Some((start, _, _)) = previous.and_then(|tools| tools.get(&tool.part_id))
+                    {
                         return *start;
                     }
                     let start = now
@@ -8457,15 +8503,24 @@ impl Transcript {
             .iter()
             .enumerate()
             .map(|(ix, tool)| {
-                let since = self
-                    .tool_group_reveals
-                    .get(row_id)
+                let reveal = self.tool_group_reveals.get(row_id);
+                let since = reveal
                     .and_then(|reveal| reveal.running_since.get(ix))
                     .copied()
                     .flatten();
-                row_activity(tool, live, since, now)
+                let settled_at = reveal
+                    .and_then(|reveal| reveal.settled_at.get(ix))
+                    .copied()
+                    .flatten();
+                row_activity(tool, live, since, settled_at, now, reduce_motion)
             })
             .collect();
+        if activities
+            .iter()
+            .any(|activity| matches!(activity, Some(RowActivity::Settling(_))))
+        {
+            motion_active = true;
+        }
         let reveal_progress: Vec<f32> = (0..tools.len())
             .map(|ix| {
                 let start = self
@@ -10215,8 +10270,13 @@ fn chip_header_row(
         .when_some(activity_state, |row, state| {
             // An ordinary running call: the same spinner, with the elapsed
             // time before it in the model label's bare faint style. Tabular
-            // figures keep the spinner still as the seconds roll.
-            row.when_some(state.elapsed_secs, |row, secs| {
+            // figures keep the spinner still as the seconds roll. Once the
+            // call is back the spinner fades out under the settled state.
+            let (elapsed_secs, spinner_opacity) = match state {
+                RowActivity::Running { elapsed_secs } => (elapsed_secs, 1.0),
+                RowActivity::Settling(t) => (None, 1.0 - t),
+            };
+            row.when_some(elapsed_secs, |row, secs| {
                 row.child(
                     div()
                         .id("tool-running-elapsed")
@@ -10239,6 +10299,7 @@ fn chip_header_row(
                     .id("tool-running")
                     .debug_selector(|| "tool-running".into())
                     .flex_none()
+                    .opacity(spinner_opacity)
                     .child(crate::loaders::mini_glyph_spinner(
                         format!("tool-running-{}", tool.part_id),
                         2.0,
@@ -10251,7 +10312,13 @@ fn chip_header_row(
         .when(failed, |row| {
             // Failure is not carried by the danger tint alone: a static glyph
             // in the trailing slot (clear of the verb's left edge) names it
-            // for anyone who cannot tell the tints apart.
+            // for anyone who cannot tell the tints apart. Fresh from a run it
+            // scales in as the spinner fades, so the change is seen.
+            let reveal = match activity_state {
+                Some(RowActivity::Settling(t)) => t,
+                _ => 1.0,
+            };
+            let scale = motion::lerp(0.25, 1.0, reveal);
             row.child(
                 div()
                     .id("tool-failed")
@@ -10259,11 +10326,15 @@ fn chip_header_row(
                     .h(px(metrics.label_line()))
                     .flex()
                     .items_center()
+                    .opacity(reveal)
                     .tooltip(crate::settings::widgets::text_tooltip("Failed"))
                     .child(
                         crate::icons::icon(crate::icons::CLOSE_CIRCLE)
                             .size(crate::typography::ui_rems(14.0))
-                            .text_color(theme.danger),
+                            .text_color(theme.danger)
+                            .with_transformation(gpui::Transformation::scale(gpui::size(
+                                scale, scale,
+                            ))),
                     ),
             )
         })
@@ -11559,9 +11630,15 @@ mod tests {
         window.update(|_, cx| feed(turn(tool_part("t1", "cargo test")), cx));
         draw(window);
         assert!(
-            window.debug_bounds("tool-running").is_none()
+            window.debug_bounds("tool-running").is_some()
                 && window.debug_bounds("tool-running-elapsed").is_none(),
-            "resolution clears the spinner and the label"
+            "resolution drops the label at once and fades the spinner out"
+        );
+        std::thread::sleep(ROW_SETTLE.total() + Duration::from_millis(50));
+        draw(window);
+        assert!(
+            window.debug_bounds("tool-running").is_none(),
+            "the spinner is gone once the settle crossfade lands"
         );
     }
 
