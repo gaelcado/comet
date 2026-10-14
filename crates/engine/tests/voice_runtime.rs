@@ -555,6 +555,26 @@ async fn voice_rejects_project_backend_overrides_and_resolved_thread_provider() 
 
 #[cfg(unix)]
 #[tokio::test]
+async fn start_verifies_eligibility_once_and_never_waits_on_the_usage_read() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = native_core(&temp).await;
+    let package = temp.path().join("codex-package");
+    let client = zeron_rpc::memory_client(core.rpc_service());
+    let (_, owner) = active_owner(&client, &core.device_id).await;
+    let wire = std::fs::read_to_string(package.join("voice-wire.jsonl")).unwrap();
+    let sent = |method: &str| wire.lines().filter(|line| line.contains(method)).count();
+    // The runtime's own account warmup, then one probe shared by the engine
+    // and the call it starts.
+    assert_eq!(sent("\"account/read\""), 2);
+    assert_eq!(sent("thread/realtime/listVoices"), 1);
+    assert_eq!(sent("account/rateLimits/read"), 0);
+    assert_eq!(sent("thread/realtime/start"), 1);
+    drop(owner);
+    core.sessions.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn exhausted_ordinary_quota_with_allowed_credits_uses_native_backend_decision() {
     let temp = tempfile::tempdir().unwrap();
     let core = native_core(&temp).await;

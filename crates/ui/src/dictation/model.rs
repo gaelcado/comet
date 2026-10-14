@@ -39,6 +39,7 @@ pub(crate) fn init(root: PathBuf, cx: &mut App) {
             .map(|voice| (*voice).to_owned())
             .collect(),
         shortcut: None,
+        voice_shortcut: None,
     });
     cx.set_global(VoiceGlobal { card, directory });
 }
@@ -46,7 +47,7 @@ pub(crate) fn directory(cx: &App) -> PathBuf {
     cx.global::<VoiceGlobal>().directory.clone()
 }
 pub(crate) fn enabled(cx: &App) -> bool {
-    settings::current(cx).dictation_enabled
+    settings::read(cx, |settings| settings.dictation_enabled)
         && cx
             .try_global::<VoiceGlobal>()
             .is_some_and(|g| g.card.read(cx).ready)
@@ -76,6 +77,7 @@ pub(crate) struct VoiceCard {
     voices: Vec<String>,
     /// Created on first render (it needs this card's context).
     shortcut: Option<Entity<settings::shortcuts::ShortcutField>>,
+    voice_shortcut: Option<Entity<settings::shortcuts::ShortcutField>>,
 }
 /// Microphones as last enumerated, refreshed off the UI thread while the page
 /// is visible so newly connected devices appear.
@@ -108,6 +110,55 @@ impl VoiceCard {
         }
     }
 
+    fn toggle_voice(&mut self, cx: &mut Context<Self>) {
+        let enabled = !settings::current(cx).codex_voice_enabled;
+        settings::update(settings::SavePolicy::Immediate, cx, |s| {
+            s.codex_voice_enabled = enabled
+        });
+        cx.refresh_windows();
+        cx.notify();
+    }
+    fn toggle_voice_sound(&mut self, cx: &mut Context<Self>) {
+        let enabled = !settings::current(cx).codex_voice_sound_enabled;
+        settings::update(settings::SavePolicy::Immediate, cx, |s| {
+            s.codex_voice_sound_enabled = enabled
+        });
+        cx.notify();
+    }
+    /// A settings switch that runs `toggle` from the pointer, the keyboard
+    /// and assistive technology alike.
+    fn switch(
+        theme: &Theme,
+        on: bool,
+        (key, id, label): (&'static str, &'static str, &'static str),
+        toggle: fn(&mut Self, &mut Context<Self>),
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let weak = cx.entity().downgrade();
+        let accent = theme.accent;
+        widgets::toggle_switch(theme, on, key)
+            .id(id)
+            .cursor_pointer()
+            .tab_index(0)
+            .role(gpui::Role::Switch)
+            .aria_label(label)
+            .aria_toggled(if on {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .focus_visible(move |s| s.border_2().border_color(accent).opacity(1.0))
+            .on_click(cx.listener(move |this, _, _, cx| toggle(this, cx)))
+            .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    cx.stop_propagation();
+                    toggle(this, cx);
+                }
+            }))
+            .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                weak.update(cx, |this, cx| toggle(this, cx)).ok();
+            })
+    }
     fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         settings::update(settings::SavePolicy::Immediate, cx, |s| {
             s.dictation_enabled = enabled
@@ -267,17 +318,18 @@ impl VoiceCard {
         }));
     }
 
+    /// Name of the system default microphone, once enumerated.
+    fn default_input_name(&self) -> Option<String> {
+        let id = self.inputs.default.as_ref()?;
+        let device = self.inputs.devices.iter().find(|d| &d.id == id)?;
+        Some(device.name.clone())
+    }
+
     /// Options for the microphone select and the index of the current one. A
     /// saved device that is unplugged stays listed so the choice is visible;
     /// recording falls back to the system default meanwhile.
     fn input_options(&self, saved: Option<&str>) -> (Vec<widgets::SelectOption>, usize) {
-        let default_name = self.inputs.default.as_ref().and_then(|id| {
-            self.inputs
-                .devices
-                .iter()
-                .find(|d| &d.id == id)
-                .map(|d| d.name.clone())
-        });
+        let default_name = self.default_input_name();
         let mut options = vec![match default_name {
             Some(name) => widgets::SelectOption::new("System default").detail(name),
             None => widgets::SelectOption::new("System default"),
@@ -386,7 +438,7 @@ impl Render for VoiceCard {
                 }
             })
             .render(&self.host_select, cx);
-            widgets::card_row(&theme, true)
+            widgets::card_row(&theme, false)
                 .child(
                     div()
                         .flex_1()
@@ -407,22 +459,113 @@ impl Render for VoiceCard {
                 )
                 .child(control)
         });
-        let conversation_card = widgets::section_card(&theme).children(host_row).child(
-            widgets::card_row(&theme, true)
+        let voice_enabled = settings::current(cx).codex_voice_enabled;
+        let voice_row = widgets::card_row(&theme, true)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(160.0))
+                    .flex()
+                    .flex_col()
+                    .child(widgets::row_title(&theme, "Realtime voice"))
+                    .child(widgets::meta_line(
+                        &theme,
+                        vec!["Talk with Codex in a conversation, hands-free".into_any_element()],
+                    )),
+            )
+            .child(Self::switch(
+                &theme,
+                voice_enabled,
+                ("voice-realtime", "voice-realtime-enable", "Realtime voice"),
+                Self::toggle_voice,
+                cx,
+            ));
+        let style_row = widgets::card_row(&theme, false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(160.0))
+                    .flex()
+                    .flex_col()
+                    .child(widgets::row_title(&theme, "Codex voice style"))
+                    .child(widgets::meta_line(
+                        &theme,
+                        vec!["Applies to your next voice session".into_any_element()],
+                    )),
+            )
+            .child(voice_control);
+        // Codex's voice runtime opens the system input itself; its protocol
+        // has no device selection, so this row reports rather than chooses.
+        let voice_microphone_row = voice_enabled.then(|| {
+            self.refresh_inputs(cx);
+            let mut meta = vec!["Follows the system input".into_any_element()];
+            meta.extend(self.default_input_name().map(IntoElement::into_any_element));
+            widgets::card_row(&theme, false).child(
+                div()
+                    .flex_1()
+                    .min_w(px(160.0))
+                    .flex()
+                    .flex_col()
+                    .child(widgets::row_title(&theme, "Microphone"))
+                    .child(widgets::meta_line(&theme, meta)),
+            )
+        });
+        let voice_shortcut_row = voice_enabled.then(|| {
+            let field = self
+                .voice_shortcut
+                .get_or_insert_with(|| {
+                    cx.new(|cx| {
+                        settings::shortcuts::ShortcutField::new(
+                            settings::ShortcutId::ToggleVoice,
+                            cx,
+                        )
+                    })
+                })
+                .clone();
+            widgets::card_row(&theme, false)
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(160.0))
                         .flex()
                         .flex_col()
-                        .child(widgets::row_title(&theme, "Codex voice style"))
+                        .child(widgets::row_title(&theme, "Shortcut"))
                         .child(widgets::meta_line(
                             &theme,
-                            vec!["Applies to your next voice session".into_any_element()],
+                            vec!["Start a voice chat, or go to the live one".into_any_element()],
                         )),
                 )
-                .child(voice_control),
-        );
+                .child(field)
+        });
+        let voice_sound_row = voice_enabled.then(|| {
+            widgets::card_row(&theme, false)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(160.0))
+                        .flex()
+                        .flex_col()
+                        .child(widgets::row_title(&theme, "Call sounds"))
+                        .child(widgets::meta_line(
+                            &theme,
+                            vec!["A cue when a call connects and when it ends".into_any_element()],
+                        )),
+                )
+                .child(Self::switch(
+                    &theme,
+                    settings::current(cx).codex_voice_sound_enabled,
+                    ("voice-sound", "voice-sound-enable", "Call sounds"),
+                    Self::toggle_voice_sound,
+                    cx,
+                ))
+        });
+        let conversation_card = widgets::section_card(&theme)
+            .child(voice_row)
+            .children(host_row.filter(|_| voice_enabled))
+            .children(voice_enabled.then_some(style_row))
+            .children(voice_microphone_row)
+            .children(voice_shortcut_row)
+            .children(voice_sound_row);
         let enabled = settings::current(cx).dictation_enabled;
         let downloading = self.cancel.is_some();
         let on = downloading || (enabled && self.ready);
@@ -437,29 +580,13 @@ impl Render for VoiceCard {
         } else {
             None
         };
-        let weak = cx.entity().downgrade();
-        let switch = widgets::toggle_switch(&theme, on, "voice-dictation")
-            .id("voice-enable")
-            .cursor_pointer()
-            .tab_index(0)
-            .role(gpui::Role::Switch)
-            .aria_label("Dictation")
-            .aria_toggled(if on {
-                gpui::Toggled::True
-            } else {
-                gpui::Toggled::False
-            })
-            .focus_visible(|s| s.border_2().border_color(theme.accent).opacity(1.0))
-            .on_click(cx.listener(|this, _, _, cx| this.primary(cx)))
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    cx.stop_propagation();
-                    this.primary(cx);
-                }
-            }))
-            .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
-                weak.update(cx, |this, cx| this.primary(cx)).ok();
-            });
+        let switch = Self::switch(
+            &theme,
+            on,
+            ("voice-dictation", "voice-enable", "Dictation"),
+            Self::primary,
+            cx,
+        );
         let progress = downloading.then(|| {
             div()
                 .mt(px(8.0))
@@ -688,6 +815,30 @@ mod tests {
             let (options, selected) = card.input_options(Some("coreaudio:gone"));
             assert_eq!((options.len(), selected), (4, 3));
         });
+    }
+    #[gpui::test]
+    fn realtime_voice_is_on_by_default_and_its_switch_persists(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        cx.update(|cx| settings::init(settings::UiSettings::default(), dir.path(), cx));
+        let card = cx.update(card);
+        card.update(cx, |card, cx| {
+            assert!(settings::current(cx).codex_voice_enabled);
+            card.toggle_voice(cx);
+            assert!(!settings::current(cx).codex_voice_enabled);
+            // Turning voice off leaves the saved style for when it returns.
+            settings::update(settings::SavePolicy::Immediate, cx, |s| {
+                s.codex_voice = Some("ember".into())
+            });
+            card.toggle_voice(cx);
+            assert!(settings::current(cx).codex_voice_enabled);
+            assert_eq!(settings::current(cx).codex_voice.as_deref(), Some("ember"));
+            // Call sounds are on by default and switch independently.
+            assert!(settings::current(cx).codex_voice_sound_enabled);
+            card.toggle_voice_sound(cx);
+            assert!(!settings::current(cx).codex_voice_sound_enabled);
+            assert!(settings::current(cx).codex_voice_enabled);
+        });
+        assert!(settings::UiSettings::load(dir.path()).codex_voice_enabled);
     }
     #[gpui::test]
     fn dictation_is_opt_in_and_disabling_preserves_download(cx: &mut gpui::TestAppContext) {

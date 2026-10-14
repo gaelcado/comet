@@ -105,10 +105,20 @@ pub(crate) fn light_plate(theme: &Theme, t: f32) -> Plate {
 /// Accent glass. `t` fades it in over the resting control; `glow` (0–1)
 /// spreads its coloured shadow.
 pub(crate) fn accent_plate(theme: &Theme, t: f32, glow: f32) -> Plate {
+    // The theme's fill token, as every other accent fill uses.
+    filled_plate(theme, theme.accent_strong, t, glow)
+}
+
+/// Destructive glass: the accent plate's structure on the theme's
+/// destructive fill token, for the one control that ends something.
+pub(crate) fn danger_plate(theme: &Theme, t: f32) -> Plate {
+    filled_plate(theme, theme.danger_strong, t, 0.0)
+}
+
+/// A filled glass plate in `base`, a theme fill token. Dark plates keep
+/// their lighting faint so the token reads as itself, not a pastel.
+fn filled_plate(theme: &Theme, base: Hsla, t: f32, glow: f32) -> Plate {
     let dark = theme.appearance.is_dark();
-    // The theme's fill token, as every other accent fill uses. Dark plates
-    // keep their lighting faint so the token reads as itself, not a pastel.
-    let base = theme.accent_strong;
     let top = lift(base, if dark { 0.06 } else { 0.22 });
     // Light: a defined edge a shade deeper than the fill, with a paler ring
     // just inside it. Dark: a soft lifted rim.

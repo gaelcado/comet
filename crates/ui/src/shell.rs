@@ -77,7 +77,6 @@ pub(crate) mod spaces;
 use side_chats::SideChatTab;
 mod tabs;
 mod voice_stage;
-use voice_stage::VOICE_STAGE_ORB_SCALE;
 
 use spaces::{AddSpaceFlow, RenameSpaceDialog};
 
@@ -110,7 +109,8 @@ actions!(
         OpenSettings,
         NextSession,
         PrevSession,
-        ArchiveSession
+        ArchiveSession,
+        ToggleVoice
     ]
 );
 
@@ -243,6 +243,10 @@ impl SidebarDisclosureMotion {
 /// the shared constructor makes left/right seams mirror each other and avoids
 /// relying on paint order when chrome crosses an animated pane boundary.
 const PANE_RESIZE_HITBOX_HALF_WIDTH: f32 = 10.0;
+/// The "Scroll to bottom" pill: its height, and about how wide it is, for
+/// telling whether it fits beside a call's docked bar.
+const JUMP_PILL_HEIGHT: f32 = 30.0;
+const JUMP_PILL_WIDTH: f32 = 164.0;
 const PANE_RESIZE_HITBOX_TOP: f32 = Theme::TITLEBAR_HEIGHT;
 /// Corner radius of the floating Linux CSD window (macOS gets its native
 /// curve from the platform; maximized/tiled Linux windows go square).
@@ -492,6 +496,14 @@ pub fn apply_keymap(
         KeyBinding::new(
             &valid_or_default(&keymap.new_project, ShortcutId::NewProject.default_combo()),
             AddSpacePalette,
+            None,
+        ),
+        KeyBinding::new(
+            &valid_or_default(
+                &keymap.toggle_voice,
+                ShortcutId::ToggleVoice.default_combo(),
+            ),
+            ToggleVoice,
             None,
         ),
         // Fixed: ⌘K summons the command palette.
@@ -1770,19 +1782,44 @@ pub struct Shell {
     composer: Entity<Composer>,
     /// The window's voice orchestrator: independent of the selected chat.
     voice: Entity<crate::voice::VoiceController>,
-    /// Sidebar footer orb (session live) and the full-window stage's orb.
-    voice_footer_orb: Entity<crate::orb::Orb>,
-    voice_stage_orb: Entity<crate::orb::Orb>,
-    /// Above the composer, only while the orchestrator's own chat is open.
-    voice_composer_orb: Entity<crate::orb::Orb>,
+    /// The call screen's control bar.
+    voice_stage_bar: Entity<crate::voice::VoiceDock>,
+    /// The call screen's feed, between frames.
+    voice_feed: voice_stage::VoiceFeed,
+    /// The call screen orb's figure, between frames.
+    voice_orb: crate::voice::orb::Motion,
+    /// What of the call is shown in its conversation ahead of the record.
+    voice_echoes: voice_stage::VoiceEchoes,
+    /// The voice chat's phase, screen and conversation at the last change
+    /// the shell itself reacted to.
+    voice_seen: (zeron_proto::voice::VoicePhase, bool, Option<String>),
+    /// A conversation created for a voice chat, opened once it is listed.
+    voice_pending_chat: Option<String>,
+    /// The voice chat's conversation is being opened for its composer, not
+    /// for its call screen.
+    voice_stage_hold: bool,
+    /// The call screen was opened by moving into its conversation: what it
+    /// replaces is gone already, so there is nothing to fade out under it.
+    /// With it, whether the page left behind showed the artwork.
+    voice_stage_cut: Option<bool>,
+    /// The call screen is arriving for a call being placed: the long way in.
+    voice_stage_placing: bool,
     voice_stage_focus: FocusHandle,
     voice_stage_was_open: bool,
     /// Last rendered route, used to distinguish navigation from staying in Settings.
     voice_stage_route: Route,
-    voice_stage_changed_at: Option<std::time::Instant>,
-    /// The chat selected when the stage opened; picking another closes it.
+    /// The call screen's progress into view, and when it was last advanced.
+    voice_stage_progress: f32,
+    voice_stage_ticked: Option<std::time::Instant>,
+    /// How far the floating bar is from the top of the screen to the
+    /// composer, 0–1, on the composer's own spring.
+    voice_bar_travel: crate::composer_dock::Glide,
+    /// The chat selected at the last render: a change is navigation.
     voice_stage_selection: Option<String>,
+    /// The call's bar outside its call screen, floated wherever the user is.
+    voice_dock: Entity<crate::voice::VoiceDock>,
     _voice_observation: gpui::Subscription,
+    _voice_dock_events: [gpui::Subscription; 2],
     /// Measured height of the bottom chrome stack (status strip + composer +
     /// terminal dock) the full-height transcript scrolls under. Paint-time
     /// measurement schedules another frame whenever this value changes.
@@ -1955,6 +1992,8 @@ pub struct Shell {
     /// Persistent across AppState observer callbacks so simultaneous session
     /// failures and connectivity degradation produce one attention sound.
     attention_sound_gate: crate::sound::AttentionSoundGate,
+    /// Where the voice call stood when its cues were last considered.
+    voice_call: crate::sound::VoiceCall,
     /// `{device,harness,latest}` discoveries already delivered as a desktop
     /// banner during this viewport lifetime.
     harness_update_seen: std::collections::HashSet<String>,
@@ -1991,6 +2030,8 @@ pub struct Shell {
     /// The store's settings when `settings` last synced with it. Fields that
     /// differ from this are the Shell's edits; all others follow the store.
     settings_base: UiSettings,
+    /// The store revision `settings` was last merged with.
+    settings_revision: Option<u64>,
     /// Session-scoped panel open flags (terminal / changes per chat; §1.10-1.11
     /// parity — heights stay in [`UiSettings`]).
     panels: SessionPanels,
@@ -2116,26 +2157,51 @@ impl Shell {
         transcript.update(cx, |transcript, _| transcript.retain_for_route_exit());
         let composer = cx.new(|cx| Composer::new(state.clone(), cx));
         let voice = cx.new(|_| crate::voice::VoiceController::default());
-        let voice_footer_orb = cx.new(|_| {
-            crate::orb::Orb::new()
-                .size(crate::orb::OrbSize::Inline)
-                .state_transition(Duration::from_millis(300))
-                .visible(false)
+        // The session's controls: the bar that floats on every screen but
+        // the call's own, and the call screen's bar.
+        let voice_dock = cx.new(|cx| {
+            crate::voice::VoiceDock::new(voice.clone(), crate::voice::Placement::Floating, cx)
         });
-        let voice_stage_orb = cx.new(|_| {
-            crate::orb::Orb::new()
-                .size(crate::orb::OrbSize::Hero)
-                .state_transition(Duration::from_millis(300))
-                .scale(VOICE_STAGE_ORB_SCALE)
-                .visible(false)
+        composer.update(cx, |composer, cx| {
+            composer.set_voice_dock(voice_dock.clone(), cx)
         });
-        let voice_composer_orb = cx.new(|_| {
-            crate::orb::Orb::new()
-                .size(crate::orb::OrbSize::Avatar)
-                .state_transition(Duration::from_millis(300))
-                .visible(false)
+        let voice_stage_bar = cx.new(|cx| {
+            crate::voice::VoiceDock::new(voice.clone(), crate::voice::Placement::Stage, cx)
         });
-        let voice_observation = cx.observe(&voice, |_: &mut Shell, _, cx| cx.notify());
+        let on_voice_dock =
+            |this: &mut Shell, _, event: &crate::voice::VoiceDockEvent, cx: &mut Context<Shell>| {
+                match event {
+                    crate::voice::VoiceDockEvent::OpenStage => this.open_voice(cx),
+                    // A question from Codex is answered in the conversation's
+                    // composer: the call screen steps aside for it.
+                    crate::voice::VoiceDockEvent::OpenTranscript(chat_id) => {
+                        this.show_voice_conversation(chat_id, cx)
+                    }
+                    crate::voice::VoiceDockEvent::LiveChanged => {}
+                }
+            };
+        let voice_dock_events = [
+            cx.subscribe(&voice_dock, on_voice_dock),
+            cx.subscribe(&voice_stage_bar, on_voice_dock),
+        ];
+        let voice_observation = cx.observe(&voice, |this: &mut Shell, voice, cx| {
+            this.sound_voice_call(cx);
+            this.follow_voice(cx);
+            this.echo_voice(cx);
+            // Levels and transcript deltas arrive many times a second, and
+            // the views that show them (the call's rows) redraw themselves.
+            // Notifying here would also rebuild everything that observes the
+            // shell, the sidebar first: only do it when the call itself
+            // changed.
+            let seen = {
+                let voice = voice.read(cx);
+                (voice.phase, voice.stage_open, voice.chat_id.clone())
+            };
+            if this.voice_seen != seen {
+                this.voice_seen = seen;
+                cx.notify();
+            }
+        });
         let links = Self::session_links(None, cx);
         transcript.update(cx, |transcript, _| {
             transcript.set_workspace_link_handler(links)
@@ -2153,6 +2219,7 @@ impl Shell {
                     // Route observation drives the dock once selection commits.
                     cx.notify();
                 }
+                ComposerEvent::StartVoice => this.enter_voice(cx),
                 ComposerEvent::Sent {
                     chat_id,
                     message_id,
@@ -2294,15 +2361,25 @@ impl Shell {
             transcript,
             composer,
             voice,
-            voice_footer_orb,
-            voice_stage_orb,
-            voice_composer_orb,
+            voice_stage_bar,
+            voice_feed: Default::default(),
+            voice_orb: Default::default(),
+            voice_echoes: Default::default(),
+            voice_seen: Default::default(),
+            voice_pending_chat: None,
+            voice_stage_hold: false,
+            voice_stage_cut: None,
+            voice_stage_placing: false,
             voice_stage_focus: cx.focus_handle(),
             voice_stage_was_open: false,
             voice_stage_route: Route::Chat,
-            voice_stage_changed_at: None,
+            voice_stage_progress: 0.0,
+            voice_stage_ticked: None,
+            voice_bar_travel: crate::composer_dock::Glide::new(0.0),
             voice_stage_selection: None,
+            voice_dock,
             _voice_observation: voice_observation,
+            _voice_dock_events: voice_dock_events,
             // Seed with the compact composer stack's rough height so the
             // first frame's clearance isn't zero (the measure corrects it).
             bottom_stack: std::rc::Rc::new(std::cell::Cell::new(120.0)),
@@ -2406,6 +2483,7 @@ impl Shell {
             sound_prev: std::collections::HashMap::new(),
             connectivity_notifications: Default::default(),
             attention_sound_gate: Default::default(),
+            voice_call: Default::default(),
             harness_update_seen: std::collections::HashSet::new(),
             harness_update_banner_task: None,
             harness_update_devices: Default::default(),
@@ -2428,6 +2506,7 @@ impl Shell {
             boot,
             data_dir,
             settings_base: settings::current(cx),
+            settings_revision: None,
             settings,
             panels: SessionPanels::default(),
             active_chat: String::new(),
@@ -2538,8 +2617,8 @@ impl Shell {
     // ---- splash ----
 
     fn on_state_changed(&mut self, state: &Entity<AppState>, cx: &mut Context<Self>) {
-        // Voice is an orchestrator over every thread: navigation keeps it,
-        // only losing the engine that hosts it ends the session.
+        // A voice chat outlives navigation between threads: only losing the
+        // engine that hosts it ends it.
         if self.voice.read(cx).chat_id.is_some()
             && state
                 .read(cx)
@@ -2548,6 +2627,8 @@ impl Shell {
         {
             self.voice.update(cx, |voice, cx| voice.cancel(cx));
         }
+        // A conversation created for a voice chat may only now be listed.
+        self.follow_voice(cx);
         self.prune_file_explorers(cx);
         self.refresh_harness_update_watch(cx);
         if state.read(cx).engine().is_none() {
@@ -2699,6 +2780,11 @@ impl Shell {
             // focused app still stays a chime — you're already looking at
             // Zeron; the sidebar dot carries the rest.
             let app_focused = cx.active_window().is_some();
+            // The conversation a live voice call runs in.
+            let on_call = {
+                let voice = self.voice.read(cx);
+                voice.chat_id.clone().filter(|_| voice.is_live())
+            };
             for (chat_id, status, send_pending, title, notify) in sessions {
                 let prev = self.sound_prev.insert(chat_id.clone(), status.clone());
                 // Keep side-chat baselines current, but never emit their
@@ -2707,6 +2793,20 @@ impl Shell {
                     && let Some(prev) = prev
                     && let Some(sound) = status.sound_since(&prev, send_pending)
                 {
+                    let in_call = on_call.as_deref() == Some(chat_id.as_str());
+                    // Which conversation rang, and why: chimes are otherwise
+                    // untraceable once several chats work at the same time.
+                    tracing::info!(
+                        target: "zeron_ui::sound",
+                        chat = %chat_id,
+                        title = title.as_deref().unwrap_or("New session"),
+                        ?sound,
+                        in_call,
+                        "session notification"
+                    );
+                    if voice_stage::call_silences(sound, in_call) {
+                        continue;
+                    }
                     if self.settings.session_sound_enabled(sound) {
                         let should_play = sound != crate::sound::Sound::Attention
                             || self
@@ -4546,6 +4646,14 @@ impl Shell {
     /// working copy while keeping the Shell's own edits, so a geometry save
     /// can never publish an older value over another surface's choice.
     fn pull_settings(&mut self, cx: &App) {
+        // Every render calls this. With the store unchanged since the last
+        // merge the result would be this working copy again, at the price of
+        // two full clones of the settings.
+        let revision = settings::revision(cx);
+        if self.settings_revision == Some(revision) {
+            return;
+        }
+        self.settings_revision = Some(revision);
         let current = settings::current(cx);
         self.settings =
             UiSettings::merge_changes(&self.settings_base, &self.settings, current.clone());
@@ -5385,7 +5493,6 @@ impl Shell {
     /// the keys it records before they can dispatch.
     pub(super) fn overlay_owns_keyboard(&self, cx: &App) -> bool {
         self.command_palette.is_some()
-            || self.voice.read(cx).stage_open
             || self.section_dialog.is_some()
             || self.section_menu.is_some()
             || self.add_space.is_some()
@@ -6303,10 +6410,12 @@ impl Shell {
         // leave two competing + placements across the responsive variants.
         let plus_alpha = self.titlebar_plus_alpha(cx);
         let show_plus = plus_alpha > 0.01;
-        let over_artwork = settings::current(cx)
-            .new_thread_composer_background
-            .as_ref()
-            .is_some_and(|background| std::path::Path::new(&background.path).is_file());
+        let over_artwork = settings::read(cx, |settings| {
+            settings
+                .new_thread_composer_background
+                .as_ref()
+                .is_some_and(|background| std::path::Path::new(&background.path).is_file())
+        });
         let island_target = if matches!(self.route, Route::Chat)
             && (self.state.read(cx).selected_chat.is_none() || self.voice.read(cx).stage_open)
             && self.settings.sidebar_collapsed
@@ -8840,7 +8949,6 @@ impl Shell {
             (true, true) => "Close settings · ⌘,".into(),
             (true, false) => "Close settings · Ctrl+,".into(),
         };
-        let voice_trigger = self.render_voice_trigger(theme, cx);
         div()
             .w_full()
             .flex()
@@ -8849,53 +8957,49 @@ impl Shell {
             .gap(px(4.0))
             .child(trigger)
             .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(2.0))
-                    .child(voice_trigger)
-                    .child(
-                        div()
-                            .id("settings-trigger")
-                            .debug_selector(|| "settings-trigger".into())
-                            .role(gpui::Role::Button)
-                            .aria_label(if settings_open {
-                                "Close settings"
-                            } else {
-                                "Settings"
-                            })
-                            .aria_toggled(if settings_open {
-                                gpui::Toggled::True
-                            } else {
-                                gpui::Toggled::False
-                            })
-                            .tooltip(move |_, cx| {
-                                let text = settings_tooltip.clone();
-                                cx.new(|_| SurfaceTabTooltip { text }).into()
-                            })
-                            .tab_index(0)
-                            .size(px(SIDEBAR_FOOTER_BUTTON_SIZE))
-                            .flex_none()
-                            .rounded(px(8.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .bg(if settings_open {
-                                theme.glass_hover()
-                            } else {
-                                motion::hover_blend(
-                                    "settings-trigger",
-                                    theme.glass_hover().opacity(0.0),
-                                    theme.glass_hover(),
-                                )
-                            })
-                            .on_hover(motion::hover_listener("settings-trigger"))
-                            .focus_visible(|s| s.border_2().border_color(theme.accent))
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx)))
-                            .child(icon(icons::SETTINGS).size(px(15.0)).text_color(
-                                if settings_open {
+                div().flex().flex_none().items_center().gap(px(2.0)).child(
+                    div()
+                        .id("settings-trigger")
+                        .debug_selector(|| "settings-trigger".into())
+                        .role(gpui::Role::Button)
+                        .aria_label(if settings_open {
+                            "Close settings"
+                        } else {
+                            "Settings"
+                        })
+                        .aria_toggled(if settings_open {
+                            gpui::Toggled::True
+                        } else {
+                            gpui::Toggled::False
+                        })
+                        .tooltip(move |_, cx| {
+                            let text = settings_tooltip.clone();
+                            cx.new(|_| SurfaceTabTooltip { text }).into()
+                        })
+                        .tab_index(0)
+                        .size(px(SIDEBAR_FOOTER_BUTTON_SIZE))
+                        .flex_none()
+                        .rounded(px(8.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .bg(if settings_open {
+                            theme.glass_hover()
+                        } else {
+                            motion::hover_blend(
+                                "settings-trigger",
+                                theme.glass_hover().opacity(0.0),
+                                theme.glass_hover(),
+                            )
+                        })
+                        .on_hover(motion::hover_listener("settings-trigger"))
+                        .focus_visible(|s| s.border_2().border_color(theme.accent))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_settings(cx)))
+                        .child(
+                            icon(icons::SETTINGS)
+                                .size(px(15.0))
+                                .text_color(if settings_open {
                                     theme.text
                                 } else {
                                     motion::hover_blend(
@@ -8903,9 +9007,9 @@ impl Shell {
                                         theme.text_muted,
                                         theme.text,
                                     )
-                                },
-                            )),
-                    ),
+                                }),
+                        ),
+                ),
             )
             .into_any_element()
     }
@@ -9373,11 +9477,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.keystroke.key == "escape" && self.voice.read(cx).stage_open {
-            self.set_voice_stage_open(false, cx);
-            cx.stop_propagation();
-            return;
-        }
         if event.keystroke.key == "escape" && self.sidebar_session_transfer.is_some() {
             cx.stop_active_drag(window);
             self.cancel_sidebar_session_transfer(cx);
@@ -9441,10 +9540,22 @@ impl Shell {
             .as_deref()
             .is_some_and(|chat_id| composer.read(cx).is_interrupting(chat_id));
         let escape_stops_active_agent = self.settings.escape_stops_active_agent;
+        // The call screen is its conversation's view, not a sheet over it:
+        // Escape closes a failure shown there and otherwise does nothing,
+        // least of all stop the call's turn. It is asked last, once nothing
+        // open over the screen (the command palette, a menu, a dialog) has
+        // taken the key.
+        let on_call_screen = self.voice.read(cx).stage_open;
+        if on_call_screen
+            && event.keystroke.key == "escape"
+            && self.voice.read(cx).phase == zeron_proto::voice::VoicePhase::Failed
+        {
+            self.set_voice_stage_open(false, cx);
+        }
 
         match resolve_shell_escape(
             &event.keystroke.key,
-            false,
+            on_call_screen,
             escape_stops_active_agent,
             self.route,
             selected_chat.as_deref(),
@@ -10008,9 +10119,14 @@ impl Shell {
             self.bottom_stack_has_composer.get(),
             (has_spaces || no_project || has_appshots) && has_selection,
         );
-        let ui_settings = settings::current(cx);
-        let new_thread_background_setting = ui_settings.new_thread_composer_background;
-        let new_thread_background_effect = ui_settings.new_thread_background_effect;
+        let (new_thread_background_setting, new_thread_background_effect, transcript_width_setting) =
+            settings::read(cx, |settings| {
+                (
+                    settings.new_thread_composer_background.clone(),
+                    settings.new_thread_background_effect,
+                    settings.transcript_width,
+                )
+            });
         let new_thread_background_adjustment = new_thread_background_setting
             .as_ref()
             .map(|background| background.adjustment)
@@ -10048,11 +10164,7 @@ impl Shell {
         self.composer
             .update(cx, |composer, cx| composer.set_dock_frame(dock_frame, cx));
         let composer_width = self.composer_dock.borrow_mut().layout_width(
-            composer_target_width(
-                main_content_width,
-                ui_settings.transcript_width,
-                has_selection,
-            ),
+            composer_target_width(main_content_width, transcript_width_setting, has_selection),
             self.reduced_motion,
             frame_time,
         );
@@ -10124,7 +10236,25 @@ impl Shell {
                         } else {
                             0.0
                         })
-                        .child(self.transcript.clone()),
+                        // Settled, the transcript is a cached view: a
+                        // sibling's animation tick (the composer's caret,
+                        // the voice row's waveform) redraws the window
+                        // without rebuilding it. While it fades or glides
+                        // it draws fresh, since a reused scene would keep
+                        // the opacity it was painted with.
+                        .child(
+                            if dock_frame.transcript() >= 1.0
+                                && transcript_geometry_ready
+                                && !departing_transcript
+                            {
+                                self.transcript
+                                    .clone()
+                                    .cached(gpui::StyleRefinement::default().size_full())
+                                    .into_any_element()
+                            } else {
+                                self.transcript.clone().into_any_element()
+                            },
+                        ),
                 )
                 // A departing transcript is visual history, not an active
                 // interaction surface bound to the newly blank route.
@@ -10329,7 +10459,6 @@ impl Shell {
                         .absolute()
                         .inset_0(),
                     )
-                    .children(self.render_voice_composer_orb(composer_width, cx))
                     .child(status)
                     .when(has_spaces || no_project || has_appshots, |el| {
                         let composer_opacity = self.composer_dock.borrow().opacity();
@@ -10343,7 +10472,7 @@ impl Shell {
                                     .mx_auto()
                                     .child(self.composer.clone())
                                     .children(if has_selection {
-                                        self.render_jump_to_bottom(cx)
+                                        self.render_jump_to_bottom(composer_width, cx)
                                     } else {
                                         None
                                     }),
@@ -10366,13 +10495,34 @@ impl Shell {
     /// with a hairline — horizontally centered over the transcript column and
     /// floating six pixels above the composer. It shares the composer's
     /// measured dock transform and paints after it, outside the transcript fade.
-    fn render_jump_to_bottom(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// While a call's bar is docked above the composer that place is the
+    /// bar's: the pill stands beside it, on its line.
+    fn render_jump_to_bottom(
+        &mut self,
+        composer_width: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if !self.transcript.read(cx).jump_button_shown() {
             return None;
         }
-        Some(
-            div()
-                .absolute()
+        let beside = self
+            .voice_dock
+            .read(cx)
+            .docked(cx)
+            .and_then(|bar| crate::voice::float::beside(bar, composer_width, JUMP_PILL_WIDTH));
+        let pill = self.jump_pill("jump-to-bottom", "jump-pill", self.transcript.clone(), cx);
+        let place = div().absolute().debug_selector(|| "jump-to-bottom".into());
+        Some(match beside {
+            Some(leading) => place
+                // Centred on the bar's line: the bar fills the room the
+                // composer keeps for it at its top.
+                .top(px((crate::voice::Placement::Floating.height()
+                    - JUMP_PILL_HEIGHT)
+                    / 2.0))
+                .left(px(leading))
+                .child(pill)
+                .into_any_element(),
+            None => place
                 // Share the composer's measured translation, not its final
                 // bottom-stack target. Paint after the composer so it cannot
                 // pass over this control during docking.
@@ -10381,9 +10531,9 @@ impl Shell {
                 .right(px(10.0))
                 .flex()
                 .justify_center()
-                .child(self.jump_pill("jump-to-bottom", "jump-pill", self.transcript.clone(), cx))
+                .child(pill)
                 .into_any_element(),
-        )
+        })
     }
 
     /// The jump pill itself — shared between the conversation overlay and
@@ -10413,7 +10563,7 @@ impl Shell {
         };
         let pill = div()
             .id(anim_key)
-            .h(px(30.0))
+            .h(px(JUMP_PILL_HEIGHT))
             .rounded_full()
             .border_1()
             .border_color(theme.border)
@@ -12584,6 +12734,7 @@ impl Render for Shell {
             .on_action(cx.listener(|this, _: &RandomWallpaper, _, cx| {
                 this.random_wallpaper(cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleVoice, _, cx| this.toggle_voice(cx)))
             // New session works from anywhere — `open_new_session` routes back
             // to chat itself, so Settings is not a dead spot.
             .on_action(cx.listener(|this, _: &NewSession, _, cx| this.open_new_session(cx)))
@@ -12645,7 +12796,11 @@ impl Render for Shell {
                 this.toggle_command_palette(window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenModelPicker, window, cx| {
-                if matches!(this.route, Route::Chat) && !this.overlay_owns_keyboard(cx) {
+                // The call screen has no composer to open it from.
+                if matches!(this.route, Route::Chat)
+                    && !this.overlay_owns_keyboard(cx)
+                    && !this.voice.read(cx).stage_open
+                {
                     let pickers = this.composer.read(cx).pickers().clone();
                     pickers.update(cx, |pickers, cx| pickers.open_model_menu(window, cx));
                 }
@@ -12852,13 +13007,22 @@ impl Render for Shell {
                 } else {
                     main
                 };
+                // The call screen has no surface of its own: it stands on the
+                // window's material, so what it replaces (the conversation,
+                // its panes and its title bar) fades out beneath it.
+                // Once it is fully covered it is not mounted at all: a hidden
+                // conversation would still be laid out, painted and blurred
+                // on every frame of the call.
+                let beneath_voice = self.voice_stage_beneath();
+                let covered = beneath_voice <= 0.0;
                 let card: AnyElement = div()
                     .flex_1()
                     .min_w_0()
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(main)
+                    .opacity(beneath_voice)
+                    .when(!covered, |card| card.child(main))
                     .into_any_element();
                 // The whole app page is one keyed `animate-in` entrance (zeron
                 // App.tsx `<div key={phase} className="animate-in h-full">`):
@@ -12923,22 +13087,34 @@ impl Render for Shell {
                                     .h_full()
                                     .flex_none()
                                     .relative()
-                                    .child(
-                                        div()
-                                            .h_full()
-                                            .flex()
-                                            .flex_row()
-                                            .child(right)
-                                            .child(files_panel),
-                                    )
-                                    .child(right_seam),
+                                    .opacity(beneath_voice)
+                                    .when(!covered, |pane| {
+                                        pane.child(
+                                            div()
+                                                .h_full()
+                                                .flex()
+                                                .flex_row()
+                                                .child(right)
+                                                .child(files_panel),
+                                        )
+                                        .child(right_seam)
+                                    }),
                             ),
                     )
-                    .child(div().absolute().top_0().left_0().right_0().child(title_bar))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .opacity(beneath_voice)
+                            .when(!covered, |bar| bar.child(title_bar)),
+                    )
                     // The stage covers the conversation's titlebar but never
                     // the cluster: the sidebar toggle and navigation stay live.
                     .children(voice_stage)
                     .child(self.render_titlebar_cluster(cx))
+                    .children(self.render_voice_bar(cx))
                     .children(overlays);
                 root.child(sidebar_tone)
                     .child(motion::fade_in("phase-app", page))

@@ -3,6 +3,15 @@
 use crate::{DocError, MessagePart, MessageRole, MessageStatus, SessionDoc, SessionMessageEntry};
 use zeron_proto::voice::{MAX_TRANSCRIPT_BYTES, VoiceRole, VoiceTranscript};
 
+/// The entry an utterance's text lives in. A client showing the words while
+/// they are being said uses the same id, so the committed entry takes that
+/// echo's place. Length-prefixing prevents collisions if a provider id
+/// contains ':'; identity is unrelated to text, so two identical phrases
+/// stay two items.
+pub fn entry_id(session_id: &str, item_id: &str) -> String {
+    format!("voice:{}:{session_id}:{item_id}", session_id.len())
+}
+
 pub fn commit_voice_transcript(
     doc: &SessionDoc,
     final_text: &VoiceTranscript,
@@ -22,14 +31,7 @@ pub fn commit_voice_transcript(
     if final_text.text.trim().is_empty() {
         return Ok(None);
     }
-    // Length-prefixing prevents collisions if a provider id contains ':';
-    // identity is unrelated to text, so two identical phrases stay two items.
-    let id = format!(
-        "voice:{}:{}:{}",
-        final_text.session_id.len(),
-        final_text.session_id,
-        final_text.item_id
-    );
+    let id = entry_id(&final_text.session_id, &final_text.item_id);
     let entries = doc.read_entries()?;
     if entries.iter().any(|entry| entry.id == id) {
         return Ok(None);

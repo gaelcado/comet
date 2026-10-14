@@ -702,7 +702,7 @@ fn group(id: ShortcutId) -> &'static str {
         | ShortcutId::ToggleFiles
         | ShortcutId::ToggleTerminal => "Panels",
         ShortcutId::NewProject => "Projects",
-        ShortcutId::ToggleDictation => "Voice",
+        ShortcutId::ToggleDictation | ShortcutId::ToggleVoice => "Voice",
         ShortcutId::OpenModelPicker
         | ShortcutId::NewSession
         | ShortcutId::NextSession

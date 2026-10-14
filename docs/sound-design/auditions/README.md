@@ -2,7 +2,7 @@
 
 Original synthesis using the approved rounded clicks, with wider rhythmic and tonal variety. Quiet levels, no noisy tails or metallic impacts.
 
-The numbered files remain audition references. `06-attention.wav` is also the source for the selected application attention cue.
+The numbered files remain audition references. `06-attention.wav` is also the source for the selected application attention cue; the realtime voice call cues keep the clicks of `07-mic-on.wav` and `08-mic-off.wav` and have a chime of their own.
 
 | # | Intended action | Character | Duration | Peak |
 |---|---|---|---:|---:|
@@ -17,6 +17,6 @@ The numbered files remain audition references. `06-attention.wav` is also the so
 | 09 | [Connection restored](09-reconnected.wav) | Three growing taps land on a soft two-note harmony. | 0.76s | -19.2 dBFS |
 | 10 | [Undo / restore](10-undo.wav) | Two reversed-weight clicks with a brief falling chime. | 0.49s | -19.2 dBFS |
 
-Regenerate with `python3 scripts/generate-sound-auditions.py`; pass `--install-attention` to refresh the selected runtime copy. Stereo 48 kHz, 16-bit PCM. No external samples. Perceived loudness depends on playback; no upward normalization is applied.
+Regenerate with `python3 scripts/generate-sound-auditions.py`; pass `--install-attention` or `--install-voice` to refresh the selected runtime copies. Stereo 48 kHz, 16-bit PCM. No external samples. Perceived loudness depends on playback; no upward normalization is applied.
 
-The action names are audition contexts, not recommendations to enable all ten. Frequent actions such as Send and Undo stay silent; the product sound scope is intentionally limited to completion, input required, errors or durable disconnections, and Appshot capture.
+The action names are audition contexts, not recommendations to enable all ten. Frequent actions such as Send and Undo stay silent; the product sound scope is intentionally limited to completion, input required, errors or durable disconnections, Appshot capture, and the two ends of a voice call.

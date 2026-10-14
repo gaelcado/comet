@@ -144,7 +144,10 @@ impl VoiceView {
                 generation,
                 item_id,
                 text,
-            } if self.current(generation) => {
+                ..
+                // An utterance's start names its speaker and carries no text
+                // yet: the caption keeps what it shows until words arrive.
+            } if self.current(generation) && !text.is_empty() => {
                 if self.caption_item != item_id || self.caption_role.is_some() {
                     self.caption.clear();
                     self.caption_item = item_id;
@@ -269,7 +272,8 @@ mod tests {
             VoiceEvent::Partial {
                 generation: 1,
                 item_id: None,
-                text: "early".into()
+                text: "early".into(),
+                role: None,
             },
             now
         ));
@@ -298,6 +302,7 @@ mod tests {
                     generation: 2,
                     item_id: Some("item".into()),
                     text: "x".repeat(MAX_TRANSCRIPT_BYTES / 2),
+                    role: None,
                 },
                 now,
             );
@@ -322,6 +327,7 @@ mod tests {
                 generation: 2,
                 item_id: Some("item".into()),
                 text: "next".into(),
+                role: None,
             },
             now,
         );

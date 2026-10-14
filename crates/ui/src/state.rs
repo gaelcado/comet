@@ -1609,6 +1609,26 @@ impl AppState {
         }
     }
 
+    /// Show `entry` as an echo, or bring the echo with its id up to date:
+    /// what is being said on a call, until the doc frame carrying the same
+    /// id supersedes it. False when nothing changed, or when the transcript
+    /// in view already has that entry.
+    pub fn set_echo(&mut self, chat_id: &str, entry: SessionMessageEntry) -> bool {
+        if self.selected_chat.as_deref() == Some(chat_id)
+            && self.transcript.iter().any(|e| e.id == entry.id)
+        {
+            return false;
+        }
+        let echoes = self.echoes.entry(chat_id.to_string()).or_default();
+        match echoes.iter_mut().find(|echo| echo.id == entry.id) {
+            Some(echo) if *echo == entry => return false,
+            Some(echo) => *echo = entry,
+            None => echoes.push(entry),
+        }
+        self.transcript_revision = self.transcript_revision.wrapping_add(1);
+        true
+    }
+
     /// Drop an echo (send failed — the prompt returns to the draft).
     pub fn remove_echo(&mut self, chat_id: &str, message_id: &str) {
         if let Some(echoes) = self.echoes.get_mut(chat_id) {

@@ -7688,6 +7688,18 @@ fn agent_message_display(text: &str) -> String {
     let Some((header, body)) = rest.split_once("]\n\n") else {
         return text.to_owned();
     };
+    // The header's current wordings (`zeron-mcp`'s `attribution`): what
+    // follows the sender's label says how an answer reaches them.
+    if let Some((name, _)) = [
+        ". To answer, use the Zeron `send_message` tool, chat ",
+        ". It is waiting for this turn's answer",
+    ]
+    .iter()
+    .find_map(|route| header.split_once(route))
+    {
+        return format!("Message from {name}\n\n{body}");
+    }
+    // Messages sent before those wordings keep the earlier one.
     let Some((label, id)) =
         header.rsplit_once(". Reply to it with the Zeron `send_message` tool, chat ")
     else {
@@ -7954,7 +7966,7 @@ fn input_chip(header: SharedString, resolved: bool, theme: &Theme) -> AnyElement
 /// A small glyph standing in for the tool's icon (zeron uses an icon set; a
 /// quiet monochrome character keeps the tile without shipping SVGs).
 /// The glyph for a tool call (zeron tool-chip.tsx `toolIcon`, Solar set).
-fn tool_icon_path(call: &ToolCall) -> &'static str {
+pub(crate) fn tool_icon_path(call: &ToolCall) -> &'static str {
     match call {
         ToolCall::Exec { .. } => crate::icons::TERMINAL,
         ToolCall::ReadFile { .. } | ToolCall::ApplyPatch { .. } => crate::icons::DOCUMENT,
@@ -8451,6 +8463,68 @@ fn chip_header_row(
 }
 
 /// The header row of an expandable chip card.
+/// The height of a [`call_line`].
+pub(crate) const CALL_LINE_HEIGHT: f32 = TOOL_TREE_ROW_HEIGHT;
+
+/// One tool call written as the transcript writes it in an activity tree
+/// (its icon, its label, what it acted on, a file's badge), for a surface
+/// that lists calls outside a transcript: the call screen. A call still
+/// running spins in place of its icon. The line does not open: the
+/// conversation is where a call's result is read.
+pub(crate) fn call_line(
+    part_id: &str,
+    call: &ToolCall,
+    is_error: bool,
+    resolved: bool,
+    theme: &Theme,
+    view: gpui::EntityId,
+    cx: &mut gpui::App,
+) -> gpui::Div {
+    let tool = ToolItem {
+        part_id: part_id.to_owned(),
+        call: call.clone(),
+        is_error,
+        resolved,
+        detail: None,
+        invocation: None,
+        output_ref: None,
+        output_bytes: None,
+        diff_ref: None,
+        subagent_ref: None,
+        subagent_status: None,
+        subagent_tail: None,
+        kind: ToolItemKind::Call,
+    };
+    let mark = if resolved {
+        crate::icons::icon(tool_icon_path(call))
+            .size(px(14.0))
+            .text_color(if is_error {
+                theme.danger
+            } else {
+                theme.text_muted
+            })
+            .into_any_element()
+    } else {
+        crate::loaders::mini_mono_spinner("call-line", 2.0, theme.text_muted, view, cx)
+            .into_any_element()
+    };
+    div()
+        .h(px(CALL_LINE_HEIGHT))
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(ACTIVITY_TEXT_GAP))
+        .child(
+            div()
+                .flex_none()
+                .w(px(16.0))
+                .flex()
+                .justify_center()
+                .child(mark),
+        )
+        .child(chip_header_row(&tool, None, theme, view, cx))
+}
+
 fn chip_header(
     tool: &ToolItem,
     open: bool,
@@ -14009,6 +14083,29 @@ mod tests {
             assistant_copy_text(&entry).as_deref(),
             Some("First **paragraph**.\n\n    indented code\n    stays indented")
         );
+    }
+
+    #[test]
+    fn agent_messages_show_their_sender_in_every_header_wording() {
+        for header in [
+            "To answer, use the Zeron `send_message` tool, chat chat-beta-2. Do not reply only to acknowledge.",
+            "It is waiting for this turn's answer and receives it automatically: answer here and do not message it back (chat chat-beta-2).",
+        ] {
+            assert_eq!(
+                agent_message_display(&format!(
+                    "[Message from Zeron chat Beta (chat-bet). {header}]\n\nplease review"
+                )),
+                "Message from Beta (chat-bet)\n\nplease review"
+            );
+        }
+        // Messages sent before those wordings, and typed ones, read as before.
+        assert_eq!(
+            agent_message_display(
+                "[Message from Zeron chat Beta. Reply to it with the Zeron `send_message` tool, chat b.]\n\nhi"
+            ),
+            "Message from Beta\n\nhi"
+        );
+        assert_eq!(agent_message_display("[Message] hi"), "[Message] hi");
     }
 
     #[test]

@@ -191,6 +191,11 @@ pub enum VoiceEvent {
         #[serde(default)]
         item_id: Option<String>,
         text: String,
+        /// Who is speaking, when the provider says so. It announces the
+        /// speaker as an utterance starts (with no text yet); the deltas
+        /// that follow carry none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<VoiceRole>,
     },
     Final {
         transcript: VoiceTranscript,

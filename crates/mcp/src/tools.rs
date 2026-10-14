@@ -611,6 +611,8 @@ impl Tools {
         if !args.include_archived {
             chats.retain(|c| !c.archived);
         }
+        // A hidden voice orchestrator is not a session the user has.
+        chats.retain(|c| !zeron_proto::voice::is_orchestrator_chat(&c.id));
         if let Some(parent) = args.parent.as_deref() {
             let parent = self.zeron.resolve_chat(parent).await?;
             chats.retain(|c| c.parent_chat_id.as_deref() == Some(parent.id.as_str()));
@@ -887,7 +889,7 @@ impl Tools {
             .into_iter()
             .map(|m| m.id)
             .collect();
-        let body = self.attribute(&chat, text).await;
+        let body = self.attribute(&chat, text, args.wait).await;
         let mut result = json!({
             "chatId": chat.id,
             "title": chat.title,
@@ -1000,9 +1002,9 @@ impl Tools {
 
     /// Prefix the sender's identity when this server speaks for a chat, so
     /// the receiving agent (and the human reading that transcript) can tell
-    /// an agent-to-agent message from a typed one. Reply instructions always
-    /// use the full id: display prefixes need not uniquely identify a chat.
-    async fn attribute(&self, target: &Chat, text: &str) -> String {
+    /// an agent-to-agent message from a typed one. See [`attribution`];
+    /// `awaited` is whether the sender waits on this turn for its answer.
+    async fn attribute(&self, target: &Chat, text: &str, awaited: bool) -> String {
         let Some(origin_id) = self.zeron.origin().chat_id.as_deref() else {
             return text.to_owned();
         };
@@ -1019,10 +1021,7 @@ impl Tools {
             }
             _ => short(origin_id).to_owned(),
         };
-        format!(
-            "[Message from Zeron chat {label}. Reply to it with the Zeron `send_message` tool, chat {}.]\n\n{text}",
-            origin_id
-        )
+        attribution(&label, origin_id, awaited, text)
     }
 
     /// Pick and perform the delivery the composer would.
@@ -1207,6 +1206,26 @@ impl Tools {
             "replies": replies,
         }))
     }
+}
+
+/// An agent-to-agent message: who it is from, and how an answer reaches them.
+/// A sender waiting on the turn receives its answer as the tool's result, so
+/// messaging it back would only start a turn there to say the same thing.
+/// One that is not waiting is answered with `send_message`, by full id
+/// (display prefixes need not uniquely identify a chat), and only when there
+/// is something to say: two chats acknowledging each other never stop.
+/// `zeron-ui`'s transcript reads this header back; keep both in step.
+fn attribution(label: &str, origin_id: &str, awaited: bool, text: &str) -> String {
+    let route = if awaited {
+        format!(
+            "It is waiting for this turn's answer and receives it automatically: answer here and do not message it back (chat {origin_id})."
+        )
+    } else {
+        format!(
+            "To answer, use the Zeron `send_message` tool, chat {origin_id}. Do not reply only to acknowledge."
+        )
+    };
+    format!("[Message from Zeron chat {label}. {route}]\n\n{text}")
 }
 
 /// claude-code when it is offered here, else the first available harness.
@@ -1435,7 +1454,16 @@ mod tests {
             "{prompt}"
         );
         assert!(prompt.ends_with("please review"));
-        assert!(prompt.contains("tool, chat chat-beta-2.]"), "{prompt}");
+        assert!(
+            prompt.contains("tool, chat chat-beta-2. Do not reply only to acknowledge.]"),
+            "{prompt}"
+        );
+        // A sender that waits on the turn gets its answer as the tool's
+        // result: the receiver is told not to message it back.
+        let awaited = attribution("Beta (chat-bet)", "chat-beta-2", true, "status?");
+        assert!(awaited.starts_with("[Message from Zeron chat Beta (chat-bet). "));
+        assert!(awaited.contains("do not message it back (chat chat-beta-2).]"));
+        assert!(!awaited.contains("send_message") && awaited.ends_with("\n\nstatus?"));
         assert_eq!(params["command"]["request"]["cwd"], "/repo/comet");
         assert_eq!(params["command"]["request"]["harness"], "claude-code");
         assert_eq!(params["command"]["request"]["model"], "opus");
@@ -1488,7 +1516,7 @@ mod tests {
                 .split_once("tool, chat ")
                 .unwrap()
                 .1
-                .split_once(".]\n\n")
+                .split_once(". Do not reply only to acknowledge.]\n\n")
                 .unwrap()
                 .0
                 .to_owned()

@@ -1837,7 +1837,9 @@ impl RpcService for EngineRpc {
                     .chat(&p.chat_id)
                     .map_err(|e| RpcError::Failed(e.to_string()))?
                     .ok_or_else(|| RpcError::Failed("voice unavailable: Unsupported".into()))?;
+                let since = std::time::Instant::now();
                 let prepared = self.prepare_voice_bridge(&p.chat_id).await;
+                let runtime_ms = since.elapsed().as_millis() as u64;
                 let (bridge, events, active) = match prepared {
                     Ok(bridge) => bridge,
                     Err(reason) => {
@@ -1847,10 +1849,22 @@ impl RpcService for EngineRpc {
                         return RpcReply::value(&crate::voice::VoiceManager::unavailable(reason));
                     }
                 };
-                let eligibility = match bridge.probe().await {
+                // A start skips the usage read and hands its probe to the call.
+                let probed = if method == methods::START_VOICE {
+                    bridge.probe_start().await
+                } else {
+                    bridge.probe().await
+                };
+                let eligibility = match probed {
                     Ok(eligible) => eligible,
                     Err(reason) => crate::voice::VoiceManager::unavailable(reason),
                 };
+                tracing::info!(
+                    target: "zeron_engine::voice",
+                    runtime_ms,
+                    probe_ms = since.elapsed().as_millis() as u64 - runtime_ms,
+                    "voice prepared"
+                );
                 if method == methods::VOICE_ELIGIBILITY {
                     return RpcReply::value(&eligibility);
                 }

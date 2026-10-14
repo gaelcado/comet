@@ -350,6 +350,24 @@ pub fn current(cx: &App) -> UiSettings {
         .unwrap_or_default()
 }
 
+/// Read from the latest settings in place. `current` clones the whole
+/// struct (its keymap, maps and paths included): render paths, which run
+/// many times a second, read what they need through this instead.
+pub fn read<R>(cx: &App, read: impl FnOnce(&UiSettings) -> R) -> R {
+    match cx.try_global::<SettingsStore>() {
+        Some(store) => read(&store.current),
+        None => read(&UiSettings::default()),
+    }
+}
+
+/// Advances whenever the settings change: a view holding a working copy
+/// only needs to merge the store's when this moved.
+pub fn revision(cx: &App) -> u64 {
+    cx.try_global::<SettingsStore>()
+        .map(|store| store.revision)
+        .unwrap_or_default()
+}
+
 /// Read the picker preference without cloning the full settings for each model row.
 pub fn compact_model_picker(cx: &App) -> bool {
     cx.try_global::<SettingsStore>()
@@ -965,6 +983,11 @@ pub struct UiSettings {
     pub reduce_motion: crate::motion::ReduceMotion,
     /// Also snap animations while the main window is not focused.
     pub pause_animations_in_background: bool,
+    /// Offers realtime voice (the composer's voice button and its shortcut).
+    pub codex_voice_enabled: bool,
+    /// Cues when a voice call connects and ends. Independent of the session
+    /// sounds; a failed call uses their attention cue.
+    pub codex_voice_sound_enabled: bool,
     /// Stable native Codex voice id only; devices and microphone state are never persisted.
     #[serde(default)]
     pub codex_voice: Option<String>,
@@ -1058,6 +1081,8 @@ impl Default for UiSettings {
             new_thread_background_effect: NewThreadBackgroundEffect::None,
             reduce_motion: crate::motion::ReduceMotion::System,
             pause_animations_in_background: false,
+            codex_voice_enabled: true,
+            codex_voice_sound_enabled: true,
             codex_voice: None,
             codex_voice_device: None,
             legacy_accent_color: None,
@@ -1095,6 +1120,7 @@ const JUMP_LABELS: [&str; JUMP_SLOTS] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShortcutId {
     ToggleDictation,
+    ToggleVoice,
     CaptureAppshot,
     RandomWallpaper,
     SaveFile,
@@ -1113,8 +1139,9 @@ pub enum ShortcutId {
 }
 
 impl ShortcutId {
-    pub const ALL: [ShortcutId; 15 + JUMP_SLOTS] = [
+    pub const ALL: [ShortcutId; 16 + JUMP_SLOTS] = [
         ShortcutId::ToggleDictation,
+        ShortcutId::ToggleVoice,
         ShortcutId::CaptureAppshot,
         ShortcutId::RandomWallpaper,
         ShortcutId::SaveFile,
@@ -1148,6 +1175,7 @@ impl ShortcutId {
     pub fn label(self) -> &'static str {
         match self {
             ShortcutId::ToggleDictation => "Hold to dictate",
+            ShortcutId::ToggleVoice => "Start realtime voice",
             ShortcutId::RandomWallpaper => "Random wallpaper",
             ShortcutId::CaptureAppshot => "Capture Appshot",
             ShortcutId::SaveFile => "Save file",
@@ -1176,6 +1204,7 @@ impl ShortcutId {
     pub fn default_combo_on(self, mac: bool) -> &'static str {
         match self {
             ShortcutId::ToggleDictation => "mod-d",
+            ShortcutId::ToggleVoice => "mod-shift-d",
             ShortcutId::RandomWallpaper => "mod-u",
             ShortcutId::CaptureAppshot if mac => "ctrl-alt-space",
             ShortcutId::CaptureAppshot => "mod-alt-space",
@@ -1225,6 +1254,7 @@ impl ShortcutId {
 #[serde(default, rename_all = "camelCase")]
 pub struct KeymapConfig {
     pub toggle_dictation: String,
+    pub toggle_voice: String,
     #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), serde(skip))]
     pub capture_appshot: String,
     pub random_wallpaper: String,
@@ -1292,6 +1322,7 @@ impl Default for KeymapConfig {
     fn default() -> Self {
         Self {
             toggle_dictation: ShortcutId::ToggleDictation.default_combo().into(),
+            toggle_voice: ShortcutId::ToggleVoice.default_combo().into(),
             capture_appshot: ShortcutId::CaptureAppshot.default_combo().into(),
             random_wallpaper: ShortcutId::RandomWallpaper.default_combo().into(),
             save_file: ShortcutId::SaveFile.default_combo().into(),
@@ -1315,6 +1346,7 @@ impl KeymapConfig {
     pub fn get(&self, id: ShortcutId) -> &str {
         match id {
             ShortcutId::ToggleDictation => &self.toggle_dictation,
+            ShortcutId::ToggleVoice => &self.toggle_voice,
             ShortcutId::CaptureAppshot => &self.capture_appshot,
             ShortcutId::RandomWallpaper => &self.random_wallpaper,
             ShortcutId::SaveFile => &self.save_file,
@@ -1340,6 +1372,7 @@ impl KeymapConfig {
     pub fn set(&mut self, id: ShortcutId, combo: String) {
         match id {
             ShortcutId::ToggleDictation => self.toggle_dictation = combo,
+            ShortcutId::ToggleVoice => self.toggle_voice = combo,
             ShortcutId::CaptureAppshot => self.capture_appshot = combo,
             ShortcutId::RandomWallpaper => self.random_wallpaper = combo,
             ShortcutId::SaveFile => self.save_file = combo,
@@ -1699,6 +1732,8 @@ impl UiSettings {
             new_thread_background_effect,
             reduce_motion,
             pause_animations_in_background,
+            codex_voice_enabled,
+            codex_voice_sound_enabled,
             codex_voice,
             codex_voice_device,
             legacy_accent_color,
@@ -2628,6 +2663,8 @@ mod tests {
             dictation_enabled: false,
             dictation_input: Some("coreaudio:usb-mic".into()),
             window_geometry: None,
+            codex_voice_enabled: false,
+            codex_voice_sound_enabled: false,
             codex_voice: Some("ember".into()),
             codex_voice_device: Some("fedora".into()),
             sidebar_width: 300.0,

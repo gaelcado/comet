@@ -488,6 +488,8 @@ pub enum SendButtonMode {
     Queue,
     /// Live run, nothing typed: red stop square.
     Stop,
+    /// Nothing typed and nothing running: start a voice chat instead.
+    Voice,
 }
 
 /// What the composer holds that a send could carry. A staged image or diff
@@ -5020,6 +5022,9 @@ pub enum ComposerEvent {
         chat_id: String,
         message_id: String,
     },
+    /// The empty composer's voice button: start a voice chat in this
+    /// conversation, or in a new one from the new-session canvas.
+    StartVoice,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5762,6 +5767,10 @@ pub struct Composer {
     account_usage: Entity<crate::account_usage::AccountUsage>,
     /// A side chat's composer: its footer keeps only the context ring.
     side_chat: bool,
+    /// The window's realtime voice session, shown above the input while it is
+    /// live. Only the main composer has one; it also offers the voice button.
+    voice_dock: Option<Entity<crate::voice::VoiceDock>>,
+    _voice_dock_events: Option<Subscription>,
     _picker_focus: Subscription,
     _input_events: Subscription,
     _dictation_events: Subscription,
@@ -6005,6 +6014,8 @@ impl Composer {
             _pickers_observe: pickers_observe,
             account_usage,
             side_chat: false,
+            voice_dock: None,
+            _voice_dock_events: None,
             _picker_focus: picker_focus,
             _input_events: input_events,
             _dictation_events: dictation_events,
@@ -6170,6 +6181,53 @@ impl Composer {
 
     /// Mark this as a side chat's composer: below the input it shows only
     /// the context ring (no checkout/ref footer, no plan usage).
+    /// Attach the window's voice session: its dock renders above the input
+    /// and the empty composer offers to start one.
+    pub(crate) fn set_voice_dock(
+        &mut self,
+        dock: Entity<crate::voice::VoiceDock>,
+        cx: &mut Context<Self>,
+    ) {
+        self._voice_dock_events = Some(cx.subscribe(&dock, |_, _, event, cx| {
+            if matches!(event, crate::voice::VoiceDockEvent::LiveChanged) {
+                cx.notify();
+            }
+        }));
+        self.voice_dock = Some(dock);
+        cx.notify();
+    }
+
+    /// The send slot can start a voice chat: voice is turned on, none is
+    /// live (there is one microphone and one voice chat at a time), this
+    /// composer is taking ordinary input, and voice can run here. Voice
+    /// continues a Codex conversation on this device; the new-session canvas
+    /// starts a new one.
+    fn voice_offered(&self, cx: &App) -> bool {
+        if self.voice_dock.is_none()
+            || self.voice_live(cx)
+            || !crate::settings::read(cx, |settings| settings.codex_voice_enabled)
+            || self.wizard.is_some()
+            || self.input.read(cx).read_only
+        {
+            return false;
+        }
+        let state = self.state.read(cx);
+        if state.selected_chat.is_none() {
+            return true;
+        }
+        state.selected_chat_row().is_some_and(|chat| {
+            Some(&chat.device_id) == state.local_device_id.as_ref()
+                && chat.config.as_ref().map(|config| config.harness)
+                    == Some(zeron_proto::HarnessId::Codex)
+        })
+    }
+
+    fn voice_live(&self, cx: &App) -> bool {
+        self.voice_dock
+            .as_ref()
+            .is_some_and(|dock| dock.read(cx).live())
+    }
+
     pub(crate) fn set_side_chat(&mut self, cx: &mut Context<Self>) {
         self.side_chat = true;
         cx.notify();
@@ -7909,7 +7967,11 @@ impl Composer {
                 self.staged().len() + self.staged_appshots().len(),
                 self.staged_comments(cx).len(),
             );
-        send_button_mode(self.run_live(cx), has_text)
+        let run_live = self.run_live(cx);
+        if !run_live && !has_text && self.voice_offered(cx) {
+            return SendButtonMode::Voice;
+        }
+        send_button_mode(run_live, has_text)
     }
 
     fn execute_workspace_command(
@@ -7970,7 +8032,8 @@ impl Composer {
             // on the just-dispatched prompt and the agent ate it silently
             // (issue #406). Stop stays on the button — and on Esc when
             // escape_stops_active_agent is enabled.
-            SendButtonMode::Stop => {}
+            // Enter never starts voice either: that is the button's job.
+            SendButtonMode::Stop | SendButtonMode::Voice => {}
             _ if no_content => {}
             _ if self.send_blocked(cx) => {}
             SendButtonMode::Send => self.send(text, false, cx),
@@ -9232,6 +9295,10 @@ impl Composer {
         if !crate::dictation::enabled(cx) && !self.input.read(cx).dictation.phase.active() {
             return;
         }
+        // A live voice chat has the microphone.
+        if self.voice_live(cx) && !self.input.read(cx).dictation.phase.active() {
+            return;
+        }
         // A queue row still acquiring its edit lease is about to replace the
         // draft, which would discard the dictation.
         if self.wizard.is_some()
@@ -9359,7 +9426,8 @@ impl Composer {
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         use crate::dictation::{Phase, glass, waveform::Mode};
-        if !crate::dictation::enabled(cx) || self.wizard.is_some() {
+        // A live voice chat has the microphone: nothing else may open it.
+        if !crate::dictation::enabled(cx) || self.wizard.is_some() || self.voice_live(cx) {
             return None;
         }
         let theme = Theme::of(cx).clone();
@@ -9755,6 +9823,46 @@ impl Composer {
                 .tooltip(crate::settings::widgets::text_tooltip("Stop"))
                 .child(div().size(px(11.0)).rounded(px(3.0)).bg(theme.bg))
                 .into_any_element(),
+            // The send slot while there is nothing to send: same plate, a
+            // voice glyph, and it starts a voice chat.
+            SendButtonMode::Voice => {
+                let composer = cx.entity().downgrade();
+                div()
+                    .id("composer-voice")
+                    .debug_selector(|| "composer-voice".into())
+                    .role(Role::Button)
+                    .aria_label("Start voice chat")
+                    .tab_index(0)
+                    .size(px(28.0))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(theme.text)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.85))
+                    .focus_visible(|style| style.border_1().border_color(theme.accent))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ComposerEvent::StartVoice)))
+                    .on_key_down(cx.listener(|_, event: &KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            cx.stop_propagation();
+                            cx.emit(ComposerEvent::StartVoice);
+                        }
+                    }))
+                    .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                        composer
+                            .update(cx, |_, cx| cx.emit(ComposerEvent::StartVoice))
+                            .ok();
+                    })
+                    .tooltip(crate::settings::widgets::text_tooltip("Start voice chat"))
+                    .child(
+                        crate::icons::icon(crate::icons::VOICE_WAVE)
+                            .size(px(15.0))
+                            .text_color(theme.bg),
+                    )
+                    .into_any_element()
+            }
             SendButtonMode::Send | SendButtonMode::Queue => {
                 // Share the submission guard with Enter, including pending
                 // edits and the new-session runnable-agent check.
@@ -10103,6 +10211,29 @@ impl Render for Composer {
             let wizard = self.render_wizard(cx);
             return container.child(motion::fade_quick("composer-wizard", div().child(wizard)));
         }
+
+        // In a conversation the composer keeps room above its stack for the
+        // call's bar, which the shell floats there; a failed start explains
+        // itself in that room instead. Never on the new-session screen,
+        // which stays as it is: there the bar stands at the top.
+        let has_chat = self.state.read(cx).selected_chat.is_some();
+        let container = match self.voice_dock.clone().filter(|_| has_chat) {
+            Some(dock) if dock.read(cx).failed(cx) => container.child(dock),
+            Some(dock) => {
+                let (slot, reserve) = {
+                    let dock = dock.read(cx);
+                    (dock.slot(), dock.reserve())
+                };
+                container.when(reserve > 0.0, |el| {
+                    el.child(crate::voice::float::slot(
+                        slot,
+                        crate::voice::Placement::Floating.height(),
+                        reserve,
+                    ))
+                })
+            }
+            None => container,
+        };
 
         // What is waiting to be sent, stacked directly above the box it was
         // typed in — the queue is a property of this composer, not a panel
@@ -10890,6 +11021,146 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
             .unwrap();
         (dir, window)
+    }
+
+    #[gpui::test]
+    fn empty_composer_offers_voice_until_text_is_typed_or_a_session_is_live(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use zeron_proto::voice::VoicePhase;
+        let (_dir, handle) = composer_focus_window(cx);
+        let voice = cx.new(|_| crate::voice::VoiceController::default());
+        let started = std::rc::Rc::new(std::cell::Cell::new(0));
+        let composer = handle.root(cx).unwrap();
+        let _subscription = cx.update(|cx| {
+            let started = started.clone();
+            cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
+                if matches!(event, ComposerEvent::StartVoice) {
+                    started.set(started.get() + 1);
+                }
+            })
+        });
+        handle
+            .update(cx, |composer, _, cx| {
+                // A composer without the window's voice session never offers it.
+                assert_eq!(composer.button_mode(cx), SendButtonMode::Send);
+                let dock = cx.new(|cx| {
+                    crate::voice::VoiceDock::new(
+                        voice.clone(),
+                        crate::voice::Placement::Floating,
+                        cx,
+                    )
+                });
+                composer.set_voice_dock(dock, cx);
+                assert_eq!(composer.button_mode(cx), SendButtonMode::Voice);
+                // Enter on the empty composer starts nothing.
+                composer.on_submit(cx);
+                composer
+                    .input
+                    .update(cx, |input, cx| input.set_text("hello", cx));
+                assert_eq!(composer.button_mode(cx), SendButtonMode::Send);
+                composer
+                    .input
+                    .update(cx, |input, cx| input.set_text("", cx));
+                crate::settings::update(crate::settings::SavePolicy::Immediate, cx, |s| {
+                    s.codex_voice_enabled = false
+                });
+                assert_eq!(composer.button_mode(cx), SendButtonMode::Send);
+                crate::settings::update(crate::settings::SavePolicy::Immediate, cx, |s| {
+                    s.codex_voice_enabled = true
+                });
+                assert_eq!(composer.button_mode(cx), SendButtonMode::Voice);
+            })
+            .unwrap();
+        assert_eq!(started.get(), 0);
+
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.update(|window, cx| window.draw(cx).clear());
+        let button = cx.debug_bounds("composer-voice").unwrap();
+        assert!(cx.debug_bounds("composer-send").is_none());
+        cx.simulate_click(button.center(), gpui::Modifiers::default());
+        assert_eq!(started.get(), 1);
+
+        // A live voice chat has the microphone: the slot is Send again and
+        // nothing offers a second voice chat or dictation. The new-session
+        // canvas shows nothing of the voice chat at all.
+        voice.update(cx, |voice, cx| {
+            voice.phase = VoicePhase::Checking;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        composer.read_with(cx, |composer, cx| {
+            assert_eq!(composer.button_mode(cx), SendButtonMode::Send);
+            assert!(composer.voice_live(cx));
+        });
+        assert!(cx.debug_bounds("composer-voice").is_none());
+        assert!(cx.debug_bounds("composer-dictation").is_none());
+        assert!(cx.debug_bounds("voice-dock").is_none());
+
+        // In another conversation the input still takes text (the call's bar
+        // floats above it, in room the shell's own test covers).
+        composer.update(cx, |composer, cx| {
+            composer.state.update(cx, |state, cx| {
+                state.selected_chat = Some("a-chat".into());
+                cx.notify();
+            });
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        composer.update(cx, |composer, cx| {
+            composer
+                .input
+                .update(cx, |input, cx| input.set_text("still typing", cx));
+            assert_eq!(composer.input.read(cx).text(), "still typing");
+        });
+
+        // Once it ends, voice is offered where it can run: a Codex
+        // conversation on this device, never one on another harness.
+        voice.update(cx, |voice, cx| voice.cancel(cx));
+        composer.update(cx, |composer, cx| {
+            composer
+                .input
+                .update(cx, |input, cx| input.set_text("", cx));
+            let chat = |harness: zeron_proto::HarnessId| -> zeron_proto::Chat {
+                let mut chat: zeron_proto::Chat = serde_json::from_value(serde_json::json!({
+                    "id": "a-chat",
+                    "deviceId": "this-device",
+                    "title": null,
+                    "archived": false,
+                    "cwd": null,
+                    "branch": null,
+                    "checkoutId": null,
+                    "config": null,
+                    "lastMessagePreview": null,
+                    "lastMessageAt": null,
+                    "createdAt": "2026-10-01T00:00:00Z",
+                }))
+                .unwrap();
+                chat.config = Some(zeron_proto::ChatConfig {
+                    harness,
+                    model: None,
+                    reasoning: None,
+                    model_options: Default::default(),
+                    sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
+                });
+                chat
+            };
+            composer.state.update(cx, |state, _| {
+                state.local_device_id = Some("this-device".into());
+                state.apply_chats(vec![chat(zeron_proto::HarnessId::ClaudeCode)]);
+                state.selected_chat = Some("a-chat".into());
+            });
+            assert_eq!(composer.button_mode(cx), SendButtonMode::Send);
+            composer.state.update(cx, |state, _| {
+                state.apply_chats(vec![chat(zeron_proto::HarnessId::Codex)]);
+                state.selected_chat = Some("a-chat".into());
+            });
+            assert_eq!(composer.button_mode(cx), SendButtonMode::Voice);
+            composer.state.update(cx, |state, _| {
+                state.local_device_id = Some("another-device".into());
+            });
+            assert_eq!(composer.button_mode(cx), SendButtonMode::Send);
+        });
     }
 
     fn with_composer_input(

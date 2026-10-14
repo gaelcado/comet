@@ -222,6 +222,35 @@ pub(crate) fn paint(
     );
 }
 
+/// Paint the hero crop dissolving from its top down to `horizon` (a window
+/// y), with nothing cut out of it: one fade across the whole artwork, for a
+/// surface whose content starts where the artwork ends (the call screen).
+/// The crop is the hero's own, so the artwork does not move between the two.
+pub(crate) fn paint_above(
+    source: Arc<RenderImage>,
+    bounds: Bounds<Pixels>,
+    horizon: Pixels,
+    adjustment: NewThreadBackgroundAdjustment,
+    window: &mut Window,
+) {
+    let horizon = horizon.min(bounds.bottom());
+    paint_adjusted_with_mask(
+        source,
+        bounds,
+        adjustment,
+        Default::default(),
+        Some(ImageAlphaMask {
+            // An exclusion below the image changes nothing but keeps the fade.
+            bounds: Bounds::new(point(bounds.left(), bounds.bottom() + px(1.0)), bounds.size),
+            radius: px(0.0),
+            feather: px(1.0),
+            clearance: px(0.0),
+            bottom_fade: Some((horizon, (horizon - bounds.top()).max(px(1.0)))),
+        }),
+        window,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

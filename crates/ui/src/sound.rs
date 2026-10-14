@@ -1,7 +1,8 @@
 //! Session notification sounds — the herdr approach (state-transition chimes
 //! played through the platform's own audio CLI, zero Rust audio deps):
 //!
-//! - embedded completion, input-request, attention and Appshot chimes;
+//! - embedded completion, input-request, attention, voice-call and Appshot
+//!   chimes;
 //! - macOS Appshots use a preloaded native player; other cues write to a
 //!   temp file and use the system player on a
 //!   background thread: `afplay` (macOS), PowerShell `Media.SoundPlayer`
@@ -25,6 +26,8 @@ static SOUND_APPSHOT: &[u8] = include_bytes!("../assets/sounds/appshot.wav");
 static SOUND_DONE: &[u8] = include_bytes!("../assets/sounds/done.wav");
 static SOUND_REQUEST: &[u8] = include_bytes!("../assets/sounds/request.wav");
 static SOUND_ATTENTION: &[u8] = include_bytes!("../assets/sounds/attention.wav");
+static SOUND_VOICE_START: &[u8] = include_bytes!("../assets/sounds/voice-start.wav");
+static SOUND_VOICE_END: &[u8] = include_bytes!("../assets/sounds/voice-end.wav");
 
 /// Which notification chime to play.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +49,24 @@ pub fn play(sound: Sound) {
         Sound::Attention => SOUND_ATTENTION,
     };
     play_in_background(data);
+}
+
+/// The two ends of a realtime voice call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceCue {
+    /// The call connected: Codex is listening.
+    Start,
+    /// A connected call ended.
+    End,
+}
+
+/// Play a voice call cue on a background thread.
+/// The caller honors the dedicated call sounds setting.
+pub fn play_voice(cue: VoiceCue) {
+    play_in_background(match cue {
+        VoiceCue::Start => SOUND_VOICE_START,
+        VoiceCue::End => SOUND_VOICE_END,
+    });
 }
 
 /// Confirm captured pixels with a soft shutter and clear chime.
@@ -167,7 +188,8 @@ mod macos_appshot {
 }
 
 fn play_in_background(data: &'static [u8]) {
-    if std::env::var_os(DISABLE_ENV).is_some() {
+    // Tests drive real state transitions; none of them should be audible.
+    if cfg!(test) || std::env::var_os(DISABLE_ENV).is_some() {
         return;
     }
     std::thread::spawn(move || {
@@ -406,6 +428,36 @@ impl ConnectivityNotificationState {
     }
 }
 
+/// Where a realtime voice call stands, as far as its sounds are concerned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum VoiceCall {
+    #[default]
+    Idle,
+    Connecting,
+    Connected,
+    Failed,
+}
+
+/// What a voice call's change of state should sound like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VoiceCallSound {
+    Cue(VoiceCue),
+    /// A failed start or a dropped call: the shared attention cue.
+    Attention,
+}
+
+/// A call sounds when it connects, when a connected call ends, and when it
+/// fails. A start abandoned before connecting is silent: nothing was opened.
+pub(crate) fn voice_sound_since(current: VoiceCall, previous: VoiceCall) -> Option<VoiceCallSound> {
+    match (current, previous) {
+        _ if current == previous => None,
+        (VoiceCall::Connected, _) => Some(VoiceCallSound::Cue(VoiceCue::Start)),
+        (VoiceCall::Failed, _) => Some(VoiceCallSound::Attention),
+        (VoiceCall::Idle, VoiceCall::Connected) => Some(VoiceCallSound::Cue(VoiceCue::End)),
+        _ => None,
+    }
+}
+
 /// Coalesce attention requests delivered by independent state watches. The
 /// persistent gate also collapses multiple failures in one session snapshot.
 #[derive(Debug, Default)]
@@ -487,6 +539,29 @@ mod tests {
     }
 
     #[test]
+    fn a_voice_call_sounds_at_both_ends_and_a_failure_asks_for_attention() {
+        use VoiceCall::*;
+        let start = Some(VoiceCallSound::Cue(VoiceCue::Start));
+        let end = Some(VoiceCallSound::Cue(VoiceCue::End));
+        assert_eq!(voice_sound_since(Connecting, Idle), None);
+        assert_eq!(voice_sound_since(Connected, Connecting), start);
+        assert_eq!(voice_sound_since(Connected, Connected), None);
+        assert_eq!(voice_sound_since(Idle, Connected), end);
+        // Abandoned before it connected: nothing opened, nothing closes.
+        assert_eq!(voice_sound_since(Idle, Connecting), None);
+        // A failed start and a dropped call share the attention cue, once.
+        for previous in [Connecting, Connected] {
+            assert_eq!(
+                voice_sound_since(Failed, previous),
+                Some(VoiceCallSound::Attention)
+            );
+        }
+        assert_eq!(voice_sound_since(Failed, Failed), None);
+        // Dismissing the failure is silent.
+        assert_eq!(voice_sound_since(Idle, Failed), None);
+    }
+
+    #[test]
     fn ordinary_queue_completions_survive_coalesced_working_states() {
         let first = baseline(Indicator::Working, None);
         let second = baseline(Indicator::Working, Some("first"));
@@ -541,6 +616,8 @@ mod tests {
             SOUND_DONE,
             SOUND_REQUEST,
             SOUND_ATTENTION,
+            SOUND_VOICE_START,
+            SOUND_VOICE_END,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             SOUND_APPSHOT,
         ] {

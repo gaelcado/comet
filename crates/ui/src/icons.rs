@@ -184,6 +184,7 @@ icon_assets![
     (MICROPHONE, "microphone"),
     (MICROPHONE_OFF, "microphone-off"),
     (PHONE_HANG_UP, "phone-hang-up"),
+    (VOICE_WAVE, "voice-wave"),
     // Hand-drawn zeron glyphs (terminal-panel.tsx / composer-actions.tsx /
     // menu-check.tsx / logo.tsx).
     (TERMINAL, "terminal"),

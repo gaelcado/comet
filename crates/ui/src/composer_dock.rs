@@ -44,7 +44,7 @@ impl Glide {
         }
     }
 
-    fn active(&self) -> bool {
+    pub(crate) fn active(&self) -> bool {
         (self.value - self.target).abs() > 0.0005 || self.velocity.abs() > 0.005
     }
 }
@@ -465,7 +465,9 @@ impl DockState {
     }
 }
 
-fn duration(docked: bool) -> f32 {
+/// Seconds the composer takes to dock into a conversation, or to return to
+/// the new-session screen. What travels with it uses the same.
+pub(crate) fn duration(docked: bool) -> f32 {
     (if docked { 0.420 } else { 0.470 }) * crate::motion::speed_scale()
 }
 

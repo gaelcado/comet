@@ -13,6 +13,7 @@ use std::{
 };
 
 mod resample;
+pub mod spectrum;
 
 pub const MAX_SECONDS: usize = 60;
 #[derive(serde::Deserialize)]
