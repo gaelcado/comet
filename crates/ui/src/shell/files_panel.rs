@@ -373,8 +373,12 @@ impl Shell {
         self.panels.update(&key, |p| p.files_open = true);
         if opening {
             self.record_panel_open(AuxiliaryPanel::Files, &key);
-            self.resplit_panels(before, Some(AuxiliaryPanel::Files), cx);
-            self.transition_files(from, before.files_content, self.files_settled_width(cx));
+            // Off the chat route Files is not laid out; re-splitting there
+            // would move that route's own columns.
+            if matches!(self.route, Route::Chat) {
+                self.resplit_panels(before, Some(AuxiliaryPanel::Files), cx);
+                self.transition_files(from, before.files_content, self.files_settled_width(cx));
+            }
         }
         if let Some(files) = self.files.get(&key).cloned() {
             files.update(cx, |files, cx| {

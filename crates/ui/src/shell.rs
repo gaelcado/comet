@@ -3312,7 +3312,10 @@ impl Shell {
     /// it opens the surface host beside it, and it never hides the explorer —
     /// only the explorer's own toggle undocks that portion.
     fn toggle_right_pane(&mut self, cx: &mut Context<Self>) {
-        if self.right_pane_open(cx) && self.promote_hidden_panel(AuxiliaryPanel::Right, cx) {
+        if matches!(self.route, Route::Chat)
+            && self.right_pane_open(cx)
+            && self.promote_hidden_panel(AuxiliaryPanel::Right, cx)
+        {
             return;
         }
         self.set_surfaces_open(!self.right_pane_open(cx), cx);
@@ -3335,6 +3338,21 @@ impl Shell {
     /// requested content is reachable.
     fn set_surfaces_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if self.active_chat.is_empty() {
+            return;
+        }
+        if !matches!(self.route, Route::Chat) {
+            // Off the chat route (a fork landing, a file close finishing
+            // while the Pull requests route shows) the pane is not laid out,
+            // and the route's own right column must not move. Flip the
+            // chat's flags like a background chat's; the next visit lays the
+            // pane out at rest.
+            let key = self.panel_key(cx);
+            if open {
+                self.record_panel_open(AuxiliaryPanel::Right, &key);
+            } else {
+                self.right_pane_expanded = false;
+            }
+            self.panels.update(&key, |p| p.changes_open = open);
             return;
         }
         if self.right_pane_open(cx) == open {

@@ -478,6 +478,33 @@ fn pull_request_pane_follows_the_shared_panel_policy(cx: &mut TestAppContext) {
     }
     cx.simulate_mouse_up(dragged, MouseButton::Left, Default::default());
     expect_board(settled_board(&shell, cx), [300.0, 700.0, 600.0]);
+    // Chat pane and Files actions that land while this route shows (a fork
+    // finishing, a file close after its save, ⌘K) keep to the chat's own
+    // flags: the board's pane keeps its divider and its takeover.
+    change(&shell, cx, |s, window, cx| {
+        s.set_surfaces_open(true, cx);
+        s.add_files_surface(window, cx);
+    });
+    expect_board(settled_board(&shell, cx), [300.0, 700.0, 600.0]);
+    change(&shell, cx, |s, _, cx| s.toggle_right_pane_expand(cx));
+    expect_board(settled_board(&shell, cx), [300.0, 1300.0, 0.0]);
+    change(&shell, cx, |s, _, cx| {
+        s.right_pane_expanded = true;
+        s.set_surfaces_open(false, cx);
+    });
+    expect_board(settled_board(&shell, cx), [300.0, 1300.0, 0.0]);
+    shell.read_with(cx, |s, cx| {
+        assert!(!s.right_pane_open(cx));
+        assert!(
+            !s.right_pane_expanded,
+            "the chat pane closed out of takeover"
+        );
+    });
+    change(&shell, cx, |s, _, cx| {
+        s.toggle_right_pane_expand(cx);
+        s.panels.update("a", |p| p.files_open = false);
+    });
+    expect_board(settled_board(&shell, cx), [300.0, 700.0, 600.0]);
     change(&shell, cx, |s, _, cx| {
         s.reset_panel_widths(PaneResizeKind::Right, cx)
     });
@@ -505,6 +532,14 @@ fn pull_request_pane_follows_the_shared_panel_policy(cx: &mut TestAppContext) {
         expect_board(draw_board(&shell, cx, 0), widths);
         expect_board(draw_board(&shell, cx, 300), widths);
     }
+    // ⌘W leaves the tab of a pane the window fit hides alone.
+    let closed =
+        cx.update(|window, cx| shell.update(cx, |s, cx| s.close_active_surface(window, cx)));
+    assert!(!closed);
+    assert_eq!(
+        shell.read_with(cx, |s, _| s.pull_request_pane.tabs.len()),
+        1
+    );
     change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
     expect_board(settled_board(&shell, cx), [0.0, 450.0, 450.0]);
     cx.simulate_resize(gpui::size(px(600.0), px(900.0)));

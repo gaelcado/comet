@@ -333,9 +333,10 @@ impl Shell {
     }
 
     /// The ⌘W cascade on this route: close the active tab while the pane
-    /// shows. Returns true when the close was consumed.
+    /// is on screen, not while the window fit hides it, like the chat
+    /// pane's. Returns true when the close was consumed.
     pub(super) fn close_active_pull_request_tab(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.pull_request_pane_open() {
+        if !(self.pull_request_pane_open() && self.right_column_shown()) {
             return false;
         }
         let Some(ix) = self.pull_request_pane.active_index() else {
