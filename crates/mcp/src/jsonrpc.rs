@@ -5,6 +5,11 @@
 //! one writer task so frames never interleave. Notifications from the client
 //! (`notifications/initialized`, `notifications/cancelled`) are accepted and
 //! ignored — there is no server-side state to initialize or cancel.
+//!
+//! `tools/list` and `tools/call` follow the engine's tool policy at the time
+//! of each request (see [`crate::tools`]). `listChanged` stays false: a
+//! session that listed tools earlier keeps its list until it reconnects, but
+//! its calls are still admitted against the current policy.
 
 use std::sync::Arc;
 
@@ -12,7 +17,8 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-use crate::tools::Tools;
+use crate::tools::{ToolCallError, Tools};
+use crate::zeron::BRIDGE_VERSION;
 
 /// Protocol revisions this server knows. The client's requested revision
 /// is echoed when it is one of these; otherwise the newest is offered and
@@ -56,6 +62,7 @@ const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
+const INTERNAL_ERROR: i64 = -32603;
 
 /// Serve MCP on this process's stdin/stdout until stdin closes.
 pub async fn serve_stdio(tools: Arc<Tools>) -> anyhow::Result<()> {
@@ -168,19 +175,31 @@ pub async fn handle_request(tools: &Tools, id: Value, method: &str, params: Valu
             )
         }
         "ping" => ok_response(id, json!({})),
-        "tools/list" => ok_response(id, json!({ "tools": tools.list() })),
+        "tools/list" => match tools.list().await {
+            Ok(offer) => ok_response(
+                id,
+                json!({
+                    "tools": offer.tools,
+                    // Diagnostics for a session that lags behind Settings.
+                    "_meta": {
+                        "zeron/catalogVersion": offer.catalog_version,
+                        "zeron/policyRevision": offer.policy_revision,
+                        "zeron/bridgeVersion": BRIDGE_VERSION,
+                    },
+                }),
+            ),
+            // No fallback to the full catalog: it may hold switched-off tools.
+            Err(refusal) => error_response(id, INTERNAL_ERROR, &refusal.to_string()),
+        },
         "tools/call" => {
             let Some(name) = params.get("name").and_then(Value::as_str) else {
                 return error_response(id, INVALID_PARAMS, "tools/call needs a tool name");
             };
-            if !tools.has(name) {
-                return error_response(id, INVALID_PARAMS, &format!("unknown tool: {name}"));
-            }
             let arguments = params
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            match tools.call(name, arguments).await {
+            match tools.invoke(name, arguments).await {
                 Ok(value) => ok_response(
                     id,
                     json!({
@@ -189,7 +208,20 @@ pub async fn handle_request(tools: &Tools, id: Value, method: &str, params: Valu
                         "isError": false,
                     }),
                 ),
-                Err(message) => ok_response(
+                Err(ToolCallError::Unknown(message)) => {
+                    error_response(id, INVALID_PARAMS, &message)
+                }
+                Err(ToolCallError::Refused(refusal)) => ok_response(
+                    id,
+                    json!({
+                        "content": [{ "type": "text", "text": refusal.to_string() }],
+                        "structuredContent": {
+                            "error": { "code": refusal.code, "message": refusal.message },
+                        },
+                        "isError": true,
+                    }),
+                ),
+                Err(ToolCallError::Failed(message)) => ok_response(
                     id,
                     json!({
                         "content": [{ "type": "text", "text": message }],

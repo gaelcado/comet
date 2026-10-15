@@ -22,7 +22,8 @@ pub mod capabilities {
     /// in [`CURRENT`] until the host serves them.
     pub const PROJECT_WIDGETS_V1: &str = "project-widgets-v1";
     /// The host persists and enforces per-tool policy for the built-in Zeron
-    /// MCP. Not advertised in [`CURRENT`] until the host serves it.
+    /// MCP (`WatchZeronMcpCatalog`, `SetZeronMcpToolOverride`,
+    /// `GetZeronMcpDiscovery`, `AdmitZeronMcpToolCall`).
     pub const ZERON_MCP_TOOL_POLICY_V1: &str = "zeron-mcp-tool-policy-v1";
 
     pub const CURRENT: &[&str] = &[
@@ -35,6 +36,7 @@ pub mod capabilities {
         HARNESS_UPDATES_V1,
         PROJECTLESS_SCRATCH_V1,
         crate::voice::remote::CAPABILITY,
+        ZERON_MCP_TOOL_POLICY_V1,
     ];
 
     pub fn current() -> Vec<String> {
@@ -116,7 +118,8 @@ mod tests {
                     "message-queue-edit-lease-v1",
                     "harness-updates-v1",
                     "projectless-scratch-v1",
-                    "voice-client-media-v1"
+                    "voice-client-media-v1",
+                    "zeron-mcp-tool-policy-v1"
                 ],
             })
         );

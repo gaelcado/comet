@@ -29,6 +29,7 @@ pub(crate) mod home_index;
 mod http_error;
 pub mod instance_lock;
 pub mod local_import;
+pub mod mcp_settings;
 mod model_catalogs;
 pub mod profile;
 pub mod project_actions;
@@ -59,6 +60,7 @@ pub use diff_sync::{
 };
 pub use doc_host::{ChatDocHandle, DocHost, DocHostConfig, EdgeConfig};
 pub use instance_lock::InstanceLock;
+pub use mcp_settings::{McpPolicyError, McpToolPolicy};
 pub use profile::EngineProfile;
 pub use project_actions::ProjectActionsStore;
 pub use registry::{HarnessDescriptor, HarnessRegistry, default_registry};
@@ -141,6 +143,8 @@ pub struct EngineCore {
     pub workspace_files: WorkspaceFiles,
     pub terminals: Terminals,
     pub project_actions: ProjectActionsStore,
+    /// Built-in Zeron MCP tool policy of this profile.
+    pub mcp_policy: McpToolPolicy,
     pub previews: zeron_preview::PreviewService,
     pub change_requests: CheckoutChangeRequests,
     pub diff_sync: CheckoutDiffSync,
@@ -269,6 +273,7 @@ impl EngineCore {
         let terminals = Terminals::new();
         let project_actions = ProjectActionsStore::open(profile.store_root())?;
         doc_host.set_project_action_runtime(project_actions.clone(), terminals.clone());
+        let mcp_policy = McpToolPolicy::open(profile.store_root());
         let previews = zeron_preview::PreviewService::new(
             profile.store_root().join("previews.json"),
             device_id.clone(),
@@ -336,6 +341,7 @@ impl EngineCore {
             workspace_files,
             terminals,
             project_actions,
+            mcp_policy,
             previews,
             change_requests,
             diff_sync,
@@ -469,6 +475,7 @@ impl EngineCore {
             self.workspace_files.clone(),
             self.terminals.clone(),
             self.project_actions.clone(),
+            self.mcp_policy.clone(),
             self.change_requests.clone(),
             self.diff_sync.clone(),
             self.uploads.clone(),

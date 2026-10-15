@@ -75,6 +75,7 @@ use crate::auth::Auth;
 use crate::change_requests::CheckoutChangeRequests;
 use crate::diff_sync::CheckoutDiffSync;
 use crate::doc_host::DocHost;
+use crate::mcp_settings::{McpPolicyError, McpToolPolicy};
 use crate::project_actions::ProjectActionsStore;
 use crate::registry::HarnessRegistry;
 use crate::repos::{Repos, session_home_dir};
@@ -689,6 +690,7 @@ pub struct EngineRpc {
     workspace_files: crate::WorkspaceFiles,
     terminals: Terminals,
     project_actions: ProjectActionsStore,
+    mcp_policy: McpToolPolicy,
     previews: Option<zeron_preview::PreviewService>,
     change_requests: CheckoutChangeRequests,
     github: GitHubCli,
@@ -714,6 +716,7 @@ impl EngineRpc {
         workspace_files: crate::WorkspaceFiles,
         terminals: Terminals,
         project_actions: ProjectActionsStore,
+        mcp_policy: McpToolPolicy,
         change_requests: CheckoutChangeRequests,
         diff_sync: CheckoutDiffSync,
         uploads: Uploads,
@@ -737,6 +740,7 @@ impl EngineRpc {
             workspace_files,
             terminals,
             project_actions,
+            mcp_policy,
             previews: None,
             change_requests,
             github,
@@ -1115,6 +1119,7 @@ impl EngineRpc {
                     | methods::WATCH_CHECKOUT_CHANGE_REQUEST
                     | methods::WATCH_WORKSPACE_GIT_STATUS
                     | methods::WATCH_HARNESS_UPDATES
+                    | methods::WATCH_ZERON_MCP_CATALOG
             ) {
                 let rx = match client.subscribe_checked(method, params).await {
                     Ok(rx) => rx,
@@ -1352,6 +1357,41 @@ fn should_invalidate_link(error: &RpcError) -> bool {
     matches!(error, RpcError::Closed | RpcError::Transport(_))
 }
 
+/// Policy failures carry stable codes; validation keeps its message.
+fn mcp_policy_rpc_error(error: McpPolicyError) -> RpcError {
+    match error {
+        McpPolicyError::Conflict { .. } => {
+            RpcError::Capability(capability_errors::MCP_POLICY_CONFLICT.into())
+        }
+        McpPolicyError::Unreadable => {
+            RpcError::Capability(capability_errors::MCP_POLICY_UNREADABLE.into())
+        }
+        McpPolicyError::Persist(err) => {
+            tracing::error!(error = %err, "Zeron MCP tool policy not saved");
+            RpcError::Capability(capability_errors::MCP_POLICY_WRITE_FAILED.into())
+        }
+        error @ (McpPolicyError::UnknownTool(_) | McpPolicyError::InvalidDescription(_)) => {
+            RpcError::BadParams(error.to_string())
+        }
+    }
+}
+
+/// A bridge speaks for a chat when the engine launched it in one.
+fn speaks_for_chat(origin_chat_id: Option<&str>) -> bool {
+    origin_chat_id.is_some_and(|chat| !chat.trim().is_empty())
+}
+
+/// Params whose fields are all optional may be sent as `null`.
+fn parse_optional_params<T: serde::de::DeserializeOwned + Default>(
+    params: serde_json::Value,
+) -> Result<T, RpcError> {
+    if params.is_null() {
+        Ok(T::default())
+    } else {
+        parse_params(params)
+    }
+}
+
 fn change_request_rpc_error(error: ChangeRequestError) -> RpcError {
     let code = match error {
         ChangeRequestError::CliUnavailable => capability_errors::PULL_REQUESTS_CLI_UNAVAILABLE,
@@ -1551,6 +1591,11 @@ fn forwardable(method: &str) -> bool {
             | methods::UPSERT_PROJECT_ACTION
             | methods::DELETE_PROJECT_ACTION
             | methods::RUN_PROJECT_ACTION
+            // Zeron MCP Settings configure the chosen engine's own policy.
+            // Discovery and admission are never forwarded: a bridge follows
+            // the policy of the engine it joined.
+            | methods::WATCH_ZERON_MCP_CATALOG
+            | methods::SET_ZERON_MCP_TOOL_OVERRIDE
             // Checkout diffs are produced on the device holding the checkout.
             | methods::WATCH_CHECKOUT_DIFFS
             | methods::WATCH_WORKSPACE_GIT_STATUS
@@ -1611,6 +1656,7 @@ fn is_stream_method(method: &str) -> bool {
             | methods::WATCH_WORKSPACE_FILES
             | methods::UPDATE_STATUS
             | methods::WATCH_HARNESS_UPDATES
+            | methods::WATCH_ZERON_MCP_CATALOG
     )
 }
 
@@ -3493,6 +3539,47 @@ impl RpcService for EngineRpc {
                     .await
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&serde_json::json!({ "ok": true }))
+            }
+            methods::WATCH_ZERON_MCP_CATALOG => {
+                let _: zeron_proto::WatchZeronMcpCatalogParams = parse_optional_params(params)?;
+                Ok(RpcReply::Stream(watch_stream(self.mcp_policy.watch())))
+            }
+            methods::SET_ZERON_MCP_TOOL_OVERRIDE => {
+                let p: zeron_proto::SetZeronMcpToolOverrideParams = parse_params(params)?;
+                let policy = self.mcp_policy.clone();
+                let snapshot = tokio::task::spawn_blocking(move || policy.set_override(&p))
+                    .await
+                    .map_err(|err| RpcError::Failed(err.to_string()))?
+                    .map_err(mcp_policy_rpc_error)?;
+                RpcReply::value(&snapshot)
+            }
+            methods::GET_ZERON_MCP_DISCOVERY => {
+                let p: zeron_proto::GetZeronMcpDiscoveryParams = parse_optional_params(params)?;
+                let discovery = self
+                    .mcp_policy
+                    .discovery(speaks_for_chat(p.origin_chat_id.as_deref()))
+                    .map_err(mcp_policy_rpc_error)?;
+                tracing::debug!(
+                    bridge_version = %p.bridge_version,
+                    policy_revision = discovery.policy_revision,
+                    tools = discovery.tools.len(),
+                    "Zeron MCP discovery"
+                );
+                RpcReply::value(&discovery)
+            }
+            methods::ADMIT_ZERON_MCP_TOOL_CALL => {
+                let p: zeron_proto::AdmitZeronMcpToolCallParams = parse_params(params)?;
+                let admission = self
+                    .mcp_policy
+                    .admit(&p.name, speaks_for_chat(p.origin_chat_id.as_deref()));
+                tracing::debug!(
+                    tool = %p.name,
+                    bridge_version = %p.bridge_version,
+                    policy_revision = admission.policy_revision,
+                    refusal = ?admission.refusal,
+                    "Zeron MCP admission"
+                );
+                RpcReply::value(&admission)
             }
             methods::LIST_PROJECT_ACTIONS => {
                 let p: ListProjectActionsParams = parse_params(params)?;

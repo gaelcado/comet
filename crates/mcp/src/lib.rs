@@ -15,6 +15,9 @@
 //! agent's MCP config with `ZERON_CHAT_ID` / `ZERON_DEVICE_ID` in the
 //! environment. Every send from such an agent is then attributed to its
 //! originating chat, and a chat can never message itself.
+//!
+//! Which tools are offered and admitted is the joined engine's policy
+//! (`zeron-mcp-tool-policy-v1`), asked for on every list and call.
 
 pub mod catalog;
 mod jsonrpc;
@@ -23,10 +26,10 @@ mod transcript;
 mod zeron;
 
 pub use catalog::{ToolDef, ToolName};
-pub use jsonrpc::serve_stdio;
-pub use tools::Tools;
+pub use jsonrpc::{handle_request, serve_stdio};
+pub use tools::{Offer, OfferedTool, PolicyRefusal, ToolCallError, Tools};
 pub use transcript::{RenderOptions, RenderedMessage, render_entries};
-pub use zeron::{Origin, Zeron};
+pub use zeron::{BRIDGE_VERSION, Origin, Zeron};
 
 /// How `zeron mcp` finds the engine and who it speaks for.
 #[derive(Debug, Clone)]

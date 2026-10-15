@@ -5,6 +5,21 @@
 //! by prefix, project by path), sender attribution, and the "how do I
 //! deliver a message to a chat in this state" choice the composer makes
 //! for humans.
+//!
+//! The engine owns the tool policy (Settings → MCP → Zeron). [`Tools::list`]
+//! asks it which tools to offer on every call, and [`Tools::call`] asks it to
+//! admit each call, and each batch item, before parsing arguments, reading
+//! files or touching anything. Nothing about the policy is cached here, so a
+//! tool switched off after an agent listed it is still refused.
+//!
+//! An engine without `zeron-mcp-tool-policy-v1` answers neither question.
+//! This bridge then offers no tools (`tools/list` is a JSON-RPC error) and
+//! refuses every call with `mcp.policy_unsupported`, rather than running
+//! tools the user may have switched off. The same holds, with
+//! `mcp.policy_unreadable` or `mcp.admission_unavailable`, while the policy
+//! is unreadable or the engine cannot be reached. The fix is to update or
+//! restart Zeron; a bridge built before the policy has no guard at all and
+//! must be replaced, which happens when its agent session restarts.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,11 +30,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use zeron_doc::SessionCommandPayload;
 use zeron_proto::{
-    Chat, ChatConfig, HarnessId, ReasoningLevel, RunRequest, SandboxLevel, Session, SessionStatus,
-    Space, UserInputAnswer,
+    Chat, ChatConfig, HarnessId, McpAdmissionRefusal, ReasoningLevel, RunRequest, SandboxLevel,
+    Session, SessionStatus, Space, UserInputAnswer,
 };
+use zeron_rpc::{RpcError, capability_errors};
 
-use crate::catalog::{MAX_BATCH, ToolDef, ToolName, catalog};
+use crate::catalog::{MAX_BATCH, ToolName, catalog};
 use crate::transcript::{RenderOptions, RenderedMessage, render_entries};
 use crate::zeron::{HarnessInfo, TurnOutcome, Zeron, session_for, short};
 
@@ -29,6 +45,85 @@ const MAX_WAIT: Duration = Duration::from_secs(3600);
 /// A session row older than this is not trusted to still be working
 /// (the UI's staleness window): a crashed host must not read as busy forever.
 const SESSION_STALE: chrono::Duration = chrono::Duration::seconds(45);
+
+/// A tool as `tools/list` serves it: this bridge's schema, with the
+/// description the engine's policy makes effective.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferedTool {
+    pub name: &'static str,
+    pub description: String,
+    pub input_schema: Value,
+}
+
+/// The tools offered now and the policy they reflect.
+#[derive(Debug, Clone)]
+pub struct Offer {
+    /// The engine's catalog version; this bridge serves its own schemas and
+    /// offers only names both know.
+    pub catalog_version: u32,
+    pub policy_revision: u64,
+    pub tools: Vec<OfferedTool>,
+}
+
+/// The engine did not let a tool run, with a stable code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyRefusal {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl std::fmt::Display for PolicyRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
+
+impl From<RpcError> for PolicyRefusal {
+    /// The engine could not answer for its policy. Never read as "enabled".
+    fn from(error: RpcError) -> Self {
+        match error {
+            RpcError::UnknownMethod(_) => Self {
+                code: capability_errors::MCP_POLICY_UNSUPPORTED,
+                message: "this Zeron engine predates per-tool MCP settings \
+                          (zeron-mcp-tool-policy-v1), so no Zeron tool runs; update and restart Zeron"
+                    .into(),
+            },
+            RpcError::Capability(code) if code == capability_errors::MCP_POLICY_UNREADABLE => {
+                Self {
+                    code: capability_errors::MCP_POLICY_UNREADABLE,
+                    message: "Zeron's MCP tool settings are unreadable, so no Zeron tool runs; \
+                              open Settings → MCP → Zeron to repair them"
+                        .into(),
+                }
+            }
+            other => Self {
+                code: capability_errors::MCP_ADMISSION_UNAVAILABLE,
+                message: format!("could not check Zeron's MCP tool settings: {other}"),
+            },
+        }
+    }
+}
+
+/// Why a call did not produce a result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolCallError {
+    /// Not a tool offered to this caller: a JSON-RPC protocol error.
+    Unknown(String),
+    /// Refused by the engine's policy before any effect: `isError: true`.
+    Refused(PolicyRefusal),
+    /// The tool ran and failed: `isError: true`.
+    Failed(String),
+}
+
+impl std::fmt::Display for ToolCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown(message) | Self::Failed(message) => f.write_str(message),
+            Self::Refused(refusal) => refusal.fmt(f),
+        }
+    }
+}
 
 pub struct Tools {
     zeron: Arc<Zeron>,
@@ -320,24 +415,92 @@ impl Tools {
         }
     }
 
-    pub fn list(&self) -> Vec<ToolDef> {
-        let in_chat = self.zeron.origin().chat_id.is_some();
-        catalog()
+    /// The tools to offer now: enabled by the engine's policy and available
+    /// in this bridge's context, in catalog order. For display only; every
+    /// call is admitted again.
+    pub async fn list(&self) -> Result<Offer, PolicyRefusal> {
+        let discovery = self.zeron.mcp_discovery().await?;
+        let tools = catalog()
             .into_iter()
-            .filter(|tool| tool.availability().allows(in_chat))
-            .collect()
+            .filter_map(|def| {
+                let offered = discovery.tools.iter().find(|t| t.name == def.name)?;
+                Some(OfferedTool {
+                    name: def.name,
+                    description: offered
+                        .description_override
+                        .clone()
+                        .unwrap_or_else(|| def.description.to_owned()),
+                    input_schema: def.input_schema,
+                })
+            })
+            .collect();
+        Ok(Offer {
+            catalog_version: discovery.catalog_version,
+            policy_revision: discovery.policy_revision,
+            tools,
+        })
     }
 
-    pub fn has(&self, name: &str) -> bool {
-        self.list().iter().any(|t| t.name == name)
+    pub async fn has(&self, name: &str) -> Result<bool, PolicyRefusal> {
+        Ok(self.list().await?.tools.iter().any(|t| t.name == name))
     }
 
     /// `Ok` is the tool's structured result; `Err` is a message the model
-    /// should read (surfaced as `isError`, never as a protocol error).
+    /// should read. See [`Self::invoke`] for the typed outcome.
     pub async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
+        self.invoke(name, args).await.map_err(|e| e.to_string())
+    }
+
+    /// Admit `name` with the engine, then run it. Admission comes before the
+    /// arguments are parsed or anything is read or changed.
+    pub async fn invoke(&self, name: &str, args: Value) -> Result<Value, ToolCallError> {
         let Some(tool) = ToolName::parse(name) else {
-            return Err(format!("unknown tool: {name}"));
+            return Err(ToolCallError::Unknown(format!("unknown tool: {name}")));
         };
+        self.admit(tool).await?;
+        self.dispatch(tool, args)
+            .await
+            .map_err(ToolCallError::Failed)
+    }
+
+    /// The engine's answer for one call, never cached.
+    async fn admit(&self, tool: ToolName) -> Result<(), ToolCallError> {
+        let name = tool.as_str();
+        let admission = self
+            .zeron
+            .admit_tool_call(name)
+            .await
+            .map_err(|e| ToolCallError::Refused(e.into()))?;
+        let refusal = match admission.refusal {
+            None if admission.admitted => return Ok(()),
+            // Not offered here, exactly as when it is not listed.
+            Some(McpAdmissionRefusal::UnavailableInContext | McpAdmissionRefusal::Unknown) => {
+                return Err(ToolCallError::Unknown(format!("unknown tool: {name}")));
+            }
+            Some(McpAdmissionRefusal::Disabled) => PolicyRefusal {
+                code: capability_errors::MCP_TOOL_DISABLED,
+                message: format!(
+                    "the Zeron tool {name} is turned off in Settings → MCP → Zeron; it did not run"
+                ),
+            },
+            Some(McpAdmissionRefusal::PolicyUnreadable) => {
+                RpcError::Capability(capability_errors::MCP_POLICY_UNREADABLE.into()).into()
+            }
+            Some(McpAdmissionRefusal::Other) | None => PolicyRefusal {
+                code: capability_errors::MCP_TOOL_REFUSED,
+                message: format!("the Zeron engine refused {name}; it did not run"),
+            },
+        };
+        tracing::debug!(
+            tool = name,
+            code = refusal.code,
+            policy_revision = admission.policy_revision,
+            "mcp: call refused"
+        );
+        Err(ToolCallError::Refused(refusal))
+    }
+
+    async fn dispatch(&self, tool: ToolName, args: Value) -> Result<Value, String> {
         let result = match tool {
             ToolName::Whoami => self.whoami().await,
             ToolName::ListDevices => self.list_devices().await,
@@ -362,13 +525,29 @@ impl Tools {
 
     /// Poll every request together, including its optional wait. A waiting
     /// first chat must not prevent subsequent chats from receiving their work.
+    /// Each item is admitted as its unit tool when it starts, so switching
+    /// off `create_chat` or `send_message` also stops it inside a batch.
     async fn batch(&self, args: BatchArgs, create: bool) -> anyhow::Result<Value> {
         anyhow::ensure!(
             (1..=MAX_BATCH).contains(&args.requests.len()),
             "requests must contain between 1 and {MAX_BATCH} items"
         );
+        let unit = if create {
+            ToolName::CreateChat
+        } else {
+            ToolName::SendMessage
+        };
         let results = futures::future::join_all(args.requests.into_iter().enumerate().map(
             |(index, args)| async move {
+                if let Err(error) = self.admit(unit).await {
+                    let code = match &error {
+                        ToolCallError::Refused(refusal) => Some(refusal.code),
+                        _ => None,
+                    };
+                    return json!({
+                        "index": index, "isError": true, "code": code, "error": error.to_string()
+                    });
+                }
                 let result = if create {
                     match serde_json::from_value(args) {
                         Ok(args) => self.create_chat(args).await,
@@ -1196,6 +1375,28 @@ mod tests {
         extra_chats: Vec<Value>,
         catalog_error: Option<&'static str>,
         reads: Mutex<Vec<(String, Value)>>,
+        /// An engine from before `zeron-mcp-tool-policy-v1`.
+        legacy_engine: bool,
+    }
+
+    /// The engine's policy answers with nothing switched off.
+    fn default_policy(method: &str, params: &Value) -> Value {
+        let in_chat = params["originChatId"].is_string();
+        if method == methods::GET_ZERON_MCP_DISCOVERY {
+            let tools: Vec<Value> = catalog()
+                .iter()
+                .filter(|def| def.availability().allows(in_chat))
+                .map(|def| json!({ "name": def.name }))
+                .collect();
+            return json!({ "catalogVersion": 1, "policyRevision": 0, "tools": tools });
+        }
+        let admitted = ToolName::parse(params["name"].as_str().unwrap_or_default())
+            .is_some_and(|tool| tool.availability().allows(in_chat));
+        json!({
+            "admitted": admitted,
+            "refusal": (!admitted).then_some("unavailable_in_context"),
+            "catalogVersion": 1, "policyRevision": 0
+        })
     }
 
     fn stream(item: Value) -> RpcReply {
@@ -1205,6 +1406,15 @@ mod tests {
     #[async_trait]
     impl RpcService for World {
         async fn handle(&self, method: &str, params: Value) -> Result<RpcReply, RpcError> {
+            if matches!(
+                method,
+                methods::GET_ZERON_MCP_DISCOVERY | methods::ADMIT_ZERON_MCP_TOOL_CALL
+            ) {
+                if self.legacy_engine {
+                    return Err(RpcError::UnknownMethod(method.into()));
+                }
+                return Ok(RpcReply::Value(default_policy(method, &params)));
+            }
             if matches!(method, methods::LIST_HARNESSES | methods::LIST_MODELS) {
                 self.reads
                     .lock()
@@ -1318,7 +1528,7 @@ mod tests {
             device_id: Some("dev-local".into()),
         };
         let tools = tools(Arc::new(World::default()), in_chat);
-        let listed = tools.list();
+        let listed = tools.list().await.unwrap().tools;
         assert_eq!(
             listed.len(),
             catalog().len(),
@@ -1340,7 +1550,7 @@ mod tests {
     async fn show_visual_is_offered_only_inside_a_chat() {
         let world = Arc::new(World::default());
         let outside = tools(world.clone(), Origin::default());
-        assert!(!outside.has("show_visual"));
+        assert!(!outside.has("show_visual").await.unwrap());
         assert!(
             outside
                 .call(
@@ -1358,7 +1568,7 @@ mod tests {
                 device_id: Some("dev-local".into()),
             },
         );
-        assert!(inside.has("show_visual"));
+        assert!(inside.has("show_visual").await.unwrap());
         // The guidance names every color the runtime accepts.
         for name in zeron_visual::TOKEN_NAMES {
             assert!(SHOW_VISUAL_DESCRIPTION.contains(name), "{name}");
@@ -2340,5 +2550,30 @@ mod tests {
             whoami["result"]["structuredContent"]["localDeviceId"],
             "dev-local"
         );
+    }
+
+    #[tokio::test]
+    async fn an_engine_without_the_tool_policy_runs_no_tool() {
+        let world = Arc::new(World {
+            legacy_engine: true,
+            ..Default::default()
+        });
+        let tools = tools(world.clone(), Origin::default());
+        let list =
+            crate::jsonrpc::handle_request(&tools, json!(1), "tools/list", Value::Null).await;
+        assert_eq!(list["error"]["code"], -32603, "{list}");
+        let call = crate::jsonrpc::handle_request(
+            &tools,
+            json!(2),
+            "tools/call",
+            json!({ "name": "archive_chat", "arguments": { "chat": "alpha" } }),
+        )
+        .await;
+        assert_eq!(call["result"]["isError"], true, "{call}");
+        assert_eq!(
+            call["result"]["structuredContent"]["error"]["code"],
+            capability_errors::MCP_POLICY_UNSUPPORTED
+        );
+        assert!(world.writes.lock().unwrap().is_empty());
     }
 }

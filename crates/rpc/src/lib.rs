@@ -270,6 +270,23 @@ pub mod capability_errors {
     pub const PULL_REQUESTS_TIMEOUT: &str = "pull_requests.timeout";
     pub const PULL_REQUESTS_DECODE: &str = "pull_requests.decode";
     pub const PULL_REQUESTS_COMMAND_FAILED: &str = "pull_requests.command_failed";
+    /// `SetZeronMcpToolOverride` was made against a stale `policyRevision`.
+    pub const MCP_POLICY_CONFLICT: &str = "mcp.policy_conflict";
+    /// The stored Zeron MCP policy is unreadable; tools are refused until it
+    /// is rebuilt from Settings.
+    pub const MCP_POLICY_UNREADABLE: &str = "mcp.policy_unreadable";
+    /// The policy change could not be saved; the previous policy still applies.
+    pub const MCP_POLICY_WRITE_FAILED: &str = "mcp.policy_write_failed";
+    /// Business error (`isError: true`) for a known Zeron MCP tool that is
+    /// switched off; never a JSON-RPC protocol error.
+    pub const MCP_TOOL_DISABLED: &str = "mcp.tool_disabled";
+    /// Business error from a bridge whose engine predates
+    /// `zeron-mcp-tool-policy-v1`: the call is refused, never run unmanaged.
+    pub const MCP_POLICY_UNSUPPORTED: &str = "mcp.policy_unsupported";
+    /// Business error for a refusal reason this bridge does not know.
+    pub const MCP_TOOL_REFUSED: &str = "mcp.tool_refused";
+    /// Business error when the engine could not be asked for admission.
+    pub const MCP_ADMISSION_UNAVAILABLE: &str = "mcp.admission_unavailable";
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -17,9 +17,14 @@ use zeron_doc::{
     SessionCommandPayload, SessionMessageEntry, TranscriptFrame, apply_transcript_frame,
 };
 use zeron_proto::{
-    Chat, Device, HarnessId, Model, ReasoningLevel, Session, SessionStatus, Space, SteeringMode,
+    AdmitZeronMcpToolCallParams, Chat, Device, GetZeronMcpDiscoveryParams, HarnessId, McpAdmission,
+    McpDiscovery, Model, ReasoningLevel, Session, SessionStatus, Space, SteeringMode,
 };
 use zeron_rpc::{RpcClient, RpcError, RpcSubscription, connect_ws, methods};
+
+/// This bridge's version, sent with policy requests so the engine can tell
+/// which sessions run an older server.
+pub const BRIDGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// First-item wait for a watch snapshot. Localhost; the engine answers
 /// watch attaches in milliseconds unless it is still assembling stores.
@@ -160,18 +165,50 @@ impl Zeron {
     /// Unary call with one reconnect on a closed socket (the engine
     /// restarted underneath a long-lived agent session).
     pub async fn call(&self, method: &str, params: Value) -> anyhow::Result<Value> {
-        let client = self.client().await?;
+        self.call_rpc(method, params)
+            .await
+            .map_err(|e| anyhow!("{method}: {e}"))
+    }
+
+    /// [`Self::call`] keeping the typed error, for callers that act on
+    /// `UnknownMethod` or a capability code.
+    async fn call_rpc(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        let connect = |e: anyhow::Error| RpcError::Transport(e.to_string());
+        let client = self.client().await.map_err(connect)?;
         match client.call(method, params.clone()).await {
             Err(RpcError::Closed) => {
                 self.forget_client().await;
-                let client = self.client().await?;
-                client
-                    .call(method, params)
-                    .await
-                    .map_err(|e| anyhow!("{method}: {e}"))
+                let client = self.client().await.map_err(connect)?;
+                client.call(method, params).await
             }
-            other => other.map_err(|e| anyhow!("{method}: {e}")),
+            other => other,
         }
+    }
+
+    /// The tools this bridge may offer now, under its engine's policy and
+    /// this bridge's calling context.
+    pub async fn mcp_discovery(&self) -> Result<McpDiscovery, RpcError> {
+        let params = GetZeronMcpDiscoveryParams {
+            origin_chat_id: self.origin.chat_id.clone(),
+            bridge_version: BRIDGE_VERSION.into(),
+        };
+        let value = self
+            .call_rpc(methods::GET_ZERON_MCP_DISCOVERY, json!(params))
+            .await?;
+        serde_json::from_value(value).map_err(|e| RpcError::Failed(format!("discovery: {e}")))
+    }
+
+    /// Ask the engine, now, whether `name` may run for this bridge.
+    pub async fn admit_tool_call(&self, name: &str) -> Result<McpAdmission, RpcError> {
+        let params = AdmitZeronMcpToolCallParams {
+            name: name.into(),
+            origin_chat_id: self.origin.chat_id.clone(),
+            bridge_version: BRIDGE_VERSION.into(),
+        };
+        let value = self
+            .call_rpc(methods::ADMIT_ZERON_MCP_TOOL_CALL, json!(params))
+            .await?;
+        serde_json::from_value(value).map_err(|e| RpcError::Failed(format!("admission: {e}")))
     }
 
     /// Open a watch stream (reconnecting once if the socket is gone).
