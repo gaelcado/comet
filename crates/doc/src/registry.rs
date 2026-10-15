@@ -1074,6 +1074,15 @@ impl RegistryDoc {
         Ok(true)
     }
 
+    /// Tombstone: forget a device (settings UI; any device may write). The
+    /// device's own engine revives the row on its next signed-in boot, so
+    /// callers sign it out first. `false` when no such row.
+    pub fn delete_device(&mut self, device_id: &str) -> Result<bool, DocError> {
+        let existed = self.row_exists(KIND_DEVICES, device_id);
+        self.delete_row_ops(&[(KIND_DEVICES, device_id)]);
+        Ok(existed)
+    }
+
     /// Stamp `lastSeenAt` on an existing device row (boot/shutdown only —
     /// periodic liveness rides presence frames, never rows).
     pub fn set_device_last_seen(

@@ -41,6 +41,12 @@ pub mod methods {
     pub const REPORT_VOICE_MEDIA_V2: &str = "ReportVoiceMediaV2";
     pub const STOP_VOICE_V2: &str = "StopVoiceV2";
     pub const CANCEL_VOICE_ATTEMPT_V2: &str = "CancelVoiceAttemptV2";
+    /// A phone's dictation on a host (`zeron_proto::voice::dictation`).
+    pub const START_DICTATION_V1: &str = "StartDictationV1";
+    pub const FEED_DICTATION_V1: &str = "FeedDictationV1";
+    pub const FINISH_DICTATION_V1: &str = "FinishDictationV1";
+    pub const CANCEL_DICTATION_V1: &str = "CancelDictationV1";
+    pub const OWN_DICTATION_V1: &str = "OwnDictationV1";
     pub const WATCH_PREVIEWS: &str = "WatchPreviews";
     pub const LIST_HARNESSES: &str = "ListHarnesses";
     pub const CANCEL_INSTALL: &str = "CancelInstall";
@@ -118,7 +124,7 @@ pub mod methods {
     pub const WATCH_SPACES: &str = "WatchSpaces";
     /// Entity mutations against the workspace doc (feature-inventory §2 DataRpc).
     /// Params are tagged `{op: createChat|createSpace|renameSpace|deleteSpace|
-    /// renameChat|setChatArchived|deleteChat|renameDevice|markChatSeen, …}`.
+    /// renameChat|setChatArchived|deleteChat|renameDevice|deleteDevice|markChatSeen, …}`.
     pub const MUTATE: &str = "Mutate";
     /// This engine's identity → `{deviceId}` (IPC-only; never relay-forwarded —
     /// the answer is about whichever engine you are directly connected to).

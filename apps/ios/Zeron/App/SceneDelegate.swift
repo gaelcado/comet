@@ -58,6 +58,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             app.voice.preview()
             if args.contains("-voice-stage") {
                 DispatchQueue.main.async { [app] in window.rootViewController?.presentVoiceStage(app: app, source: nil) }
+                // `-voice-stage-cycle`: the stage minimizes after eight
+                // seconds and comes back four seconds later.
+                if args.contains("-voice-stage-cycle") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) { window.rootViewController?.presentedViewController?.dismiss(animated: true) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [app] in window.rootViewController?.presentVoiceStage(app: app, source: nil) }
+                }
             }
         }
         #endif

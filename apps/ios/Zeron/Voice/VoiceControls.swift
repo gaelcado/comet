@@ -2,7 +2,7 @@ import UIKit
 
 /// Voice inside the tab bar's bottom accessory. Idle: a round waveform button
 /// beside "New session" (tap to call, hold for host and style). Live: a call
-/// strip with the orb, the call clock and mute/hang-up — tap it for the stage.
+/// strip with the glyph, the call clock and mute/hang-up — tap it for the stage.
 final class VoiceAccessoryView: UIView {
     var onStart: ((UIView) -> Void)?
     var onOpen: ((UIView) -> Void)?
@@ -12,7 +12,8 @@ final class VoiceAccessoryView: UIView {
     private(set) var live = false
     let startButton = UIButton(type: .system)
     private let strip = PressableControl()
-    let orb = OrbView(preset: .avatar, orb: .connecting)
+    /// The call's glyph, small: a 6×6 disc, as on desktop.
+    let orb = GlyphView(shape: .disc, orb: .connecting, dot: 2.2)
     private let title = UILabel()
     private let detail = UILabel()
     private let mute = UIButton(type: .system)
@@ -92,11 +93,11 @@ final class VoiceAccessoryView: UIView {
             strip.bottomAnchor.constraint(equalTo: bottomAnchor),
             strip.leadingAnchor.constraint(equalTo: leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: trailingAnchor),
-            orb.leadingAnchor.constraint(equalTo: strip.leadingAnchor),
+            orb.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: 8),
             orb.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
-            orb.widthAnchor.constraint(equalToConstant: 34),
-            orb.heightAnchor.constraint(equalToConstant: 34),
-            labels.leadingAnchor.constraint(equalTo: orb.trailingAnchor, constant: 8),
+            orb.widthAnchor.constraint(equalToConstant: 18),
+            orb.heightAnchor.constraint(equalToConstant: 18),
+            labels.leadingAnchor.constraint(equalTo: orb.trailingAnchor, constant: 10),
             labels.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
             labels.trailingAnchor.constraint(lessThanOrEqualTo: mute.leadingAnchor, constant: -8),
             mute.trailingAnchor.constraint(equalTo: end.leadingAnchor, constant: -6),
@@ -153,7 +154,7 @@ final class VoiceBarItem {
     let item: UIBarButtonItem
     private let app: AppModel
     private let button = UIButton(type: .system)
-    private let orb = OrbView(preset: .avatar, orb: .connecting)
+    private let orb = GlyphView(shape: .disc, orb: .connecting, dot: 2.2)
     private weak var host: UIViewController?
     private var token: AnyObject?
 
@@ -169,8 +170,8 @@ final class VoiceBarItem {
             button.heightAnchor.constraint(equalToConstant: 36),
             orb.centerXAnchor.constraint(equalTo: button.centerXAnchor),
             orb.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            orb.widthAnchor.constraint(equalToConstant: 32),
-            orb.heightAnchor.constraint(equalToConstant: 32),
+            orb.widthAnchor.constraint(equalToConstant: 18),
+            orb.heightAnchor.constraint(equalToConstant: 18),
         ])
         button.setImage(UIImage(systemName: "waveform", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)), for: .normal)
         button.tintColor = Palette.text

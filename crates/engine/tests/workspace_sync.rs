@@ -341,6 +341,26 @@ async fn two_engines_share_a_workspace() {
     )
     .await;
 
+    // B forgets a device; A stops listing it.
+    client_b
+        .call(
+            methods::MUTATE,
+            serde_json::json!({ "op": "deleteDevice", "deviceId": "dev-a" }),
+        )
+        .await
+        .expect("delete device");
+    wait_for(
+        || {
+            a.workspace
+                .read_devices()
+                .unwrap_or_default()
+                .iter()
+                .all(|d| d.id != "dev-a")
+        },
+        "device delete on A",
+    )
+    .await;
+
     drop(link);
     a.shutdown().await;
     b.shutdown().await;

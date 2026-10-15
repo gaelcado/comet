@@ -13565,6 +13565,7 @@ dependencies = [
  "zeron-rpc",
  "zeron-sync",
  "zeron-update",
+ "zeron-voice",
  "zip",
 ]
 
@@ -13626,6 +13627,7 @@ name = "zeron-mobile"
 version = "0.2.112"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "similar",
@@ -13633,11 +13635,13 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uniffi",
+ "uuid",
  "zeron-client",
  "zeron-doc",
  "zeron-markdown",
  "zeron-orb",
  "zeron-proto",
+ "zeron-rpc",
  "zeron-syntax",
  "zeron-text",
  "zeron-veil",

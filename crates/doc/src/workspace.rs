@@ -132,6 +132,15 @@ impl WorkspaceDoc {
         Ok(true)
     }
 
+    /// Forget a device: delete its row. `false` when no such row.
+    pub fn delete_device(&self, device_id: &str) -> Result<bool, DocError> {
+        let devices = self.doc.get_map("devices");
+        let existed = devices.get(device_id).is_some();
+        devices.delete(device_id)?;
+        self.doc.commit();
+        Ok(existed)
+    }
+
     /// Stamp `lastSeenAt` on an existing device row (boot/shutdown only — periodic
     /// liveness rides ephemeral presence, never the oplog). `false` when no such row.
     pub fn set_device_last_seen(
