@@ -11,6 +11,7 @@ pub mod device_paths;
 pub mod entities;
 pub mod file_mentions;
 pub mod invocation;
+pub mod mcp;
 pub mod motion;
 pub mod preview;
 pub mod projectless;
@@ -21,6 +22,7 @@ pub mod workspace;
 
 pub use agent::*;
 pub use entities::*;
+pub use mcp::*;
 pub use preview::*;
 pub use sidebar_pins::*;
 pub use workspace::*;

@@ -235,6 +235,17 @@ pub mod methods {
     /// Lazy full-tool-output fetch from the R2 sidecar by doc-resident ref
     /// (chat2-sync A3). Edge-direct from any device — never relay-forwarded.
     pub const FETCH_TOOL_BLOB: &str = "FetchToolBlob";
+    // Built-in Zeron MCP tool policy (`zeron_proto::mcp`). Settings reaches the
+    // chosen engine with the first two (relay-forwardable); a bridge asks its own
+    // engine with the last two (never forwarded).
+    /// Stream: the full `McpCatalogSnapshot`, then one per policy change.
+    pub const WATCH_ZERON_MCP_CATALOG: &str = "WatchZeronMcpCatalog";
+    /// Compare-and-set one tool's override against `expectedPolicyRevision`.
+    pub const SET_ZERON_MCP_TOOL_OVERRIDE: &str = "SetZeronMcpToolOverride";
+    /// The tools a bridge offers now: policy and calling context applied.
+    pub const GET_ZERON_MCP_DISCOVERY: &str = "GetZeronMcpDiscovery";
+    /// Admit one call under the current policy, before any of its effects.
+    pub const ADMIT_ZERON_MCP_TOOL_CALL: &str = "AdmitZeronMcpToolCall";
     // Updates (ControlRpc, relay-forwardable — a device reports/applies its own
     // binary's update). Stream: current UpdateStatus, then every change.
     pub const UPDATE_STATUS: &str = "UpdateStatus";

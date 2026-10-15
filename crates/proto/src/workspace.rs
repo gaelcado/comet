@@ -18,6 +18,12 @@ pub mod capabilities {
     /// The host creates a projectless chat's scratch folder
     /// (`crate::projectless`) when it runs; older hosts only know `~`.
     pub const PROJECTLESS_SCRATCH_V1: &str = "projectless-scratch-v1";
+    /// The host owns per-project widgets and their refreshes. Not advertised
+    /// in [`CURRENT`] until the host serves them.
+    pub const PROJECT_WIDGETS_V1: &str = "project-widgets-v1";
+    /// The host persists and enforces per-tool policy for the built-in Zeron
+    /// MCP. Not advertised in [`CURRENT`] until the host serves it.
+    pub const ZERON_MCP_TOOL_POLICY_V1: &str = "zeron-mcp-tool-policy-v1";
 
     pub const CURRENT: &[&str] = &[
         COMPOSER_REFERENCES_V1,
@@ -127,5 +133,7 @@ mod tests {
         assert!(info.cursor_sdk_version.is_none());
         assert!(!info.supports(capabilities::MESSAGE_QUEUE_V1));
         assert!(!info.supports(capabilities::COMPOSER_REFERENCES_V1));
+        assert!(!info.supports(capabilities::PROJECT_WIDGETS_V1));
+        assert!(!info.supports(capabilities::ZERON_MCP_TOOL_POLICY_V1));
     }
 }
