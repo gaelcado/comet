@@ -680,6 +680,12 @@ impl WorkspaceHost {
         Ok(self.read(|doc| doc.space(space_id))?)
     }
 
+    /// Whether the space was deleted, here or by a peer (a tombstone, not
+    /// merely a row this replica has not seen).
+    pub fn space_deleted(&self, space_id: &str) -> bool {
+        self.read(|doc| doc.space_deleted(space_id))
+    }
+
     pub fn read_chats(&self) -> Result<Vec<Chat>, EngineError> {
         Ok(self.read(|doc| doc.read_chats())?)
     }

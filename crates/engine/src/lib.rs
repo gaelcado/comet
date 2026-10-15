@@ -33,6 +33,7 @@ pub mod mcp_settings;
 mod model_catalogs;
 pub mod profile;
 pub mod project_actions;
+pub mod project_widgets;
 pub mod registry;
 pub mod repos;
 pub mod rpc;
@@ -63,6 +64,7 @@ pub use instance_lock::InstanceLock;
 pub use mcp_settings::{McpPolicyError, McpToolPolicy};
 pub use profile::EngineProfile;
 pub use project_actions::ProjectActionsStore;
+pub use project_widgets::{ProjectWidgets, WidgetsError};
 pub use registry::{HarnessDescriptor, HarnessRegistry, default_registry};
 pub use repos::{CheckoutIdentity, Repos, worktree_branch_from_title};
 pub use rpc::EngineRpc;
@@ -145,6 +147,8 @@ pub struct EngineCore {
     pub project_actions: ProjectActionsStore,
     /// Built-in Zeron MCP tool policy of this profile.
     pub mcp_policy: McpToolPolicy,
+    /// Project widgets of this profile, served for the spaces this device owns.
+    pub project_widgets: ProjectWidgets,
     pub previews: zeron_preview::PreviewService,
     pub change_requests: CheckoutChangeRequests,
     pub diff_sync: CheckoutDiffSync,
@@ -258,6 +262,17 @@ impl EngineCore {
         doc_host.set_workspace(workspace.clone());
         doc_host.set_sessions(sessions.clone());
         sessions.set_doc_host(doc_host.clone());
+        // Before stale runs recover: a refresh left unfinished must be
+        // interrupted before anything could resume it.
+        let project_widgets = ProjectWidgets::open(
+            profile.store_root(),
+            &device_id,
+            Arc::new(project_widgets::RegistrySpaces::new(
+                workspace.clone(),
+                &device_id,
+            )),
+        );
+        project_widgets.start_reconciliation(workspace.watch_spaces());
         match sessions.recover_stale() {
             Ok(0) => {}
             Ok(recovered) => tracing::info!(recovered, "stale sessions recovered on boot"),
@@ -342,6 +357,7 @@ impl EngineCore {
             terminals,
             project_actions,
             mcp_policy,
+            project_widgets,
             previews,
             change_requests,
             diff_sync,
@@ -476,6 +492,7 @@ impl EngineCore {
             self.terminals.clone(),
             self.project_actions.clone(),
             self.mcp_policy.clone(),
+            self.project_widgets.clone(),
             self.change_requests.clone(),
             self.diff_sync.clone(),
             self.uploads.clone(),
@@ -546,6 +563,7 @@ impl EngineCore {
         self.diff_sync.shutdown().await;
         self.workspace_files.shutdown().await;
         self.spaces_sync.shutdown().await;
+        self.project_widgets.shutdown();
         self.doc_host.shutdown_workers().await;
         self.doc_host.flush_all();
         self.workspace.shutdown();

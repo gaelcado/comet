@@ -332,6 +332,44 @@ impl Uploads {
         } else {
             path
         };
+        let resolved = self.jail(path, extra_roots)?;
+        let meta = std::fs::metadata(&resolved)?;
+        if !meta.is_file() {
+            return Err(EngineError::Other("Attachment is not a file".into()));
+        }
+        if meta.len() > MAX_BYTES {
+            return Err(EngineError::Other("Attachment is too large".into()));
+        }
+        // Files the user attached themselves read back whatever their type (a
+        // queued message restores them for editing); other roots stay image-only.
+        let mime_type = match mime_by_ext(&resolved) {
+            Some(mime) => mime,
+            None if std::fs::canonicalize(&self.inner.dir)
+                .is_ok_and(|uploads| resolved.starts_with(uploads)) =>
+            {
+                "application/octet-stream"
+            }
+            None => {
+                return Err(EngineError::Other(
+                    "Attachment is not a supported image".into(),
+                ));
+            }
+        };
+        Ok(InspectedFile {
+            name: resolved
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "attachment".into()),
+            mime_type: mime_type.to_string(),
+            size: meta.len(),
+            resolved,
+        })
+    }
+
+    /// The canonical path of `path` if it lies under the uploads dir, a
+    /// read-only root or one of `extra_roots`, symlinks resolved.
+    fn jail(&self, path: &str, extra_roots: &[PathBuf]) -> Result<PathBuf, EngineError> {
+        let outside = || EngineError::Other("Attachment is outside the upload cache".into());
         let read_roots = self
             .inner
             .read_only_roots
@@ -368,37 +406,76 @@ impl Uploads {
         if !allowed {
             return Err(outside());
         }
-        let meta = std::fs::metadata(&resolved)?;
-        if !meta.is_file() {
-            return Err(EngineError::Other("Attachment is not a file".into()));
-        }
-        if meta.len() > MAX_BYTES {
-            return Err(EngineError::Other("Attachment is too large".into()));
-        }
-        // Files the user attached themselves read back whatever their type (a
-        // queued message restores them for editing); other roots stay image-only.
-        let mime_type = match mime_by_ext(&resolved) {
-            Some(mime) => mime,
-            None if std::fs::canonicalize(&self.inner.dir)
-                .is_ok_and(|uploads| resolved.starts_with(uploads)) =>
-            {
-                "application/octet-stream"
-            }
-            None => {
-                return Err(EngineError::Other(
-                    "Attachment is not a supported image".into(),
-                ));
-            }
+        Ok(resolved)
+    }
+}
+
+/// A visual read back by [`Uploads::read_visual`].
+pub struct StoredVisual {
+    pub script: String,
+    pub assets: std::collections::BTreeMap<String, Vec<u8>>,
+}
+
+impl Uploads {
+    /// Read a visual stored by [`Self::store_visual`]: its script and every
+    /// asset its manifest names, through the uploads jail (this profile's
+    /// uploads dir and granted read-only roots, never a chat cwd). A manifest
+    /// naming a missing or invalid file fails the whole read.
+    pub fn read_visual(&self, script_path: &str) -> Result<StoredVisual, EngineError> {
+        use zeron_proto::{
+            VISUAL_MAX_ASSET_BYTES, VISUAL_MAX_ASSETS, VISUAL_MAX_BYTES, valid_visual_asset_name,
         };
-        Ok(InspectedFile {
-            name: resolved
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "attachment".into()),
-            mime_type: mime_type.to_string(),
-            size: meta.len(),
-            resolved,
-        })
+        let read = |path: &Path, max: usize| -> Result<Vec<u8>, EngineError> {
+            let resolved = self.jail(&path.to_string_lossy(), &[])?;
+            let meta = std::fs::metadata(&resolved)?;
+            if !meta.is_file() || meta.len() > max as u64 {
+                return Err(EngineError::Other(format!(
+                    "{} is not a visual file",
+                    path.display()
+                )));
+            }
+            Ok(std::fs::read(resolved)?)
+        };
+        // The jail resolves the script first; its siblings sit beside it.
+        let script = self.jail(script_path, &[])?;
+        let stem = script
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix("-visual.luau"))
+            .ok_or_else(|| EngineError::Other("not a visual script".into()))?
+            .to_owned();
+        let dir = script
+            .parent()
+            .ok_or_else(|| EngineError::Other("not a visual script".into()))?;
+        let script = String::from_utf8(read(&script, VISUAL_MAX_BYTES)?)
+            .map_err(|_| EngineError::Other("the visual script is not UTF-8".into()))?;
+        let manifest = dir.join(format!("{stem}-assets.json"));
+        let names: Vec<String> = match std::fs::symlink_metadata(&manifest) {
+            // A visual without assets has no manifest.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            _ => serde_json::from_slice(&read(&manifest, 64 * 1024)?)
+                .map_err(|_| EngineError::Other("the visual's asset list is unreadable".into()))?,
+        };
+        if names.len() > VISUAL_MAX_ASSETS {
+            return Err(EngineError::Other(
+                "the visual lists too many assets".into(),
+            ));
+        }
+        let mut assets = std::collections::BTreeMap::new();
+        for name in names {
+            if !valid_visual_asset_name(&name) {
+                return Err(EngineError::Other(format!(
+                    "asset name '{name}' is invalid"
+                )));
+            }
+            let bytes = read(
+                &dir.join(format!("{stem}-asset-{name}")),
+                VISUAL_MAX_ASSET_BYTES,
+            )
+            .map_err(|_| EngineError::Other(format!("asset '{name}' is missing")))?;
+            assets.insert(name, bytes);
+        }
+        Ok(StoredVisual { script, assets })
     }
 }
 

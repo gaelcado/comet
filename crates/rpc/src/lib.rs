@@ -246,6 +246,25 @@ pub mod methods {
     pub const GET_ZERON_MCP_DISCOVERY: &str = "GetZeronMcpDiscovery";
     /// Admit one call under the current policy, before any of its effects.
     pub const ADMIT_ZERON_MCP_TOOL_CALL: &str = "AdmitZeronMcpToolCall";
+    // Project widgets (`zeron_proto::project_widgets`), served by the engine
+    // owning the space and relay-forwardable with `targetDeviceId`.
+    /// Stream: the space's `ProjectWidgetsSnapshot`, then one per change.
+    pub const WATCH_PROJECT_WIDGETS: &str = "WatchProjectWidgets";
+    pub const GET_PROJECT_WIDGET: &str = "GetProjectWidget";
+    /// Chunked read of one immutable widget file (script or asset).
+    pub const READ_PROJECT_WIDGET_ASSET_CHUNK: &str = "ReadProjectWidgetAssetChunk";
+    /// Copy a chat's visual into a new widget of a space (deduplicated).
+    pub const SAVE_PROJECT_VISUAL: &str = "SaveProjectVisual";
+    pub const CREATE_PROJECT_WIDGET: &str = "CreateProjectWidget";
+    /// Compare-and-set on the widget's `revision`.
+    pub const UPDATE_PROJECT_WIDGET: &str = "UpdateProjectWidget";
+    /// Compare-and-set on the space's `collectionRevision`.
+    pub const REORDER_PROJECT_WIDGETS: &str = "ReorderProjectWidgets";
+    pub const DELETE_PROJECT_WIDGET: &str = "DeleteProjectWidget";
+    /// Not served yet: hosts answer with an unknown-method error.
+    pub const REFRESH_PROJECT_WIDGET: &str = "RefreshProjectWidget";
+    /// Not served yet: hosts answer with an unknown-method error.
+    pub const CANCEL_PROJECT_WIDGET_REFRESH: &str = "CancelProjectWidgetRefresh";
     // Updates (ControlRpc, relay-forwardable — a device reports/applies its own
     // binary's update). Stream: current UpdateStatus, then every change.
     pub const UPDATE_STATUS: &str = "UpdateStatus";
@@ -287,6 +306,32 @@ pub mod capability_errors {
     pub const MCP_TOOL_REFUSED: &str = "mcp.tool_refused";
     /// Business error when the engine could not be asked for admission.
     pub const MCP_ADMISSION_UNAVAILABLE: &str = "mcp.admission_unavailable";
+    /// A project widget changed since the `revision` (or the space's widgets
+    /// since the `collectionRevision`) the request was made against. Nothing
+    /// changed; reload before retrying.
+    pub const WIDGETS_CONFLICT: &str = "widgets.conflict";
+    /// The `operationId` or `creationKey` was already used with another payload.
+    pub const WIDGETS_KEY_REUSED: &str = "widgets.key_reused";
+    /// No such live widget on this owner.
+    pub const WIDGETS_NOT_FOUND: &str = "widgets.not_found";
+    /// The chat or visual to save no longer exists on this owner.
+    pub const WIDGETS_SOURCE_NOT_FOUND: &str = "widgets.source_not_found";
+    /// The space is unknown, deleted or owned by another device, or the owner
+    /// device cannot be reached.
+    pub const WIDGETS_OWNER_UNAVAILABLE: &str = "widgets.owner_unavailable";
+    /// The named refresh is not the widget's active one.
+    pub const WIDGETS_REFRESH_INACTIVE: &str = "widgets.refresh_inactive";
+    /// The content failed validation. Not a bare capability code: the error
+    /// text starts with this code and `: `, followed by the reason (script
+    /// errors keep their line numbers).
+    pub const WIDGETS_INVALID_VISUAL: &str = "widgets.invalid_visual";
+    /// The space already holds the most widgets it may.
+    pub const WIDGETS_QUOTA_EXCEEDED: &str = "widgets.quota_exceeded";
+    /// The change could not be saved (for example a full disk); the previous
+    /// state is intact.
+    pub const WIDGETS_WRITE_FAILED: &str = "widgets.write_failed";
+    /// The widget store is unreadable or from a newer build; writes are refused.
+    pub const WIDGETS_STORE_UNAVAILABLE: &str = "widgets.store_unavailable";
 }
 
 #[derive(Debug, thiserror::Error)]

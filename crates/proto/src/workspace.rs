@@ -18,8 +18,9 @@ pub mod capabilities {
     /// The host creates a projectless chat's scratch folder
     /// (`crate::projectless`) when it runs; older hosts only know `~`.
     pub const PROJECTLESS_SCRATCH_V1: &str = "projectless-scratch-v1";
-    /// The host owns per-project widgets and their refreshes. Not advertised
-    /// in [`CURRENT`] until the host serves them.
+    /// The host owns per-project widgets (`crate::project_widgets`): watch,
+    /// read, save, create, update, reorder and delete. Refresh is not served
+    /// yet (`RefreshProjectWidget` answers as an unknown method).
     pub const PROJECT_WIDGETS_V1: &str = "project-widgets-v1";
     /// The host persists and enforces per-tool policy for the built-in Zeron
     /// MCP (`WatchZeronMcpCatalog`, `SetZeronMcpToolOverride`,
@@ -37,6 +38,7 @@ pub mod capabilities {
         PROJECTLESS_SCRATCH_V1,
         crate::voice::remote::CAPABILITY,
         ZERON_MCP_TOOL_POLICY_V1,
+        PROJECT_WIDGETS_V1,
     ];
 
     pub fn current() -> Vec<String> {
@@ -119,7 +121,8 @@ mod tests {
                     "harness-updates-v1",
                     "projectless-scratch-v1",
                     "voice-client-media-v1",
-                    "zeron-mcp-tool-policy-v1"
+                    "zeron-mcp-tool-policy-v1",
+                    "project-widgets-v1"
                 ],
             })
         );

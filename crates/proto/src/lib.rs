@@ -14,6 +14,7 @@ pub mod invocation;
 pub mod mcp;
 pub mod motion;
 pub mod preview;
+pub mod project_widgets;
 pub mod projectless;
 pub mod sidebar_pins;
 pub mod view;
@@ -24,6 +25,7 @@ pub use agent::*;
 pub use entities::*;
 pub use mcp::*;
 pub use preview::*;
+pub use project_widgets::*;
 pub use sidebar_pins::*;
 pub use workspace::*;
 

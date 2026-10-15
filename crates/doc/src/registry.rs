@@ -1128,6 +1128,25 @@ impl RegistryDoc {
             .map(Space::from))
     }
 
+    /// Whether the space row is a tombstone (deleted here or by a peer),
+    /// pending ops applied. A space this replica never saw is not deleted.
+    pub fn space_deleted(&self, space_id: &str) -> bool {
+        let mut row = self
+            .authoritative
+            .get(KIND_SPACES)
+            .and_then(|m| m.get(space_id))
+            .cloned();
+        for op in self
+            .pending_ops()
+            .filter(|op| op.kind == KIND_SPACES && op.id == space_id)
+        {
+            if let (Some(next), _) = apply_op(row.as_ref(), op) {
+                row = Some(next);
+            }
+        }
+        row.is_some_and(|row| row.deleted)
+    }
+
     pub fn read_spaces(&self) -> Result<Vec<Space>, DocError> {
         let mut spaces: Vec<Space> = self
             .read_kind::<crate::workspace::RawSpace>(KIND_SPACES)

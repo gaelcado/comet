@@ -77,6 +77,7 @@ use crate::diff_sync::CheckoutDiffSync;
 use crate::doc_host::DocHost;
 use crate::mcp_settings::{McpPolicyError, McpToolPolicy};
 use crate::project_actions::ProjectActionsStore;
+use crate::project_widgets::{ProjectWidgets, WidgetsError};
 use crate::registry::HarnessRegistry;
 use crate::repos::{Repos, session_home_dir};
 use crate::sessions::SessionsEngine;
@@ -691,6 +692,7 @@ pub struct EngineRpc {
     terminals: Terminals,
     project_actions: ProjectActionsStore,
     mcp_policy: McpToolPolicy,
+    project_widgets: ProjectWidgets,
     previews: Option<zeron_preview::PreviewService>,
     change_requests: CheckoutChangeRequests,
     github: GitHubCli,
@@ -717,6 +719,7 @@ impl EngineRpc {
         terminals: Terminals,
         project_actions: ProjectActionsStore,
         mcp_policy: McpToolPolicy,
+        project_widgets: ProjectWidgets,
         change_requests: CheckoutChangeRequests,
         diff_sync: CheckoutDiffSync,
         uploads: Uploads,
@@ -741,6 +744,7 @@ impl EngineRpc {
             terminals,
             project_actions,
             mcp_policy,
+            project_widgets,
             previews: None,
             change_requests,
             github,
@@ -837,6 +841,22 @@ impl EngineRpc {
             ));
         }
         Ok(space)
+    }
+
+    /// Run one widget operation off the async workers and reply with it.
+    async fn widgets_call<T>(
+        &self,
+        op: impl FnOnce(ProjectWidgets) -> Result<T, WidgetsError> + Send + 'static,
+    ) -> Result<RpcReply, RpcError>
+    where
+        T: serde::Serialize + Send + 'static,
+    {
+        let widgets = self.project_widgets.clone();
+        let value = tokio::task::spawn_blocking(move || op(widgets))
+            .await
+            .map_err(|err| RpcError::Failed(err.to_string()))?
+            .map_err(widgets_rpc_error)?;
+        RpcReply::value(&value)
     }
 
     /// Resolve a mention-search root from synced workspace rows. A client may
@@ -1120,6 +1140,7 @@ impl EngineRpc {
                     | methods::WATCH_WORKSPACE_GIT_STATUS
                     | methods::WATCH_HARNESS_UPDATES
                     | methods::WATCH_ZERON_MCP_CATALOG
+                    | methods::WATCH_PROJECT_WIDGETS
             ) {
                 let rx = match client.subscribe_checked(method, params).await {
                     Ok(rx) => rx,
@@ -1263,6 +1284,10 @@ impl EngineRpc {
                 .map(drop),
             MutateParams::DeleteSpace { space_id } => {
                 let deleted = self.workspace.delete_space(&space_id).map_err(failed)?;
+                // The registry watch reconciles too (deletions may come from a
+                // peer); this only makes a local deletion take effect at once.
+                let widgets = self.project_widgets.clone();
+                tokio::task::spawn_blocking(move || widgets.reconcile_deleted_spaces());
                 // Best-effort teardown of live runs we host for the deleted chats
                 // (the doc rows are already tombstoned; a straggler run would only
                 // write into an orphaned session doc).
@@ -1374,6 +1399,48 @@ fn mcp_policy_rpc_error(error: McpPolicyError) -> RpcError {
             RpcError::BadParams(error.to_string())
         }
     }
+}
+
+/// Widget failures carry stable codes. Invalid content keeps its reason
+/// (script errors with line numbers) after its code.
+fn widgets_rpc_error(error: WidgetsError) -> RpcError {
+    use capability_errors as codes;
+    let code = match error {
+        WidgetsError::Conflict => codes::WIDGETS_CONFLICT,
+        WidgetsError::KeyReused => codes::WIDGETS_KEY_REUSED,
+        WidgetsError::NotFound => codes::WIDGETS_NOT_FOUND,
+        WidgetsError::SourceNotFound => codes::WIDGETS_SOURCE_NOT_FOUND,
+        WidgetsError::OwnerUnavailable => codes::WIDGETS_OWNER_UNAVAILABLE,
+        WidgetsError::RefreshInactive => codes::WIDGETS_REFRESH_INACTIVE,
+        WidgetsError::QuotaExceeded => codes::WIDGETS_QUOTA_EXCEEDED,
+        WidgetsError::StoreUnavailable => codes::WIDGETS_STORE_UNAVAILABLE,
+        WidgetsError::Write(err) => {
+            tracing::error!(error = %err, "project widget change not saved");
+            codes::WIDGETS_WRITE_FAILED
+        }
+        // Over the wire this arrives as a plain failure whose text starts
+        // with the code.
+        WidgetsError::InvalidVisual(reason) => {
+            return RpcError::Failed(format!("{}: {reason}", codes::WIDGETS_INVALID_VISUAL));
+        }
+        WidgetsError::BadRequest(message) => return RpcError::BadParams(message),
+    };
+    RpcError::Capability(code.into())
+}
+
+/// Methods served by the engine owning a project space.
+fn is_project_widgets_method(method: &str) -> bool {
+    matches!(
+        method,
+        methods::WATCH_PROJECT_WIDGETS
+            | methods::GET_PROJECT_WIDGET
+            | methods::READ_PROJECT_WIDGET_ASSET_CHUNK
+            | methods::SAVE_PROJECT_VISUAL
+            | methods::CREATE_PROJECT_WIDGET
+            | methods::UPDATE_PROJECT_WIDGET
+            | methods::REORDER_PROJECT_WIDGETS
+            | methods::DELETE_PROJECT_WIDGET
+    )
 }
 
 /// A bridge speaks for a chat when the engine launched it in one.
@@ -1596,6 +1663,16 @@ fn forwardable(method: &str) -> bool {
             // the policy of the engine it joined.
             | methods::WATCH_ZERON_MCP_CATALOG
             | methods::SET_ZERON_MCP_TOOL_OVERRIDE
+            // Project widgets live on the engine owning the space, which
+            // validates the space and profile itself.
+            | methods::WATCH_PROJECT_WIDGETS
+            | methods::GET_PROJECT_WIDGET
+            | methods::READ_PROJECT_WIDGET_ASSET_CHUNK
+            | methods::SAVE_PROJECT_VISUAL
+            | methods::CREATE_PROJECT_WIDGET
+            | methods::UPDATE_PROJECT_WIDGET
+            | methods::REORDER_PROJECT_WIDGETS
+            | methods::DELETE_PROJECT_WIDGET
             // Checkout diffs are produced on the device holding the checkout.
             | methods::WATCH_CHECKOUT_DIFFS
             | methods::WATCH_WORKSPACE_GIT_STATUS
@@ -1657,6 +1734,7 @@ fn is_stream_method(method: &str) -> bool {
             | methods::UPDATE_STATUS
             | methods::WATCH_HARNESS_UPDATES
             | methods::WATCH_ZERON_MCP_CATALOG
+            | methods::WATCH_PROJECT_WIDGETS
     )
 }
 
@@ -1913,6 +1991,24 @@ impl RpcService for EngineRpc {
                     | methods::CANCEL_AGENT_LOGIN
             ) {
                 return self.forward_agent_login(&target, method, params).await;
+            }
+            if is_project_widgets_method(method) {
+                // An unreachable owner is a stable state for widget views,
+                // distinct from an empty project.
+                if self.links.is_none() {
+                    return Err(RpcError::Capability(
+                        capability_errors::WIDGETS_OWNER_UNAVAILABLE.into(),
+                    ));
+                }
+                return self
+                    .forward(&target, method, params)
+                    .await
+                    .map_err(|err| match err {
+                        RpcError::Transport(_) | RpcError::Closed => RpcError::Capability(
+                            capability_errors::WIDGETS_OWNER_UNAVAILABLE.into(),
+                        ),
+                        err => err,
+                    });
             }
             return self.forward(&target, method, params).await;
         }
@@ -3580,6 +3676,72 @@ impl RpcService for EngineRpc {
                     "Zeron MCP admission"
                 );
                 RpcReply::value(&admission)
+            }
+            methods::WATCH_PROJECT_WIDGETS => {
+                let p: zeron_proto::WatchProjectWidgetsParams = parse_params(params)?;
+                let widgets = self.project_widgets.clone();
+                let rx = tokio::task::spawn_blocking(move || widgets.watch(&p.space_id))
+                    .await
+                    .map_err(|err| RpcError::Failed(err.to_string()))?
+                    .map_err(widgets_rpc_error)?;
+                Ok(RpcReply::Stream(watch_stream(rx)))
+            }
+            methods::GET_PROJECT_WIDGET => {
+                let p: zeron_proto::GetProjectWidgetParams = parse_params(params)?;
+                let workspace = self.workspace.clone();
+                self.widgets_call(move |widgets| {
+                    let widget = widgets.get(&p.widget_id)?;
+                    // A deleted source chat is a missing link, not an error.
+                    let source_missing = widget.source.as_ref().is_some_and(|source| {
+                        matches!(workspace.chat(&source.source_chat_id), Ok(None))
+                    });
+                    Ok(zeron_proto::ProjectWidgetDetail {
+                        widget,
+                        source_missing,
+                    })
+                })
+                .await
+            }
+            methods::READ_PROJECT_WIDGET_ASSET_CHUNK => {
+                let p: zeron_proto::ReadProjectWidgetAssetChunkParams = parse_params(params)?;
+                self.widgets_call(move |widgets| widgets.read_asset_chunk(&p))
+                    .await
+            }
+            methods::SAVE_PROJECT_VISUAL => {
+                let p: zeron_proto::SaveProjectVisualParams = parse_params(params)?;
+                let (doc_host, workspace, uploads) = (
+                    self.doc_host.clone(),
+                    self.workspace.clone(),
+                    self.uploads.clone(),
+                );
+                self.widgets_call(move |widgets| {
+                    widgets.save_visual(&p, || {
+                        crate::project_widgets::resolve_chat_visual(
+                            &doc_host,
+                            &workspace,
+                            &uploads,
+                            &p.source_chat_id,
+                            &p.source_visual_id,
+                        )
+                    })
+                })
+                .await
+            }
+            methods::CREATE_PROJECT_WIDGET => {
+                let p: zeron_proto::CreateProjectWidgetParams = parse_params(params)?;
+                self.widgets_call(move |widgets| widgets.create(&p)).await
+            }
+            methods::UPDATE_PROJECT_WIDGET => {
+                let p: zeron_proto::UpdateProjectWidgetParams = parse_params(params)?;
+                self.widgets_call(move |widgets| widgets.update(&p)).await
+            }
+            methods::REORDER_PROJECT_WIDGETS => {
+                let p: zeron_proto::ReorderProjectWidgetsParams = parse_params(params)?;
+                self.widgets_call(move |widgets| widgets.reorder(&p)).await
+            }
+            methods::DELETE_PROJECT_WIDGET => {
+                let p: zeron_proto::DeleteProjectWidgetParams = parse_params(params)?;
+                self.widgets_call(move |widgets| widgets.delete(&p)).await
             }
             methods::LIST_PROJECT_ACTIONS => {
                 let p: ListProjectActionsParams = parse_params(params)?;
