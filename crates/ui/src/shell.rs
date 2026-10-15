@@ -1113,7 +1113,6 @@ enum PaneResizeKind {
     Right,
     Files,
     Terminal,
-    PullRequests,
 }
 
 /// Resolve one pointer sample while keeping the persisted width legal. The
@@ -2240,9 +2239,10 @@ pub struct Shell {
     /// they last painted with their content held at its layout width (same
     /// order).
     fit_exits: [Option<(WidthTween, f32)>; 3],
-    /// The window width the surface host's share was last split for. Seeded
-    /// by the first frame, so a saved divider survives a relaunch.
-    split_viewport: Option<f32>,
+    /// The window width the right column's share was last split for, on
+    /// the chat route and the Pull requests route. Seeded by the first
+    /// frame, so a saved divider survives a relaunch.
+    split_viewport: [Option<f32>; 2],
     /// The last window fit and the inputs it was computed from, one slot
     /// per `closing` flag of `fit`: layout helpers ask for both many times
     /// per frame while a close runs. Not a per-frame value, since handlers
@@ -2682,7 +2682,7 @@ impl Shell {
             files_content_tween: None,
             painted_columns: None,
             fit_exits: [None; 3],
-            split_viewport: None,
+            split_viewport: [None; 2],
             fit_memo: Default::default(),
             right_images_suspended: false,
             sidebar_edge_bounce: None,
@@ -3245,7 +3245,7 @@ impl Shell {
 
     /// Open and on screen: the window fit is not hiding it.
     fn right_pane_shown(&self, cx: &App) -> bool {
-        self.right_pane_open(cx) && self.horizontal_fit().right
+        matches!(self.route, Route::Chat) && self.right_pane_open(cx) && self.horizontal_fit().right
     }
 
     /// The current chat's terminal flag (per-session, in-memory).
@@ -3254,27 +3254,27 @@ impl Shell {
     }
 
     fn right_target(&self, cx: &App) -> f32 {
-        self.right_target_for_columns(cx, self.sidebar_now(), self.files_reserved_width(cx))
+        self.right_target_for_columns(self.sidebar_now(), self.files_reserved_width(cx))
     }
 
     /// The surface host's width once every running transition has landed.
     /// The initial target uses the sidebar and Files' settled allocation;
     /// the painted pane follows its live target while its neighbours move.
     fn right_settled_target(&self, cx: &App) -> f32 {
-        self.right_target_for_columns(cx, self.sidebar_target(), self.files_settled_width(cx))
+        self.right_target_for_columns(self.sidebar_target(), self.files_settled_width(cx))
     }
 
-    fn right_target_for_columns(&self, cx: &App, sidebar: f32, files: f32) -> f32 {
-        if !self.right_pane_shown(cx) {
+    fn right_target_for_columns(&self, sidebar: f32, files: f32) -> f32 {
+        if !self.right_column_shown() {
             0.0
         } else {
             // Manual sizing preserves a usable conversation column. Takeover
             // intentionally consumes it completely. Both ride the sidebar
             // tween so toggling it remains seamless.
-            if self.right_pane_expanded {
+            if self.right_column_expanded() {
                 right_pane_takeover_width(self.viewport_width - files, sidebar)
             } else {
-                self.settings.right_pane_width.min(right_pane_max_width(
+                self.right_column_width().min(right_pane_max_width(
                     self.viewport_width - files,
                     sidebar,
                     CHAT_PANEL_MIN,
@@ -3343,47 +3343,17 @@ impl Shell {
             }
             return;
         }
-        // Reverse from the visible width when toggled during an animation.
-        let before = self.painted_panels(cx);
-        let from = before.right;
-        let content_from = before.right_content;
-        self.right_edge_bounce = None;
-        self.right_resize_edge = None;
-        self.finish_pane_resize(PaneResizeKind::Right);
-        let sidebar_now = self.sidebar_now();
-        let from_main = self.main_content_width(self.main_target_width(from, cx), cx);
-        let was_expanded = self.right_pane_expanded || self.tween_active(self.main_takeover_tween);
-        let key = self.panel_key(cx);
         if open {
-            self.record_panel_open(AuxiliaryPanel::Right, &key);
             // Its previews load again; the next hide releases them anew.
             self.right_images_suspended = false;
-        } else {
-            // Closing always leaves takeover mode — reopening at full bleed
-            // with the conversation gone read as a broken chat.
-            self.right_pane_expanded = false;
         }
-        self.panels.update(&key, |p| p.changes_open = open);
-        self.resplit_panels(before, Some(AuxiliaryPanel::Right), cx);
-        let to = self.right_settled_target(cx);
-        let pane = self.panel_tween(from, to);
-        self.right_tween = Some(pane);
-        let (content_start, content_end) = panel_content_tween(content_from, from, to);
-        self.right_content_tween = Some(WidthTween {
-            from: content_start,
-            to: content_end,
-            ..pane
-        });
-        // The conversation's return rides the pane's own tween.
-        self.main_takeover_tween = was_expanded.then(|| WidthTween {
-            from: from_main,
-            to: conversation_width(
-                self.viewport_width - self.files_reserved_width(cx),
-                sidebar_now,
-                to,
-            ),
-            ..pane
-        });
+        // Reverse from the visible width when toggled during an animation.
+        let key = self.panel_key(cx);
+        self.transition_right_column(
+            open,
+            |shell| shell.panels.update(&key, |p| p.changes_open = open),
+            cx,
+        );
         if open
             && let RightSurface::Diff(id) = self.resolved_right_active(cx)
             && let Some(changes) = self.diffs.get(&id).cloned()
@@ -4891,7 +4861,6 @@ impl Shell {
             PaneResizeKind::Sidebar => self.sidebar_resize_edge = None,
             PaneResizeKind::Terminal => self.terminal_drag_anchor = None,
             PaneResizeKind::Right => self.right_resize_edge = None,
-            PaneResizeKind::PullRequests => self.pull_request_pane.resize_edge = None,
             PaneResizeKind::Files => {}
         }
     }
@@ -4921,7 +4890,7 @@ impl Shell {
                 starts_bounce: false,
             }
         };
-        self.settings.right_pane_width = sample.width;
+        self.set_right_column_width(sample.width);
         self.pane_resize_dragging = Some(PaneResizeKind::Right);
         if sample.starts_bounce {
             self.right_edge_bounce = sample.edge.map(motion::ResizeEdgeBounce::new);
@@ -4978,6 +4947,13 @@ impl Shell {
             if let Some(page) = self.pull_requests_page.as_ref().cloned() {
                 page.update(cx, |page, _| page.on_hidden());
             }
+        }
+        if self.route != route {
+            // The departing route's panel motion ends with it; the arriving
+            // one lays out at rest.
+            self.clear_panel_transitions();
+            self.fit_exits = [None; 3];
+            self.painted_columns = None;
         }
         self.route = route;
         if !was_pull_requests && will_show_pull_requests {
@@ -7051,7 +7027,7 @@ impl Shell {
             .min(max)
             + self.eval_resize_edge_bounce(
                 self.right_edge_bounce,
-                self.right_pane_open(cx) && !self.right_pane_expanded,
+                self.right_column_open() && !self.right_column_expanded(),
             )
     }
 
@@ -12474,7 +12450,7 @@ impl Shell {
     fn toggle_right_pane_expand(&mut self, cx: &mut Context<Self>) {
         // The outgoing header stays painted during close, but it must not
         // turn an already closed surface into a zero-width takeover.
-        if !self.right_pane_shown(cx) {
+        if !self.right_column_shown() {
             return;
         }
         // A second click during the first expansion starts at the painted
@@ -12486,7 +12462,7 @@ impl Shell {
         self.finish_pane_resize(PaneResizeKind::Right);
         let sidebar_now = self.sidebar_now();
         let from_main = self.main_content_width(self.main_target_width(from, cx), cx);
-        self.right_pane_expanded = !self.right_pane_expanded;
+        self.set_right_column_expanded(!self.right_column_expanded());
         let to = self.right_target(cx);
         let right_transition = self.panel_tween(from, to);
         self.right_tween = Some(right_transition);
@@ -13482,7 +13458,6 @@ impl Render for Shell {
             .on_key_down(cx.listener(Self::on_key_down))
             .on_drag_move(cx.listener(Self::on_sidebar_drag))
             .on_drag_move(cx.listener(Self::on_right_pane_drag))
-            .on_drag_move(cx.listener(Self::on_pull_request_pane_drag))
             .on_drag_move(cx.listener(Self::on_files_panel_drag))
             .on_drag_move(cx.listener(Self::on_terminal_drag))
             // The panel shortcuts are chat-scoped chrome: in Settings they are
@@ -13761,10 +13736,8 @@ impl Render for Shell {
                 if on_pull_requests && let Some((url, device)) = self.pending_pull_request.take() {
                     self.show_pull_request_detail(url, device, window, cx);
                 }
-                let right_target_width = if on_chat {
+                let right_target_width = if on_chat || on_pull_requests {
                     self.right_visible_width(cx)
-                } else if on_pull_requests {
-                    self.pull_request_pane_visible_width()
                 } else {
                     0.0
                 };
@@ -13829,12 +13802,12 @@ impl Render for Shell {
                 // never renders it (zeron __root.tsx `!isSettings && activeChat`
                 // around the diff column) — the per-session open flags stay
                 // intact for the return trip.
-                let right_open = on_chat && self.right_pane_shown(cx);
+                let right_open = (on_chat || on_pull_requests) && self.right_column_shown();
                 // Takeover mode derives its width from the viewport, so a
                 // manual drag handle would fight the expanded target.
                 let right_handle = (right_open
                     && !panel_handoff
-                    && !self.right_pane_expanded
+                    && !self.right_column_expanded()
                     && !self.tween_active(self.right_tween))
                 .then(|| {
                     self.resize_handle(
@@ -13847,11 +13820,6 @@ impl Render for Shell {
                     // A forgiving transparent hit target centered on the
                     // seam; the panel's 1px border remains the visual divider.
                     .left(px(-PANE_RESIZE_HITBOX_HALF_WIDTH))
-                })
-                .or_else(|| {
-                    on_pull_requests
-                        .then(|| self.pull_request_pane_handle(cx))
-                        .flatten()
                 });
                 let right: AnyElement = if on_chat {
                     self.render_right_pane(window, cx)
@@ -16767,6 +16735,15 @@ mod exit_regressions {
         });
         for width in [600.0, 1400.0] {
             cx.simulate_resize(gpui::size(px(width), px(800.0)));
+            if width < CHAT_PANEL_MIN + RIGHT_PANE_MIN {
+                // Too narrow for the board beside it, the pane gives way to
+                // the board until it is asked for, then opens over it.
+                cx.update(|window, cx| {
+                    window.draw(cx).clear();
+                    window.dispatch_action(Box::new(ToggleChanges), cx);
+                });
+                cx.run_until_parked();
+            }
             for collapsed in [true, false] {
                 shell.update(cx, |shell, cx| {
                     shell.settings.sidebar_collapsed = collapsed;
@@ -19064,13 +19041,13 @@ impl Shell {
     /// Size the pull request pane by hand, without the open animation.
     pub fn fixture_pull_request_pane_width(&mut self, width: f32, cx: &mut Context<Self>) {
         self.settings.pull_request_pane_width = width;
-        self.pull_request_pane.tween = None;
+        self.clear_panel_transitions();
         cx.notify();
     }
 
     pub fn fixture_toggle_pull_request_pane_expand(&mut self, cx: &mut Context<Self>) {
-        self.toggle_pull_request_pane_expand(cx);
-        self.pull_request_pane.tween = None;
+        self.toggle_right_pane_expand(cx);
+        self.clear_panel_transitions();
     }
 
     pub fn fixture_pull_request_settings(&mut self, open: bool, cx: &mut Context<Self>) {

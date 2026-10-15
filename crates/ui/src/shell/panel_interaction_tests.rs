@@ -393,3 +393,137 @@ fn panels_share_space_and_keep_rendered_geometry_through_their_lifecycle(cx: &mu
         expect(settled(&shell, cx), landed.widths);
     }
 }
+
+/// The Pull requests route lays out `[sidebar, pull request pane, board]`
+/// under the same policy, with the board as the content column.
+fn draw_board(shell: &Entity<Shell>, cx: &mut VisualTestContext, millis: u64) -> [f32; 4] {
+    shell.update(cx, |shell, cx| {
+        *shell.test_time.as_mut().unwrap() +=
+            Duration::from_millis(millis).mul_f32(motion::speed_scale());
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let mut width = |id| cx.debug_bounds(id).map_or(0.0, |b| f32::from(b.size.width));
+    [
+        width("sidebar-column"),
+        width("right-panel"),
+        width("conversation-column"),
+        // The board's own layout, which takeover keeps beneath the pane.
+        width("pull-requests-column"),
+    ]
+}
+
+#[track_caller]
+fn expect_board(actual: [f32; 4], expected: [f32; 3]) {
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        near(actual, expected);
+    }
+}
+
+fn settled_board(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> [f32; 4] {
+    draw_board(shell, cx, 600);
+    draw_board(shell, cx, 600)
+}
+
+#[gpui::test]
+fn pull_request_pane_follows_the_shared_panel_policy(cx: &mut TestAppContext) {
+    let (_dir, shell, cx) = setup(cx);
+    change(&shell, cx, |s, _, cx| s.open_pull_requests(cx));
+    expect_board(settled_board(&shell, cx), [300.0, 0.0, 1300.0]);
+    let open = |cx: &mut VisualTestContext, number: u32| {
+        cx.update(|window, cx| {
+            window.dispatch_action(
+                Box::new(crate::pull_request_detail::OpenPullRequest(
+                    format!("https://github.com/a/b/pull/{number}"),
+                    None,
+                )),
+                cx,
+            )
+        });
+    };
+
+    // Opening eases in on the panel curve, and the board and the pane split
+    // what the sidebar leaves.
+    let before = draw_board(&shell, cx, 0);
+    open(cx, 1);
+    expect_board(draw_board(&shell, cx, 0), [before[0], before[1], before[2]]);
+    let first = draw_board(&shell, cx, 16)[1];
+    assert!(first > 0.0 && first < 65.0, "the pane lurches: {first}");
+    let mut previous = first;
+    for _ in 0..15 {
+        let width = draw_board(&shell, cx, 16)[1];
+        assert!(width >= previous - 0.5 && width <= 650.5);
+        previous = width;
+    }
+    expect_board(settled_board(&shell, cx), [300.0, 650.0, 650.0]);
+
+    // A reversal mid-close continues from the painted width.
+    change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
+    let closing = draw_board(&shell, cx, 75);
+    change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
+    let reopened = draw_board(&shell, cx, 0);
+    expect_board(reopened, [closing[0], closing[1], closing[2]]);
+    // The sidebar's toggle re-splits the board and the pane.
+    change(&shell, cx, |s, _, cx| s.toggle_sidebar(cx));
+    expect_board(settled_board(&shell, cx), [0.0, 800.0, 800.0]);
+    change(&shell, cx, |s, _, cx| s.toggle_sidebar(cx));
+    expect_board(settled_board(&shell, cx), [300.0, 650.0, 650.0]);
+
+    // A dragged divider holds until a seam reset restores the split.
+    let seam = gpui::point(px(950.0), px(400.0));
+    let dragged = gpui::point(px(900.0), px(400.0));
+    cx.simulate_mouse_down(seam, MouseButton::Left, Default::default());
+    for _ in 0..2 {
+        cx.simulate_mouse_move(dragged, Some(MouseButton::Left), Default::default());
+    }
+    cx.simulate_mouse_up(dragged, MouseButton::Left, Default::default());
+    expect_board(settled_board(&shell, cx), [300.0, 700.0, 600.0]);
+    change(&shell, cx, |s, _, cx| {
+        s.reset_panel_widths(PaneResizeKind::Right, cx)
+    });
+    expect_board(settled_board(&shell, cx), [300.0, 650.0, 650.0]);
+
+    // Takeover covers the board, which keeps its layout beneath the pane.
+    let board = draw_board(&shell, cx, 0)[3];
+    change(&shell, cx, |s, _, cx| s.toggle_right_pane_expand(cx));
+    for millis in [0, 75, 180] {
+        near(draw_board(&shell, cx, millis)[3], board);
+    }
+    expect_board(settled_board(&shell, cx), [300.0, 1300.0, 0.0]);
+    change(&shell, cx, |s, _, cx| s.toggle_right_pane_expand(cx));
+    expect_board(settled_board(&shell, cx), [300.0, 650.0, 650.0]);
+
+    // Narrowing applies directly and hides the least recently opened
+    // column (the pane, opened before the sidebar returned). Asking for it
+    // promotes it; below the board's minimum beside it, it opens over the
+    // board.
+    for (width, widths) in [
+        (1000.0, [300.0, 360.0, 340.0]),
+        (900.0, [300.0, 0.0, 600.0]),
+    ] {
+        cx.simulate_resize(gpui::size(px(width), px(900.0)));
+        expect_board(draw_board(&shell, cx, 0), widths);
+        expect_board(draw_board(&shell, cx, 300), widths);
+    }
+    change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
+    expect_board(settled_board(&shell, cx), [0.0, 450.0, 450.0]);
+    cx.simulate_resize(gpui::size(px(600.0), px(900.0)));
+    expect_board(draw_board(&shell, cx, 0), [0.0, 0.0, 600.0]);
+    change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
+    expect_board(settled_board(&shell, cx), [0.0, 600.0, 0.0]);
+    change(&shell, cx, |s, _, cx| s.toggle_right_pane_expand(cx));
+    cx.simulate_resize(gpui::size(px(1600.0), px(900.0)));
+    expect_board(settled_board(&shell, cx), [300.0, 650.0, 650.0]);
+
+    // Leaving mid-open lands the chat at rest, and the board returns at rest.
+    change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
+    expect_board(settled_board(&shell, cx), [300.0, 0.0, 1300.0]);
+    change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
+    draw_board(&shell, cx, 75);
+    change(&shell, cx, |s, _, cx| {
+        s.apply_nav(NavEntry::Chat("a".into()), cx)
+    });
+    expect_board(draw_board(&shell, cx, 0), [300.0, 0.0, 1300.0]);
+    change(&shell, cx, |s, _, cx| s.open_pull_requests(cx));
+    expect_board(draw_board(&shell, cx, 0), [300.0, 650.0, 650.0]);
+}

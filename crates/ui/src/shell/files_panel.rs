@@ -94,7 +94,7 @@ impl Shell {
                 self.fit_exit_width(1)
                     .map_or(0.0, |width| (width / RIGHT_PANE_MIN).clamp(0.0, 1.0))
             },
-            self.right_pane_expanded && fit.right,
+            self.right_column_expanded() && fit.right,
         )
     }
 
@@ -162,14 +162,14 @@ impl Shell {
         } else {
             0.0
         };
-        let right = fit.right && self.right_pane_open(cx);
+        let right = fit.right && self.right_column_open();
         files_panel_layout(
             self.viewport_width,
             sidebar,
             preferred,
             preferred,
             if right { 1.0 } else { 0.0 },
-            self.right_pane_expanded && right,
+            self.right_column_expanded() && right,
         )
         .width
     }
