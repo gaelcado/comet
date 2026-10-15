@@ -132,6 +132,21 @@ impl Bundles {
         Ok(out)
     }
 
+    /// A published bundle's script, verified against its manifest.
+    pub(super) fn read_script(
+        &self,
+        content: &ProjectWidgetContent,
+    ) -> Result<String, WidgetsError> {
+        let path = self.file(&content.bundle_id, BundleFile::Script)?;
+        let bytes = std::fs::read(&path).map_err(|_| WidgetsError::Conflict)?;
+        if bytes.len() as u64 != content.script_size || sha256(&bytes) != content.script_sha256 {
+            return Err(WidgetsError::Write(
+                "stored script does not match its manifest".into(),
+            ));
+        }
+        String::from_utf8(bytes).map_err(|err| WidgetsError::Write(err.to_string()))
+    }
+
     /// One chunk of a published bundle's file of `size` bytes.
     pub(super) fn read_chunk(
         &self,

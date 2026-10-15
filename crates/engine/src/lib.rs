@@ -272,8 +272,10 @@ impl EngineCore {
                 &device_id,
             )),
         );
+        project_widgets.withdraw_interrupted_refreshes(&doc_host);
         project_widgets.start_reconciliation(workspace.watch_spaces());
-        match sessions.recover_stale() {
+        // A crashed widget refresh is never resumed on its own.
+        match sessions.recover_stale_except(&project_widgets.refresh_chat_ids()) {
             Ok(0) => {}
             Ok(recovered) => tracing::info!(recovered, "stale sessions recovered on boot"),
             Err(err) => tracing::error!(error = %err, "stale-session recovery failed"),
@@ -289,6 +291,13 @@ impl EngineCore {
         let project_actions = ProjectActionsStore::open(profile.store_root())?;
         doc_host.set_project_action_runtime(project_actions.clone(), terminals.clone());
         let mcp_policy = McpToolPolicy::open(profile.store_root());
+        project_widgets.attach_refresh(project_widgets::RefreshRuntime {
+            sessions: sessions.clone(),
+            doc_host: doc_host.clone(),
+            workspace: workspace.clone(),
+            registry: registry.clone(),
+            policy: mcp_policy.clone(),
+        });
         let previews = zeron_preview::PreviewService::new(
             profile.store_root().join("previews.json"),
             device_id.clone(),
@@ -532,6 +541,9 @@ impl EngineCore {
     pub async fn shutdown(&self) {
         self.previews.shutdown().await;
         self.harness_updates.shutdown().await;
+        // Widget refreshes stop watching first: runs ended by this shutdown
+        // are marked interrupted when the store next opens, like a crash.
+        self.project_widgets.shutdown();
         // A run interruption transitions its chat to Idle, and Idle normally
         // releases the next queued row. Freeze first so quitting never starts
         // recovered work while the engine is being torn down.
@@ -563,7 +575,6 @@ impl EngineCore {
         self.diff_sync.shutdown().await;
         self.workspace_files.shutdown().await;
         self.spaces_sync.shutdown().await;
-        self.project_widgets.shutdown();
         self.doc_host.shutdown_workers().await;
         self.doc_host.flush_all();
         self.workspace.shutdown();

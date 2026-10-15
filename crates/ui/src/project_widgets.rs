@@ -33,10 +33,13 @@ use gpui::{
 };
 use sha2::Digest as _;
 use zeron_proto::{
-    DeleteProjectWidgetParams, GetProjectWidgetParams, PROJECT_WIDGET_SCRIPT_ASSET, ProjectWidget,
+    CancelProjectWidgetRefreshParams, DeleteProjectWidgetParams, GetProjectWidgetParams, HarnessId,
+    PROJECT_WIDGET_INSTRUCTION_MAX_BYTES, PROJECT_WIDGET_SCRIPT_ASSET, ProjectWidget,
     ProjectWidgetAssetChunk, ProjectWidgetContent, ProjectWidgetDeletion, ProjectWidgetDetail,
-    ProjectWidgetRefreshState, ProjectWidgetWrite, ProjectWidgetWriteOutcome,
-    ProjectWidgetsSnapshot, ReadProjectWidgetAssetChunkParams, ReorderProjectWidgetsParams,
+    ProjectWidgetRecipe, ProjectWidgetRecipePatch, ProjectWidgetRefresh,
+    ProjectWidgetRefreshAdmission, ProjectWidgetRefreshCancellation, ProjectWidgetRefreshState,
+    ProjectWidgetWrite, ProjectWidgetWriteOutcome, ProjectWidgetsSnapshot,
+    ReadProjectWidgetAssetChunkParams, RefreshProjectWidgetParams, ReorderProjectWidgetsParams,
     SaveProjectVisualParams, Space, UpdateProjectWidgetParams, VISUAL_MAX_ASSET_BYTES,
     VISUAL_MAX_ASSETS, VISUAL_MAX_BYTES, VISUAL_MAX_TITLE_CHARS, WatchProjectWidgetsParams,
     WorkspaceScope, capabilities,
@@ -54,8 +57,12 @@ use crate::visuals::{VisualFrame, VisualLayoutChanged, VisualSource};
 /// What a stale write is answered with: the change was refused, nothing
 /// moved, and the current state must be loaded before trying again.
 const CONFLICT_COPY: &str = "This widget changed elsewhere. Reload it before retrying.";
-/// The Refresh control's place until refreshes through an agent arrive.
-const REFRESH_SOON_COPY: &str = "Refresh will be available soon";
+/// Why Refresh is disabled on an owner that predates refreshes.
+const REFRESH_UNSUPPORTED_COPY: &str =
+    "This device's Zeron can't refresh widgets. Update it first.";
+/// What a running refresh is, for assistive technology and the tooltip.
+const REFRESH_RUN_COPY: &str =
+    "An agent run is making a new version. The current one stays until it succeeds.";
 /// What the empty state's new chat asks for. Sent only by the user.
 const DASHBOARD_REQUEST: &str =
     "Build a dashboard of this project's key metrics and show it as a visual.";
@@ -309,6 +316,17 @@ fn error_copy(error: &RpcError) -> String {
         }
         _ if code.starts_with(capability_errors::WIDGETS_INVALID_VISUAL) => {
             "This visual can't be kept as a widget.".into()
+        }
+        // The owner says what is missing: no recipe, an agent that isn't
+        // available there, or update_widget switched off in Settings → MCP.
+        _ if code.starts_with(capability_errors::WIDGETS_REFRESH_UNAVAILABLE) => {
+            match code.split_once(": ") {
+                Some((_, reason)) => format!("Can't refresh: {reason}."),
+                None => "This widget can't be refreshed on its device.".into(),
+            }
+        }
+        _ if code == capability_errors::WIDGETS_REFRESH_INACTIVE => {
+            "This refresh already ended.".into()
         }
         RpcError::UnknownMethod(_) => {
             "This device's Zeron can't keep widgets. Update it first.".into()
@@ -792,6 +810,8 @@ enum Collection {
 #[derive(Debug, Clone, PartialEq)]
 enum MutationKind {
     Rename(String),
+    /// Save the refresh recipe, then refresh.
+    Recipe(ProjectWidgetRecipe),
     /// Move by this many places (−1 up, +1 down).
     Move(isize),
     Delete,
@@ -957,6 +977,34 @@ impl WidgetsModel {
                     refresh_recipe: Default::default(),
                     content: None,
                     refresh_id: None,
+                    origin_chat_id: None,
+                    target_device_id: None,
+                })
+            }
+            MutationKind::Recipe(recipe) => {
+                let instruction = recipe.instruction.trim();
+                if instruction.is_empty() {
+                    return Err("Say what the refresh should do.".into());
+                }
+                if instruction.len() > PROJECT_WIDGET_INSTRUCTION_MAX_BYTES {
+                    return Err("Shorten the instruction.".into());
+                }
+                let recipe = ProjectWidgetRecipe {
+                    instruction: instruction.to_owned(),
+                    ..recipe.clone()
+                };
+                if widget.refresh_recipe.as_ref() == Some(&recipe) {
+                    return Ok(None);
+                }
+                Request::Update(UpdateProjectWidgetParams {
+                    widget_id: widget.id.clone(),
+                    expected_revision: widget.revision,
+                    operation_id: operation_id.clone(),
+                    title: None,
+                    refresh_recipe: ProjectWidgetRecipePatch::Set(recipe),
+                    content: None,
+                    refresh_id: None,
+                    origin_chat_id: None,
                     target_device_id: None,
                 })
             }
@@ -1064,35 +1112,106 @@ impl WidgetsModel {
             settled: true,
         }
     }
-}
 
-/// The Refresh control. Refreshes through an agent arrive with
-/// `RefreshProjectWidget`; until then it keeps its place, disabled, and
-/// says so rather than pretending to run.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum RefreshControl {
-    Soon,
-    /// The owner reported a refresh attempt (newer engines).
-    Reported(ProjectWidgetRefreshState),
-}
-
-fn refresh_control(widget: &ProjectWidget) -> RefreshControl {
-    match &widget.refresh {
-        None => RefreshControl::Soon,
-        Some(refresh) => RefreshControl::Reported(refresh.state),
+    /// An attempt the owner answered a refresh or cancel with. The watch
+    /// may already show something newer: never step back from it.
+    fn refresh_settled(&mut self, generation: u64, widget_id: &str, refresh: ProjectWidgetRefresh) {
+        if generation != self.generation {
+            return;
+        }
+        let Collection::Ready(snapshot) = &mut self.collection else {
+            return;
+        };
+        let Some(widget) = snapshot.widgets.iter_mut().find(|w| w.id == widget_id) else {
+            return;
+        };
+        let newer = match &widget.refresh {
+            None => true,
+            Some(shown) if shown.refresh_id == refresh.refresh_id => {
+                refresh_active(shown.state) && !refresh_active(refresh.state)
+            }
+            Some(shown) => shown.started_at <= refresh.started_at,
+        };
+        if newer {
+            widget.refresh = Some(refresh);
+        }
     }
 }
 
-fn refresh_state_label(state: ProjectWidgetRefreshState) -> &'static str {
-    match state {
-        ProjectWidgetRefreshState::Queued | ProjectWidgetRefreshState::Running => "Refreshing",
-        ProjectWidgetRefreshState::AwaitingInput => "Response needed",
-        ProjectWidgetRefreshState::Succeeded => "Refreshed",
-        ProjectWidgetRefreshState::Failed => "Refresh failed",
-        ProjectWidgetRefreshState::Cancelled => "Refresh cancelled",
-        ProjectWidgetRefreshState::Interrupted => "Refresh interrupted",
-        ProjectWidgetRefreshState::Conflict => "Refresh stopped: the widget changed",
-        ProjectWidgetRefreshState::Other => "Refresh status unknown",
+fn refresh_active(state: ProjectWidgetRefreshState) -> bool {
+    matches!(
+        state,
+        ProjectWidgetRefreshState::Queued
+            | ProjectWidgetRefreshState::Running
+            | ProjectWidgetRefreshState::AwaitingInput
+    )
+}
+
+/// What a widget's Refresh area offers, from its latest attempt. The last
+/// good content stays shown whatever the attempt does.
+#[derive(Debug, Clone, PartialEq)]
+enum RefreshControl {
+    /// The owner predates refreshes: shown disabled, saying why.
+    Unsupported,
+    /// Refresh can start; without a recipe it asks for one first.
+    Start { configure: bool },
+    /// The agent run is working: Cancel and Open run.
+    Running {
+        refresh_id: String,
+        chat_id: Option<String>,
+    },
+    /// The agent asked a question: its run needs an answer.
+    AwaitingInput {
+        refresh_id: String,
+        chat_id: Option<String>,
+    },
+    /// Cancelled; the content is unchanged and Refresh starts again.
+    Cancelled,
+    /// Ended without publishing: what happened, and Retry.
+    Failed {
+        message: String,
+        chat_id: Option<String>,
+    },
+}
+
+fn refresh_control(widget: &ProjectWidget, supported: bool) -> RefreshControl {
+    if !supported {
+        return RefreshControl::Unsupported;
+    }
+    let start = RefreshControl::Start {
+        configure: widget.refresh_recipe.is_none(),
+    };
+    let Some(refresh) = &widget.refresh else {
+        return start;
+    };
+    let refresh_id = refresh.refresh_id.clone();
+    let chat_id = refresh.execution_chat_id.clone();
+    match refresh.state {
+        ProjectWidgetRefreshState::Queued | ProjectWidgetRefreshState::Running => {
+            RefreshControl::Running {
+                refresh_id,
+                chat_id,
+            }
+        }
+        ProjectWidgetRefreshState::AwaitingInput => RefreshControl::AwaitingInput {
+            refresh_id,
+            chat_id,
+        },
+        ProjectWidgetRefreshState::Succeeded => start,
+        ProjectWidgetRefreshState::Cancelled => RefreshControl::Cancelled,
+        ProjectWidgetRefreshState::Failed
+        | ProjectWidgetRefreshState::Interrupted
+        | ProjectWidgetRefreshState::Conflict
+        | ProjectWidgetRefreshState::Other => RefreshControl::Failed {
+            message: refresh
+                .error_message
+                .as_deref()
+                .map(str::trim)
+                .filter(|message| !message.is_empty())
+                .map(|message| message.chars().take(300).collect())
+                .unwrap_or_else(|| "The refresh didn't finish.".into()),
+            chat_id,
+        },
     }
 }
 
@@ -1136,6 +1255,20 @@ struct RenameDialog {
     _events: Subscription,
 }
 
+/// The first Refresh of a widget without a recipe: what to ask, and which
+/// agent runs it. Nothing is prefilled from the chat it came from.
+struct RecipeDialog {
+    widget_id: String,
+    instruction: Entity<ComposerInput>,
+    model: Entity<ComposerInput>,
+    /// The agents enabled on the widget's device; `None` while loading.
+    harnesses: Option<Vec<(HarnessId, String)>>,
+    harness: usize,
+    error: Option<SharedString>,
+    focus_pending: bool,
+    _load: Task<()>,
+}
+
 pub struct ProjectWidgetsPage {
     state: Entity<AppState>,
     model: WidgetsModel,
@@ -1155,6 +1288,11 @@ pub struct ProjectWidgetsPage {
     /// Opened from the keyboard: the menu takes focus on the next frame.
     menu_focus_pending: bool,
     rename: Option<RenameDialog>,
+    recipe: Option<RecipeDialog>,
+    recipe_select: widgets::SelectState,
+    /// Widgets with a refresh or cancel request on its way.
+    refresh_pending: HashSet<String>,
+    refresh_tasks: HashMap<String, Task<()>>,
     delete_confirm: Option<String>,
     /// Stable focus per widget: its section (kept rendered while it holds
     /// focus) and its actions trigger.
@@ -1211,6 +1349,10 @@ impl ProjectWidgetsPage {
             menu_focus: cx.focus_handle(),
             menu_focus_pending: false,
             rename: None,
+            recipe: None,
+            recipe_select: widgets::SelectState::default(),
+            refresh_pending: HashSet::new(),
+            refresh_tasks: HashMap::new(),
             delete_confirm: None,
             section_focus: HashMap::new(),
             trigger_focus: HashMap::new(),
@@ -1265,6 +1407,10 @@ impl ProjectWidgetsPage {
         self.source_tasks.clear();
         self.menu = None;
         self.rename = None;
+        self.recipe = None;
+        // Leaving the page never cancels a refresh: the owner runs it.
+        self.refresh_pending.clear();
+        self.refresh_tasks.clear();
         self.delete_confirm = None;
         self.watch_task = None;
         self.write_task = None;
@@ -1606,22 +1752,28 @@ impl ProjectWidgetsPage {
             return;
         };
         let rename = matches!(kind, MutationKind::Rename(_));
+        let recipe = matches!(kind, MutationKind::Recipe(_));
         let (mutation, request) = match self.model.begin(widget_id, kind) {
             Ok(Some(begun)) => begun,
             Ok(None) => {
                 if rename {
                     self.close_rename(cx);
                 }
+                if recipe && self.recipe.take().is_some() {
+                    // The same recipe is already saved.
+                    self.start_refresh(widget_id, cx);
+                }
                 return;
             }
             Err(message) => {
-                match self.rename.as_mut().filter(|_| rename) {
-                    Some(dialog) => dialog.error = Some(message.into()),
-                    None => {
-                        self.model
-                            .problems
-                            .insert(widget_id.to_owned(), message.into());
-                    }
+                if rename && let Some(dialog) = self.rename.as_mut() {
+                    dialog.error = Some(message.into());
+                } else if recipe && let Some(dialog) = self.recipe.as_mut() {
+                    dialog.error = Some(message.into());
+                } else {
+                    self.model
+                        .problems
+                        .insert(widget_id.to_owned(), message.into());
                 }
                 cx.notify();
                 return;
@@ -1679,6 +1831,7 @@ impl ProjectWidgetsPage {
         cx: &mut Context<Self>,
     ) {
         let rename = matches!(mutation.kind, MutationKind::Rename(_));
+        let recipe = matches!(mutation.kind, MutationKind::Recipe(_));
         let id = mutation.widget_id.clone();
         let outcome = self.model.finish(mutation, result);
         if !outcome.settled {
@@ -1695,10 +1848,228 @@ impl ProjectWidgetsPage {
                 None => self.rename = None,
             }
         }
+        if recipe && let Some(dialog) = self.recipe.as_mut().filter(|d| d.widget_id == id) {
+            match self.model.problems.remove(&id) {
+                Some(problem) => {
+                    dialog.error = Some(problem);
+                    cx.notify();
+                    return;
+                }
+                None => {
+                    // Saved: run it against the revision it produced.
+                    self.recipe = None;
+                    self.start_refresh(&id, cx);
+                }
+            }
+        }
         self.frames.retain(|id, _| self.model.widget(id).is_some());
         self.pending_focus = Some(outcome.focus);
         self.sync_items(cx);
         cx.notify();
+    }
+
+    // ---- refresh ----
+
+    /// The owner runs refreshes (`project-widget-refresh-v1`).
+    fn refresh_supported(&self, cx: &App) -> bool {
+        self.model.target.as_ref().is_some_and(|target| {
+            self.state
+                .read(cx)
+                .device_supports(&target.device_id, capabilities::PROJECT_WIDGET_REFRESH_V1)
+        })
+    }
+
+    /// Refresh: ask for a recipe first if there is none.
+    fn request_refresh(&mut self, widget_id: &str, cx: &mut Context<Self>) {
+        match self.model.widget(widget_id) {
+            Some(widget) if widget.refresh_recipe.is_none() => self.open_recipe(widget_id, cx),
+            Some(_) => self.start_refresh(widget_id, cx),
+            None => {}
+        }
+    }
+
+    /// One click, one request id. The owner joins an attempt that is
+    /// already running instead of starting another.
+    fn start_refresh(&mut self, widget_id: &str, cx: &mut Context<Self>) {
+        let Some(widget) = self.model.widget(widget_id).cloned() else {
+            return;
+        };
+        let params = RefreshProjectWidgetParams {
+            widget_id: widget.id,
+            expected_revision: widget.revision,
+            request_id: uuid::Uuid::new_v4().to_string(),
+            target_device_id: None,
+        };
+        self.send_refresh(
+            widget_id,
+            methods::REFRESH_PROJECT_WIDGET,
+            serde_json::to_value(params),
+            cx,
+        );
+    }
+
+    fn cancel_refresh(&mut self, widget_id: &str, refresh_id: &str, cx: &mut Context<Self>) {
+        let params = CancelProjectWidgetRefreshParams {
+            widget_id: widget_id.to_owned(),
+            refresh_id: refresh_id.to_owned(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            target_device_id: None,
+        };
+        self.send_refresh(
+            widget_id,
+            methods::CANCEL_PROJECT_WIDGET_REFRESH,
+            serde_json::to_value(params),
+            cx,
+        );
+    }
+
+    fn send_refresh(
+        &mut self,
+        widget_id: &str,
+        method: &'static str,
+        params: serde_json::Result<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        if !self.model.live || !self.refresh_pending.insert(widget_id.to_owned()) {
+            return;
+        }
+        let mut params = params.unwrap_or_default();
+        if let Some(device) = self
+            .model
+            .target
+            .as_ref()
+            .and_then(|target| route_to(self.state.read(cx), &target.device_id))
+        {
+            params["targetDeviceId"] = device.into();
+        }
+        self.model.problems.remove(widget_id);
+        let generation = self.model.generation;
+        let id = widget_id.to_owned();
+        let task = cx.spawn(async move |this, cx| {
+            let client = engine.client();
+            let result = if method == methods::REFRESH_PROJECT_WIDGET {
+                client
+                    .call_as::<ProjectWidgetRefreshAdmission>(method, params)
+                    .await
+                    .map(|admission| admission.refresh)
+            } else {
+                client
+                    .call_as::<ProjectWidgetRefreshCancellation>(method, params)
+                    .await
+                    .map(|cancellation| cancellation.refresh)
+            };
+            this.update(cx, |page, cx| {
+                page.refresh_pending.remove(&id);
+                match result {
+                    Ok(refresh) => page.model.refresh_settled(generation, &id, refresh),
+                    Err(error) if generation == page.model.generation => {
+                        page.model.problems.insert(id, error_copy(&error).into());
+                    }
+                    Err(_) => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        self.refresh_tasks.insert(widget_id.to_owned(), task);
+        cx.notify();
+    }
+
+    fn open_recipe(&mut self, widget_id: &str, cx: &mut Context<Self>) {
+        let (Some(engine), Some(target)) = (
+            self.state.read(cx).engine().cloned(),
+            self.model.target.clone(),
+        ) else {
+            return;
+        };
+        let routed = route_to(self.state.read(cx), &target.device_id);
+        let instruction = cx.new(|cx| {
+            ComposerInput::new(
+                "What should the agent refresh? For example: recompute these metrics for the last 30 days.",
+                cx,
+            )
+        });
+        let model = cx.new(|cx| ComposerInput::new("Model (optional)", cx).with_single_line());
+        let load = cx.spawn(async move |this, cx| {
+            let params = match routed {
+                Some(device) => serde_json::json!({ "targetDeviceId": device }),
+                None => serde_json::json!({}),
+            };
+            let listed = engine
+                .client()
+                .call_as::<Vec<zeron_engine::HarnessDescriptor>>(methods::LIST_HARNESSES, params)
+                .await;
+            this.update(cx, |page, cx| {
+                let Some(dialog) = page.recipe.as_mut() else {
+                    return;
+                };
+                match listed {
+                    Ok(listed) => {
+                        let agents: Vec<(HarnessId, String)> = listed
+                            .into_iter()
+                            .filter(|d| {
+                                d.installed && zeron_engine::registry::descriptor_enabled(d)
+                            })
+                            .map(|d| (d.id, d.name))
+                            .collect();
+                        if agents.is_empty() {
+                            dialog.error = Some("No agent is enabled on this device.".into());
+                        }
+                        dialog.harnesses = Some(agents);
+                    }
+                    Err(error) => {
+                        dialog.harnesses = Some(Vec::new());
+                        dialog.error = Some(error_copy(&error).into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        self.recipe = Some(RecipeDialog {
+            widget_id: widget_id.to_owned(),
+            instruction,
+            model,
+            harnesses: None,
+            harness: 0,
+            error: None,
+            focus_pending: true,
+            _load: load,
+        });
+        cx.notify();
+    }
+
+    fn close_recipe(&mut self, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.recipe.take() {
+            self.pending_focus = Some(Some(dialog.widget_id));
+        }
+        cx.notify();
+    }
+
+    fn save_recipe(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = &self.recipe else {
+            return;
+        };
+        let Some(harness) = dialog
+            .harnesses
+            .as_ref()
+            .and_then(|agents| agents.get(dialog.harness))
+            .map(|(id, _)| *id)
+        else {
+            return;
+        };
+        let model = dialog.model.read(cx).text().trim().to_owned();
+        let recipe = ProjectWidgetRecipe {
+            instruction: dialog.instruction.read(cx).text().to_owned(),
+            harness,
+            model: (!model.is_empty()).then_some(model),
+            reasoning: None,
+        };
+        let id = dialog.widget_id.clone();
+        self.mutate(&id, MutationKind::Recipe(recipe), cx);
     }
 
     // ---- menus and dialogs ----
@@ -1809,6 +2180,8 @@ impl ProjectWidgetsPage {
     fn on_escape(&mut self, cx: &mut Context<Self>) -> bool {
         if self.rename.is_some() {
             self.close_rename(cx);
+        } else if self.recipe.is_some() {
+            self.close_recipe(cx);
         } else if self.delete_confirm.is_some() {
             self.close_delete(cx);
         } else if self.menu.is_some() {
@@ -2095,36 +2468,7 @@ impl ProjectWidgetsPage {
         let menu_open = self.menu.as_ref().is_some_and(|m| m.widget_id == id);
         let title = widget.title.clone();
 
-        let refresh = match refresh_control(&widget) {
-            RefreshControl::Soon => div()
-                .id(SharedString::from(format!("widget-refresh-{id}")))
-                .role(gpui::Role::Button)
-                .aria_label(format!("Refresh {title}"))
-                .aria_description(REFRESH_SOON_COPY)
-                .tab_index(0)
-                .focus_visible(|s| s.border_2().border_color(theme.accent))
-                .child(
-                    widgets::action_button(theme, ActionTone::Quiet)
-                        .opacity(0.5)
-                        .cursor_default()
-                        .child(
-                            icon(icons::REFRESH)
-                                .size(px(14.0))
-                                .text_color(theme.text_muted),
-                        )
-                        .child("Refresh"),
-                )
-                .tooltip(widgets::text_tooltip(REFRESH_SOON_COPY))
-                .into_any_element(),
-            RefreshControl::Reported(state) => div()
-                .id(SharedString::from(format!("widget-refresh-{id}")))
-                .role(gpui::Role::Status)
-                .px(px(10.0))
-                .text_size(crate::typography::ui_rems(12.5))
-                .text_color(theme.text_muted)
-                .child(refresh_state_label(state))
-                .into_any_element(),
-        };
+        let refresh = self.render_refresh(&widget, theme, cx);
 
         let source_control: Option<AnyElement> = match source {
             Some(_) if source_missing => Some(
@@ -2343,6 +2687,163 @@ impl ProjectWidgetsPage {
             .into_any_element()
     }
 
+    /// The Refresh area: a button, or what the running attempt needs.
+    fn render_refresh(
+        &mut self,
+        widget: &ProjectWidget,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = widget.id.clone();
+        let title = widget.title.clone();
+        let pending = self.refresh_pending.contains(&id);
+        let live = self.model.live;
+        let status = |label: &'static str, tooltip: Option<&'static str>| {
+            let element = div()
+                .id(SharedString::from(format!("widget-refresh-status-{id}")))
+                .role(gpui::Role::Status)
+                .px(px(6.0))
+                .text_size(crate::typography::ui_rems(12.5))
+                .text_color(theme.text_muted)
+                .child(label);
+            match tooltip {
+                Some(copy) => element
+                    .aria_description(copy)
+                    .tooltip(widgets::text_tooltip(copy))
+                    .into_any_element(),
+                None => element.into_any_element(),
+            }
+        };
+        let button = |label: &'static str, glyph, key: &str| {
+            widgets::ghost_action(theme)
+                .id(SharedString::from(format!("widget-{key}-{id}")))
+                .child(icon(glyph).size(px(14.0)).text_color(theme.text_muted))
+                .child(label)
+        };
+        let open_run = |chat_id: Option<String>, cx: &mut Context<Self>| {
+            chat_id.map(|chat_id| {
+                keyboard_button(
+                    button("Open run", icons::CHAT_ROUND_LINE, "open-run")
+                        .aria_label(format!("Open the run refreshing {title}")),
+                    theme,
+                    cx,
+                    move |_, _, cx| cx.emit(ProjectWidgetsEvent::OpenChat(chat_id.clone())),
+                )
+                .into_any_element()
+            })
+        };
+        let start = |label: &'static str, cx: &mut Context<Self>| {
+            let id = id.clone();
+            let element =
+                button(label, icons::REFRESH, "refresh").aria_label(format!("{label} {title}"));
+            if pending || !live {
+                element.opacity(0.5).cursor_default().into_any_element()
+            } else {
+                keyboard_button(element, theme, cx, move |page, _, cx| {
+                    page.request_refresh(&id, cx)
+                })
+                .into_any_element()
+            }
+        };
+        let cancel = |refresh_id: String, cx: &mut Context<Self>| {
+            let id = id.clone();
+            let element = button("Cancel", icons::STOP, "cancel-refresh")
+                .aria_label(format!("Cancel refreshing {title}"));
+            if pending || !live {
+                element.opacity(0.5).cursor_default().into_any_element()
+            } else {
+                keyboard_button(element, theme, cx, move |page, _, cx| {
+                    page.cancel_refresh(&id, &refresh_id, cx)
+                })
+                .into_any_element()
+            }
+        };
+        let row = |children: Vec<AnyElement>| {
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(4.0))
+                .children(children)
+                .into_any_element()
+        };
+        match refresh_control(widget, self.refresh_supported(cx)) {
+            RefreshControl::Unsupported => div()
+                .id(SharedString::from(format!("widget-refresh-{id}")))
+                .role(gpui::Role::Button)
+                .aria_label(format!("Refresh {title}"))
+                .aria_description(REFRESH_UNSUPPORTED_COPY)
+                .tab_index(0)
+                .focus_visible(|s| s.border_2().border_color(theme.accent))
+                .child(
+                    widgets::action_button(theme, ActionTone::Quiet)
+                        .opacity(0.5)
+                        .cursor_default()
+                        .child(
+                            icon(icons::REFRESH)
+                                .size(px(14.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .child("Refresh"),
+                )
+                .tooltip(widgets::text_tooltip(REFRESH_UNSUPPORTED_COPY))
+                .into_any_element(),
+            RefreshControl::Start { .. } if pending => {
+                status("Starting refresh…", Some(REFRESH_RUN_COPY))
+            }
+            RefreshControl::Start { .. } => start("Refresh", cx),
+            RefreshControl::Running {
+                refresh_id,
+                chat_id,
+            } => {
+                let mut children = vec![status("Refreshing", Some(REFRESH_RUN_COPY))];
+                children.push(cancel(refresh_id, cx));
+                children.extend(open_run(chat_id, cx));
+                row(children)
+            }
+            RefreshControl::AwaitingInput {
+                refresh_id,
+                chat_id,
+            } => {
+                let mut children = vec![status(
+                    "Response needed",
+                    Some("The agent asked a question. Open the run to answer it."),
+                )];
+                children.extend(open_run(chat_id, cx));
+                children.push(cancel(refresh_id, cx));
+                row(children)
+            }
+            RefreshControl::Cancelled => row(vec![
+                status("Refresh cancelled", None),
+                start("Refresh", cx),
+            ]),
+            RefreshControl::Failed { message, chat_id } => {
+                let mut children = vec![
+                    div()
+                        .id(SharedString::from(format!("widget-refresh-failed-{id}")))
+                        .role(gpui::Role::Alert)
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .px(px(6.0))
+                        .text_size(crate::typography::ui_rems(12.5))
+                        .text_color(theme.danger_muted)
+                        .child(
+                            icon(icons::DANGER_TRIANGLE)
+                                .size(px(14.0))
+                                .text_color(theme.danger_muted),
+                        )
+                        .child(SharedString::from(message))
+                        .into_any_element(),
+                    start("Retry", cx),
+                ];
+                children.extend(open_run(chat_id, cx));
+                row(children)
+            }
+        }
+    }
+
     fn render_menu(&mut self, id: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme.for_popup();
         let actions = self.menu_actions(id);
@@ -2480,6 +2981,114 @@ impl ProjectWidgetsPage {
                 )
                 .into_any_element();
             overlays.push(popover::modal("rename-widget-dialog", viewport, card));
+        }
+        if let Some(dialog) = &mut self.recipe {
+            if std::mem::take(&mut dialog.focus_pending) {
+                window.focus(&dialog.instruction.focus_handle(cx), cx);
+            }
+            let instruction = dialog.instruction.clone();
+            let model = dialog.model.clone();
+            let error = dialog.error.clone();
+            let agents = dialog.harnesses.clone();
+            let selected = dialog.harness;
+            let ready = agents.as_ref().is_some_and(|agents| !agents.is_empty());
+            let agent: AnyElement = match agents {
+                None => popover::dialog_body(&theme, "Looking for this device's agents…")
+                    .into_any_element(),
+                Some(agents) if agents.is_empty() => gpui::Empty.into_any_element(),
+                Some(agents) => {
+                    widgets::select("widget-recipe-agent", "Agent", &theme, |page: &mut Self| {
+                        &mut page.recipe_select
+                    })
+                    .options(
+                        agents
+                            .iter()
+                            .map(|(_, name)| widgets::SelectOption::new(name.clone())),
+                        selected,
+                    )
+                    .heading("Agent on this device")
+                    .on_select(|page, ix, _, cx| {
+                        if let Some(dialog) = page.recipe.as_mut() {
+                            dialog.harness = ix;
+                        }
+                        cx.notify();
+                    })
+                    .render(&self.recipe_select, cx)
+                    .into_any_element()
+                }
+            };
+            let save = popover::btn_primary(&theme, "Save and refresh").id("widget-recipe-save");
+            let card = popover::dialog_card(&theme)
+                .id("widget-recipe-dialog-card")
+                .role(gpui::Role::Dialog)
+                .aria_label("Set up refresh")
+                .on_key_down(cx.listener(|page, event: &gpui::KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "escape" {
+                        page.close_recipe(cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(popover::dialog_title(&theme, "Set up refresh"))
+                .child(div().mt(px(6.0)).child(popover::dialog_body(
+                    &theme,
+                    "Refresh starts an agent run in this project with this instruction. It uses the \
+                     agent's own tools and accounts, and the widget changes only if the run succeeds.",
+                )))
+                .child(
+                    div()
+                        .mt(px(12.0))
+                        .child(popover::dialog_field(instruction.into_any_element())),
+                )
+                .child(
+                    div()
+                        .mt(px(8.0))
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(agent)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(160.0))
+                                .child(popover::dialog_field(model.into_any_element())),
+                        ),
+                )
+                .when_some(error, |el, error| {
+                    el.child(
+                        div()
+                            .id("widget-recipe-error")
+                            .role(gpui::Role::Alert)
+                            .mt(px(8.0))
+                            .text_size(crate::typography::ui_rems(12.5))
+                            .text_color(theme.danger_muted)
+                            .child(error),
+                    )
+                })
+                .child(
+                    div()
+                        .mt(px(16.0))
+                        .flex()
+                        .flex_row()
+                        .justify_end()
+                        .gap(px(8.0))
+                        .child(keyboard_button(
+                            popover::btn_ghost(&theme, "Cancel", "widget-recipe-cancel")
+                                .id("widget-recipe-cancel"),
+                            &theme,
+                            cx,
+                            |page, _, cx| page.close_recipe(cx),
+                        ))
+                        .child(if ready {
+                            keyboard_button(save, &theme, cx, |page, _, cx| page.save_recipe(cx))
+                                .into_any_element()
+                        } else {
+                            save.opacity(0.5).cursor_default().into_any_element()
+                        }),
+                )
+                .into_any_element();
+            overlays.push(popover::modal("widget-recipe-dialog", viewport, card));
         }
         if let Some(id) = self.delete_confirm.clone() {
             let title = self
@@ -2784,6 +3393,100 @@ mod tests {
         );
         assert_eq!(outcome.focus.as_deref(), Some("w3"));
         assert_eq!(ids(&model), ["w1", "w3"]);
+    }
+
+    #[test]
+    fn a_refresh_shows_what_its_attempt_needs_and_never_steps_back() {
+        use ProjectWidgetRefreshState as State;
+        let attempt = |id: &str, state: State, started_at: i64| ProjectWidgetRefresh {
+            refresh_id: id.into(),
+            state,
+            started_at,
+            finished_at: None,
+            execution_chat_id: Some("run".into()),
+            error_code: None,
+            error_message: None,
+        };
+        let mut w = widget("w1", 1);
+        assert_eq!(refresh_control(&w, false), RefreshControl::Unsupported);
+        // No recipe yet: Refresh asks for one first.
+        assert_eq!(
+            refresh_control(&w, true),
+            RefreshControl::Start { configure: true }
+        );
+        w.refresh_recipe = Some(ProjectWidgetRecipe {
+            instruction: "Recount".into(),
+            harness: HarnessId::Codex,
+            model: None,
+            reasoning: None,
+        });
+        let run = Some("run".to_owned());
+        for (state, control) in [
+            (State::Succeeded, RefreshControl::Start { configure: false }),
+            (
+                State::Queued,
+                RefreshControl::Running {
+                    refresh_id: "r1".into(),
+                    chat_id: run.clone(),
+                },
+            ),
+            (
+                State::AwaitingInput,
+                RefreshControl::AwaitingInput {
+                    refresh_id: "r1".into(),
+                    chat_id: run.clone(),
+                },
+            ),
+            (State::Cancelled, RefreshControl::Cancelled),
+            (
+                State::Interrupted,
+                RefreshControl::Failed {
+                    message: "The refresh didn't finish.".into(),
+                    chat_id: run.clone(),
+                },
+            ),
+        ] {
+            w.refresh = Some(attempt("r1", state, 10));
+            assert_eq!(refresh_control(&w, true), control, "{state:?}");
+        }
+        w.refresh = Some(ProjectWidgetRefresh {
+            error_message: Some("The agent finished without sending a new version.".into()),
+            ..attempt("r1", State::Failed, 10)
+        });
+        assert!(matches!(
+            refresh_control(&w, true),
+            RefreshControl::Failed { message, .. } if message.starts_with("The agent finished")
+        ));
+
+        // A late reply never replaces what the watch already shows.
+        let mut model = WidgetsModel::new();
+        model.retarget(target("space-a"));
+        w.refresh = Some(attempt("r2", State::Succeeded, 20));
+        model.watched(1, snapshot("space-a", 1, vec![w]));
+        model.refresh_settled(1, "w1", attempt("r2", State::Running, 20));
+        model.refresh_settled(1, "w1", attempt("r1", State::Cancelled, 10));
+        model.refresh_settled(0, "w1", attempt("r3", State::Queued, 30));
+        let shown = model.widget("w1").unwrap().refresh.clone().unwrap();
+        assert_eq!(
+            (shown.refresh_id.as_str(), shown.state),
+            ("r2", State::Succeeded)
+        );
+        model.refresh_settled(1, "w1", attempt("r3", State::Queued, 30));
+        assert_eq!(
+            model
+                .widget("w1")
+                .unwrap()
+                .refresh
+                .as_ref()
+                .unwrap()
+                .refresh_id,
+            "r3"
+        );
+        model.refresh_settled(1, "w1", attempt("r3", State::Cancelled, 30));
+        assert_eq!(
+            model.widget("w1").unwrap().refresh.as_ref().unwrap().state,
+            State::Cancelled
+        );
     }
 
     #[test]

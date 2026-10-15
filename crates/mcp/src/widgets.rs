@@ -247,6 +247,7 @@ pub(crate) async fn update(zeron: &Zeron, args: UpdateArgs) -> anyhow::Result<Va
         refresh_recipe,
         content,
         refresh_id: args.refresh_id,
+        origin_chat_id: zeron.origin().chat_id.clone(),
         target_device_id: target,
     };
     let write =
@@ -367,7 +368,12 @@ fn widget_error(method: &str, error: RpcError) -> anyhow::Error {
             "the project's device is unreachable or no longer hosts this project"
         }
         codes::WIDGETS_REFRESH_INACTIVE => {
-            "refreshId is not this widget's active refresh; omit it outside a refresh run"
+            "refreshId is not this widget's active refresh (it ended, was cancelled or \
+             belongs to another chat); omit it outside a refresh run"
+        }
+        codes::WIDGETS_REFRESH_SCOPE => {
+            "a widget refresh run may only stage its own widget's content: call update_widget \
+             with that widget's id and the refreshId from the refresh instructions"
         }
         codes::WIDGETS_QUOTA_EXCEEDED => "this project already has the most widgets it can keep",
         codes::WIDGETS_STORE_UNAVAILABLE => "the widget store cannot be written on that device",

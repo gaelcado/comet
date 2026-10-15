@@ -3459,6 +3459,88 @@ impl DocHost {
         Ok(id)
     }
 
+    /// Engine-internal Run (a project widget refresh). `command_id` is
+    /// preallocated by the caller and doubles as the user message id, so the
+    /// turn it starts can be watched before it drains
+    /// ([`SessionsEngine::watch_turn_end`]). Replaying an id already in the
+    /// ledger appends nothing. Unlike [`Self::queue_command`] it leaves the
+    /// chat's archive state alone.
+    pub(crate) fn queue_internal_run(
+        &self,
+        chat_id: &str,
+        command_id: &str,
+        request: zeron_proto::RunRequest,
+    ) -> Result<(), EngineError> {
+        let handle = self.open(chat_id)?;
+        let commands = handle.doc.read_commands()?;
+        if commands.iter().any(|c| c.id == command_id) {
+            return Ok(());
+        }
+        let now = now_ms();
+        let entry = SessionCommandEntry {
+            id: command_id.to_owned(),
+            payload: SessionCommandPayload::Run {
+                request,
+                message_id: command_id.to_owned(),
+            },
+            issued_by: self.inner.config.device_id.clone(),
+            issued_at: now,
+            based_on: handle.doc.read_entries()?.last().map(|m| CommandBasedOn {
+                turn_id: Some(m.id.clone()),
+                frontier: None,
+            }),
+            expires_at: Some(now + COMMAND_DEFAULT_TTL_MS),
+            status: SessionCommandStatus::Pending,
+            resolution: None,
+        };
+        handle.doc.queue_command(&entry)?;
+        self.nudge_remote_host(chat_id);
+        self.spawn_command_delivery(chat_id, entry, Vec::new());
+        Ok(())
+    }
+
+    /// Make sure command `command_id` never executes on this host, whether
+    /// or not it is in the chat's ledger yet. `true` when this call stopped
+    /// it; `false` when it already ran, is running, or was settled. A
+    /// pending ledger entry is resolved `rejected` with `note`.
+    pub(crate) fn withdraw_command(
+        &self,
+        chat_id: &str,
+        command_id: &str,
+        note: &str,
+    ) -> Result<bool, EngineError> {
+        // Claimed like a drain would: no drain can start it meanwhile, and
+        // the dead-command sweep leaves it alone.
+        if !lock(&self.inner.executing).insert(command_id.to_owned()) {
+            return Ok(false);
+        }
+        let withdrawn = (|| {
+            if !self.inner.store.mark_processed(command_id)? {
+                return Ok(false);
+            }
+            let known = self
+                .workspace()
+                .is_some_and(|ws| ws.chat(chat_id).ok().flatten().is_some());
+            if known {
+                let handle = self.open(chat_id)?;
+                let pending = handle.doc.read_commands()?.iter().any(|c| {
+                    c.id == command_id && c.status == SessionCommandStatus::Pending
+                });
+                if pending {
+                    self.resolve_command(
+                        &handle,
+                        command_id,
+                        SessionCommandStatus::Rejected,
+                        Some(note),
+                    );
+                }
+            }
+            Ok(true)
+        })();
+        lock(&self.inner.executing).remove(command_id);
+        withdrawn
+    }
+
     /// A send revives an archived chat on every device (best-effort).
     fn unarchive_on_send(&self, chat_id: &str) {
         let Some(workspace) = self.workspace() else {

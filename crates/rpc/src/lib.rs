@@ -261,9 +261,10 @@ pub mod methods {
     /// Compare-and-set on the space's `collectionRevision`.
     pub const REORDER_PROJECT_WIDGETS: &str = "ReorderProjectWidgets";
     pub const DELETE_PROJECT_WIDGET: &str = "DeleteProjectWidget";
-    /// Not served yet: hosts answer with an unknown-method error.
+    /// Admit an agent refresh of a widget (`project-widget-refresh-v1`);
+    /// answers once queued, never waits for the agent.
     pub const REFRESH_PROJECT_WIDGET: &str = "RefreshProjectWidget";
-    /// Not served yet: hosts answer with an unknown-method error.
+    /// Make a refresh attempt unpublishable, then stop its run.
     pub const CANCEL_PROJECT_WIDGET_REFRESH: &str = "CancelProjectWidgetRefresh";
     // Updates (ControlRpc, relay-forwardable — a device reports/applies its own
     // binary's update). Stream: current UpdateStatus, then every change.
@@ -332,6 +333,12 @@ pub mod capability_errors {
     pub const WIDGETS_WRITE_FAILED: &str = "widgets.write_failed";
     /// The widget store is unreadable or from a newer build; writes are refused.
     pub const WIDGETS_STORE_UNAVAILABLE: &str = "widgets.store_unavailable";
+    /// A refresh cannot start here. Not a bare capability code: the error
+    /// text starts with this code and `: `, followed by what is missing (no
+    /// recipe, harness unavailable, `update_widget` switched off, …).
+    pub const WIDGETS_REFRESH_UNAVAILABLE: &str = "widgets.refresh_unavailable";
+    /// A refresh run tried to write outside its own widget's attempt.
+    pub const WIDGETS_REFRESH_SCOPE: &str = "widgets.refresh_scope";
 }
 
 #[derive(Debug, thiserror::Error)]

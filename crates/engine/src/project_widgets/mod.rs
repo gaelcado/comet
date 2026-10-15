@@ -21,11 +21,15 @@
 //!   and checked with the recorded seed before the transaction that points the
 //!   widget at it. A failed write leaves the previous bundle and pointer; the
 //!   orphan is collected later, after a grace period.
+//! - **Refresh.** An agent run proposes content only as its attempt's
+//!   candidate; the content changes once that run's turn completes, while
+//!   the attempt is still the widget's active one ([`refresh`]).
 //!
 //! SQLite and file work is blocking: call from `spawn_blocking`. The store
 //! lock is a plain mutex never held across an `.await`.
 
 mod bundles;
+mod refresh;
 mod store;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -50,6 +54,7 @@ use zeron_proto::{
 };
 
 use bundles::{BundleFile, Bundles, sha256};
+pub use refresh::RefreshRuntime;
 use store::StoredWidget;
 
 pub const PROJECT_WIDGETS_DB: &str = "project-widgets.sqlite3";
@@ -80,6 +85,10 @@ pub enum WidgetsError {
     OwnerUnavailable,
     #[error("that refresh is not active")]
     RefreshInactive,
+    #[error("a refresh run may only stage its own widget's content")]
+    RefreshScope,
+    #[error("{0}")]
+    RefreshUnavailable(String),
     #[error("{0}")]
     InvalidVisual(String),
     #[error("this project already has {PROJECT_WIDGETS_MAX_PER_SPACE} widgets")]
@@ -154,6 +163,7 @@ struct Inner {
     /// Lock order: `db`, then `watchers`.
     watchers: Mutex<HashMap<String, watch::Sender<ProjectWidgetsSnapshot>>>,
     cancel: CancellationToken,
+    refresh: refresh::RefreshState,
     #[cfg(test)]
     fail_next_commit: std::sync::atomic::AtomicBool,
 }
@@ -169,13 +179,18 @@ impl ProjectWidgets {
     /// `StoreUnavailable`. Refresh attempts left unfinished by a previous
     /// run are marked interrupted here, before anything can resume them.
     pub fn open(profile_store_root: &Path, device_id: &str, spaces: Arc<dyn WidgetSpaces>) -> Self {
+        let refresh = refresh::RefreshState::default();
         let db = match store::open(&profile_store_root.join(PROJECT_WIDGETS_DB)) {
             Ok((conn, writable)) => {
                 if writable {
                     match store::interrupt_unfinished_refreshes(&conn) {
-                        Ok(0) => {}
-                        Ok(count) => {
-                            tracing::info!(count, "unfinished widget refreshes interrupted")
+                        Ok(runs) if runs.is_empty() => {}
+                        Ok(runs) => {
+                            tracing::info!(
+                                count = runs.len(),
+                                "unfinished widget refreshes interrupted"
+                            );
+                            refresh.interrupted_at_open(runs);
                         }
                         Err(err) => {
                             tracing::error!(error = %err, "widget refreshes not interrupted")
@@ -197,6 +212,7 @@ impl ProjectWidgets {
                 bundles: Bundles::new(profile_store_root.join(PROJECT_WIDGETS_DIR).join("assets")),
                 watchers: Mutex::new(HashMap::new()),
                 cancel: CancellationToken::new(),
+                refresh,
                 #[cfg(test)]
                 fail_next_commit: Default::default(),
             }),
@@ -568,11 +584,17 @@ impl ProjectWidgets {
         if current.revision != p.expected_revision {
             return Err(WidgetsError::Conflict);
         }
-        if p.refresh_id.is_some() {
-            // Refresh seam: a refresh run's update is staged as a candidate
-            // of its active attempt, never published here. No attempt can be
-            // active until refreshes are served.
-            return Err(WidgetsError::RefreshInactive);
+        if let Some(refresh_id) = &p.refresh_id {
+            // A refresh run's content waits as its attempt's candidate.
+            return self.stage_candidate(p, refresh_id, &current, assets, &fingerprint);
+        }
+        // Nor can a refresh run publish around its attempt.
+        if let Some(chat) = &p.origin_chat_id
+            && self
+                .read(|conn| store::active_attempt_in_chat(conn, chat))?
+                .is_some()
+        {
+            return Err(WidgetsError::RefreshScope);
         }
         let new_content = match (&p.content, assets) {
             (Some(input), Some(mut assets)) => {
@@ -766,7 +788,7 @@ impl ProjectWidgets {
             store::record_receipt(&tx, &p.operation_id, KIND_DELETE, &fingerprint, &deletion)?;
             self.commit(tx)?;
             self.publish(conn, &space_id);
-            stop_refreshes(&invalidated);
+            self.stop_refreshes(&invalidated);
             Ok(deletion)
         })?;
         self.collect_garbage_older_than(GC_GRACE);
@@ -806,7 +828,7 @@ impl ProjectWidgets {
                 store::bump_collection(&tx, &space_id)?;
                 self.commit(tx)?;
                 self.publish(conn, &space_id);
-                stop_refreshes(&invalidated);
+                self.stop_refreshes(&invalidated);
                 Ok(stored.len())
             })?;
             tracing::info!(space = %space_id, widgets = count, "deleted space's widgets removed");
@@ -988,15 +1010,6 @@ pub fn resolve_chat_visual(
     })
 }
 
-/// Refresh seam: stop the agent runs of refresh attempts a deletion made
-/// unpublishable. The attempts are already invalidated in the store; until
-/// refreshes are served none can exist.
-fn stop_refreshes(refresh_ids: &[String]) {
-    if !refresh_ids.is_empty() {
-        tracing::info!(count = refresh_ids.len(), "widget refreshes invalidated");
-    }
-}
-
 fn tombstone(
     tx: &Transaction<'_>,
     stored: &StoredWidget,
@@ -1012,7 +1025,7 @@ fn tombstone(
         "DELETE FROM collection_items WHERE widget_id = ?1",
         params![id],
     )?;
-    let invalidated = store::invalidate_refreshes(tx, id, "cancelled")?;
+    let invalidated = store::invalidate_refreshes(tx, id)?;
     Ok((stored.widget.revision + 1, invalidated))
 }
 

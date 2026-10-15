@@ -238,10 +238,93 @@ struct Inner {
     /// dispatch or accepted steer) — the diff sync snapshots the checkout tree
     /// for the Changes pane's "Latest turn" scope. Absent in bare tests.
     turn_listener: OnceLock<TurnListener>,
+    /// User message id → its [`TurnEndWatch`] (token, sender). Only watched
+    /// messages are here; the run settles them at the turn's end.
+    turn_ends: Mutex<HashMap<String, (u64, watch::Sender<Option<TurnEnd>>)>>,
+    turn_end_tokens: std::sync::atomic::AtomicU64,
 }
 
 /// Turn-start hook: called with `(chat_id, cwd)`.
 pub type TurnListener = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+/// How the turn started by one user message ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnEnd {
+    pub status: DoneStatus,
+}
+
+/// Engine-local receipt for the end of the turn a user message starts
+/// ([`SessionsEngine::watch_turn_end`]). A turn ends at its `Done` (or the
+/// quiesce park that stands in for one), not when the session parks or its
+/// process exits; a run that goes away without a `Done` settles
+/// `Interrupted`. Dropping the watch stops watching.
+pub struct TurnEndWatch {
+    message_id: String,
+    token: u64,
+    rx: watch::Receiver<Option<TurnEnd>>,
+    inner: std::sync::Weak<Inner>,
+}
+
+impl TurnEndWatch {
+    /// The end, once the turn has ended.
+    pub fn ended(&self) -> Option<TurnEnd> {
+        *self.rx.borrow()
+    }
+
+    /// Wait for the end. `None` only if the engine went away first.
+    pub async fn wait(&mut self) -> Option<TurnEnd> {
+        loop {
+            if let Some(end) = *self.rx.borrow_and_update() {
+                return Some(end);
+            }
+            if self.rx.changed().await.is_err() {
+                return *self.rx.borrow();
+            }
+        }
+    }
+}
+
+impl Drop for TurnEndWatch {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.upgrade() {
+            let mut watches = lock(&inner.turn_ends);
+            if watches
+                .get(&self.message_id)
+                .is_some_and(|(token, _)| *token == self.token)
+            {
+                watches.remove(&self.message_id);
+            }
+        }
+    }
+}
+
+/// The watched user messages whose turn one run is executing: its first
+/// message, then each steer confirmed at a boundary. Settled together at
+/// the turn's end; a run that ends without one settles them `Interrupted`.
+struct OpenTurns {
+    inner: Arc<Inner>,
+    messages: Vec<String>,
+}
+
+impl OpenTurns {
+    fn begin(&mut self, message_id: &str) {
+        if !self.messages.iter().any(|m| m == message_id) {
+            self.messages.push(message_id.to_owned());
+        }
+    }
+
+    fn settle(&mut self, status: DoneStatus) {
+        for message_id in self.messages.drain(..) {
+            self.inner.settle_turn(&message_id, status);
+        }
+    }
+}
+
+impl Drop for OpenTurns {
+    fn drop(&mut self) {
+        self.settle(DoneStatus::Interrupted);
+    }
+}
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -279,8 +362,36 @@ impl SessionsEngine {
                 generated_images: OnceLock::new(),
                 scratch_root: OnceLock::new(),
                 turn_listener: OnceLock::new(),
+                turn_ends: Mutex::new(HashMap::new()),
+                turn_end_tokens: Default::default(),
             }),
         }
+    }
+
+    /// Watch the end of the turn that user message `message_id` starts.
+    /// Register before the message is dispatched; a message that never
+    /// reaches a run never settles (callers keep their own deadline).
+    pub fn watch_turn_end(&self, message_id: &str) -> TurnEndWatch {
+        let token = self
+            .inner
+            .turn_end_tokens
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (tx, rx) = watch::channel(None);
+        lock(&self.inner.turn_ends).insert(message_id.to_owned(), (token, tx));
+        TurnEndWatch {
+            message_id: message_id.to_owned(),
+            token,
+            rx,
+            inner: Arc::downgrade(&self.inner),
+        }
+    }
+
+    /// Whether runs started now carry the Zeron MCP (the IPC port is known).
+    pub fn serves_zeron_mcp(&self) -> bool {
+        self.inner
+            .ipc_port
+            .load(std::sync::atomic::Ordering::Relaxed)
+            != 0
     }
 
     pub(crate) fn voice_manager(&self) -> crate::voice::VoiceManager {
@@ -1166,6 +1277,16 @@ impl SessionsEngine {
     /// the remembered harness session (zeron: "not just eulogized";
     /// `MAX_AUTO_RESUME` = 3 consecutive revivals, fresh = crashed < 12h ago).
     pub fn recover_stale(&self) -> Result<usize, EngineError> {
+        self.recover_stale_except(&Default::default())
+    }
+
+    /// [`Self::recover_stale`] that closes the journals of `no_resume` chats
+    /// the same way but never re-dispatches them (project widget refresh
+    /// chats: a crashed refresh is not retried on its own).
+    pub fn recover_stale_except(
+        &self,
+        no_resume: &std::collections::HashSet<String>,
+    ) -> Result<usize, EngineError> {
         const MAX_AUTO_RESUME: u32 = 3;
         const RESUME_FRESH_MS: i64 = 12 * 60 * 60 * 1000;
 
@@ -1217,7 +1338,10 @@ impl SessionsEngine {
                         .map(|e| now_ms() - e.created_at < RESUME_FRESH_MS)
                 })
                 .unwrap_or(false);
-            let will_resume = fresh && prompt.is_some() && attempts < MAX_AUTO_RESUME;
+            let will_resume = fresh
+                && prompt.is_some()
+                && attempts < MAX_AUTO_RESUME
+                && !no_resume.contains(&chat_id);
 
             let note = if will_resume {
                 "Run interrupted by engine restart — resuming"
@@ -1324,6 +1448,12 @@ impl SessionsEngine {
 }
 
 impl Inner {
+    fn settle_turn(&self, message_id: &str, status: DoneStatus) {
+        if let Some((_, tx)) = lock(&self.turn_ends).remove(message_id) {
+            tx.send_replace(Some(TurnEnd { status }));
+        }
+    }
+
     /// Journal + broadcast one event (the two unconditional legs of the pipeline).
     /// Sanitize before ANY journal/publish path, including nested subagent events.
     async fn prepare_generated_image(
@@ -2208,6 +2338,13 @@ async fn drive_run(
     turn: TurnControl,
 ) {
     let device_id = inner.device_id.clone();
+    let mut open_turns = OpenTurns {
+        inner: inner.clone(),
+        messages: Vec::new(),
+    };
+    if !resume_state.idle {
+        open_turns.begin(&resume_state.user_message_id);
+    }
     // Captured for post-run auto-titling (the request moves into the harness).
     let harness_id = harness.id();
     let user_prompt = request.prompt.clone();
@@ -2351,6 +2488,7 @@ async fn drive_run(
             );
             inner.remove_run(&chat_id, &run_id);
             inner.set_status(&chat_id, SessionStatus::Errored, false);
+            open_turns.settle(DoneStatus::Errored);
             return;
         }
     };
@@ -2718,6 +2856,8 @@ async fn drive_run(
                         }
                         inner.note_message(&chat_id, &folded_text(&folded));
                     }
+                    // The watchdog parks the turn as completed.
+                    open_turns.settle(DoneStatus::Completed);
                     folded.clear();
                     dirty = false;
                     entry_id = new_id();
@@ -3109,6 +3249,8 @@ async fn drive_run(
                 "run died before session start; retrying once (resume kept)"
             );
             inner.remove_run(&chat_id, &run_id);
+            // The retry runs the same message; its run settles the turn.
+            open_turns.messages.clear();
             let engine = SessionsEngine {
                 inner: inner.clone(),
             };
@@ -3168,6 +3310,10 @@ async fn drive_run(
                 .get(&chat_id)
                 .filter(|h| h.run_id == run_id)
                 .and_then(|h| lock(&h.routed_steers).pop_front());
+            // The confirmed message's turn is this one from here on.
+            if let Some(steer) = &confirmed {
+                open_turns.begin(&steer.message_id);
+            }
             // Consumed: a steer carrying the fork history delivered it to
             // this runtime's provider session.
             if confirmed.is_some_and(|steer| steer.fork_history)
@@ -3271,6 +3417,8 @@ async fn drive_run(
                 }
                 inner.note_message(&chat_id, &folded_text(&folded));
             }
+            // After the transcript is written: a watcher reads it settled.
+            open_turns.settle(*status);
             if *status == DoneStatus::Completed {
                 // A cleanly completed turn resets the auto-resume revival
                 // budget: only consecutive crash-revive-crash cycles spend it.

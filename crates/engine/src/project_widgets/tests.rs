@@ -38,6 +38,7 @@ fn update(widget: &ProjectWidget, content: ProjectWidgetContentInput) -> UpdateP
         refresh_recipe: ProjectWidgetRecipePatch::Unchanged,
         content: Some(content),
         refresh_id: None,
+        origin_chat_id: None,
         target_device_id: None,
     }
 }

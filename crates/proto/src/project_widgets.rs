@@ -105,7 +105,8 @@ pub enum ProjectWidgetRefreshState {
     Other,
 }
 
-/// The latest refresh attempt of a widget.
+/// The latest refresh attempt of a widget. `startedAt` is when it was
+/// last attempted, distinct from the widget's `lastSuccessfulAt`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectWidgetRefresh {
@@ -115,10 +116,18 @@ pub struct ProjectWidgetRefresh {
     pub started_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<i64>,
+    /// The widget's dedicated refresh chat, kept archived ("Open run").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_chat_id: Option<String>,
+    /// Why a finished attempt did not publish: `no_result`, `agent_error`,
+    /// `timeout`, `cancelled`, `deleted`, `conflict`, `run_stopped`,
+    /// `engine_restarted`, `chat_deleted`, `chat_busy`, `launch_failed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    /// A short sentence for `errorCode`, written by the engine; never the
+    /// agent's output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
 }
 
 /// A widget as its owner stores it. Times are epoch millis.
@@ -182,6 +191,9 @@ pub enum ProjectWidgetWriteOutcome {
     Replayed,
     /// The visual is already saved in this space; nothing was created.
     Existing,
+    /// A refresh run's content was validated and kept as the candidate of
+    /// its attempt; the widget is unchanged until the run succeeds.
+    Staged,
     /// An outcome added by a newer engine.
     #[serde(other)]
     Other,
@@ -335,9 +347,13 @@ pub struct UpdateProjectWidgetParams {
     pub content: Option<ProjectWidgetContentInput>,
     /// Stage the content as a candidate of this refresh instead of
     /// publishing it. Refused with `widgets.refresh_inactive` unless the
-    /// refresh is the widget's active one.
+    /// refresh is the widget's active one and `originChatId` is its run's chat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_id: Option<String>,
+    /// The chat whose agent makes the call (the Zeron MCP's origin). A
+    /// refresh run may only stage its own widget's content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_chat_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_device_id: Option<String>,
 }
@@ -366,7 +382,10 @@ pub struct DeleteProjectWidgetParams {
     pub target_device_id: Option<String>,
 }
 
-/// `RefreshProjectWidget` params. Not served yet.
+/// `RefreshProjectWidget` params → [`ProjectWidgetRefreshAdmission`]. Answers
+/// once the attempt is durably queued, without waiting for the agent. The
+/// same `requestId`, or any click while an attempt is active, returns that
+/// attempt instead of starting another.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshProjectWidgetParams {
@@ -377,7 +396,9 @@ pub struct RefreshProjectWidgetParams {
     pub target_device_id: Option<String>,
 }
 
-/// `CancelProjectWidgetRefresh` params. Not served yet.
+/// `CancelProjectWidgetRefresh` params → [`ProjectWidgetRefreshCancellation`].
+/// The answer means no result of that attempt can be published any more;
+/// stopping its agent follows. Cancelling again changes nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelProjectWidgetRefreshParams {
@@ -386,6 +407,41 @@ pub struct CancelProjectWidgetRefreshParams {
     pub request_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_device_id: Option<String>,
+}
+
+/// `RefreshProjectWidget` reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWidgetRefreshAdmission {
+    pub widget_id: String,
+    pub refresh: ProjectWidgetRefresh,
+    /// An attempt for this `requestId`, or an active one, already existed;
+    /// no new run was started.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub existing: bool,
+}
+
+/// How a cancellation was answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectWidgetCancelOutcome {
+    Cancelled,
+    AlreadyCancelled,
+    /// The attempt had already published its result.
+    AlreadyCompleted,
+    /// The attempt had already ended without publishing.
+    AlreadyFinished,
+    #[serde(other)]
+    Other,
+}
+
+/// `CancelProjectWidgetRefresh` reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWidgetRefreshCancellation {
+    pub widget_id: String,
+    pub outcome: ProjectWidgetCancelOutcome,
+    pub refresh: ProjectWidgetRefresh,
 }
 
 #[cfg(test)]
@@ -417,7 +473,7 @@ mod tests {
             "awaitingInput"
         );
         assert_eq!(
-            serde_json::from_value::<ProjectWidgetWriteOutcome>(json!("staged")).unwrap(),
+            serde_json::from_value::<ProjectWidgetWriteOutcome>(json!("merged")).unwrap(),
             ProjectWidgetWriteOutcome::Other
         );
         // A detail whose source still exists omits the flag.

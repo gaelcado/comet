@@ -1412,6 +1412,7 @@ fn widgets_rpc_error(error: WidgetsError) -> RpcError {
         WidgetsError::SourceNotFound => codes::WIDGETS_SOURCE_NOT_FOUND,
         WidgetsError::OwnerUnavailable => codes::WIDGETS_OWNER_UNAVAILABLE,
         WidgetsError::RefreshInactive => codes::WIDGETS_REFRESH_INACTIVE,
+        WidgetsError::RefreshScope => codes::WIDGETS_REFRESH_SCOPE,
         WidgetsError::QuotaExceeded => codes::WIDGETS_QUOTA_EXCEEDED,
         WidgetsError::StoreUnavailable => codes::WIDGETS_STORE_UNAVAILABLE,
         WidgetsError::Write(err) => {
@@ -1422,6 +1423,9 @@ fn widgets_rpc_error(error: WidgetsError) -> RpcError {
         // with the code.
         WidgetsError::InvalidVisual(reason) => {
             return RpcError::Failed(format!("{}: {reason}", codes::WIDGETS_INVALID_VISUAL));
+        }
+        WidgetsError::RefreshUnavailable(reason) => {
+            return RpcError::Failed(format!("{}: {reason}", codes::WIDGETS_REFRESH_UNAVAILABLE));
         }
         WidgetsError::BadRequest(message) => return RpcError::BadParams(message),
     };
@@ -1440,6 +1444,8 @@ fn is_project_widgets_method(method: &str) -> bool {
             | methods::UPDATE_PROJECT_WIDGET
             | methods::REORDER_PROJECT_WIDGETS
             | methods::DELETE_PROJECT_WIDGET
+            | methods::REFRESH_PROJECT_WIDGET
+            | methods::CANCEL_PROJECT_WIDGET_REFRESH
     )
 }
 
@@ -1673,6 +1679,8 @@ fn forwardable(method: &str) -> bool {
             | methods::UPDATE_PROJECT_WIDGET
             | methods::REORDER_PROJECT_WIDGETS
             | methods::DELETE_PROJECT_WIDGET
+            | methods::REFRESH_PROJECT_WIDGET
+            | methods::CANCEL_PROJECT_WIDGET_REFRESH
             // Checkout diffs are produced on the device holding the checkout.
             | methods::WATCH_CHECKOUT_DIFFS
             | methods::WATCH_WORKSPACE_GIT_STATUS
@@ -3742,6 +3750,15 @@ impl RpcService for EngineRpc {
             methods::DELETE_PROJECT_WIDGET => {
                 let p: zeron_proto::DeleteProjectWidgetParams = parse_params(params)?;
                 self.widgets_call(move |widgets| widgets.delete(&p)).await
+            }
+            methods::REFRESH_PROJECT_WIDGET => {
+                let p: zeron_proto::RefreshProjectWidgetParams = parse_params(params)?;
+                self.widgets_call(move |widgets| widgets.refresh(&p)).await
+            }
+            methods::CANCEL_PROJECT_WIDGET_REFRESH => {
+                let p: zeron_proto::CancelProjectWidgetRefreshParams = parse_params(params)?;
+                self.widgets_call(move |widgets| widgets.cancel_refresh(&p))
+                    .await
             }
             methods::LIST_PROJECT_ACTIONS => {
                 let p: ListProjectActionsParams = parse_params(params)?;
