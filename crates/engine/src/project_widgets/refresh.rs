@@ -106,7 +106,7 @@ impl ProjectWidgets {
 
     /// Every chat a widget refresh ran in: boot recovery must not resume them.
     pub fn refresh_chat_ids(&self) -> HashSet<String> {
-        self.read(|conn| store::refresh_chats(conn))
+        self.read(store::refresh_chats)
             .map(|chats| chats.into_iter().collect())
             .unwrap_or_default()
     }

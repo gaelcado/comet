@@ -13,7 +13,7 @@ use zeron_proto::{McpToolAvailability, McpToolDescriptor};
 
 /// Version of the catalog's names, descriptions and schemas. Bump it whenever
 /// any of them changes; it is unrelated to the policy revision.
-pub const CATALOG_VERSION: u32 = 2;
+pub const CATALOG_VERSION: u32 = 3;
 
 /// Most requests one `create_chats` / `send_messages` call takes.
 pub const MAX_BATCH: usize = 32;

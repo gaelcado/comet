@@ -19,3 +19,22 @@
 - **Recommended surface treatment** — A theme variant's authored recommendation for whether its surfaces are frosted or opaque. It is used only when the user keeps the surface preference at theme default.
 - **Surface preference** — A device-local choice of theme default, frosted, or opaque that is independent of appearance, theme, and accent selections.
 - **Resolved surface treatment** — The effective frosted or opaque treatment produced by applying the surface preference to the active variant's recommendation.
+
+## Project widget vocabulary
+
+- **Visual** — Interactive content an agent shows inline in a chat. It belongs to that chat until someone saves it.
+- **Project widget** — A visual kept in one project space, on the device that owns the space, independent of the chat it came from. Not the Settings UI primitives also called widgets.
+- **Owner** — The device whose engine holds a space's widgets. Other devices reach them only through it; there is no replica.
+- **Bundle** — One immutable version of a widget's content: its script and assets. New content is a new bundle, never an edit.
+- **Refresh recipe** — The instruction and agent choice a refresh runs. It never holds a credential.
+- **Refresh attempt** — One agent run asked to rebuild one widget. It changes the widget only if its turn completes successfully.
+- **Candidate** — Content a refresh attempt proposed, validated but not yet published.
+- **Last success** — When the widget's current content was validated. Distinct from the last attempt and from the age of the data it shows.
+
+## Zeron MCP vocabulary
+
+- **Zeron MCP** — The MCP server Zeron gives its own agents. Distinct from third-party MCP servers an agent may also use.
+- **Bridge** — One running Zeron MCP server, attached to the engine it joined.
+- **Tool policy** — The switches and description overrides of the Zeron MCP tools, owned by one engine and profile.
+- **Description override** — Replacement text for a tool's description. It changes what agents read, never what the tool may do.
+- **Admission** — The engine's decision, at the moment of each call, whether a tool may run.

@@ -135,6 +135,9 @@ Watch streams are the engine's only read surface (there is no one-shot "get
 transcript" RPC); a snapshot is "subscribe, take the first item, drop" — drop
 cancels server-side, exactly what the sidebar does on attach.
 
+Every tool, the four widget tools included, is subject to the
+[tool policy](#tool-policy) before it runs.
+
 `send_message` mode `auto` starts idle chats and steers working chats through
 their live mailbox without interrupting tools or child processes. Providers
 consume it at their next supported input boundary. Only explicit `queue` mode
@@ -229,6 +232,155 @@ read back like a scene's image. Nothing foreign is hosted, so a visual scrolls, 
 the glass composer, and takes input like any other row, identically on Linux,
 macOS, and Windows, and it follows theme, appearance, and text-size changes
 without rerunning the script.
+
+### Project widgets
+
+`list_widgets`, `get_widget`, `create_widget` and `update_widget` read and
+write the widgets kept in a project ([project-widgets.md](project-widgets.md)).
+A widget lives on the device that hosts its project: pass the `deviceId` that
+`list_widgets` returns as `device` to the other three. `show_visual` never saves
+anything; an agent creates a widget only when the user asks to keep a visual.
+
+| Tool | Contract |
+| --- | --- |
+| `list_widgets {project?, device?}` | Metadata only: `id`, `title`, `revision`, `contentRevision`, `lastSuccessfulAt`, `updatedAt`, `hasSource`, `hasRefreshRecipe`. Without `project`, the origin chat's project; outside a project chat `project` is required. Never an implicit first project. |
+| `get_widget {widgetId, device?, includeContent?}` | The widget (revisions, manifest with sizes and SHA-256, recipe, source) and `sourceMissing`. With `includeContent`, also the script and assets base64 by name, up to 1 MB of assets in total; the rest are named in `omittedAssets`. |
+| `create_widget {project, creationKey, operationId, title, script, assets?, refreshRecipe?}` | `project` is required, even in a project chat. `creationKey` (1–128 bytes, chosen by the agent) names the widget in its project and is never reused there, even after deletion: the same key and arguments return the first widget (`replayed`); other arguments fail with `widgets.key_reused`. Widgets are never matched by title. |
+| `update_widget {widgetId, expectedRevision, operationId, …}` | Compare-and-set on `revision`; see below. |
+
+`operationId` (1–128 bytes) identifies one request: resending it after a lost
+reply returns the first answer (`outcome: replayed`), reusing it with other
+arguments fails with `widgets.key_reused`. Asset paths are read from the
+agent's working directory, as for `show_visual`; the engine never reads a
+remote agent's files.
+
+`update_widget` applies only against the widget's current `revision`. Any
+change since then (a rename in the app, a refresh, another agent) fails with
+`widgets.conflict` and changes nothing: call `get_widget`, reapply the change,
+retry with the new revision and a new `operationId`.
+
+- `title`, `refreshRecipe` and `clearRefreshRecipe` change metadata only and
+  keep the content.
+- `script` replaces the content and must be the whole script. With
+  `keepExistingAssets: true`, current assets not replaced by `assets` are kept
+  (the bridge names the current bundle, which the engine checks); with
+  `false`, the assets become exactly `assets`. When the widget has assets,
+  `keepExistingAssets` is required with `script`, so leaving out `assets` never
+  deletes them.
+- `refreshId` is only for a run Zeron started to refresh that widget. The
+  content is then staged (`outcome: staged`) and replaces the widget only when
+  the run's turn completes. Outside that run, or after the refresh ended, it
+  fails with `widgets.refresh_inactive`. A refresh run that omits `refreshId`,
+  or names another widget, fails with `widgets.refresh_scope`.
+
+Results carry `outcome` (`created`, `updated`, `staged`, `replayed`),
+`widgetId`, `projectId`, `deviceId`, `revision` and `contentRevision`. Errors
+start with their stable code (`widgets.*`, listed in
+[project-widgets.md](project-widgets.md#errors)); `widgets.invalid_visual` keeps
+the script's error and line after it. An engine without `project-widgets-v1`
+is reported as such.
+
+## Tool policy
+
+Settings → **MCP** → Zeron lists every built-in tool of the chosen device's
+engine: switch, effective and original description, input schema, and whether
+it is available only from a chat. Every tool can be switched off; the page
+uses app RPCs, not MCP tools, so it stays usable with all of them off.
+
+The policy belongs to one engine profile, in `mcp-tool-settings.json` at the
+profile store root:
+
+```json
+{ "version": 1, "revision": 3,
+  "tools": { "send_message": { "enabled": false, "descriptionOverride": "…" } } }
+```
+
+An omitted field follows the default (enabled, original description). Defaults
+are never copied in, so a reset description follows later catalog versions.
+Entries for names this build does not know (written by a newer build) are kept
+and never create or enable a tool. An override must be non-blank, at most
+16 KiB of UTF-8, without control characters other than tab and line breaks. It
+is catalog text only: name, schema, chat-only constraint and the agent's
+permissions do not change.
+
+`SetZeronMcpToolOverride` is a compare-and-set on `policyRevision`. It writes a
+temporary file, renames it into place, and only then publishes the new
+revision; a failed write keeps the previous policy. Resending an applied
+`operationId` returns the current policy instead of a conflict.
+
+The policy fails closed. A missing file means the defaults. An unreadable file
+or unknown `version` refuses every tool and Settings shows all of them off; the
+first change sent against the published revision keeps a copy
+(`mcp-tool-settings.json.unreadable-<ms>`) and rebuilds the policy from the
+defaults plus that change. Override text is never logged.
+
+### Enforcement
+
+The bridge asks its engine on every `tools/list` (`GetZeronMcpDiscovery`) and
+every call (`AdmitZeronMcpToolCall`), before parsing arguments, reading files or
+any effect. It caches neither answer.
+
+- Admission is the cut-off. Once a change that switches a tool off is
+  acknowledged, no later call to it is admitted, including from a list fetched
+  earlier. A call admitted before runs to its end; nothing is undone.
+- `create_chats` and `send_messages` are admitted under their own name, then
+  each item as `create_chat` or `send_message` when it starts. A refused item
+  reports `isError` and its `code`; the others still run. Switching off only
+  the batch name leaves the single tool available.
+- A known tool that is switched off returns `isError: true` with
+  `structuredContent.error.code` `mcp.tool_disabled`. A tool unknown to the
+  engine, or chat-only outside a chat, keeps the JSON-RPC "unknown tool" error.
+- `tools/list` adds `_meta` for diagnosing lagging sessions:
+  `zeron/catalogVersion` (the engine's `catalog::CATALOG_VERSION`, now 3),
+  `zeron/policyRevision` and `zeron/bridgeVersion`. The bridge serves its own
+  schemas and offers only names both sides know.
+- `listChanged` stays `false`. A session keeps the list it fetched until it
+  reconnects the MCP: Pi registers its tools when its runtime starts, and other
+  harnesses may cache too. New names and descriptions appear after a
+  reconnection; a switched-off tool is refused at once either way. Settings
+  says: "New calls use this setting. Some agents must reconnect the MCP to
+  refresh their tool list."
+- MCP cancellation notifications are still ignored.
+
+| Code | Where | Meaning |
+| --- | --- | --- |
+| `mcp.tool_disabled` | call result | Switched off in Settings; it did not run. |
+| `mcp.policy_unreadable` | call result, `tools/list` error, Settings | Stored policy unusable; nothing runs until a change rebuilds it. |
+| `mcp.policy_unsupported` | call result, `tools/list` error | The engine predates `zeron-mcp-tool-policy-v1`. |
+| `mcp.admission_unavailable` | call result, `tools/list` error | The engine could not be asked. |
+| `mcp.tool_refused` | call result | A refusal reason this bridge does not know. |
+| `mcp.policy_conflict` | Settings | Changed since `expectedPolicyRevision`; reload. |
+| `mcp.policy_write_failed` | Settings | Not saved; the previous policy applies. |
+
+### Scope
+
+A bridge follows the policy of the engine it joined (`ZERON_IPC_PORT`).
+Discovery and admission are never relay-forwarded; `WatchZeronMcpCatalog` and
+`SetZeronMcpToolOverride` are, so Settings can configure another device's
+engine. Device B's policy filters the bridges attached to B, not those of A,
+even when A's agents act on B's chats with `device`. The policy is not synced
+between devices, not shared between profiles, and not copied by the
+local-to-synced import.
+
+It governs what the Zeron MCP offers, nothing else: the app's RPCs, the agent's
+shell and file access, its other MCP servers and the harness's own permissions
+are unchanged. It is not a security boundary.
+
+### Versions
+
+- New bridge, engine without `zeron-mcp-tool-policy-v1`: `tools/list` is a
+  JSON-RPC error and every call fails with `mcp.policy_unsupported`; nothing
+  runs unmanaged. Settings shows "Not available on this device" and offers no
+  change there. The
+  engine injects its own executable (`current_exe`), so this happens when that
+  file is replaced by a newer build while the older engine keeps running,
+  until the engine restarts.
+- A `zeron mcp` built before the policy has no guard: it lists and runs every
+  tool whatever Settings says, and reconnects to a newer engine after a
+  restart. An injected bridge starts with its harness process, so a runtime
+  still running from before the update keeps its old bridge until it
+  restarts. An externally configured `zeron mcp` (another app's MCP config)
+  must be restarted to be managed.
 
 ## Selecting a host and project
 
@@ -336,7 +488,11 @@ BIN=target/debug/zeron
 `create_chat` with `"prompt": "Reply with exactly the word pong", "wait": true`
 against a live daemon returns the assistant's `pong` in a few seconds; archive
 the chat afterwards with `archive_chat`. Unit tests (`cargo test -p zeron-mcp`)
-drive the whole tool set against an in-memory stub `RpcService`.
+drive the whole tool set against an in-memory stub `RpcService`. The engine
+tests `mcp_tool_policy` and `mcp_widget_tools` run the bridge against a real
+in-memory engine: a tool switched off between list and call, batches, and the
+widget tools' replay and conflict rules. Persistence, compare-and-set and the
+corrupt-file path are unit tests in `crates/engine/src/mcp_settings.rs`.
 
 An isolated stdio instance is available with
 `cargo run -p zeron-engine --example mcp_standalone_smoke`. It provides a temporary

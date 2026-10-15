@@ -3523,9 +3523,11 @@ impl DocHost {
                 .is_some_and(|ws| ws.chat(chat_id).ok().flatten().is_some());
             if known {
                 let handle = self.open(chat_id)?;
-                let pending = handle.doc.read_commands()?.iter().any(|c| {
-                    c.id == command_id && c.status == SessionCommandStatus::Pending
-                });
+                let pending = handle
+                    .doc
+                    .read_commands()?
+                    .iter()
+                    .any(|c| c.id == command_id && c.status == SessionCommandStatus::Pending);
                 if pending {
                     self.resolve_command(
                         &handle,

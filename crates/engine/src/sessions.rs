@@ -240,12 +240,15 @@ struct Inner {
     turn_listener: OnceLock<TurnListener>,
     /// User message id → its [`TurnEndWatch`] (token, sender). Only watched
     /// messages are here; the run settles them at the turn's end.
-    turn_ends: Mutex<HashMap<String, (u64, watch::Sender<Option<TurnEnd>>)>>,
+    turn_ends: Mutex<HashMap<String, TurnEndSender>>,
     turn_end_tokens: std::sync::atomic::AtomicU64,
 }
 
 /// Turn-start hook: called with `(chat_id, cwd)`.
 pub type TurnListener = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+/// A [`TurnEndWatch`]'s token and the sender that settles it.
+type TurnEndSender = (u64, watch::Sender<Option<TurnEnd>>);
 
 /// How the turn started by one user message ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
