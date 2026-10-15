@@ -397,7 +397,9 @@ impl Shell {
         // and project actions, live in the session card.
         let (title, harness, on_canvas): (SharedString, Option<zeron_proto::HarnessId>, bool) = {
             let state = self.state.read(cx);
-            match state.selected_chat_row() {
+            // The Widgets route is a project's, not the selected chat's.
+            let on_widgets = matches!(self.route, Route::ProjectWidgets { .. });
+            match state.selected_chat_row().filter(|_| !on_widgets) {
                 Some(chat) => (
                     SharedString::from(transcript::single_line(
                         &chat.title.clone().unwrap_or_else(|| "New session".into()),

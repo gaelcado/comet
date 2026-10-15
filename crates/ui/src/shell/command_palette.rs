@@ -254,6 +254,8 @@ enum Command {
     Settings,
     Theme(AppearanceMode),
     ArchiveThread,
+    /// The current project space's widgets.
+    ProjectWidgets,
 }
 
 impl Command {
@@ -266,6 +268,7 @@ impl Command {
             Self::Theme(AppearanceMode::Light) => "Switch to light theme",
             Self::Theme(AppearanceMode::Dark) => "Switch to dark theme",
             Self::ArchiveThread => "Archive thread",
+            Self::ProjectWidgets => "Open project widgets",
         }
     }
 
@@ -276,6 +279,7 @@ impl Command {
             Self::Settings => icons::SETTINGS,
             Self::Theme(mode) => mode.icon(),
             Self::ArchiveThread => icons::ARCHIVE_MINIMALISTIC,
+            Self::ProjectWidgets => icons::WIDGET,
         }
     }
 }
@@ -640,11 +644,15 @@ impl Shell {
         };
         let query = palette.search.read(cx).text().trim().to_lowercase();
         let can_archive = self.state.read(cx).archivable_selected_chat().is_some();
+        let widgets = Command::ProjectWidgets;
+        let can_open_widgets = matches_query(&query, widgets.label())
+            && crate::project_widgets::current_space(self.state.read(cx)).is_some();
         let commands = |section| {
             PaletteSection::new(
                 section,
                 commands_for(&query, Theme::of(cx).appearance.is_dark(), can_archive)
                     .into_iter()
+                    .chain(can_open_widgets.then(|| widgets.clone()))
                     .map(RowKind::Command),
             )
         };
@@ -872,6 +880,17 @@ impl Shell {
             RowKind::Command(Command::Settings) => self.open_last_settings(cx),
             RowKind::Command(Command::Theme(_)) => unreachable!(),
             RowKind::Command(Command::ArchiveThread) => self.archive_selected_chat(cx),
+            RowKind::Command(Command::ProjectWidgets) => {
+                let entry = {
+                    let state = self.state.read(cx);
+                    crate::project_widgets::current_space(state).and_then(|space| {
+                        crate::project_widgets::widgets_entry(state, &space, Some(&space))
+                    })
+                };
+                if let Some(crate::project_widgets::WidgetsEntry::Open(target)) = entry {
+                    self.open_project_widgets(target, cx);
+                }
+            }
             RowKind::Chat(id) => self.open_chat(id, cx),
             RowKind::File { path, is_dir } => {
                 self.open_palette_path(path, is_dir, None, window, cx)
@@ -921,7 +940,7 @@ impl Shell {
             Command::NewProject => ShortcutId::NewProject,
             Command::Settings => return Some(crate::settings::badge_combo("mod-,")),
             Command::ArchiveThread => ShortcutId::ArchiveSession,
-            Command::Theme(_) => return None,
+            Command::Theme(_) | Command::ProjectWidgets => return None,
         };
         let combo = self.settings.keymap.get(id);
         let valid = Keystroke::parse(&platform_combo(combo)).is_ok();

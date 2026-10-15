@@ -38,6 +38,7 @@ use crate::motion::{
     self, AnimationExt as _, MotionSpec, PANEL_RESIZE, RESIZE, SPLASH_OUT, TAB_SLIDE,
 };
 use crate::popover::{self, Loadable};
+use crate::project_widgets::{ProjectWidgetsEvent, ProjectWidgetsPage, WidgetsTarget};
 use crate::pull_requests::PullRequestsPage;
 use crate::rail;
 use crate::settings::accounts::AccountsPage;
@@ -295,7 +296,9 @@ fn composer_target_width(panel_width: f32, content_width: f32, docked: bool) -> 
 }
 
 fn titlebar_new_session_alpha(route: &Route, has_selected_chat: bool) -> f32 {
-    if matches!(route, Route::PullRequests) || (matches!(route, Route::Chat) && has_selected_chat) {
+    if matches!(route, Route::PullRequests | Route::ProjectWidgets { .. })
+        || (matches!(route, Route::Chat) && has_selected_chat)
+    {
         1.0
     } else {
         0.0
@@ -693,11 +696,17 @@ fn settings_open_route(route: &str, remembered: SettingsSection) -> Option<Setti
 }
 
 /// What the main outlet shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Chat,
     PullRequests,
     Settings(SettingsSection),
+    /// One project space's widgets, on the device that owns it. Its own
+    /// identity: never the new-chat canvas's.
+    ProjectWidgets {
+        space_id: String,
+        device_id: String,
+    },
 }
 
 /// Maximum width the right pane may occupy while retaining the conversation
@@ -860,6 +869,7 @@ pub enum NavEntry {
         device: Option<String>,
     },
     Settings(SettingsSection),
+    ProjectWidgets(WidgetsTarget),
 }
 
 /// Browser-style navigation history for the titlebar back/forward buttons
@@ -2065,6 +2075,9 @@ pub struct Shell {
     /// Route history behind the titlebar back/forward buttons (§ nav history).
     nav: NavHistory,
     pull_requests_page: Option<Entity<PullRequestsPage>>,
+    /// The Widgets page, kept while the app runs; it lets go of its
+    /// renderers and watch whenever its route is left.
+    project_widgets_page: Option<(Entity<ProjectWidgetsPage>, Subscription)>,
     /// Opened pull requests, as tabs in a pane beside the board.
     pull_request_pane: pull_request_pane::PullRequestPane,
     /// A detail view a history step landed on, opened by the next render
@@ -2495,10 +2508,18 @@ impl Shell {
             )),
             _ => None,
         };
-        let nav = NavHistory::new(match route {
+        let settings_focus_pending = matches!(route, Route::Settings(_));
+        let nav = NavHistory::new(match &route {
             Route::Chat => NavEntry::Chat(String::new()),
             Route::PullRequests => NavEntry::PullRequests,
-            Route::Settings(section) => NavEntry::Settings(section),
+            Route::Settings(section) => NavEntry::Settings(*section),
+            Route::ProjectWidgets {
+                space_id,
+                device_id,
+            } => NavEntry::ProjectWidgets(WidgetsTarget {
+                space_id: space_id.clone(),
+                device_id: device_id.clone(),
+            }),
         });
         // Parent notifications carry presentation changes (session status,
         // elapsed labels, menus); sibling animation/caret ticks do not.
@@ -2580,11 +2601,12 @@ impl Shell {
                 .map(|_| cx.focus_handle())
                 .collect(),
             settings_return_focus: None,
-            settings_focus_pending: matches!(route, Route::Settings(_)),
+            settings_focus_pending,
             settings_restore_pending: false,
             settings_return_route: Route::Chat,
             nav,
             pull_requests_page: None,
+            project_widgets_page: None,
             pull_request_pane: Default::default(),
             pending_pull_request: None,
             pull_request_cache: Default::default(),
@@ -4321,6 +4343,63 @@ impl Shell {
                     cx,
                 );
             }
+            TranscriptEvent::OpenProjectWidgets {
+                space_id,
+                device_id,
+            } => self.open_project_widgets(
+                WidgetsTarget {
+                    space_id: space_id.clone(),
+                    device_id: device_id.clone(),
+                },
+                cx,
+            ),
+        }
+    }
+
+    /// Open a project space's widgets, recording the navigation.
+    pub(super) fn open_project_widgets(&mut self, target: WidgetsTarget, cx: &mut Context<Self>) {
+        self.enter_project_widgets_route(target.clone(), cx);
+        self.nav.push(NavEntry::ProjectWidgets(target));
+        cx.notify();
+    }
+
+    /// Show the Widgets route without recording a navigation.
+    fn enter_project_widgets_route(&mut self, target: WidgetsTarget, cx: &mut Context<Self>) {
+        self.close_user_menu(cx);
+        self.close_chat_menu(cx);
+        if self.space_menu.begin_close() {
+            popover::reap_popup(cx, |shell: &mut Self| &mut shell.space_menu);
+        }
+        if self.spaces_menu.begin_close() {
+            popover::reap_popup(cx, |shell: &mut Self| &mut shell.spaces_menu);
+        }
+        self.set_route(
+            Route::ProjectWidgets {
+                space_id: target.space_id,
+                device_id: target.device_id,
+            },
+            cx,
+        );
+    }
+
+    fn on_project_widgets_event(
+        &mut self,
+        _: Entity<ProjectWidgetsPage>,
+        event: &ProjectWidgetsEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            // Opened as it is: an archived chat stays archived.
+            ProjectWidgetsEvent::OpenChat(chat_id) => self.open_chat(chat_id.clone(), cx),
+            ProjectWidgetsEvent::NewDashboardChat { space_id, request } => {
+                self.open_new_session(Some(space_id.clone()), cx);
+                // Never sent for the user, and never over their own draft.
+                let input = self.composer.read(cx).input.clone();
+                if input.read(cx).text().trim().is_empty() {
+                    input.update(cx, |input, cx| input.set_text(request.clone(), cx));
+                }
+            }
+            ProjectWidgetsEvent::OpenSpace(target) => self.open_project_widgets(target.clone(), cx),
         }
     }
 
@@ -4994,6 +5073,36 @@ impl Shell {
                 page.update(cx, |page, cx| page.on_visible(cx));
             }
         }
+        self.sync_project_widgets_page(cx);
+    }
+
+    /// The Widgets page follows the route: it shows the route's space, and
+    /// releases its renderers, reads and watch once the route is left.
+    fn sync_project_widgets_page(&mut self, cx: &mut Context<Self>) {
+        let target = match &self.route {
+            Route::ProjectWidgets {
+                space_id,
+                device_id,
+            } => WidgetsTarget {
+                space_id: space_id.clone(),
+                device_id: device_id.clone(),
+            },
+            _ => {
+                if let Some((page, _)) = &self.project_widgets_page {
+                    page.update(cx, |page, cx| page.hide(cx));
+                }
+                return;
+            }
+        };
+        if self.project_widgets_page.is_none() {
+            let state = self.state.clone();
+            let page = cx.new(|cx| ProjectWidgetsPage::new(state, cx));
+            let events = cx.subscribe(&page, Self::on_project_widgets_event);
+            self.project_widgets_page = Some((page, events));
+        }
+        if let Some((page, _)) = &self.project_widgets_page {
+            page.update(cx, |page, cx| page.open(Some(target), cx));
+        }
     }
 
     /// Close the user menu through the exit animation (no-op when closed).
@@ -5377,7 +5486,7 @@ impl Shell {
         }
         if !matches!(self.route, Route::Settings(_)) {
             self.settings_focus_pending = true;
-            self.settings_return_route = self.route;
+            self.settings_return_route = self.route.clone();
         }
         self.set_route(Route::Settings(section), cx);
         self.remember_settings_section(section, cx);
@@ -5487,7 +5596,7 @@ impl Shell {
     fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_focus_pending = false;
         self.settings_restore_pending = true;
-        let route = self.settings_return_route;
+        let route = self.settings_return_route.clone();
         self.set_route(route, cx);
         cx.notify();
     }
@@ -5539,11 +5648,12 @@ impl Shell {
             }
             NavEntry::Settings(section) => {
                 if !matches!(self.route, Route::Settings(_)) {
-                    self.settings_return_route = self.route;
+                    self.settings_return_route = self.route.clone();
                 }
                 self.set_route(Route::Settings(section.canonical()), cx);
                 self.remember_settings_section(section, cx);
             }
+            NavEntry::ProjectWidgets(target) => self.enter_project_widgets_route(target, cx),
         }
         self.close_user_menu(cx);
         self.close_chat_menu(cx);
@@ -10602,7 +10712,7 @@ impl Shell {
             &event.keystroke.key,
             false,
             escape_stops_active_agent,
-            self.route,
+            self.route.clone(),
             selected_chat.as_deref(),
             indicator,
             interrupting,
@@ -11006,6 +11116,16 @@ impl Shell {
         let theme = &theme_owned;
         let (border, text, faint) = (theme.border, theme.text, theme.text_faint);
 
+        if matches!(self.route, Route::ProjectWidgets { .. })
+            && let Some((page, _)) = &self.project_widgets_page
+        {
+            return div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .child(page.clone())
+                .into_any_element();
+        }
         if matches!(self.route, Route::PullRequests) {
             if self.pull_requests_page.is_none() {
                 self.pull_requests_page =
@@ -18818,7 +18938,10 @@ mod settings_modal_regressions {
             cx.simulate_keystrokes(window.into(), &platform_combo(combo));
             window
                 .read_with(cx, |shell, cx| {
-                    (shell.route, shell.state.read(cx).selected_chat.clone())
+                    (
+                        shell.route.clone(),
+                        shell.state.read(cx).selected_chat.clone(),
+                    )
                 })
                 .unwrap()
         };

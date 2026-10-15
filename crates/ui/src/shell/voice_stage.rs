@@ -97,7 +97,7 @@ impl Shell {
             self.route != self.voice_stage_route && matches!(self.route, Route::Settings(_));
         // Record every render, even with no visibility change: leaving and
         // reentering the same settings page must count as navigation too.
-        self.voice_stage_route = self.route;
+        self.voice_stage_route = self.route.clone();
         if self.voice.read(cx).stage_open
             && self.voice_stage_was_open
             && (navigating_to_settings || selected != self.voice_stage_selection)

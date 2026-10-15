@@ -17,6 +17,7 @@ windows-render-fixture = []
 appshots-fixture = ["gpui_platform/test-support"]
 pull-request-fixture = ["gpui_platform/test-support"]
 mcp-settings-fixture = ["gpui_platform/test-support"]
+project-widgets-fixture = ["gpui_platform/test-support"]
 resource-profile = ["gpui/bench", "gpui_platform/test-support"]
 
 [[example]]
@@ -62,6 +63,10 @@ required-features = ["compact-picker-fixture"]
 [[example]]
 name = "mcp-settings-fixture"
 required-features = ["mcp-settings-fixture"]
+
+[[example]]
+name = "project-widgets-fixture"
+required-features = ["project-widgets-fixture"]
 
 [dependencies]
 zeron-voice-media.workspace = true

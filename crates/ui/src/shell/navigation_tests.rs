@@ -606,3 +606,40 @@ fn pull_requests_from_a_chat_open_as_tabs_beside_the_focused_session(cx: &mut Te
         });
     });
 }
+
+#[gpui::test]
+fn project_widgets_route_keeps_its_own_space_through_history(cx: &mut TestAppContext) {
+    let (shell, cx) = setup(cx);
+    let target = crate::project_widgets::WidgetsTarget {
+        space_id: "space-a".into(),
+        device_id: "local".into(),
+    };
+    let widgets_route = Route::ProjectWidgets {
+        space_id: "space-a".into(),
+        device_id: "local".into(),
+    };
+    shell.update(cx, |shell, cx| {
+        shell.nav.push(NavEntry::Chat("parent".into()));
+        shell.open_project_widgets(target.clone(), cx);
+        assert_eq!(shell.route, widgets_route);
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    shell.update(cx, |shell, cx| {
+        // The page is its own place: the selected chat is untouched, and
+        // Back returns to it.
+        assert_eq!(
+            shell.state.read(cx).selected_chat.as_deref(),
+            Some("parent")
+        );
+        shell.navigate_back(cx);
+        assert_eq!(shell.route, Route::Chat);
+        assert_eq!(
+            shell.state.read(cx).selected_chat.as_deref(),
+            Some("parent")
+        );
+        shell.navigate_forward(cx);
+        assert_eq!(shell.route, widgets_route);
+        assert_eq!(shell.nav.current(), &NavEntry::ProjectWidgets(target));
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+}

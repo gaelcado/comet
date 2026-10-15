@@ -42,10 +42,111 @@ enum Load {
     Failed(SharedString),
 }
 
-/// One inline visual in a transcript.
+/// Where a visual's script and assets come from, and the seed it renders
+/// with, so the same runtime shows chat parts and saved project widgets.
+pub enum VisualSource {
+    /// A `show_visual` chat part: its upload files (`{id}-visual.luau`, the
+    /// `{id}-assets.json` manifest, `{id}-asset-{name}`), seeded with the
+    /// part's visual id, which ends the row id after its last `#`.
+    Upload { path: String },
+    /// A project widget's immutable bundle at one content revision, read
+    /// with `ReadProjectWidgetAssetChunk` and verified against its manifest,
+    /// rendered with the seed the widget stores.
+    Widget {
+        widget_id: String,
+        content_revision: u64,
+        content: zeron_proto::ProjectWidgetContent,
+    },
+    /// A script already in memory (fixtures and tests).
+    #[cfg(any(test, feature = "project-widgets-fixture"))]
+    Inline { script: String, seed: u64 },
+}
+
+impl VisualSource {
+    fn seed(&self, id: &str) -> u64 {
+        match self {
+            // The engine seeded its check with the part's visual id: the
+            // reader sees the same random data.
+            Self::Upload { .. } => zeron_visual::seed_for(id.rsplit('#').next().unwrap_or(id)),
+            Self::Widget { content, .. } => content.render_seed,
+            #[cfg(any(test, feature = "project-widgets-fixture"))]
+            Self::Inline { seed, .. } => *seed,
+        }
+    }
+
+    /// Read the script and its assets; a failure is the line to show.
+    async fn load(
+        self,
+        engine: EngineHandle,
+        target: Option<String>,
+        executor: gpui::BackgroundExecutor,
+    ) -> Result<(String, zeron_visual::Assets), SharedString> {
+        match self {
+            Self::Upload { path } => {
+                let read = |path: String| {
+                    let (engine, target) = (engine.clone(), target.clone());
+                    let executor = executor.clone();
+                    async move {
+                        crate::attachments::read_attachment_bytes(
+                            &engine,
+                            &executor,
+                            target.as_deref(),
+                            &path,
+                            None,
+                        )
+                        .await
+                        .map(|(_, _, bytes)| bytes)
+                    }
+                };
+                let script = read(path.clone())
+                    .await
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .ok_or_else(|| SharedString::from("Visual unavailable"))?;
+                // Its files sit beside it, listed in `{id}-assets.json`
+                // (absent for a visual without any).
+                let mut files = HashMap::new();
+                if let Some(stem) = path.strip_suffix("-visual.luau")
+                    && let Some(names) = read(format!("{stem}-assets.json"))
+                        .await
+                        .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+                {
+                    for name in names
+                        .into_iter()
+                        .filter(|name| zeron_visual::assets::valid_name(name))
+                        .take(zeron_visual::assets::MAX_ASSETS)
+                    {
+                        if let Some(bytes) = read(format!("{stem}-asset-{name}")).await {
+                            files.insert(name, Arc::<[u8]>::from(bytes));
+                        }
+                    }
+                }
+                Ok((script, zeron_visual::Assets::new(files)))
+            }
+            Self::Widget {
+                widget_id,
+                content_revision,
+                content,
+            } => crate::project_widgets::read_bundle(
+                &engine,
+                &executor,
+                target.as_deref(),
+                &widget_id,
+                content_revision,
+                &content,
+            )
+            .await
+            .map_err(SharedString::from),
+            #[cfg(any(test, feature = "project-widgets-fixture"))]
+            Self::Inline { script, .. } => Ok((script, zeron_visual::Assets::default())),
+        }
+    }
+}
+
+/// One visual: inline in a transcript, or a saved project widget.
 pub struct VisualFrame {
     id: SharedString,
     title: SharedString,
+    seed: u64,
     load: Load,
     runtime: Option<Rc<RefCell<zeron_visual::Visual>>>,
     tree: Option<Rc<Node>>,
@@ -175,7 +276,7 @@ impl VisualFrame {
     pub fn new(
         id: SharedString,
         title: String,
-        path: String,
+        source: VisualSource,
         engine: Option<EngineHandle>,
         target_device_id: Option<String>,
         cx: &mut Context<Self>,
@@ -186,52 +287,26 @@ impl VisualFrame {
             free_images(images, cx);
         })
         .detach();
+        let seed = source.seed(&id);
         let mut tasks = Vec::new();
+        #[cfg(any(test, feature = "project-widgets-fixture"))]
+        let (source, engine) = match source {
+            VisualSource::Inline { script, .. } => {
+                let mut this = Self::empty(id, title, seed, Load::Loading, tasks);
+                this.start(&script, zeron_visual::Assets::default(), cx);
+                return this;
+            }
+            source => (source, engine),
+        };
         let load = match engine {
             Some(engine) => {
                 tasks.push(cx.spawn(async move |this, cx| {
-                    let read = |path: String| {
-                        let (engine, target) = (engine.clone(), target_device_id.clone());
-                        let executor = cx.background_executor().clone();
-                        async move {
-                            crate::attachments::read_attachment_bytes(
-                                &engine,
-                                &executor,
-                                target.as_deref(),
-                                &path,
-                                None,
-                            )
-                            .await
-                            .map(|(_, _, bytes)| bytes)
-                        }
-                    };
-                    let script = read(path.clone())
-                        .await
-                        .and_then(|bytes| String::from_utf8(bytes).ok());
-                    // Its files sit beside it, listed in `{id}-assets.json`
-                    // (absent for a visual without any).
-                    let mut files = HashMap::new();
-                    if script.is_some()
-                        && let Some(stem) = path.strip_suffix("-visual.luau")
-                        && let Some(names) = read(format!("{stem}-assets.json"))
-                            .await
-                            .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
-                    {
-                        for name in names
-                            .into_iter()
-                            .filter(|name| zeron_visual::assets::valid_name(name))
-                            .take(zeron_visual::assets::MAX_ASSETS)
-                        {
-                            if let Some(bytes) = read(format!("{stem}-asset-{name}")).await {
-                                files.insert(name, Arc::<[u8]>::from(bytes));
-                            }
-                        }
-                    }
-                    let assets = zeron_visual::Assets::new(files);
-                    let _ = this.update(cx, |this, cx| match script {
-                        Some(script) => this.start(&script, assets, cx),
-                        None => {
-                            this.load = Load::Failed("Visual unavailable".into());
+                    let executor = cx.background_executor().clone();
+                    let loaded = source.load(engine, target_device_id, executor).await;
+                    let _ = this.update(cx, |this, cx| match loaded {
+                        Ok((script, assets)) => this.start(&script, assets, cx),
+                        Err(message) => {
+                            this.load = Load::Failed(message);
                             cx.notify();
                         }
                     });
@@ -240,9 +315,14 @@ impl VisualFrame {
             }
             None => Load::Failed("Visual unavailable".into()),
         };
+        Self::empty(id, title, seed, load, tasks)
+    }
+
+    fn empty(id: SharedString, title: String, seed: u64, load: Load, tasks: Vec<Task<()>>) -> Self {
         Self {
             id,
             title: title.into(),
+            seed,
             load,
             runtime: None,
             tree: None,
@@ -259,14 +339,19 @@ impl VisualFrame {
         self.link_ui = link_ui;
     }
 
+    /// Why the visual isn't showing as it should: its content couldn't be
+    /// read or loaded, or its script failed while running.
+    pub fn failure(&self) -> Option<SharedString> {
+        match &self.load {
+            Load::Failed(message) => Some(message.clone()),
+            _ => self.error.clone(),
+        }
+    }
+
     /// Run a script's setup and first render (the engine already ran the
     /// same script before publishing it, so failures here are rare).
     fn start(&mut self, script: &str, assets: zeron_visual::Assets, cx: &mut Context<Self>) {
-        // The row id ends with the part's visual id, which the engine
-        // seeded its check with: the reader sees the same random data.
-        let visual_id = self.id.rsplit('#').next().unwrap_or(&self.id);
-        let seed = zeron_visual::seed_for(visual_id);
-        match zeron_visual::Visual::load(script, seed) {
+        match zeron_visual::Visual::load(script, self.seed) {
             Ok(visual) => {
                 let visual = visual.with_assets(assets);
                 self.runtime = Some(Rc::new(RefCell::new(visual)));

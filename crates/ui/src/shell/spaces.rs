@@ -7499,13 +7499,58 @@ impl Shell {
             let closing = self.space_menu.closing_since();
             let rename_id = space_id.clone();
             let delete_id = space_id.clone();
+            // The project's widgets: its current space, or an explicit
+            // choice among its clones (never an elected owner).
+            let widgets = {
+                let state = self.state.read(cx);
+                let current = crate::project_widgets::current_space(state);
+                crate::project_widgets::widgets_entry(state, &space_id, current.as_deref())
+            };
+            let widget_rows: Vec<(String, crate::project_widgets::WidgetsTarget)> = match widgets {
+                Some(crate::project_widgets::WidgetsEntry::Open(target)) => {
+                    vec![("Widgets".into(), target)]
+                }
+                Some(crate::project_widgets::WidgetsEntry::Choose(choices)) => choices
+                    .into_iter()
+                    .map(|choice| (format!("Widgets · {}", choice.place), choice.target))
+                    .collect(),
+                None => Vec::new(),
+            };
             let menu = popover::popover_card(&theme)
-                .w(px(170.0))
+                .w(px(if widget_rows.len() > 1 { 280.0 } else { 170.0 }))
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                     this.close_space_menu(cx);
                 }))
                 .flex()
                 .flex_col()
+                .children(
+                    widget_rows
+                        .into_iter()
+                        .enumerate()
+                        .map(|(ix, (label, target))| {
+                            popover::menu_row(
+                                &theme,
+                                false,
+                                format!("space-menu-widgets-{space_id}-{ix}"),
+                            )
+                            .id(("space-menu-widgets", ix))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_project_widgets(target.clone(), cx)
+                            }))
+                            .child(
+                                icon(icons::WIDGET)
+                                    .size(px(16.0))
+                                    .text_color(theme.text_muted),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(SharedString::from(label)),
+                            )
+                        }),
+                )
                 .child(
                     popover::menu_row(&theme, false, format!("space-menu-rename-{space_id}"))
                         .id("space-menu-rename")

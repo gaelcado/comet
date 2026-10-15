@@ -3369,6 +3369,8 @@ pub struct Transcript {
     attachment_loads: HashMap<crate::attachments::AttachmentKey, Task<()>>,
     /// Inline `show_visual` visuals, keyed by row id.
     visuals: HashMap<SharedString, Entity<crate::visuals::VisualFrame>>,
+    /// Each visual's "Save to project" chrome, keyed like `visuals`.
+    visual_saves: HashMap<SharedString, Entity<crate::project_widgets::SaveVisual>>,
     /// Scheduled retry wake-ups for errored sources (the 2s→15s ladder).
     attachment_retries: HashMap<(String, String), Task<()>>,
     /// Sidecar blob fetches keyed by doc ref (`chatId/partId[.diff]`,
@@ -3407,6 +3409,8 @@ pub enum TranscriptEvent {
         title: String,
         frozen: bool,
     },
+    /// "Open widgets" after saving a visual: the project space it went to.
+    OpenProjectWidgets { space_id: String, device_id: String },
 }
 
 impl gpui::EventEmitter<TranscriptEvent> for Transcript {}
@@ -3665,6 +3669,7 @@ impl Transcript {
             image_copy: None,
             attachment_loads: HashMap::new(),
             visuals: HashMap::new(),
+            visual_saves: HashMap::new(),
             attachment_retries: HashMap::new(),
             blob_details: HashMap::new(),
             blob_fetch_order: HashMap::new(),
@@ -6729,7 +6734,9 @@ impl Transcript {
                     crate::visuals::VisualFrame::new(
                         row_id.clone(),
                         title.to_owned(),
-                        path.to_owned(),
+                        crate::visuals::VisualSource::Upload {
+                            path: path.to_owned(),
+                        },
                         engine,
                         target,
                         cx,
@@ -6750,7 +6757,51 @@ impl Transcript {
             }
         };
         frame.update(cx, |frame, _| frame.set_link_ui(link_ui));
-        div().w_full().child(frame).into_any_element()
+        let save = self.visual_save(row_id, title, cx);
+        div()
+            .w_full()
+            .child(frame)
+            .children(save)
+            .into_any_element()
+    }
+
+    /// The row's "Save to project" chrome, outside the visual's own tree.
+    /// Only a chat's own transcript offers it, never a subagent's.
+    fn visual_save(
+        &mut self,
+        row_id: &SharedString,
+        title: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<crate::project_widgets::SaveVisual>> {
+        if let Some(save) = self.visual_saves.get(row_id) {
+            return Some(save.clone());
+        }
+        let chat_id = self
+            .chat_id
+            .clone()
+            .filter(|_| self.doc_override.is_none())?;
+        let visual_id = row_id.rsplit('#').next().unwrap_or(row_id).to_owned();
+        let state = self.state.clone();
+        let title = title.to_owned();
+        let save = cx.new(|cx| {
+            crate::project_widgets::SaveVisual::new(state, chat_id, visual_id, title, cx)
+        });
+        let id = row_id.clone();
+        cx.subscribe(&save, move |this, _, event, cx| match event {
+            crate::project_widgets::SaveVisualEvent::LayoutChanged => {
+                this.diagram_layout_changed(std::slice::from_ref(&id), cx);
+            }
+            crate::project_widgets::SaveVisualEvent::OpenWidgets {
+                space_id,
+                device_id,
+            } => cx.emit(TranscriptEvent::OpenProjectWidgets {
+                space_id: space_id.clone(),
+                device_id: device_id.clone(),
+            }),
+        })
+        .detach();
+        self.visual_saves.insert(row_id.clone(), save.clone());
+        Some(save)
     }
 
     /// The right-aligned thumbnail strip above a user bubble.
