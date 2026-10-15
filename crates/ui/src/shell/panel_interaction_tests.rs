@@ -522,8 +522,7 @@ fn pull_request_pane_follows_the_shared_panel_policy(cx: &mut TestAppContext) {
 
     // Narrowing applies directly and hides the least recently opened
     // column (the pane, opened before the sidebar returned). Asking for it
-    // promotes it; below the board's minimum beside it, it opens over the
-    // board.
+    // promotes it.
     for (width, widths) in [
         (1000.0, [300.0, 360.0, 340.0]),
         (900.0, [300.0, 0.0, 600.0]),
@@ -542,23 +541,27 @@ fn pull_request_pane_follows_the_shared_panel_policy(cx: &mut TestAppContext) {
     );
     change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
     expect_board(settled_board(&shell, cx), [0.0, 450.0, 450.0]);
-    cx.simulate_resize(gpui::size(px(600.0), px(900.0)));
-    expect_board(draw_board(&shell, cx, 0), [0.0, 0.0, 600.0]);
-    change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
-    expect_board(settled_board(&shell, cx), [0.0, 600.0, 0.0]);
-    change(&shell, cx, |s, _, cx| s.toggle_right_pane_expand(cx));
     cx.simulate_resize(gpui::size(px(1600.0), px(900.0)));
     expect_board(settled_board(&shell, cx), [300.0, 650.0, 650.0]);
 
-    // Leaving mid-open lands the chat at rest, and the board returns at rest.
+    // Leaving mid-open lands the chat at rest: its own pane, open beside the
+    // conversation, takes nothing from the board pane's motion or divider
+    // bounce. The board then returns at rest.
     change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
     expect_board(settled_board(&shell, cx), [300.0, 0.0, 1300.0]);
-    change(&shell, cx, |s, _, cx| s.toggle_pull_request_pane(cx));
+    change(&shell, cx, |s, _, cx| {
+        s.panels.update("a", |p| p.changes_open = true);
+        s.toggle_pull_request_pane(cx);
+    });
     draw_board(&shell, cx, 75);
     change(&shell, cx, |s, _, cx| {
+        s.right_edge_bounce = Some(motion::ResizeEdgeBounce::new(motion::ResizeEdge::Max));
         s.apply_nav(NavEntry::Chat("a".into()), cx)
     });
-    expect_board(draw_board(&shell, cx, 0), [300.0, 0.0, 1300.0]);
+    // The window changed since the chat's last split, so it splits again.
+    expect_board(draw_board(&shell, cx, 0), [300.0, 650.0, 650.0]);
+    expect_board(draw_board(&shell, cx, 300), [300.0, 650.0, 650.0]);
+    assert!(shell.read_with(cx, |s, _| s.right_edge_bounce.is_none()));
     change(&shell, cx, |s, _, cx| s.open_pull_requests(cx));
     expect_board(draw_board(&shell, cx, 0), [300.0, 650.0, 650.0]);
 }

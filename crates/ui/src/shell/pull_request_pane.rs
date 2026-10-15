@@ -122,16 +122,9 @@ impl Shell {
             && !self.pull_request_pane.tabs.is_empty()
     }
 
-    /// The window has room for the board's minimum beside the pane's, once
-    /// the sidebar makes way.
-    fn pull_request_pane_fits_beside_board(&self) -> bool {
-        self.viewport_width >= CHAT_PANEL_MIN + RIGHT_PANE_MIN
-    }
-
     /// Show or hide the pane, keeping its tabs, like the chat's right pane:
     /// it eases from what is painted and splits the width with the board.
-    /// Asking for a pane the window fit hides brings it forward; a window
-    /// too narrow for the board beside it opens it over the board.
+    /// Asking for a pane the window fit hides brings it forward.
     pub(super) fn set_pull_request_pane_open(&mut self, open: bool, cx: &mut Context<Self>) {
         let open = open && !self.pull_request_pane.tabs.is_empty();
         if !matches!(self.route, Route::PullRequests) {
@@ -142,39 +135,13 @@ impl Shell {
             return;
         }
         if self.pull_request_pane.open == open {
-            if open && !self.horizontal_fit().right {
-                self.reveal_hidden_pull_request_pane(cx);
+            if open {
+                self.promote_hidden_panel(AuxiliaryPanel::Right, cx);
             }
             return;
         }
-        let over_board = open && !self.pull_request_pane_fits_beside_board();
-        self.transition_right_column(
-            open,
-            |shell| {
-                shell.pull_request_pane.open = open;
-                shell.pull_request_pane.expanded |= over_board;
-            },
-            cx,
-        );
+        self.transition_right_column(open, |shell| shell.pull_request_pane.open = open, cx);
         self.sync_pull_request_selection(cx);
-        cx.notify();
-    }
-
-    /// An open pane the window fit hides: rank it most recent, and when the
-    /// window still has no room beside the board, show it over the board,
-    /// which keeps its layout beneath. The next frame eases it in from what
-    /// it paints (see `Shell::track_horizontal_fit`).
-    fn reveal_hidden_pull_request_pane(&mut self, cx: &mut Context<Self>) {
-        if self.promote_hidden_panel(AuxiliaryPanel::Right, cx) {
-            return;
-        }
-        let board = self.painted_panels(cx).conversation_content;
-        self.record_panel_open(AuxiliaryPanel::Right, &self.layout_key(cx));
-        self.pull_request_pane.expanded = true;
-        self.main_takeover_tween = Some(WidthTween {
-            from: board,
-            ..self.panel_tween(board, 0.0)
-        });
         cx.notify();
     }
 
@@ -459,9 +426,13 @@ impl Shell {
     }
 
     /// The titlebar toggle: hide or reveal the pane, keeping its tabs. A
-    /// pane the window fit hides is revealed rather than closed.
+    /// pane the window fit hides is brought forward rather than closed,
+    /// like the chat pane's toggle.
     pub(super) fn toggle_pull_request_pane(&mut self, cx: &mut Context<Self>) {
-        self.set_pull_request_pane_open(!self.right_column_shown(), cx);
+        if self.pull_request_pane_open() && self.promote_hidden_panel(AuxiliaryPanel::Right, cx) {
+            return;
+        }
+        self.set_pull_request_pane_open(!self.pull_request_pane.open, cx);
     }
 
     /// Close one tab; closing the last collapses the pane.

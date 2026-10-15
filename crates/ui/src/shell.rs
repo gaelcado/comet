@@ -4967,11 +4967,13 @@ impl Shell {
             }
         }
         if self.route != route {
-            // The departing route's panel motion ends with it; the arriving
-            // one lays out at rest.
+            // The departing route's panel motion ends with it, its divider
+            // bounce included; the arriving one lays out at rest.
             self.clear_panel_transitions();
             self.fit_exits = [None; 3];
             self.painted_columns = None;
+            self.right_edge_bounce = None;
+            self.right_resize_edge = None;
         }
         self.route = route;
         if !was_pull_requests && will_show_pull_requests {
@@ -16751,17 +16753,9 @@ mod exit_regressions {
                 cx,
             );
         });
-        for width in [600.0, 1400.0] {
+        // The app's narrowest window, then a wide one.
+        for width in [900.0, 1400.0] {
             cx.simulate_resize(gpui::size(px(width), px(800.0)));
-            if width < CHAT_PANEL_MIN + RIGHT_PANE_MIN {
-                // Too narrow for the board beside it, the pane gives way to
-                // the board until it is asked for, then opens over it.
-                cx.update(|window, cx| {
-                    window.draw(cx).clear();
-                    window.dispatch_action(Box::new(ToggleChanges), cx);
-                });
-                cx.run_until_parked();
-            }
             for collapsed in [true, false] {
                 shell.update(cx, |shell, cx| {
                     shell.settings.sidebar_collapsed = collapsed;
@@ -16778,8 +16772,7 @@ mod exit_regressions {
                     cx.run_until_parked();
                     let new_session = cx.debug_bounds("titlebar-new-session").unwrap();
                     let tab = cx.debug_bounds("pull-request-tab-0").unwrap();
-                    // Covering the board, the tabs sit just past the cluster
-                    // like the chat pane's in takeover.
+                    // The tabs stay clear of the window-control cluster.
                     assert!(
                         tab.left() >= new_session.right(),
                         "PR tab overlaps New session: width={width}, collapsed={collapsed}, fullscreen={fullscreen}, tab={tab:?}, new_session={new_session:?}"
