@@ -126,6 +126,10 @@ name (default: the local engine's device).
 | `respond_to_input` | `QueueCommand` RespondInput                               |
 | `archive_chat`     | `Mutate setChatArchived`                                  |
 | `show_visual`      | `PublishVisual {chatId, title, script, assets}` (origin chat only; assets base64 by name, read by the MCP server from the agent's cwd) |
+| `list_widgets`     | `WatchProjectWidgets` snapshot (metadata only; project defaults to the origin chat's) |
+| `get_widget`       | `GetProjectWidget` (+ `ReadProjectWidgetAssetChunk` per file with `includeContent`) |
+| `create_widget`    | `CreateProjectWidget` (project required; assets read like `show_visual`'s) |
+| `update_widget`    | `GetProjectWidget` when a script is sent, then `UpdateProjectWidget` |
 
 Watch streams are the engine's only read surface (there is no one-shot "get
 transcript" RPC); a snapshot is "subscribe, take the first item, drop" — drop

@@ -13,7 +13,7 @@ use zeron_proto::{McpToolAvailability, McpToolDescriptor};
 
 /// Version of the catalog's names, descriptions and schemas. Bump it whenever
 /// any of them changes; it is unrelated to the policy revision.
-pub const CATALOG_VERSION: u32 = 1;
+pub const CATALOG_VERSION: u32 = 2;
 
 /// Most requests one `create_chats` / `send_messages` call takes.
 pub const MAX_BATCH: usize = 32;
@@ -67,6 +67,10 @@ pub enum ToolName {
     CreateChats,
     SendMessages,
     ShowVisual,
+    ListWidgets,
+    GetWidget,
+    CreateWidget,
+    UpdateWidget,
 }
 
 impl ToolName {
@@ -89,6 +93,10 @@ impl ToolName {
         Self::CreateChats,
         Self::SendMessages,
         Self::ShowVisual,
+        Self::ListWidgets,
+        Self::GetWidget,
+        Self::CreateWidget,
+        Self::UpdateWidget,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -110,6 +118,10 @@ impl ToolName {
             Self::CreateChats => "create_chats",
             Self::SendMessages => "send_messages",
             Self::ShowVisual => SHOW_VISUAL,
+            Self::ListWidgets => "list_widgets",
+            Self::GetWidget => "get_widget",
+            Self::CreateWidget => "create_widget",
+            Self::UpdateWidget => "update_widget",
         }
     }
 
@@ -136,7 +148,11 @@ impl ToolName {
             | Self::RespondToInput
             | Self::ArchiveChat
             | Self::CreateChats
-            | Self::SendMessages => McpToolAvailability::Always,
+            | Self::SendMessages
+            | Self::ListWidgets
+            | Self::GetWidget
+            | Self::CreateWidget
+            | Self::UpdateWidget => McpToolAvailability::Always,
         }
     }
 }
@@ -347,7 +363,99 @@ pub fn catalog() -> Vec<ToolDef> {
             "required": ["script", "title"]
         }),
     });
+    tools.extend(widget_tools());
     tools
+}
+
+fn widget_assets_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Files the script uses, by the name it uses them, as in show_visual: { \"data.json\": \"out/data.json\" }. Paths are on this machine, relative to your working directory; same formats and limits as show_visual."
+    })
+}
+
+fn widget_recipe_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "How a refresh rebuilds this widget later: the instruction an agent gets and which agent runs it. Never put credentials here.",
+        "properties": {
+            "instruction": { "type": "string", "description": "What to collect and redraw, e.g. \"Recompute signups for the last 30 days and keep the same chart\"." },
+            "harness": { "type": "string", "description": "Harness id (see list_harnesses on the project's device)." },
+            "model": { "type": "string" },
+            "reasoning": { "type": "string" }
+        },
+        "required": ["instruction", "harness"]
+    })
+}
+
+/// Project widgets: visuals kept in a project, on the device that hosts it.
+fn widget_tools() -> [ToolDef; 4] {
+    [
+        ToolDef {
+            name: "list_widgets",
+            description: "Widgets kept in a project: id, title, revision, contentRevision, when the content was last validated, and whether it has a source chat or a refresh recipe. Never returns scripts or assets (see get_widget). In a project chat, omit project to list this chat's project; elsewhere project is required. Widgets live on the device that hosts their project: pass the returned deviceId as device to get_widget and update_widget.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project id, path, or name. Defaults to the project of the chat you are speaking from." },
+                    "device": { "type": "string", "description": "Host device (id or name). With project, it must own that project." }
+                }
+            }),
+        },
+        ToolDef {
+            name: "get_widget",
+            description: "One widget: title, revision, contentRevision, refresh recipe, source chat, and its content manifest (asset names, sizes, sha256). With includeContent, also its Luau script and its assets base64 by name; assets past 1 MB in total are listed in omittedAssets instead (keep them in an update with keepExistingAssets). Use the returned revision as update_widget's expectedRevision.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "widgetId": { "type": "string" },
+                    "device": { "type": "string", "description": "The widget's device (deviceId from list_widgets). Omit for the local engine." },
+                    "includeContent": { "type": "boolean", "default": false, "description": "Also return the script and assets." }
+                },
+                "required": ["widgetId"]
+            }),
+        },
+        ToolDef {
+            name: "create_widget",
+            description: "Keep a visual in a project as a widget: a Luau script in show_visual's format plus its asset files, stored on the project's device until deleted. Create one only when the user asks to keep a visual in their project; show_visual never saves anything. project is required, even in a project chat. creationKey names this widget within the project and is chosen by you (e.g. \"weekly-signups\"): calling again with the same creationKey and the same arguments returns the first widget (outcome replayed), never a duplicate; the same creationKey with different arguments fails with widgets.key_reused. operationId identifies this request (a fresh UUID; resend it only to retry after a lost reply). Widgets are never matched by title: two creationKeys make two widgets. Errors start with a stable code: widgets.key_reused, widgets.quota_exceeded (50 per project), widgets.invalid_visual (with the script's error and line; fix it and call again), widgets.owner_unavailable. Returns widgetId, revision, contentRevision and outcome (created or replayed).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project id, path, or name." },
+                    "device": { "type": "string", "description": "Host device (id or name); it must own the project." },
+                    "creationKey": { "type": "string", "description": "Your stable name for this widget within the project, 1-128 bytes." },
+                    "operationId": { "type": "string", "description": "Unique id of this request, 1-128 bytes." },
+                    "title": { "type": "string" },
+                    "script": { "type": "string", "description": "The Luau visual script, as for show_visual." },
+                    "assets": widget_assets_schema(),
+                    "refreshRecipe": widget_recipe_schema()
+                },
+                "required": ["project", "creationKey", "operationId", "title", "script"]
+            }),
+        },
+        ToolDef {
+            name: "update_widget",
+            description: "Change a widget against its current revision (from list_widgets or get_widget). If anything changed the widget since expectedRevision, the call fails with widgets.conflict and changes nothing: call get_widget, reapply your change to what is there now, and retry with its revision and a new operationId. operationId identifies this request: resending it after a lost reply returns the first answer (outcome replayed); reusing it with other arguments fails with widgets.key_reused. title, refreshRecipe and clearRefreshRecipe change metadata only and keep the content. Sending script replaces the content, so send the whole script; then keepExistingAssets: true keeps every current asset that assets does not replace, and false makes the assets exactly assets (none if omitted). When the widget has assets, keepExistingAssets is required with a script, so leaving out assets never deletes them by accident. Omit refreshId unless Zeron started this run to refresh the widget. Returns outcome (updated or replayed), revision and contentRevision.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "widgetId": { "type": "string" },
+                    "expectedRevision": { "type": "integer", "minimum": 1, "description": "The widget's revision your change is based on." },
+                    "operationId": { "type": "string", "description": "Unique id of this request, 1-128 bytes." },
+                    "device": { "type": "string", "description": "The widget's device (deviceId from list_widgets). Omit for the local engine." },
+                    "title": { "type": "string" },
+                    "refreshRecipe": widget_recipe_schema(),
+                    "clearRefreshRecipe": { "type": "boolean", "default": false, "description": "Remove the refresh recipe." },
+                    "script": { "type": "string", "description": "New content: the whole Luau script." },
+                    "assets": widget_assets_schema(),
+                    "keepExistingAssets": { "type": "boolean", "description": "With script: keep current assets not sent in assets (true), or replace them all (false)." },
+                    "refreshId": { "type": "string", "description": "The refresh this update answers, when Zeron runs you to refresh the widget." }
+                },
+                "required": ["widgetId", "expectedRevision", "operationId"]
+            }),
+        },
+    ]
 }
 
 /// Shows a page in the CALLING chat, so it is offered only to an agent that

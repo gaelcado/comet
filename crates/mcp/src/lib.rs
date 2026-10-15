@@ -23,6 +23,7 @@ pub mod catalog;
 mod jsonrpc;
 mod tools;
 mod transcript;
+mod widgets;
 mod zeron;
 
 pub use catalog::{ToolDef, ToolName};

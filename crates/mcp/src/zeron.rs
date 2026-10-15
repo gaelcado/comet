@@ -172,7 +172,7 @@ impl Zeron {
 
     /// [`Self::call`] keeping the typed error, for callers that act on
     /// `UnknownMethod` or a capability code.
-    async fn call_rpc(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+    pub(crate) async fn call_rpc(&self, method: &str, params: Value) -> Result<Value, RpcError> {
         let connect = |e: anyhow::Error| RpcError::Transport(e.to_string());
         let client = self.client().await.map_err(connect)?;
         match client.call(method, params.clone()).await {
@@ -237,6 +237,36 @@ impl Zeron {
                 "{method}: no snapshot within {}s",
                 SNAPSHOT_TIMEOUT.as_secs()
             ),
+        }
+    }
+
+    /// [`Self::snapshot`] keeping the typed error: the server acknowledges
+    /// the subscription first, so a refusal arrives as itself rather than as
+    /// an empty stream.
+    pub(crate) async fn snapshot_rpc(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RpcError> {
+        let connect = |e: anyhow::Error| RpcError::Transport(e.to_string());
+        let client = self.client().await.map_err(connect)?;
+        let mut rx = match client.subscribe_checked(method, params.clone()).await {
+            Err(RpcError::Closed) => {
+                self.forget_client().await;
+                let client = self.client().await.map_err(connect)?;
+                client.subscribe_checked(method, params).await?
+            }
+            other => other?,
+        };
+        match tokio::time::timeout(SNAPSHOT_TIMEOUT, rx.recv()).await {
+            Ok(Some(item)) => Ok(item),
+            Ok(None) => Err(RpcError::Failed(format!(
+                "{method}: stream ended before its first snapshot"
+            ))),
+            Err(_) => Err(RpcError::Failed(format!(
+                "{method}: no snapshot within {}s",
+                SNAPSHOT_TIMEOUT.as_secs()
+            ))),
         }
     }
 

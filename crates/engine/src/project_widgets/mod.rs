@@ -543,8 +543,12 @@ impl ProjectWidgets {
             "expectedRevision": p.expected_revision,
             "title": title,
             "refreshRecipe": p.refresh_recipe,
+            // Only the bundle current at `expectedRevision` can be kept, so the
+            // id adds nothing; leaving it out lets a client that re-reads the
+            // widget to retry the same operation get its first answer.
             "content": p.content.as_ref().zip(assets.as_ref()).map(|(content, assets)| {
-                content_digest(&content.script, assets, content.keep_assets_from_bundle.as_deref())
+                let keep = content.keep_assets_from_bundle.as_ref().map(|_| "current");
+                content_digest(&content.script, assets, keep)
             }),
             "refreshId": p.refresh_id,
         }));

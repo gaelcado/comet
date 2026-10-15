@@ -37,6 +37,7 @@ use zeron_rpc::{RpcError, capability_errors};
 
 use crate::catalog::{MAX_BATCH, ToolName, catalog};
 use crate::transcript::{RenderOptions, RenderedMessage, render_entries};
+use crate::widgets;
 use crate::zeron::{HarnessInfo, TurnOutcome, Zeron, session_for, short};
 
 /// Default and ceiling for the blocking waits.
@@ -132,11 +133,12 @@ pub struct Tools {
     pending_turns: tokio::sync::Mutex<HashMap<String, Arc<PendingTurn>>>,
 }
 
-/// Read `show_visual`'s asset files (paths relative to the agent's working
-/// directory), base64-encoded by name for the engine.
-async fn read_visual_assets(
+/// Read a visual's asset files (paths relative to the agent's working
+/// directory), base64-encoded by name for the engine. Shared by
+/// `show_visual` and the widget tools; it only reads.
+pub(crate) async fn read_visual_assets(
     assets: &std::collections::BTreeMap<String, String>,
-) -> anyhow::Result<serde_json::Map<String, Value>> {
+) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
     use base64::Engine as _;
     use zeron_proto::{
         VISUAL_MAX_ASSET_BYTES as MAX_ASSET_BYTES, VISUAL_MAX_ASSETS as MAX_ASSETS,
@@ -147,7 +149,7 @@ async fn read_visual_assets(
         assets.len() <= MAX_ASSETS,
         "a visual takes at most {MAX_ASSETS} assets"
     );
-    let mut out = serde_json::Map::new();
+    let mut out = std::collections::BTreeMap::new();
     let mut total = 0;
     let mut seen = std::collections::HashSet::new();
     for (name, path) in assets {
@@ -194,7 +196,7 @@ async fn read_visual_assets(
         );
         out.insert(
             name.clone(),
-            Value::String(base64::engine::general_purpose::STANDARD.encode(bytes)),
+            base64::engine::general_purpose::STANDARD.encode(bytes),
         );
     }
     Ok(out)
@@ -519,6 +521,10 @@ impl Tools {
             ToolName::RespondToInput => self.respond_to_input(parse(args)?).await,
             ToolName::ArchiveChat => self.archive_chat(parse(args)?).await,
             ToolName::ShowVisual => self.show_visual(parse(args)?).await,
+            ToolName::ListWidgets => widgets::list(&self.zeron, parse(args)?).await,
+            ToolName::GetWidget => widgets::get(&self.zeron, parse(args)?).await,
+            ToolName::CreateWidget => widgets::create(&self.zeron, parse(args)?).await,
+            ToolName::UpdateWidget => widgets::update(&self.zeron, parse(args)?).await,
         };
         result.map_err(|e| format!("{e:#}"))
     }
