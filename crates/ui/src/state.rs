@@ -2181,6 +2181,7 @@ impl AppState {
                 status: Some(zeron_doc::MessageStatus::Streaming),
                 continuation_of: None,
                 duration_ms: None,
+                finished_at: None,
             },
         );
         // The machine may have failed before this placeholder arrived.
@@ -5613,6 +5614,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         }
     }
 
@@ -6517,6 +6519,7 @@ mod tests {
             status,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         };
         let user = zeron_doc::MessageRole::User;
         let assistant = zeron_doc::MessageRole::Assistant;
@@ -6549,6 +6552,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         };
         let user = zeron_doc::MessageRole::User;
         let assistant = zeron_doc::MessageRole::Assistant;
@@ -7658,6 +7662,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         };
         let row = |id: &str| zeron_doc::QueuedMessage {
             id: id.into(),
@@ -7696,6 +7701,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         };
         state.push_echo("c1", echo.clone());
         // Duplicate pushes dedupe.
@@ -7742,6 +7748,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         };
         let user = zeron_doc::MessageRole::User;
         let assistant = zeron_doc::MessageRole::Assistant;
@@ -7810,6 +7817,7 @@ mod tests {
                 status: None,
                 continuation_of: None,
                 duration_ms: None,
+                finished_at: None,
             },
         );
         state.push_cloud_setup_echo("c1", "m1", 0, true);

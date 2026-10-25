@@ -898,6 +898,7 @@ impl ChatDocHandle {
             status: Some(MessageStatus::Complete),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         })
     }
 
@@ -941,6 +942,7 @@ impl ChatDocHandle {
             status: Some(MessageStatus::Complete),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         })?;
         self.doc.mark_provider_switched()?;
         Ok(true)
@@ -4421,7 +4423,9 @@ impl DocHost {
                 continue;
             };
             changed = true;
-            if let Err(err) = handle.write_user_message(&row.id, &row.text, row.issued_at) {
+            if let Err(err) =
+                handle.write_user_message(&row.id, &row.text, row.issued_at.min(now_ms()))
+            {
                 tracing::warn!(chat = %handle.chat_id, error = %err, "cancelled held send write failed");
             }
         }
@@ -6270,6 +6274,7 @@ mod transfer_progress_tests {
                     status: None,
                     continuation_of: None,
                     duration_ms: None,
+                    finished_at: None,
                 })
                 .unwrap();
         }

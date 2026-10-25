@@ -3208,6 +3208,7 @@ impl SubagentSink {
             status: Some(MessageStatus::Complete),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         };
         if let Err(err) = self.doc.push_message(&entry) {
             tracing::warn!(doc = %self.doc_id, error = %err, "subagent steer write failed");
@@ -5057,6 +5058,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         })
         .unwrap();
         let current = format!("Current {skill}\nKeep **Markdown**");
@@ -5098,6 +5100,7 @@ mod tests {
                 status: None,
                 continuation_of: None,
                 duration_ms: None,
+                finished_at: None,
             })
             .unwrap();
         }
@@ -5990,6 +5993,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         };
         let entries = vec![
             entry("u1", MessageRole::User, "first"),

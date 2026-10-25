@@ -60,6 +60,54 @@ pub struct SessionMessageEntry {
     /// the field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<i64>,
+    /// Epoch millis the assistant turn settled, stamped with `duration_ms`.
+    /// `created_at` is when the turn began; this is the moment its reply
+    /// reads as written. Absent on the same rows as `duration_ms`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<i64>,
+}
+
+impl SessionMessageEntry {
+    /// When this entry reads as written, for its hover timestamp: a settled
+    /// assistant turn's end, otherwise its creation. `None` for an unknown
+    /// (zero or negative) time, which would render as 1970, and for a turn
+    /// that settled with no recorded end: crash recovery marks a dead
+    /// stream aborted without one, and its start would read as the
+    /// question's time — the very confusion `finishedAt` exists to fix.
+    pub fn settled_at(&self) -> Option<i64> {
+        let at = match self.ended_at() {
+            Some(end) => end.max(self.created_at),
+            None if self.status == Some(MessageStatus::Aborted) => return None,
+            None => self.created_at,
+        };
+        (at > 0).then_some(at)
+    }
+
+    /// When a settled turn ended: `finishedAt`, or `createdAt + durationMs`
+    /// on docs written before it. A Cloud setup entry counts its duration
+    /// from the send that brought the machine up, not its own start, so
+    /// its legacy end isn't derivable and stays unknown.
+    pub fn ended_at(&self) -> Option<i64> {
+        self.finished_at.or_else(|| {
+            if zeron_proto::cloud_setup_message_id(&self.id).is_some() {
+                return None;
+            }
+            self.duration_ms.map(|d| self.created_at + d.max(0))
+        })
+    }
+
+    /// Fold continuation segment `next` into this root: parts append, and
+    /// the turn ends where the last segment ended. Each segment counts its
+    /// own `durationMs` from its own start, so the root's duration spans
+    /// from the root's start to that end rather than taking the last
+    /// segment's alone.
+    pub fn absorb_continuation(&mut self, next: &SessionMessageEntry) {
+        self.parts.extend(next.parts.iter().cloned());
+        if let Some(end) = next.ended_at() {
+            self.finished_at = Some(end);
+            self.duration_ms = Some((end - self.created_at).max(0));
+        }
+    }
 }
 
 /// The doc-resident flat part map (`DocMessagePart` in TS). Distinct from the app-layer
@@ -982,6 +1030,9 @@ fn write_entry_scalar_fields(map: &LoroMap, entry: &SessionMessageEntry) -> Resu
     if let Some(duration_ms) = entry.duration_ms {
         map.insert("durationMs", duration_ms)?;
     }
+    if let Some(finished_at) = entry.finished_at {
+        map.insert("finishedAt", finished_at)?;
+    }
     Ok(())
 }
 
@@ -1102,6 +1153,8 @@ fn entry_from_json(v: serde_json::Value) -> Result<SessionMessageEntry, DocError
         continuation_of: Option<String>,
         #[serde(default)]
         duration_ms: Option<i64>,
+        #[serde(default)]
+        finished_at: Option<i64>,
     }
     match serde_json::from_value::<RawEntry>(v.clone()) {
         Ok(raw) => Ok(SessionMessageEntry {
@@ -1113,6 +1166,7 @@ fn entry_from_json(v: serde_json::Value) -> Result<SessionMessageEntry, DocError
             status: raw.status,
             continuation_of: raw.continuation_of,
             duration_ms: raw.duration_ms,
+            finished_at: raw.finished_at,
         }),
         // 2026-08-10 incident rule: a missing field must cost AT MOST what
         // the field carried — never the entry, never the transcript. Rooms
@@ -1178,6 +1232,7 @@ fn salvage_entry(
             .and_then(|s| serde_json::from_value(s.clone()).ok()),
         continuation_of: str_field("continuationOf"),
         duration_ms: obj.get("durationMs").and_then(|x| x.as_i64()),
+        finished_at: obj.get("finishedAt").and_then(|x| x.as_i64()),
     })
 }
 
@@ -1262,10 +1317,7 @@ pub fn join_continuation_entries(entries: Vec<SessionMessageEntry>) -> Vec<Sessi
         match &entry.continuation_of {
             Some(root_id) => {
                 if let Some(&at) = root_index.get(root_id) {
-                    out[at].parts.extend(entry.parts);
-                    if entry.duration_ms.is_some() {
-                        out[at].duration_ms = entry.duration_ms;
-                    }
+                    out[at].absorb_continuation(&entry);
                 } else {
                     // Orphan continuation — surface as its own entry rather than dropping.
                     out.push(entry);
@@ -1305,6 +1357,12 @@ pub struct SegmentWriter<'a> {
 
 impl<'a> SegmentWriter<'a> {
     /// Begin a streaming assistant entry: pushes the entry with `status: streaming`, no parts.
+    ///
+    /// `created_at` never reads earlier than the entry before it: a reply
+    /// can't begin before the message it answers. A runtime parked between
+    /// turns holds its park time as the next segment's start until a steer
+    /// boundary resets it, and a harness that streams before that boundary
+    /// would otherwise stamp its reply above the question in time.
     pub fn begin(
         doc: &'a SessionDoc,
         entry_id: &str,
@@ -1313,6 +1371,23 @@ impl<'a> SegmentWriter<'a> {
     ) -> Result<Self, DocError> {
         let messages = doc.doc.get_list("messages");
         let entry_index = messages.len();
+        // Never past this host's own clock, though: a future-dated entry
+        // (another device's skew) would otherwise push the start, and with
+        // it `durationMs`'s origin, into the future.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(created_at, |d| d.as_millis() as i64);
+        let created_at = match entry_index.checked_sub(1).and_then(|ix| messages.get(ix)) {
+            Some(loro::ValueOrContainer::Container(loro::Container::Map(map))) => {
+                match map.get("createdAt") {
+                    Some(loro::ValueOrContainer::Value(LoroValue::I64(prev))) => {
+                        created_at.max(prev.min(now))
+                    }
+                    _ => created_at,
+                }
+            }
+            _ => created_at,
+        };
         let map = messages.push_container(LoroMap::new())?;
         write_entry_scalar_fields(
             &map,
@@ -1325,6 +1400,7 @@ impl<'a> SegmentWriter<'a> {
                 status: Some(MessageStatus::Streaming),
                 continuation_of: None,
                 duration_ms: None,
+                finished_at: None,
             },
         )?;
         map.insert_container("parts", LoroList::new())?;
@@ -1461,8 +1537,9 @@ impl<'a> SegmentWriter<'a> {
         Ok(())
     }
 
-    /// Finish the stream: sync final parts, stamp a terminal status, and
-    /// record how long the turn ran (`now - createdAt`).
+    /// Finish the stream: sync final parts, stamp a terminal status, the
+    /// moment the turn settled (`finishedAt`), and how long it ran
+    /// (`now - createdAt`, or from [`Self::count_duration_from`]).
     pub fn finish(mut self, folded: &[MessagePart], status: MessageStatus) -> Result<(), DocError> {
         self.sync(folded)?;
         let map = self.entry_map()?;
@@ -1473,6 +1550,9 @@ impl<'a> SegmentWriter<'a> {
             .unwrap_or(self.created_at);
         if self.duration_from > 0 {
             map.insert("durationMs", (now - self.duration_from).max(0))?;
+        }
+        if self.created_at > 0 {
+            map.insert("finishedAt", now.max(self.created_at))?;
         }
         self.doc.doc.commit();
         Ok(())
@@ -1614,6 +1694,7 @@ mod tests {
         };
         doc.push_message(&SessionMessageEntry {
             duration_ms: None,
+            finished_at: None,
             id: "fork:side".into(),
             role: MessageRole::System,
             parts: vec![seam.clone()],
@@ -1642,6 +1723,7 @@ mod tests {
         };
         doc.push_message(&SessionMessageEntry {
             duration_ms: None,
+            finished_at: None,
             id: "switch:1".into(),
             role: MessageRole::System,
             parts: vec![seam.clone()],
@@ -1675,6 +1757,7 @@ mod tests {
                 status: Some(MessageStatus::Complete),
                 continuation_of: (segment > 0).then(|| "segment-0".into()),
                 duration_ms: None,
+                finished_at: None,
             })
             .unwrap();
         }
@@ -1786,6 +1869,7 @@ mod tests {
             status: Some(MessageStatus::Complete),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         }
     }
 
@@ -1823,6 +1907,116 @@ mod tests {
         assert_eq!(entry.created_at, now - 5_000, "the entry's own time is kept");
         let duration = entry.duration_ms.unwrap();
         assert!((60_000..65_000).contains(&duration), "{duration}");
+        // The end is the moment it settled, whatever the duration counted from.
+        let finished = entry.finished_at.unwrap();
+        assert!((now..now + 5_000).contains(&finished), "{finished}");
+        assert_eq!(entry.settled_at(), Some(finished));
+    }
+
+    #[test]
+    fn a_reply_never_begins_before_the_message_it_answers() {
+        let doc = SessionDoc::init("c1").unwrap();
+        let mut question = user_entry("m1", "hello");
+        question.created_at = 2_000;
+        doc.push_message(&question).unwrap();
+        // A parked runtime's stale segment start (its last turn's park time).
+        SegmentWriter::begin(&doc, "a1", "dev", 1_000)
+            .unwrap()
+            .finish(&[], MessageStatus::Complete)
+            .unwrap();
+        let reply = &doc.read_entries().unwrap()[1];
+        assert_eq!(reply.created_at, 2_000);
+        assert!(reply.finished_at.unwrap() >= 2_000);
+        // A later start is kept as is.
+        SegmentWriter::begin(&doc, "a2", "dev", 9_000_000_000_000).unwrap();
+        assert_eq!(doc.read_entries().unwrap()[2].created_at, 9_000_000_000_000);
+    }
+
+    #[test]
+    fn a_future_dated_entry_never_pushes_a_reply_past_now() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let doc = SessionDoc::init("c1").unwrap();
+        let mut skewed = user_entry("m1", "from a fast clock");
+        skewed.created_at = now + 3_600_000;
+        doc.push_message(&skewed).unwrap();
+        SegmentWriter::begin(&doc, "a1", "dev", now - 1_000)
+            .unwrap()
+            .finish(&[], MessageStatus::Complete)
+            .unwrap();
+        let reply = &doc.read_entries().unwrap()[1];
+        assert!(reply.created_at <= now + 5_000, "{}", reply.created_at);
+        assert!(reply.finished_at.unwrap() <= now + 5_000);
+    }
+
+    #[test]
+    fn settled_at_hides_what_it_cannot_know() {
+        let mut reply = user_entry("a1", "x");
+        reply.role = MessageRole::Assistant;
+        reply.created_at = 1_000;
+        // Crash recovery aborted it with no end: no strip, not its start.
+        reply.status = Some(MessageStatus::Aborted);
+        assert_eq!(reply.settled_at(), None);
+        reply.finished_at = Some(4_000);
+        assert_eq!(reply.settled_at(), Some(4_000));
+        // A legacy Cloud setup entry's duration counts from the send.
+        let mut setup = user_entry(&zeron_proto::cloud_setup_entry_id("m1"), "x");
+        setup.role = MessageRole::Assistant;
+        setup.created_at = 60_000;
+        setup.duration_ms = Some(120_000);
+        assert_eq!(setup.ended_at(), None);
+        assert_eq!(setup.settled_at(), Some(60_000));
+    }
+
+    #[test]
+    fn continuations_span_the_whole_turn() {
+        let entry = |id: &str, created_at, duration_ms, continuation_of: Option<&str>| {
+            let mut entry = user_entry(id, id);
+            entry.role = MessageRole::Assistant;
+            entry.created_at = created_at;
+            entry.duration_ms = duration_ms;
+            entry.continuation_of = continuation_of.map(Into::into);
+            entry
+        };
+        // Each segment counted only itself: 1s, then 2s starting at 10s.
+        let joined = join_continuation_entries(vec![
+            entry("a1", 1_000, Some(1_000), None),
+            entry("a1-2", 10_000, Some(2_000), Some("a1")),
+        ]);
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].parts.len(), 2);
+        assert_eq!(joined[0].finished_at, Some(12_000));
+        assert_eq!(joined[0].duration_ms, Some(11_000));
+        // A stamped end wins over the derived one; a live tail keeps the root's.
+        let mut stamped = entry("a1-2", 10_000, Some(2_000), Some("a1"));
+        stamped.finished_at = Some(12_500);
+        let joined =
+            join_continuation_entries(vec![entry("a1", 1_000, Some(1_000), None), stamped]);
+        assert_eq!(joined[0].settled_at(), Some(12_500));
+        let joined = join_continuation_entries(vec![
+            entry("a1", 1_000, Some(1_000), None),
+            entry("a1-2", 10_000, None, Some("a1")),
+        ]);
+        assert_eq!(joined[0].duration_ms, Some(1_000));
+    }
+
+    #[test]
+    fn finished_at_survives_the_doc_and_salvage() {
+        let doc = SessionDoc::init("c1").unwrap();
+        let mut reply = user_entry("a1", "done");
+        reply.role = MessageRole::Assistant;
+        reply.duration_ms = Some(500);
+        reply.finished_at = Some(1_501);
+        doc.push_message(&reply).unwrap();
+        assert_eq!(doc.read_entries().unwrap()[0].finished_at, Some(1_501));
+        // A strict-parse failure (no deviceId) keeps the field.
+        let salvaged = decode_entry_json(serde_json::json!({
+            "id": "a2", "role": "assistant", "createdAt": 5, "finishedAt": 9, "parts": [],
+        }))
+        .unwrap();
+        assert_eq!(salvaged.finished_at, Some(9));
     }
 
     #[test]
@@ -2038,6 +2232,7 @@ mod tests {
             status: Some(MessageStatus::Aborted),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         })
         .unwrap();
         let picked = vec![zeron_proto::UserInputAnswer {
@@ -2081,6 +2276,7 @@ mod tests {
             status: Some(MessageStatus::Complete),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         })
         .unwrap();
         assert_eq!(doc.read_entries().unwrap()[0].parts[0], answered);
@@ -2353,6 +2549,7 @@ mod tests {
             status: Some(MessageStatus::Complete),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         })
         .unwrap();
         let entries = doc.read_entries().unwrap();

@@ -1185,19 +1185,26 @@ pub struct Row {
 
 /// Absolute hover-timestamp label, e.g. "Jul 1, 3:45 PM" — the exact
 /// `formatTimestamp` shape (utils.ts: short month, numeric day, hour,
-/// 2-digit minutes, no leading zero on the hour). Pure over an explicit
-/// timezone so tests don't depend on the host's local time.
-pub fn format_timestamp<Tz: chrono::TimeZone>(ms: i64, tz: &Tz) -> String
+/// 2-digit minutes, no leading zero on the hour). A time outside `now_ms`'s
+/// year names its year ("Jul 1, 2025, 3:45 PM"), so last year's messages
+/// don't read as this year's. Pure over an explicit timezone and clock so
+/// tests don't depend on the host's.
+pub fn format_timestamp<Tz: chrono::TimeZone>(ms: i64, now_ms: i64, tz: &Tz) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
-    match chrono::DateTime::from_timestamp_millis(ms) {
-        Some(utc) => utc
-            .with_timezone(tz)
-            .format("%b %-d, %-I:%M %p")
-            .to_string(),
-        None => String::new(),
-    }
+    use chrono::Datelike;
+    let Some(at) = chrono::DateTime::from_timestamp_millis(ms).map(|t| t.with_timezone(tz)) else {
+        return String::new();
+    };
+    let same_year = chrono::DateTime::from_timestamp_millis(now_ms)
+        .is_some_and(|now| now.with_timezone(tz).year() == at.year());
+    let shape = if same_year {
+        "%b %-d, %-I:%M %p"
+    } else {
+        "%b %-d, %Y, %-I:%M %p"
+    };
+    at.format(shape).to_string()
 }
 
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -1460,7 +1467,7 @@ pub fn rows_for_entry(
             entry_id,
             // User rows always carry the strip (chat-view.tsx: whenever
             // `createdAt` exists — the optimistic echo included).
-            timestamp: Some(entry.created_at),
+            timestamp: entry.settled_at(),
             copy_text,
             compact_fold: None,
         }];
@@ -1879,6 +1886,7 @@ pub fn rows_for_entry(
                 let work_entry = SessionMessageEntry {
                     parts: work_parts,
                     duration_ms: None,
+                    finished_at: None,
                     continuation_of: None,
                     ..entry.clone()
                 };
@@ -1932,7 +1940,9 @@ pub fn rows_for_entry(
         first.turn_start = true;
     }
     // Timestamp strip under the entry's LAST row once the turn has settled
-    // (chat-view.tsx: "No timestamp hover mid-stream"). The version bit keeps
+    // (chat-view.tsx: "No timestamp hover mid-stream"), reading when the
+    // turn ENDED: `createdAt` is its start, a moment after the question,
+    // so the two would otherwise share a time. The version bit keeps
     // the diff key honest for last-row kinds whose own version wouldn't
     // change when streaming flips off (chips).
     if !streaming
@@ -1942,7 +1952,7 @@ pub fn rows_for_entry(
             RowKind::ForkMarker { .. } | RowKind::SwitchMarker { .. }
         )
     {
-        last.timestamp = Some(entry.created_at);
+        last.timestamp = entry.settled_at();
         last.copy_text = assistant_copy_text(entry);
         last.version ^= 1 << 62;
     }
@@ -8344,7 +8354,11 @@ impl Transcript {
             let timestamp = div()
                 .text_size(crate::typography::ui_rems(12.0))
                 .text_color(theme.text_muted.opacity(0.55))
-                .child(SharedString::from(format_timestamp(ms, &chrono::Local)));
+                .child(SharedString::from(format_timestamp(
+                    ms,
+                    chrono::Utc::now().timestamp_millis(),
+                    &chrono::Local,
+                )));
             let copy = copy_text.map(|text| {
                 let entry_id = copy_entry_id.clone();
                 let fade_key = format!("copy-message-hover-{entry_id}");
@@ -11183,6 +11197,8 @@ fn entry_fingerprint(entry: &SessionMessageEntry, pending: bool) -> u64 {
     });
     acc.push(pending as u8);
     acc.extend_from_slice(&entry.duration_ms.unwrap_or(0).to_le_bytes());
+    // The hover timestamp row reads this; a stamp landing alone must re-row.
+    acc.extend_from_slice(&entry.settled_at().unwrap_or(0).to_le_bytes());
     for part in &entry.parts {
         acc.extend_from_slice(part.id().as_bytes());
         acc.extend_from_slice(&(part.byte_len() as u64).to_le_bytes());
@@ -13057,11 +13073,13 @@ mod tests {
             id: id.into(),
             role: MessageRole::Assistant,
             parts,
-            created_at: 0,
+            // A real time: zero reads as unknown and hides the timestamp.
+            created_at: 1,
             device_id: "dev".into(),
             status: Some(status),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         }
     }
 
@@ -13102,6 +13120,7 @@ mod tests {
             status: Some(MessageStatus::Complete),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         }
     }
 
@@ -13172,6 +13191,7 @@ mod tests {
             status: Some(MessageStatus::Complete),
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         }
     }
 
@@ -17743,7 +17763,10 @@ mod tests {
         let ms = chrono::DateTime::parse_from_rfc3339("2026-07-01T19:45:00Z")
             .unwrap()
             .timestamp_millis();
-        assert_eq!(format_timestamp(ms, &tz), "Jul 1, 3:45 PM");
+        assert_eq!(format_timestamp(ms, ms, &tz), "Jul 1, 3:45 PM");
+        // Another year names it.
+        let next_year = ms + 365 * 24 * 3600 * 1000;
+        assert_eq!(format_timestamp(ms, next_year, &tz), "Jul 1, 2026, 3:45 PM");
 
         // User entries carry the strip on their single row (pending too).
         let user = SessionMessageEntry {
@@ -17755,6 +17778,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         };
         let rows = rows_for_entry(&user, true, false, &mut parse);
         assert_eq!(rows.len(), 1);
@@ -17775,6 +17799,24 @@ mod tests {
         );
         assert!(rows[..rows.len() - 1].iter().all(|r| r.timestamp.is_none()));
         assert!(rows[..rows.len() - 1].iter().all(|r| r.copy_text.is_none()));
+
+        // …reading when the turn ENDED, not when it began a moment after
+        // the question (both used to show the same minute)…
+        let mut finished = done.clone();
+        finished.created_at = ms;
+        finished.duration_ms = Some(90_000);
+        finished.finished_at = Some(ms + 95_000);
+        let rows = rows_for_entry(&finished, false, false, &mut parse);
+        assert_eq!(rows.last().unwrap().timestamp, Some(ms + 95_000));
+        // …from `createdAt + durationMs` on docs written before `finishedAt`…
+        finished.finished_at = None;
+        let rows = rows_for_entry(&finished, false, false, &mut parse);
+        assert_eq!(rows.last().unwrap().timestamp, Some(ms + 90_000));
+        // …and none for an unknown time, which would read as 1970.
+        let mut unknown = user.clone();
+        unknown.created_at = 0;
+        let rows = rows_for_entry(&unknown, true, false, &mut parse);
+        assert_eq!(rows[0].timestamp, None);
 
         // …but never mid-stream (chat-view.tsx: no hover under a moving reply).
         let live = assistant(
@@ -18042,6 +18084,7 @@ mod tests {
             status: None,
             continuation_of: None,
             duration_ms: None,
+            finished_at: None,
         }
     }
 

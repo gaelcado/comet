@@ -37,6 +37,12 @@ pub struct RenderedMessage {
     /// Epoch millis, plus the same instant as RFC 3339 for readability.
     pub created_at: i64,
     pub created_at_iso: String,
+    /// When a settled assistant turn ended (`createdAt` is when it began).
+    /// Absent on user rows and live streams.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at_iso: Option<String>,
     pub device_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<MessageStatus>,
@@ -97,10 +103,13 @@ fn fold_into(parent: &mut RenderedMessage, child: RenderedMessage) {
     if child.pending_input.is_some() {
         parent.pending_input = child.pending_input;
     }
-    // The continuation carries the live status of the turn.
+    // The continuation carries the live status of the turn, and its end:
+    // a still-streaming tail means the turn hasn't finished.
     if child.status.is_some() {
         parent.status = child.status;
     }
+    parent.finished_at = child.finished_at;
+    parent.finished_at_iso = child.finished_at_iso;
 }
 
 fn render_one(entry: &SessionMessageEntry, options: RenderOptions) -> RenderedMessage {
@@ -164,11 +173,14 @@ fn render_one(entry: &SessionMessageEntry, options: RenderOptions) -> RenderedMe
             MessagePart::Fork { .. } | MessagePart::Switch { .. } => {}
         }
     }
+    let finished_at = entry.ended_at().filter(|at| *at > 0);
     RenderedMessage {
         id: entry.id.clone(),
         role: entry.role,
         created_at: entry.created_at,
         created_at_iso: iso(entry.created_at),
+        finished_at,
+        finished_at_iso: finished_at.map(iso),
         device_id: entry.device_id.clone(),
         status: entry.status,
         text: text_parts.join("\n\n"),
@@ -239,6 +251,7 @@ mod tests {
     fn entry(id: &str, role: MessageRole, parts: Vec<MessagePart>) -> SessionMessageEntry {
         SessionMessageEntry {
             duration_ms: None,
+            finished_at: None,
             id: id.into(),
             role,
             parts,
@@ -313,6 +326,23 @@ mod tests {
             Some("req-1")
         );
         assert_eq!(rendered[1].created_at_iso, "2023-11-14T22:13:20Z");
+        assert_eq!(rendered[1].finished_at, None, "no end recorded");
+    }
+
+    #[test]
+    fn settled_turns_report_when_they_ended() {
+        let mut reply = entry("a1", MessageRole::Assistant, vec![]);
+        reply.duration_ms = Some(60_000);
+        reply.finished_at = Some(1_700_000_065_000);
+        let question = entry("u1", MessageRole::User, vec![]);
+        let rendered = render_entries(&[question, reply.clone()], RenderOptions::default());
+        assert_eq!(rendered[0].finished_at, None, "user rows have no end");
+        assert_eq!(rendered[1].finished_at, Some(1_700_000_065_000));
+        assert_eq!(rendered[1].finished_at_iso.as_deref(), Some("2023-11-14T22:14:25Z"));
+        // Docs written before `finishedAt` derive it from the duration.
+        reply.finished_at = None;
+        let rendered = render_entries(&[reply], RenderOptions::default());
+        assert_eq!(rendered[0].finished_at, Some(1_700_000_060_000));
     }
 
     #[test]
@@ -388,5 +418,6 @@ mod tests {
         assert_eq!(rendered.len(), 1);
         assert_eq!(rendered[0].text, "first half\n\nsecond half");
         assert_eq!(rendered[0].status, Some(MessageStatus::Streaming));
+        assert_eq!(rendered[0].finished_at, None, "a live tail hasn't ended");
     }
 }

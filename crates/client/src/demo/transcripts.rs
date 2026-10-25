@@ -273,6 +273,7 @@ pub(crate) fn entry(
         status: Some(MessageStatus::Complete),
         continuation_of: None,
         duration_ms: (role == MessageRole::Assistant).then_some(48_000),
+        finished_at: (role == MessageRole::Assistant).then_some(created_at + 48_000),
     }
 }
 
