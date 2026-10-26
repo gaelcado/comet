@@ -1174,6 +1174,8 @@ pub struct Row {
     /// Epoch-ms for the 16px hover-timestamp strip UNDER this row: set on the
     /// LAST row of a completed entry (user rows always; assistant rows only
     /// once streaming ends — "the turn isn't at a time yet", chat-view.tsx).
+    /// `Some(0)` when the entry's time is unknown: the strip and its copy
+    /// action stay, only the time label is left out.
     pub timestamp: Option<i64>,
     /// Text copied by the entry-level hover action. Present only on the last
     /// settled row, beside the timestamp; tools and transport-only metadata
@@ -1467,7 +1469,7 @@ pub fn rows_for_entry(
             entry_id,
             // User rows always carry the strip (chat-view.tsx: whenever
             // `createdAt` exists — the optimistic echo included).
-            timestamp: entry.settled_at(),
+            timestamp: Some(entry.settled_at().unwrap_or(0)),
             copy_text,
             compact_fold: None,
         }];
@@ -1952,7 +1954,7 @@ pub fn rows_for_entry(
             RowKind::ForkMarker { .. } | RowKind::SwitchMarker { .. }
         )
     {
-        last.timestamp = entry.settled_at();
+        last.timestamp = Some(entry.settled_at().unwrap_or(0));
         last.copy_text = assistant_copy_text(entry);
         last.version ^= 1 << 62;
     }
@@ -8351,14 +8353,18 @@ impl Transcript {
         let copy_text = row.copy_text.clone();
         let copy_entry_id = row.entry_id.clone();
         let strip = row.timestamp.map(|ms| {
-            let timestamp = div()
-                .text_size(crate::typography::ui_rems(12.0))
-                .text_color(theme.text_muted.opacity(0.55))
-                .child(SharedString::from(format_timestamp(
-                    ms,
-                    chrono::Utc::now().timestamp_millis(),
-                    &chrono::Local,
-                )));
+            // An unknown time (0) keeps the lane and its copy action but
+            // shows no label rather than 1970 or a misleading start time.
+            let timestamp = (ms > 0).then(|| {
+                div()
+                    .text_size(crate::typography::ui_rems(12.0))
+                    .text_color(theme.text_muted.opacity(0.55))
+                    .child(SharedString::from(format_timestamp(
+                        ms,
+                        chrono::Utc::now().timestamp_millis(),
+                        &chrono::Local,
+                    )))
+            });
             let copy = copy_text.map(|text| {
                 let entry_id = copy_entry_id.clone();
                 let fade_key = format!("copy-message-hover-{entry_id}");
@@ -8397,7 +8403,7 @@ impl Transcript {
                 .flex_row()
                 .items_center()
                 .gap(px(Theme::SPACE_SM));
-            let metadata = metadata.child(timestamp).children(copy);
+            let metadata = metadata.children(timestamp).children(copy);
             div()
                 .h(px(Theme::SPACE_SM + Theme::SPACE_MD * 2.0))
                 .pt(px(Theme::SPACE_SM))
@@ -13073,8 +13079,7 @@ mod tests {
             id: id.into(),
             role: MessageRole::Assistant,
             parts,
-            // A real time: zero reads as unknown and hides the timestamp.
-            created_at: 1,
+            created_at: 0,
             device_id: "dev".into(),
             status: Some(status),
             continuation_of: None,
@@ -17812,11 +17817,12 @@ mod tests {
         finished.finished_at = None;
         let rows = rows_for_entry(&finished, false, false, &mut parse);
         assert_eq!(rows.last().unwrap().timestamp, Some(ms + 90_000));
-        // …and none for an unknown time, which would read as 1970.
+        // …and no label for an unknown time, which would read as 1970; the
+        // strip itself stays for its copy action.
         let mut unknown = user.clone();
         unknown.created_at = 0;
         let rows = rows_for_entry(&unknown, true, false, &mut parse);
-        assert_eq!(rows[0].timestamp, None);
+        assert_eq!(rows[0].timestamp, Some(0));
 
         // …but never mid-stream (chat-view.tsx: no hover under a moving reply).
         let live = assistant(
