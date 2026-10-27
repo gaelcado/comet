@@ -61,55 +61,18 @@ pub struct RenderedMessage {
 }
 
 /// Render entries in order, folding continuation entries into the message
-/// they continue.
+/// they continue — the same join the app and engine read
+/// ([`zeron_doc::join_continuation_entries`]): the last segment carries the
+/// turn's live status and its end. A continuation whose parent is not in the
+/// window stands alone under its own id.
 pub fn render_entries(
     entries: &[SessionMessageEntry],
     options: RenderOptions,
 ) -> Vec<RenderedMessage> {
-    let mut rendered: Vec<RenderedMessage> = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let mut message = render_one(entry, options);
-        if let Some(parent_id) = &entry.continuation_of
-            && let Some(parent) = rendered.iter_mut().find(|m| &m.id == parent_id)
-        {
-            fold_into(parent, message);
-            continue;
-        }
-        // A continuation whose parent is not in the window stands alone;
-        // keep its own id so a later `continuation_of` can still find it.
-        message.id = entry.id.clone();
-        rendered.push(message);
-    }
-    rendered
-}
-
-fn fold_into(parent: &mut RenderedMessage, child: RenderedMessage) {
-    if !child.text.is_empty() {
-        if !parent.text.is_empty() {
-            parent.text.push_str("\n\n");
-        }
-        parent.text.push_str(&child.text);
-    }
-    match (&mut parent.reasoning, child.reasoning) {
-        (Some(existing), Some(more)) => {
-            existing.push_str("\n\n");
-            existing.push_str(&more);
-        }
-        (slot @ None, Some(more)) => *slot = Some(more),
-        _ => {}
-    }
-    parent.tools.extend(child.tools);
-    parent.errors.extend(child.errors);
-    if child.pending_input.is_some() {
-        parent.pending_input = child.pending_input;
-    }
-    // The continuation carries the live status of the turn, and its end:
-    // a still-streaming tail means the turn hasn't finished.
-    if child.status.is_some() {
-        parent.status = child.status;
-    }
-    parent.finished_at = child.finished_at;
-    parent.finished_at_iso = child.finished_at_iso;
+    zeron_doc::join_continuation_entries(entries.to_vec())
+        .iter()
+        .map(|entry| render_one(entry, options))
+        .collect()
 }
 
 fn render_one(entry: &SessionMessageEntry, options: RenderOptions) -> RenderedMessage {
@@ -338,7 +301,10 @@ mod tests {
         let rendered = render_entries(&[question, reply.clone()], RenderOptions::default());
         assert_eq!(rendered[0].finished_at, None, "user rows have no end");
         assert_eq!(rendered[1].finished_at, Some(1_700_000_065_000));
-        assert_eq!(rendered[1].finished_at_iso.as_deref(), Some("2023-11-14T22:14:25Z"));
+        assert_eq!(
+            rendered[1].finished_at_iso.as_deref(),
+            Some("2023-11-14T22:14:25Z")
+        );
         // Docs written before `finishedAt` derive it from the duration.
         reply.finished_at = None;
         let rendered = render_entries(&[reply], RenderOptions::default());

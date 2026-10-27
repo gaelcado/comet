@@ -979,7 +979,7 @@ impl ChatDocHandle {
                     .doc
                     .set_message_status(&entry.id, MessageStatus::Aborted)?
             {
-                let part_id = format!("{}-recovery", entry.id);
+                let part_id = zeron_doc::recovery_part_id(&entry.id);
                 if let Err(err) = self.doc.append_error_part(&entry.id, &part_id, note) {
                     tracing::warn!(chat = %self.chat_id, error = %err, "recovery note append failed");
                 }

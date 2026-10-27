@@ -4,7 +4,7 @@
 //! - `meta`:     LoroMap  { chatId: string, schemaVersion: number }         (host-only writer)
 //! - `messages`: LoroList of LoroMap {
 //!   id, role, parts: LoroList<part map>, createdAt, deviceId, status?,
-//!   continuationOf?, durationMs? }
+//!   continuationOf?, durationMs?, finishedAt? }
 //! - `commands`: LoroList of LoroMap {
 //!   id, kind, payload(json), issuedBy, issuedAt, basedOn?, expiresAt?, status, resolution? }
 //! - `queue`:    LoroMovableList of LoroMap {
@@ -62,22 +62,28 @@ pub struct SessionMessageEntry {
     pub duration_ms: Option<i64>,
     /// Epoch millis the assistant turn settled, stamped with `duration_ms`.
     /// `created_at` is when the turn began; this is the moment its reply
-    /// reads as written. Absent on the same rows as `duration_ms`.
+    /// reads as written. Absent on user rows, live streams, and docs written
+    /// before the field existed (which may still carry `duration_ms`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<i64>,
+}
+
+/// The error part crash recovery appends to a stream it found abandoned
+/// and marked aborted (see the engine's `mark_abandoned_streams`).
+pub fn recovery_part_id(entry_id: &str) -> String {
+    format!("{entry_id}-recovery")
 }
 
 impl SessionMessageEntry {
     /// When this entry reads as written, for its hover timestamp: a settled
     /// assistant turn's end, otherwise its creation. `None` for an unknown
-    /// (zero or negative) time, which would render as 1970, and for a turn
-    /// that settled with no recorded end: crash recovery marks a dead
-    /// stream aborted without one, and its start would read as the
-    /// question's time — the very confusion `finishedAt` exists to fix.
+    /// (zero or negative) time, which would render as 1970, and for a stream
+    /// crash recovery aborted: nothing recorded when it died, and its start
+    /// would read as the question's time — the confusion `finishedAt` fixes.
     pub fn settled_at(&self) -> Option<i64> {
         let at = match self.ended_at() {
             Some(end) => end.max(self.created_at),
-            None if self.status == Some(MessageStatus::Aborted) => return None,
+            None if self.recovered() => return None,
             None => self.created_at,
         };
         (at > 0).then_some(at)
@@ -96,17 +102,30 @@ impl SessionMessageEntry {
         })
     }
 
-    /// Fold continuation segment `next` into this root: parts append, and
-    /// the turn ends where the last segment ended. Each segment counts its
-    /// own `durationMs` from its own start, so the root's duration spans
-    /// from the root's start to that end rather than taking the last
-    /// segment's alone.
+    /// Whether crash recovery settled this entry (aborted, with its note).
+    fn recovered(&self) -> bool {
+        self.status == Some(MessageStatus::Aborted) && {
+            let note = recovery_part_id(&self.id);
+            self.parts
+                .iter()
+                .any(|part| matches!(part, MessagePart::Error { id, .. } if *id == note))
+        }
+    }
+
+    /// Fold continuation segment `next` into this root. Parts append, and the
+    /// last segment speaks for the turn: its status, and its end. Each segment
+    /// counts its own `durationMs` from its own start, so the root's duration
+    /// spans from the root's start to that end rather than taking the last
+    /// segment's alone; a tail with no end (still streaming) leaves the turn
+    /// without one.
     pub fn absorb_continuation(&mut self, next: &SessionMessageEntry) {
         self.parts.extend(next.parts.iter().cloned());
-        if let Some(end) = next.ended_at() {
-            self.finished_at = Some(end);
-            self.duration_ms = Some((end - self.created_at).max(0));
+        if next.status.is_some() {
+            self.status = next.status;
         }
+        let end = next.ended_at();
+        self.finished_at = end;
+        self.duration_ms = end.map(|end| (end - self.created_at).max(0));
     }
 }
 
@@ -679,6 +698,9 @@ impl SessionDoc {
         entries.reverse();
         // Preserve the joined id even when the first included segment's root
         // is outside the window, so its text rows survive the full reset.
+        // The joined duration then counts from that segment's start, not the
+        // root's: only docs from before continuations stopped being written
+        // split a turn, so a window into one may read a shorter "Worked for".
         if let Some(first) = entries.first_mut()
             && let Some(root) = first.continuation_of.take()
         {
@@ -1357,12 +1379,6 @@ pub struct SegmentWriter<'a> {
 
 impl<'a> SegmentWriter<'a> {
     /// Begin a streaming assistant entry: pushes the entry with `status: streaming`, no parts.
-    ///
-    /// `created_at` never reads earlier than the entry before it: a reply
-    /// can't begin before the message it answers. A runtime parked between
-    /// turns holds its park time as the next segment's start until a steer
-    /// boundary resets it, and a harness that streams before that boundary
-    /// would otherwise stamp its reply above the question in time.
     pub fn begin(
         doc: &'a SessionDoc,
         entry_id: &str,
@@ -1371,23 +1387,6 @@ impl<'a> SegmentWriter<'a> {
     ) -> Result<Self, DocError> {
         let messages = doc.doc.get_list("messages");
         let entry_index = messages.len();
-        // Never past this host's own clock, though: a future-dated entry
-        // (another device's skew) would otherwise push the start, and with
-        // it `durationMs`'s origin, into the future.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(created_at, |d| d.as_millis() as i64);
-        let created_at = match entry_index.checked_sub(1).and_then(|ix| messages.get(ix)) {
-            Some(loro::ValueOrContainer::Container(loro::Container::Map(map))) => {
-                match map.get("createdAt") {
-                    Some(loro::ValueOrContainer::Value(LoroValue::I64(prev))) => {
-                        created_at.max(prev.min(now))
-                    }
-                    _ => created_at,
-                }
-            }
-            _ => created_at,
-        };
         let map = messages.push_container(LoroMap::new())?;
         write_entry_scalar_fields(
             &map,
@@ -1914,50 +1913,18 @@ mod tests {
     }
 
     #[test]
-    fn a_reply_never_begins_before_the_message_it_answers() {
-        let doc = SessionDoc::init("c1").unwrap();
-        let mut question = user_entry("m1", "hello");
-        question.created_at = 2_000;
-        doc.push_message(&question).unwrap();
-        // A parked runtime's stale segment start (its last turn's park time).
-        SegmentWriter::begin(&doc, "a1", "dev", 1_000)
-            .unwrap()
-            .finish(&[], MessageStatus::Complete)
-            .unwrap();
-        let reply = &doc.read_entries().unwrap()[1];
-        assert_eq!(reply.created_at, 2_000);
-        assert!(reply.finished_at.unwrap() >= 2_000);
-        // A later start is kept as is.
-        SegmentWriter::begin(&doc, "a2", "dev", 9_000_000_000_000).unwrap();
-        assert_eq!(doc.read_entries().unwrap()[2].created_at, 9_000_000_000_000);
-    }
-
-    #[test]
-    fn a_future_dated_entry_never_pushes_a_reply_past_now() {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-        let doc = SessionDoc::init("c1").unwrap();
-        let mut skewed = user_entry("m1", "from a fast clock");
-        skewed.created_at = now + 3_600_000;
-        doc.push_message(&skewed).unwrap();
-        SegmentWriter::begin(&doc, "a1", "dev", now - 1_000)
-            .unwrap()
-            .finish(&[], MessageStatus::Complete)
-            .unwrap();
-        let reply = &doc.read_entries().unwrap()[1];
-        assert!(reply.created_at <= now + 5_000, "{}", reply.created_at);
-        assert!(reply.finished_at.unwrap() <= now + 5_000);
-    }
-
-    #[test]
     fn settled_at_hides_what_it_cannot_know() {
         let mut reply = user_entry("a1", "x");
         reply.role = MessageRole::Assistant;
         reply.created_at = 1_000;
-        // Crash recovery aborted it with no end: no strip, not its start.
+        // Stopped before `durationMs` existed: its start is all there is.
         reply.status = Some(MessageStatus::Aborted);
+        assert_eq!(reply.settled_at(), Some(1_000));
+        // Aborted by crash recovery with no end: no time, not its start.
+        reply.parts.push(MessagePart::Error {
+            id: recovery_part_id("a1"),
+            message: "Run interrupted".into(),
+        });
         assert_eq!(reply.settled_at(), None);
         reply.finished_at = Some(4_000);
         assert_eq!(reply.settled_at(), Some(4_000));
@@ -1989,17 +1956,18 @@ mod tests {
         assert_eq!(joined[0].parts.len(), 2);
         assert_eq!(joined[0].finished_at, Some(12_000));
         assert_eq!(joined[0].duration_ms, Some(11_000));
-        // A stamped end wins over the derived one; a live tail keeps the root's.
+        // A stamped end wins over the derived one; a live tail has none yet,
+        // and its status speaks for the turn.
         let mut stamped = entry("a1-2", 10_000, Some(2_000), Some("a1"));
         stamped.finished_at = Some(12_500);
         let joined =
             join_continuation_entries(vec![entry("a1", 1_000, Some(1_000), None), stamped]);
         assert_eq!(joined[0].settled_at(), Some(12_500));
-        let joined = join_continuation_entries(vec![
-            entry("a1", 1_000, Some(1_000), None),
-            entry("a1-2", 10_000, None, Some("a1")),
-        ]);
-        assert_eq!(joined[0].duration_ms, Some(1_000));
+        let mut live = entry("a1-2", 10_000, None, Some("a1"));
+        live.status = Some(MessageStatus::Streaming);
+        let joined = join_continuation_entries(vec![entry("a1", 1_000, Some(1_000), None), live]);
+        assert_eq!(joined[0].status, Some(MessageStatus::Streaming));
+        assert_eq!((joined[0].duration_ms, joined[0].finished_at), (None, None));
     }
 
     #[test]

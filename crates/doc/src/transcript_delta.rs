@@ -422,6 +422,30 @@ mod tests {
     }
 
     #[test]
+    fn a_settling_tick_is_never_a_bare_text_append() {
+        // The final flush grows the text AND stamps the turn's timing; a
+        // text-only append would drop `durationMs`/`finishedAt` on the wire.
+        let b0 = entry("b", "almost");
+        let mut b1 = entry("b", "almost done");
+        b1.duration_ms = Some(4_000);
+        b1.finished_at = Some(4_000);
+        for next in [b1.clone(), {
+            let mut only_end = b1.clone();
+            only_end.duration_ms = None;
+            only_end
+        }] {
+            match diff_transcript(&[b0.clone()], &[next.clone()]) {
+                TranscriptFrame::Delta { upsert, append, .. } => {
+                    assert!(append.is_empty(), "timing changes travel as an upsert");
+                    assert_eq!(upsert.len(), 1);
+                }
+                other => panic!("expected delta, got {other:?}"),
+            }
+            apply(&[b0.clone()], &[next]);
+        }
+    }
+
+    #[test]
     fn streaming_reasoning_tick_is_a_text_append() {
         let mut b0 = entry("b", "prompt");
         b0.parts = vec![MessagePart::Reasoning {
