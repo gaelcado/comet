@@ -564,4 +564,14 @@ fn pull_request_pane_follows_the_shared_panel_policy(cx: &mut TestAppContext) {
     assert!(shell.read_with(cx, |s, _| s.right_edge_bounce.is_none()));
     change(&shell, cx, |s, _, cx| s.open_pull_requests(cx));
     expect_board(draw_board(&shell, cx, 0), [300.0, 650.0, 650.0]);
+
+    // A sidebar toggled on the chat route re-splits the board's pane on
+    // return, as a toggle here would.
+    change(&shell, cx, |s, _, cx| {
+        s.apply_nav(NavEntry::Chat("a".into()), cx)
+    });
+    change(&shell, cx, |s, _, cx| s.toggle_sidebar(cx));
+    settled_board(&shell, cx);
+    change(&shell, cx, |s, _, cx| s.open_pull_requests(cx));
+    expect_board(settled_board(&shell, cx), [0.0, 800.0, 800.0]);
 }

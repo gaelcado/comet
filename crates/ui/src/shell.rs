@@ -2243,6 +2243,9 @@ pub struct Shell {
     /// the chat route and the Pull requests route. Seeded by the first
     /// frame, so a saved divider survives a relaunch.
     split_viewport: [Option<f32>; 2],
+    /// The settled sidebar width each of those routes was last left with:
+    /// a sidebar toggled on the other route re-splits this one on return.
+    departed_sidebar: [Option<f32>; 2],
     /// The last window fit and the inputs it was computed from, one slot
     /// per `closing` flag of `fit`: layout helpers ask for both many times
     /// per frame while a close runs. Not a per-frame value, since handlers
@@ -2683,6 +2686,7 @@ impl Shell {
             painted_columns: None,
             fit_exits: [None; 3],
             split_viewport: [None; 2],
+            departed_sidebar: [None; 2],
             fit_memo: Default::default(),
             right_images_suspended: false,
             sidebar_edge_bounce: None,
@@ -4966,9 +4970,11 @@ impl Shell {
                 page.update(cx, |page, _| page.on_hidden());
             }
         }
-        if self.route != route {
+        let changed = self.route != route;
+        if changed {
             // The departing route's panel motion ends with it, its divider
             // bounce included; the arriving one lays out at rest.
+            self.leave_route_layout();
             self.clear_panel_transitions();
             self.fit_exits = [None; 3];
             self.painted_columns = None;
@@ -4976,6 +4982,9 @@ impl Shell {
             self.right_resize_edge = None;
         }
         self.route = route;
+        if changed {
+            self.arrive_route_layout(cx);
+        }
         if !was_pull_requests && will_show_pull_requests {
             if let Some(page) = self.pull_requests_page.as_ref().cloned() {
                 page.update(cx, |page, cx| page.on_visible(cx));
@@ -16753,13 +16762,20 @@ mod exit_regressions {
                 cx,
             );
         });
-        // The app's narrowest window, then a wide one.
+        // The app's narrowest window, then a wide one, beside the board and
+        // covering it.
         for width in [900.0, 1400.0] {
             cx.simulate_resize(gpui::size(px(width), px(800.0)));
-            for collapsed in [true, false] {
+            for (collapsed, expanded) in
+                [(true, false), (false, false), (true, true), (false, true)]
+            {
                 shell.update(cx, |shell, cx| {
                     shell.settings.sidebar_collapsed = collapsed;
                     shell.sidebar_tween = None;
+                    if shell.pull_request_pane.expanded != expanded {
+                        shell.toggle_right_pane_expand(cx);
+                    }
+                    assert_eq!(shell.pull_request_pane.expanded, expanded);
                     cx.notify();
                 });
                 for fullscreen in [false, true] {
@@ -16775,7 +16791,7 @@ mod exit_regressions {
                     // The tabs stay clear of the window-control cluster.
                     assert!(
                         tab.left() >= new_session.right(),
-                        "PR tab overlaps New session: width={width}, collapsed={collapsed}, fullscreen={fullscreen}, tab={tab:?}, new_session={new_session:?}"
+                        "PR tab overlaps New session: width={width}, collapsed={collapsed}, expanded={expanded}, fullscreen={fullscreen}, tab={tab:?}, new_session={new_session:?}"
                     );
                     let toggle = cx.debug_bounds("toggle-pull-request-pane").unwrap();
                     assert!(toggle.left() >= tab.right() && toggle.right() <= px(width));

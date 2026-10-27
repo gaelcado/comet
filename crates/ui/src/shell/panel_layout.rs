@@ -2,6 +2,16 @@
 //! share its width, and the motion between arrangements.
 use super::*;
 
+/// A route's slot in the per-route split records: the routes with a right
+/// column.
+fn split_slot(route: Route) -> Option<usize> {
+    match route {
+        Route::Chat => Some(0),
+        Route::PullRequests => Some(1),
+        Route::Settings(_) => None,
+    }
+}
+
 /// The pull request pane's recency key; never a chat id.
 const PULL_REQUEST_PANE_KEY: &str = "\0pull-requests";
 
@@ -197,6 +207,28 @@ impl Shell {
         match self.route {
             Route::PullRequests => self.settings.pull_request_pane_width = width,
             _ => self.settings.right_pane_width = width,
+        }
+    }
+
+    /// Leaving a route remembers its settled sidebar width.
+    pub(super) fn leave_route_layout(&mut self) {
+        if let Some(slot) = split_slot(self.route) {
+            self.departed_sidebar[slot] = Some(self.settled_fit().1);
+        }
+    }
+
+    /// Arriving on a route whose sidebar changed meanwhile (toggled on the
+    /// other route) re-splits it, as that toggle would have here. A sidebar
+    /// unchanged since leaving keeps a dragged divider.
+    pub(super) fn arrive_route_layout(&mut self, cx: &App) {
+        let Some(slot) = split_slot(self.route) else {
+            return;
+        };
+        if self.departed_sidebar[slot]
+            .take()
+            .is_some_and(|left| (self.settled_fit().1 - left).abs() > 0.5)
+        {
+            self.split_panel_widths(cx);
         }
     }
 
@@ -757,10 +789,8 @@ impl Shell {
         // outside takeover takes a share, so a chat switch, a visit to
         // Settings or a relaunch keeps a dragged divider; panel toggles
         // re-split on their own (see `Self::resplit_panels`).
-        let slot = match self.route {
-            Route::Chat => 0,
-            Route::PullRequests => 1,
-            Route::Settings(_) => return,
+        let Some(slot) = split_slot(self.route) else {
+            return;
         };
         let last = *self.split_viewport[slot].get_or_insert(viewport);
         let (fit, _) = self.settled_fit();

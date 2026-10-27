@@ -719,8 +719,9 @@ impl Shell {
         let plus_inset = TITLEBAR_ACTION_SLOT_WIDTH * self.titlebar_plus_alpha(cx);
         let sidebar_now = self.sidebar_now();
         let right_pad = self.titlebar_right_pad(TITLEBAR_ACTION_EDGE_INSET);
-        // Open and not hidden by the window fit; its strip follows the
-        // painted pane, mid-transition included.
+        // Open and not hidden by the window fit. The strip follows the
+        // painted pane while it opens or resizes; a closing pane drops its
+        // strip at once.
         let open = self.right_column_shown();
         let pane_width = self.right_visible_width(cx);
         let covers_board = open && pane_width >= (self.viewport_width - sidebar_now).max(0.0) - 0.5;
