@@ -2431,9 +2431,11 @@ pub struct Shell {
     /// the chat route and the Pull requests route. Seeded by the first
     /// frame, so a saved divider survives a relaunch.
     split_viewport: [Option<f32>; 2],
-    /// The settled sidebar width each of those routes was last left with:
-    /// a sidebar toggled on the other route re-splits this one on return.
-    departed_sidebar: [Option<f32>; 2],
+    /// Sidebar toggles so far, and the count each of those routes last
+    /// split for: a toggle made on the other route re-splits this one on
+    /// return.
+    sidebar_toggles: u64,
+    split_sidebar_toggles: [u64; 2],
     /// The last window fit and the inputs it was computed from, one slot
     /// per `closing` flag of `fit`: layout helpers ask for both many times
     /// per frame while a close runs. Not a per-frame value, since handlers
@@ -2920,7 +2922,8 @@ impl Shell {
             painted_columns: None,
             fit_exits: [None; 3],
             split_viewport: [None; 2],
-            departed_sidebar: [None; 2],
+            sidebar_toggles: 0,
+            split_sidebar_toggles: [0; 2],
             fit_memo: Default::default(),
             right_images_suspended: false,
             sidebar_edge_bounce: None,
@@ -3416,9 +3419,13 @@ impl Shell {
                     self.nav.push(entry);
                 }
             }
-            self.clear_panel_transitions();
+            // The right column's motion is the shown route's: a selection
+            // change while Pull requests shows leaves its pane easing.
+            if matches!(self.route, Route::Chat) {
+                self.clear_panel_transitions();
+                self.fit_exits = [None; 3];
+            }
             self.terminal_tween = None;
-            self.fit_exits = [None; 3];
             let key = self.panel_key(cx);
             // Entering the new-chat canvas always lands with the terminal
             // hidden (user request) — a previously opened canvas drawer must
@@ -3568,6 +3575,7 @@ impl Shell {
         self.sidebar_tween = Some(self.panel_tween(from, self.sidebar_target()));
         self.schedule_save(cx);
         self.resplit_panels(before, None, cx);
+        self.note_sidebar_toggle();
         cx.notify();
     }
 
@@ -5302,11 +5310,9 @@ impl Shell {
                 page.update(cx, |page, _| page.on_hidden());
             }
         }
-        let changed = self.route != route;
-        if changed {
-            // The departing route's panel motion ends with it, its divider
-            // bounce included; the arriving one lays out at rest.
-            self.leave_route_layout();
+        if self.route != route {
+            // The departing route's right column motion ends with it, its
+            // divider bounce included; the arriving one's starts at rest.
             self.clear_panel_transitions();
             self.fit_exits = [None; 3];
             self.painted_columns = None;
@@ -5314,9 +5320,6 @@ impl Shell {
             self.right_resize_edge = None;
         }
         self.route = route;
-        if changed {
-            self.arrive_route_layout(cx);
-        }
         if !was_pull_requests && will_show_pull_requests {
             if let Some(page) = self.pull_requests_page.as_ref().cloned() {
                 page.update(cx, |page, cx| page.on_visible(cx));

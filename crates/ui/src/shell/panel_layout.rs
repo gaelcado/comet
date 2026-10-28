@@ -210,25 +210,13 @@ impl Shell {
         }
     }
 
-    /// Leaving a route remembers its settled sidebar width.
-    pub(super) fn leave_route_layout(&mut self) {
+    /// A sidebar toggle re-splits the shown route at once (see
+    /// `Shell::toggle_sidebar`); the other route catches up on its next
+    /// frame (see [`Self::observe_viewport_width`]).
+    pub(super) fn note_sidebar_toggle(&mut self) {
+        self.sidebar_toggles += 1;
         if let Some(slot) = split_slot(self.route) {
-            self.departed_sidebar[slot] = Some(self.settled_fit().1);
-        }
-    }
-
-    /// Arriving on a route whose sidebar changed meanwhile (toggled on the
-    /// other route) re-splits it, as that toggle would have here. A sidebar
-    /// unchanged since leaving keeps a dragged divider.
-    pub(super) fn arrive_route_layout(&mut self, cx: &App) {
-        let Some(slot) = split_slot(self.route) else {
-            return;
-        };
-        if self.departed_sidebar[slot]
-            .take()
-            .is_some_and(|left| (self.settled_fit().1 - left).abs() > 0.5)
-        {
-            self.split_panel_widths(cx);
+            self.split_sidebar_toggles[slot] = self.sidebar_toggles;
         }
     }
 
@@ -797,6 +785,13 @@ impl Shell {
         if fit.right && !self.right_column_expanded() && (viewport - last).abs() > 0.01 {
             self.split_panel_widths(cx);
             self.split_viewport[slot] = Some(viewport);
+        }
+        // A sidebar toggled while the other route showed re-splits this one
+        // for the chat actually shown, as that toggle would have here. A
+        // sidebar drag is not a toggle, so a dragged divider holds.
+        if self.split_sidebar_toggles[slot] != self.sidebar_toggles {
+            self.split_sidebar_toggles[slot] = self.sidebar_toggles;
+            self.split_panel_widths(cx);
         }
     }
 }
