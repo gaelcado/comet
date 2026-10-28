@@ -205,7 +205,6 @@ pub(crate) fn subagent_transcript(
     if running {
         reply.status = Some(MessageStatus::Streaming);
         reply.duration_ms = None;
-        reply.finished_at = None;
         if let Some(MessagePart::Tool { resolved, .. }) = reply.parts.last_mut() {
             *resolved = false;
         }
@@ -274,7 +273,7 @@ pub(crate) fn entry(
         status: Some(MessageStatus::Complete),
         continuation_of: None,
         duration_ms: (role == MessageRole::Assistant).then_some(48_000),
-        finished_at: (role == MessageRole::Assistant).then_some(created_at + 48_000),
+        finished_at: None,
     }
 }
 
@@ -435,7 +434,6 @@ fn veil(host: &str, now: i64) -> Vec<SessionMessageEntry> {
     );
     live.status = Some(MessageStatus::Streaming);
     live.duration_ms = None;
-    live.finished_at = None;
     vec![
         user("m1", now - 3_500_000, &attach),
         assistant(

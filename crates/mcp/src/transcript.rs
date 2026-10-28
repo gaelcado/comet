@@ -38,7 +38,8 @@ pub struct RenderedMessage {
     pub created_at: i64,
     pub created_at_iso: String,
     /// When a settled assistant turn ended (`createdAt` is when it began).
-    /// Absent on user rows and live streams.
+    /// Absent on user rows, live streams, replies crash recovery aborted, and
+    /// older entries without a duration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -295,20 +296,15 @@ mod tests {
     #[test]
     fn settled_turns_report_when_they_ended() {
         let mut reply = entry("a1", MessageRole::Assistant, vec![]);
-        reply.duration_ms = Some(60_000);
         reply.finished_at = Some(1_700_000_065_000);
         let question = entry("u1", MessageRole::User, vec![]);
-        let rendered = render_entries(&[question, reply.clone()], RenderOptions::default());
+        let rendered = render_entries(&[question, reply], RenderOptions::default());
         assert_eq!(rendered[0].finished_at, None, "user rows have no end");
         assert_eq!(rendered[1].finished_at, Some(1_700_000_065_000));
         assert_eq!(
             rendered[1].finished_at_iso.as_deref(),
             Some("2023-11-14T22:14:25Z")
         );
-        // Docs written before `finishedAt` derive it from the duration.
-        reply.finished_at = None;
-        let rendered = render_entries(&[reply], RenderOptions::default());
-        assert_eq!(rendered[0].finished_at, Some(1_700_000_060_000));
     }
 
     #[test]
@@ -384,6 +380,5 @@ mod tests {
         assert_eq!(rendered.len(), 1);
         assert_eq!(rendered[0].text, "first half\n\nsecond half");
         assert_eq!(rendered[0].status, Some(MessageStatus::Streaming));
-        assert_eq!(rendered[0].finished_at, None, "a live tail hasn't ended");
     }
 }

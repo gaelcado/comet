@@ -4423,9 +4423,7 @@ impl DocHost {
                 continue;
             };
             changed = true;
-            if let Err(err) =
-                handle.write_user_message(&row.id, &row.text, row.issued_at.min(now_ms()))
-            {
+            if let Err(err) = handle.write_user_message(&row.id, &row.text, row.issued_at) {
                 tracing::warn!(chat = %handle.chat_id, error = %err, "cancelled held send write failed");
             }
         }

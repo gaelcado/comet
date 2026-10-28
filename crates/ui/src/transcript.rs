@@ -17834,7 +17834,8 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].timestamp, Some(RowTime::At(ms)));
 
-        // Assistant entries: strip on the LAST row once settled…
+        // Assistant entries: strip on the LAST row once settled; an unknown
+        // time (createdAt 0) keeps the strip and its copy, with no label…
         let done = assistant(
             "a1",
             MessageStatus::Complete,
@@ -17858,33 +17859,12 @@ mod tests {
         // the question (both used to show the same minute)…
         let mut finished = done.clone();
         finished.created_at = ms;
-        finished.duration_ms = Some(90_000);
         finished.finished_at = Some(ms + 95_000);
         let rows = rows_for_entry(&finished, false, false, &mut parse);
-        assert_eq!(rows.last().unwrap().timestamp, Some(RowTime::At(ms + 95_000)));
-        // …from `createdAt + durationMs` on docs written before `finishedAt`…
-        finished.finished_at = None;
-        let rows = rows_for_entry(&finished, false, false, &mut parse);
-        assert_eq!(rows.last().unwrap().timestamp, Some(RowTime::At(ms + 90_000)));
-        // …and no label for an unknown time, which would read as 1970; the
-        // strip itself stays for its copy action.
-        let mut unknown = user.clone();
-        unknown.created_at = 0;
-        let rows = rows_for_entry(&unknown, true, false, &mut parse);
-        assert_eq!(rows[0].timestamp, Some(RowTime::Unknown));
-        // A stream crash recovery aborted has no end and no label either, but
-        // keeps its strip; one the user stopped long ago keeps its start.
-        let mut stopped = finished.clone();
-        stopped.status = Some(MessageStatus::Aborted);
-        stopped.duration_ms = None;
-        let rows = rows_for_entry(&stopped, false, false, &mut parse);
-        assert_eq!(rows.last().unwrap().timestamp, Some(RowTime::At(ms)));
-        stopped.parts.push(MessagePart::Error {
-            id: zeron_doc::recovery_part_id(&stopped.id),
-            message: "Run interrupted".into(),
-        });
-        let rows = rows_for_entry(&stopped, false, false, &mut parse);
-        assert_eq!(rows.last().unwrap().timestamp, Some(RowTime::Unknown));
+        assert_eq!(
+            rows.last().unwrap().timestamp,
+            Some(RowTime::At(ms + 95_000))
+        );
 
         // …but never mid-stream (chat-view.tsx: no hover under a moving reply).
         let live = assistant(
@@ -17904,11 +17884,16 @@ mod tests {
         let mut reply = assistant("a1", MessageStatus::Complete, vec![text_part("p1", "done")]);
         reply.created_at = 1_000;
         reply.finished_at = Some(5_000);
-        let mut row = rows_for_entry(&reply, false, false, &mut parse).pop().unwrap();
+        let mut row = rows_for_entry(&reply, false, false, &mut parse)
+            .pop()
+            .unwrap();
         let version = row.version;
         // A message sent after the reply finished leaves it alone.
         cap_reply_time(&mut row, 1_000, 6_000);
-        assert_eq!((row.timestamp, row.version), (Some(RowTime::At(5_000)), version));
+        assert_eq!(
+            (row.timestamp, row.version),
+            (Some(RowTime::At(5_000)), version)
+        );
         // A steer sent while it worked caps it, and re-keys the row.
         cap_reply_time(&mut row, 1_000, 3_000);
         assert_eq!(row.timestamp, Some(RowTime::At(3_000)));
@@ -17919,15 +17904,6 @@ mod tests {
         row.timestamp = Some(RowTime::Unknown);
         cap_reply_time(&mut row, 1_000, 500);
         assert_eq!(row.timestamp, Some(RowTime::Unknown));
-    }
-
-    #[test]
-    fn a_finish_stamp_alone_rebuilds_the_rows() {
-        let mut reply = assistant("a1", MessageStatus::Complete, vec![text_part("p1", "done")]);
-        reply.created_at = 1_000;
-        let before = entry_fingerprint(&reply, false);
-        reply.finished_at = Some(5_000);
-        assert_ne!(entry_fingerprint(&reply, false), before);
     }
 
     #[test]

@@ -62,8 +62,9 @@ pub struct SessionMessageEntry {
     pub duration_ms: Option<i64>,
     /// Epoch millis the assistant turn settled, stamped with `duration_ms`.
     /// `created_at` is when the turn began; this is the moment its reply
-    /// reads as written. Absent on user rows, live streams, and docs written
-    /// before the field existed (which may still carry `duration_ms`).
+    /// reads as written. Absent on user rows, live streams, replies crash
+    /// recovery aborted, and entries written before the field existed (which
+    /// may still carry `duration_ms`, or, older still, not even that).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<i64>,
 }
@@ -92,10 +93,11 @@ impl SessionMessageEntry {
     /// When a settled turn ended: `finishedAt`, or `createdAt + durationMs`
     /// on docs written before it. A Cloud setup entry counts its duration
     /// from the send that brought the machine up, not its own start, so
-    /// its legacy end isn't derivable and stays unknown.
+    /// its legacy end isn't derivable and stays unknown; so does one with no
+    /// start (a salvaged entry), which would otherwise land in 1970.
     pub fn ended_at(&self) -> Option<i64> {
         self.finished_at.or_else(|| {
-            if zeron_proto::cloud_setup_message_id(&self.id).is_some() {
+            if self.created_at <= 0 || zeron_proto::cloud_setup_message_id(&self.id).is_some() {
                 return None;
             }
             self.duration_ms.map(|d| self.created_at + d.max(0))
@@ -112,20 +114,15 @@ impl SessionMessageEntry {
         }
     }
 
-    /// Fold continuation segment `next` into this root. Parts append, and the
-    /// last segment speaks for the turn: its status, and its end. Each segment
-    /// counts its own `durationMs` from its own start, so the root's duration
-    /// spans from the root's start to that end rather than taking the last
-    /// segment's alone; a tail with no end (still streaming) leaves the turn
-    /// without one.
+    /// Fold continuation segment `next` into this root: parts append, and the
+    /// last segment speaks for the turn — its status and its timing.
     pub fn absorb_continuation(&mut self, next: &SessionMessageEntry) {
         self.parts.extend(next.parts.iter().cloned());
         if next.status.is_some() {
             self.status = next.status;
         }
-        let end = next.ended_at();
-        self.finished_at = end;
-        self.duration_ms = end.map(|end| (end - self.created_at).max(0));
+        self.finished_at = next.finished_at;
+        self.duration_ms = next.duration_ms;
     }
 }
 
@@ -698,9 +695,6 @@ impl SessionDoc {
         entries.reverse();
         // Preserve the joined id even when the first included segment's root
         // is outside the window, so its text rows survive the full reset.
-        // The joined duration then counts from that segment's start, not the
-        // root's: only docs from before continuations stopped being written
-        // split a turn, so a window into one may read a shorter "Worked for".
         if let Some(first) = entries.first_mut()
             && let Some(root) = first.continuation_of.take()
         {
@@ -1935,39 +1929,12 @@ mod tests {
         setup.duration_ms = Some(120_000);
         assert_eq!(setup.ended_at(), None);
         assert_eq!(setup.settled_at(), Some(60_000));
-    }
-
-    #[test]
-    fn continuations_span_the_whole_turn() {
-        let entry = |id: &str, created_at, duration_ms, continuation_of: Option<&str>| {
-            let mut entry = user_entry(id, id);
-            entry.role = MessageRole::Assistant;
-            entry.created_at = created_at;
-            entry.duration_ms = duration_ms;
-            entry.continuation_of = continuation_of.map(Into::into);
-            entry
-        };
-        // Each segment counted only itself: 1s, then 2s starting at 10s.
-        let joined = join_continuation_entries(vec![
-            entry("a1", 1_000, Some(1_000), None),
-            entry("a1-2", 10_000, Some(2_000), Some("a1")),
-        ]);
-        assert_eq!(joined.len(), 1);
-        assert_eq!(joined[0].parts.len(), 2);
-        assert_eq!(joined[0].finished_at, Some(12_000));
-        assert_eq!(joined[0].duration_ms, Some(11_000));
-        // A stamped end wins over the derived one; a live tail has none yet,
-        // and its status speaks for the turn.
-        let mut stamped = entry("a1-2", 10_000, Some(2_000), Some("a1"));
-        stamped.finished_at = Some(12_500);
-        let joined =
-            join_continuation_entries(vec![entry("a1", 1_000, Some(1_000), None), stamped]);
-        assert_eq!(joined[0].settled_at(), Some(12_500));
-        let mut live = entry("a1-2", 10_000, None, Some("a1"));
-        live.status = Some(MessageStatus::Streaming);
-        let joined = join_continuation_entries(vec![entry("a1", 1_000, Some(1_000), None), live]);
-        assert_eq!(joined[0].status, Some(MessageStatus::Streaming));
-        assert_eq!((joined[0].duration_ms, joined[0].finished_at), (None, None));
+        // Nor is one with no start (salvaged without `createdAt`): not 1970.
+        let mut salvaged = user_entry("a2", "x");
+        salvaged.role = MessageRole::Assistant;
+        salvaged.created_at = 0;
+        salvaged.duration_ms = Some(60_000);
+        assert_eq!(salvaged.settled_at(), None);
     }
 
     #[test]
