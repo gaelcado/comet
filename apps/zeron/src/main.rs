@@ -34,7 +34,13 @@ enum Command {
     Headless,
     #[cfg(feature = "ui-workbench")]
     /// Open the native GPUI design workbench without starting the engine.
-    UiWorkbench,
+    UiWorkbench {
+        /// Page to open: overview, foundations, components, icons, atelier or inventory.
+        page: Option<String>,
+        /// Override the saved appearance for this window: light or dark.
+        #[arg(long)]
+        appearance: Option<String>,
+    },
     /// Sign in and enable sync on the next engine start.
     Login,
     /// Remove the saved session and return to local-only on the next start.
@@ -202,8 +208,11 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         #[cfg(feature = "ui-workbench")]
-        Some(Command::UiWorkbench) => {
-            zeron_ui::ui_workbench::run(paths::data_dir());
+        Some(Command::UiWorkbench { page, appearance }) => {
+            zeron_ui::ui_workbench::run(
+                paths::data_dir(),
+                zeron_ui::ui_workbench::Options { page, appearance },
+            );
             Ok(())
         }
         Some(Command::Headless) => {

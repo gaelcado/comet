@@ -8,6 +8,25 @@ cargo run -p zeron --features ui-workbench -- ui-workbench
 
 On macOS, `scripts/run-macos-dev.sh ui-workbench` builds and launches an isolated development bundle. It does not start the engine or open a workspace.
 
+Open a page directly, optionally in the other appearance, to review a change or capture it:
+
+```sh
+cargo run -p zeron --features ui-workbench -- ui-workbench components --appearance light
+```
+
+Pages are `overview`, `foundations`, `components`, `icons` (current), `atelier` (proposed) and `inventory`.
+
+## Using it
+
+- **Filter.** One field in the top bar filters the current page by name, builder, token, constant, source path or note. ⌘F focuses it and Esc clears it; on other platforms use Ctrl.
+- **Pages.** ⌘1 to ⌘6 switch pages. Long pages have a jump bar under the heading.
+- **Copy.** Every builder, color token, icon constant, asset, call site, source location and command is a copy control. The copied value is confirmed in place and in a toast.
+- **Theme.** The top bar picks the theme variant, accent and appearance for this window only. The saved settings do not change.
+- **Icons.** Current icons copy their `icons::` constant. In the atelier, select a glyph to inspect it at 40, 24, 20 and optical 16px beside the current icon it replaces. The inspector also shows its constant, asset file and production call sites.
+- **Inventory.** Filter patterns by status (needs fixture, consolidate, mounted). Expand a consolidation decision to see and copy its source locations.
+
+To add a specimen, add a `SpecimenDef` and its stage to `crates/ui/src/ui_workbench.rs`, calling the production builder, and mark the pattern `mounted` in `components.json`.
+
 ## Current and target
 
 **Current app** pages use the production `icons::Assets`, effective `Theme`, registered font faces and native builders. The navigation, page column, section labels and filled row blocks follow the current Settings system. Interactive specimens call production functions; data-bound screens are listed as needing a native fixture, not redrawn. The standalone workbench reads settings but does not change the saved appearance.
