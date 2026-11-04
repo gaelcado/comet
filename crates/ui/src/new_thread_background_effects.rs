@@ -400,7 +400,7 @@ fn background_luminance(path: &Path, cx: &mut gpui::App) -> Option<Arc<Backgroun
 
 /// Safe to call on both routes: loading/decoding/effects happen once off-thread,
 /// before the hero is requested, and never depend on composer/sidebar geometry.
-pub(super) fn prepare(
+pub(crate) fn prepare(
     effect: NewThreadBackgroundEffect,
     theme: &Theme,
     path: &Path,

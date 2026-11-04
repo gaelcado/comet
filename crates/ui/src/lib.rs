@@ -619,3 +619,42 @@ fn deliver_appshot(
         appshots::foreground_after_capture();
     }
 }
+
+/// The voice stage's backdrop for the glyph workbench (`examples/glyph-bench`):
+/// the new-thread artwork with the chosen effect, painted as the stage does.
+#[doc(hidden)]
+pub mod workbench {
+    use gpui::{App, Bounds, Pixels, Window};
+
+    pub use crate::settings::NewThreadBackgroundEffect;
+
+    /// Paints the user's new-thread artwork in `effect` over `bounds` with its
+    /// soft bottom fade; nothing while it is still loading.
+    pub fn paint_artwork(
+        effect: NewThreadBackgroundEffect,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let settings = crate::settings::current(cx);
+        let Some(background) = settings.new_thread_composer_background else {
+            return;
+        };
+        let theme = crate::theme::Theme::of(cx).clone();
+        if let Some(artwork) = crate::new_thread_background_effects::prepare(
+            effect,
+            &theme,
+            std::path::Path::new(&background.path),
+            cx,
+        ) {
+            crate::new_thread_background_mask::paint(
+                artwork,
+                bounds,
+                bounds,
+                background.adjustment,
+                false,
+                window,
+            );
+        }
+    }
+}

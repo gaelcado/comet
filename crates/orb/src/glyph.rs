@@ -63,6 +63,9 @@ const FEATHER: f32 = 3.0;
 /// Dots dim over this many dots as they near a matrix's outline, so a
 /// matrix touches what holds it and fades where it does.
 const EDGE: f32 = 2.0;
+/// Dots over which a beam eases out where it meets its box: one, so the
+/// strip runs to its container's edges.
+const BEAM_EDGE: f32 = 0.8;
 /// Seconds a beam's bands take to fall back after a sound: longer than a
 /// field's, so a dictation let go settles rather than drops.
 const BEAM_RELEASE: f32 = 0.35;
@@ -129,6 +132,9 @@ pub enum Outline {
     /// The bottom of something taller with corners of this radius, in dots:
     /// a strip along a composer's bottom edge, square at its top.
     Under(f32),
+    /// The top of something with corners of this radius, in dots: a tray
+    /// tucked behind a composer, round above and square where it meets it.
+    Over(f32),
 }
 
 impl Outline {
@@ -152,7 +158,7 @@ impl Outline {
         let (x, y) = (col + 0.5 - cols as f32 / 2.0, row + 0.5 - rows as f32 / 2.0);
         // A box `hx` × `hy` about the centre with corners `radius` round;
         // `low` alone rounds the bottom corners and keeps the top square.
-        let rounded = |radius: f32, low: bool| {
+        let rounded = |radius: f32, low: bool, y: f32| {
             let radius = radius.clamp(0.0, hx.min(hy));
             let qx = x.abs() - (hx - radius);
             let qy = if low { y } else { y.abs() } - (hy - radius);
@@ -166,9 +172,12 @@ impl Outline {
         match self {
             Self::Square => (hx - x.abs()).min(hy - y.abs()),
             Self::Disc => hx.min(hy) - (x * x + y * y).sqrt(),
-            Self::Stadium => rounded(hx.min(hy), false),
-            Self::Rounded(radius) => rounded(radius, false),
-            Self::Under(radius) => rounded(radius, true),
+            Self::Stadium => rounded(hx.min(hy), false, y),
+            Self::Rounded(radius) => rounded(radius, false, y),
+            Self::Under(radius) => rounded(radius, true, y),
+            // The bottom's mirror: round on top, square where it meets what
+            // it sits on.
+            Self::Over(radius) => rounded(radius, true, -y),
         }
     }
 
@@ -1065,7 +1074,10 @@ impl Beam {
                 0.0
             };
             for row in 0..rows {
-                let edge = outline.edge_in(col as f32, row as f32, cols, rows, area);
+                // A beam meets its box: only its outermost dots ease out, so
+                // a strip a few dots tall stays full rather than padded.
+                let edge =
+                    smooth(outline.depth_in(col as f32, row as f32, cols, rows, area) / BEAM_EDGE);
                 if edge <= 0.0 {
                     continue;
                 }

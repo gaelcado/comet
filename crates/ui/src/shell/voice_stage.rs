@@ -402,20 +402,24 @@ impl Shell {
                     .size(px(13.0))
                     .text_color(gpui::white()),
             );
+        // The beam fills the tray to its border, top and sides, down to where
+        // the composer covers it, and dissolves into the controls at its end.
+        let border = 1.0;
+        let controls = 2.0 * TRAY_CONTROL + 4.0;
         let beam = div()
             .id("voice-composer-orb")
             .debug_selector(|| "voice-composer-orb".into())
             .role(gpui::Role::Button)
             .aria_label("Open voice")
             .tab_index(0)
-            .flex_1()
-            .min_w_0()
-            .h_full()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right(px(controls))
+            .bottom(px(overlap))
             .cursor_pointer()
             .tooltip(stage_tooltip("Open voice"))
             .on_click(cx.listener(|this, _, _, cx| this.set_voice_stage_open(true, cx)))
-            // From the tray's padding, as its controls sit at the other end;
-            // it only dissolves where it meets them.
             .child(
                 crate::edge_fade::edge_faded(
                     fade,
@@ -426,9 +430,9 @@ impl Shell {
                         Grid::dense(glyph::BEAM_DOT),
                         mode,
                         inks,
-                        // No frame to follow: the beam's own dots thin out
-                        // at its ends, as the orb's do at its rim.
-                        glyph::Outline::Square,
+                        // The tray's own top corners; square where the
+                        // composer meets it.
+                        glyph::Outline::Over(crate::queue::PANEL_RADIUS - border),
                     )
                     .size_full(),
                 )
@@ -437,16 +441,18 @@ impl Shell {
         // The queue's own surface, tucked under the composer's top edge: the
         // call sits in the conversation as a queued message does.
         let tray = crate::queue::queue_panel_surface(&theme, false)
+            .relative()
             .w(px(width))
             .mx_auto()
             .mb(px(-overlap))
+            .child(beam)
             .child(
                 div()
                     .h(px(height))
                     .flex()
                     .items_center()
+                    .justify_end()
                     .gap(px(4.0))
-                    .child(beam)
                     .child(mic)
                     .child(end),
             );
