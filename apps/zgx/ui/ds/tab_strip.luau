@@ -400,20 +400,16 @@ function M.new(props: Props)
 		return false
 	end
 	function self.Highlight(): Node
-		return ui.presence(function(): string
-			return if measured() then "on" else ""
-		end, function(which: string): Node
-			if which == "" then
-				return ui.div {}
-			end
+		-- (Placed by the box round it, the pill in the flow inside, so the
+		-- presence takes the pill's size: nothing at all until it's measured.)
+		local pill = ui.presence(function(): string?
+			return if measured() then "on" else nil
+		end, function(): Node
 			local function chosen(): string
 				return props.selected() or ""
 			end
 			return ui.div {
 				id = `{props.key}-chosen`,
-				absolute = true,
-				left = 0,
-				top = 0,
 				h = props.h,
 				rounded = props.rounded,
 				bg = "$zeron.selected.flat.bg",
@@ -430,7 +426,8 @@ function M.new(props: Props)
 					return if held:get() == chosen() and (ph == "lifted" or ph == "settling") then 0 else 1
 				end,
 			}
-		end, { absolute = true, left = 0, top = 0, pointer_events = "none" })
+		end)
+		return ui.div { absolute = true, left = 0, top = 0, pointer_events = "none", pill }
 	end
 
 	return self
