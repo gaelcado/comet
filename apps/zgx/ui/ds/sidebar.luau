@@ -4868,6 +4868,8 @@ fn layer(input:LayerInput)->vec4<f32> {
 			end,
 		}
 	end
+	-- (A card's: the window's edge under it, `zeron.inset.rim`.)
+	local rim = (ui.theme.get("zeron.inset.rim") :: number?) or 5
 	local root = ui.column {
 		id = if is_island then "rail" else nil,
 		w = if props.card
@@ -4891,7 +4893,7 @@ fn layer(input:LayerInput)->vec4<f32> {
 				left = 0,
 				right = 0,
 				top = props.top or 0,
-				bottom = 5,
+				bottom = rim,
 				overflow = "hidden",
 				rounded = "$zeron.inset.radius",
 				bg = "$zeron.inset.bg",
@@ -4925,8 +4927,11 @@ fn layer(input:LayerInput)->vec4<f32> {
 				-- (A card's: on the top bar, past Back and Forward, the window's
 				-- gap before the card taken off.)
 				if props.card then
-					-- (`controls_end` holds the row's own 10 past its last control.)
-					return ui.raw(TitleBar.controls_end() - 10 + 8 - 5, "past the title bar's controls, by its group gap")
+					-- (Past the last of them by the bar's gap between groups, as the
+					-- sessions' tabs start past them, less the window's edge the
+					-- card stands in by.)
+					local group = (ui.theme.get("zeron.island.group") :: number?) or 8
+					return ui.raw(TitleBar.last_control_end() + group - rim, "past the title bar's controls, by its group gap")
 				end
 				local button = (ui.theme.get("zeron.icon_button.md") :: number?) or 24
 				return room() - PAD - button
@@ -4986,7 +4991,7 @@ fn layer(input:LayerInput)->vec4<f32> {
 			absolute = true,
 			right = ui.raw(-gap, "the gap beside it"),
 			top = card_top,
-			bottom = 5,
+			bottom = rim,
 			w = gap,
 			rounded = "$radius.full",
 			pointer_events = "none",
@@ -4995,6 +5000,6 @@ fn layer(input:LayerInput)->vec4<f32> {
 			end,
 			opacity = shown_wide,
 		},
-		edge_handle(gap, card_top, 5),
+		edge_handle(gap, card_top, rim),
 	}
 end)

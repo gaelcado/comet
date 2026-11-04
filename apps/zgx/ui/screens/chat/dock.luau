@@ -10,6 +10,8 @@
 --                         footer's line (the chips under the pill: 24, and
 --                         8 above them), which has no surface of its own;
 --                         its height with one line of draft
+--   Dock.TRANSCRIPT_SIDE, Dock.transcript_measure()   the transcript's
+--                         sides and column over it, `OVERHANG` past its edges
 --   Dock.page_pad()       the page's bottom padding: to the footer's line
 --   Dock.room(height)     the transcript's `foot`, from the
 --                         docked composer's measured height
@@ -26,7 +28,28 @@ M.GAP = 8
 M.FOOTER = 32
 M.REST = 81
 -- Its sides' room from the page's edges.
-M.SIDES = ui.raw(32, "the composer's room from the page's edges")
+local SIDES = 32
+M.SIDES = ui.raw(SIDES, "the composer's room from the page's edges")
+-- The transcript over it, the chat page's and a side chat's alike: its
+-- column this much wider than the composer each side, at any width, its
+-- rows' sides that much nearer the page's edges. None: the conversation's
+-- words and the composer line up down both edges. (It was 12 on the chat
+-- page, so the words showed past the composer as they passed behind it,
+-- and none or 8 in a side chat, by its width.)
+M.OVERHANG = 0
+M.TRANSCRIPT_SIDE = SIDES - M.OVERHANG
+function M.transcript_measure(): number
+	return prefs.conversation_width:get() + 2 * M.OVERHANG
+end
+
+-- A new chat's middle, where its composer rises to (screens/chat/composer)
+-- and what stands in its place without a project (screens/chat/home): the
+-- card's middle, raised this much, so the eye reads it as centred (a block
+-- dead on the middle reads low). One line for both.
+M.LIFT = 24
+function M.hero_y(page_h: number): number
+	return page_h / 2 - M.LIFT
+end
 
 -- A chat's head: the height of a code pane's (`zeron.files.head`), so the two stand
 -- level side by side.

@@ -63,19 +63,19 @@ local function resolve(id: Id): () -> string?
 	end
 end
 
--- Placeholder rows while a transcript comes: a prompt, a reply's lines.
+-- Placeholder rows while a transcript comes: a prompt, a reply's lines,
+-- where the transcript's first will stand (its sides, its column and its
+-- first message's 16 under the card's top), so nothing jumps as it lands.
 local function loading(): Node
 	return ui.column {
 		w_full = true,
 		h_full = true,
 		items = "center",
-		pt = "$space.8",
-		px = "$space.5",
+		pt = "$space.4",
+		px = ui.raw(Dock.TRANSCRIPT_SIDE, "the transcript's sides"),
 		ui.column {
 			w_full = true,
-			max_w = function(): number
-				return prefs.conversation_width:get()
-			end,
+			max_w = Dock.transcript_measure,
 			gap = "$space.3",
 			ui.row { w_full = true, justify = "end", ds.Skeleton { w = 220, h = 36, rounded = "$zeron.prose.bubble.radius" } },
 			ds.Skeleton { w = 120 },
@@ -242,12 +242,9 @@ local function Session(id: Id?): Node
 					end, function(id: string): Node
 						return T.Transcript {
 							-- Settings' "Conversation width", followed as it moves.
-							-- (A little wider than the composer each side, so it's
-							-- seen fading as it passes behind.)
-							measure = function(): number
-								return prefs.conversation_width:get() + 24
-							end,
-							side = 20,
+							-- (Its edges the composer's: screens/chat/dock.)
+							measure = Dock.transcript_measure,
+							side = Dock.TRANSCRIPT_SIDE,
 							fade_lead = 12,
 							messages = store.messages,
 							offset = offset,

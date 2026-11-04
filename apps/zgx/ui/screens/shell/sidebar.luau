@@ -32,6 +32,11 @@ local control = require("@ds/control")
 local locale = require("@ds/locale")
 local ds_session_row = require("@ds/session_row")
 
+-- The window's edge round the cards, and the top bar over them
+-- (`zeron.inset.rim`, `zeron.inset.top`: ds/tokens).
+local RIM = (ui.theme.get("zeron.inset.rim") :: number?) or 5
+local TOP_BAR = (ui.theme.get("zeron.inset.top") :: number?) or 42
+
 export type Props = {
 	collapsed: State<boolean>,
 	-- The most it may take, and whether a change follows at once (the
@@ -641,7 +646,9 @@ local function connection_line(): Node
 			id = "connection-line",
 			w_full = true,
 			shrink = 0,
-			px = "$space.3",
+			-- (Its dot on the foot's left edge: Star on GitHub's glyph's, the
+			-- filter's and the empty list's words'.)
+			px = "$space.2",
 			pb = "$space.2",
 			gap = "$space.2",
 			items = "center",
@@ -1349,10 +1356,10 @@ M.Sidebar = ui.component(function(props: Props): Node
 		relative = true,
 		-- (The window's gap before its card, closing with it.)
 		pl = motion.tween(ui.computed(function(): number
-			return if fit.current:get().sidebar then 5 else 0
+			return if fit.current:get().sidebar then RIM else 0
 		end), motion.sidebar),
 		-- (That gap's top moves the window, as the bar beside it does.)
-		ui.div { absolute = true, left = 0, top = 0, w = ui.raw(5, "the window's gap"), h = ui.raw(42, "the top bar"), window_drag = true },
+		ui.div { absolute = true, left = 0, top = 0, w = RIM, h = TOP_BAR, window_drag = true },
 		bar,
 		rename_dialog(),
 		delete_dialog(),
