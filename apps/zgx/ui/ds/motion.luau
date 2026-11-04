@@ -117,7 +117,7 @@ end
 -- A column's width from `from` to `to`, for `anime.animate` (its `value`
 -- the width it goes to): at once, with motion reduced. Every column takes
 -- it: the sidebar, the session's panel (opening, closing, expanding over
--- the page).
+-- the page), the split's panes settling.
 function M.column(from: number, to: number): TableParams
 	return { value = to, duration = M.ms(M.duration(to - from)), ease = M.EASE }
 end
@@ -127,7 +127,7 @@ end
 M.sidebar = { duration = M.BASE, ease = M.EASE } :: TweenOptions
 
 -- What a column holds as its edge sweeps over it (the sidebar's rows, the
--- panel's tabs, the page under an expanded panel): laid
+-- panel's tabs, the page under an expanded panel, a pane just added): laid
 -- out once, at the width it's going to (or, going, the width it rested at),
 -- it never squeezes. It drifts `NUDGE` points with the edge and fades in
 -- `FADE_IN_OUT` ms as it comes or goes, so it arrives and leaves softly
@@ -150,6 +150,19 @@ function M.content(on: boolean, toward: number, at_once: boolean?): ElementParam
 	return ({
 		x = { to = x, duration = M.BASE, ease = M.EASE },
 		opacity = { to = opacity, duration = M.FADE_IN_OUT, ease = M.EASE },
+	} :: any)
+end
+-- The same for content made as it comes (a pane just added): from faded
+-- out, `NUDGE` points along `x` and `y` (signs: where it comes in from), to
+-- at rest.
+function M.arrive(x: number, y: number): ElementParams
+	if M.reduced_now() then
+		return { x = 0, y = 0, opacity = 1, duration = 0 } :: any
+	end
+	return ({
+		x = { from = x * M.NUDGE, to = 0, duration = M.BASE, ease = M.EASE },
+		y = { from = y * M.NUDGE, to = 0, duration = M.BASE, ease = M.EASE },
+		opacity = { from = 0, to = 1, duration = M.FADE_IN_OUT, ease = M.EASE },
 	} :: any)
 end
 
