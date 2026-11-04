@@ -7,6 +7,7 @@ local shared = require("@app/screens/chat/shared")
 local EmptyState = require("@ds/empty_state")
 local route = require("@app/screens/shell/route")
 local boundary = require("@app/screens/shell/boundary")
+local Dock = require("@app/screens/chat/dock")
 
 -- No project yet (Zeron's first launch): one thing to do, in the
 -- composer's place (the shell holds the composer back meanwhile).
@@ -51,11 +52,11 @@ local function Home(): Node
 		ui.show(function(): boolean
 			return not route.needs_project:get()
 		end, ui.slot("chat.home", { w_full = true, items = "center", gap = "$space.3", mb = "$space.8" })),
-		-- On the window's middle, not the middle of what's under the title
-		-- strip: up by half the strip (the shell's 38).
+		-- On the composer's line (screens/chat/dock `hero_y`): the room under
+		-- it twice the lift, so centred it stands that much over the middle.
 		ui.show(function(): boolean
 			return route.needs_project:get()
-		end, ui.div { mt = ui.raw(-38, "half the title strip up: centred on the window, as the eye reads it"), first_project() }),
+		end, ui.div { mb = ui.raw(2 * Dock.LIFT, "the new chat's line over the card's middle"), first_project() }),
 	}
 end
 

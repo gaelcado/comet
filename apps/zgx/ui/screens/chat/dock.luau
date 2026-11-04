@@ -28,6 +28,15 @@ M.REST = 81
 -- Its sides' room from the page's edges.
 M.SIDES = ui.raw(32, "the composer's room from the page's edges")
 
+-- A new chat's middle, where its composer rises to (screens/chat/composer)
+-- and what stands in its place without a project (screens/chat/home): the
+-- card's middle, raised this much, so the eye reads it as centred (a block
+-- dead on the middle reads low). One line for both.
+M.LIFT = 24
+function M.hero_y(page_h: number): number
+	return page_h / 2 - M.LIFT
+end
+
 -- A chat's head: the height of a code pane's (`zeron.files.head`), so the two stand
 -- level side by side.
 function M.head(): number
