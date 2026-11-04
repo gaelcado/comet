@@ -38,8 +38,6 @@ local ZeronCommands = require("@app/screens/chat/zeron_commands")
 -- (Loaded with the chat page: captures land on its composer.)
 local Appshots = require("@app/screens/chat/appshots")
 
--- The title bar's height (Zeron's): a new chat centres under it.
-local TITLE_H = 38
 -- Zeron's dock spring (ω ≈ 27).
 local DOCK: SpringOptions = { stiffness = 730, damping = 54 }
 -- Its gap to the window's foot, docked. Its width, rising and docked: the
@@ -1137,8 +1135,9 @@ local function Composer(): Node
 		shared.composer_shown:set(false)
 	end)
 	local dock = ui.ref()
-	-- Where it stands: mid-page on a new chat (centred under the title bar),
-	-- else docked at the foot (0), as laid out now.
+	-- Where it stands: mid-page on a new chat (on the card's middle, as the
+	-- eye reads it: screens/chat/dock `hero_y`), else docked at the foot (0),
+	-- as laid out now.
 	local function target_y(): number
 		if not new_chat() then
 			return 0
@@ -1153,7 +1152,7 @@ local function Composer(): Node
 		if tall <= 0 then
 			tall = shared.dock_h:get()
 		end
-		local hero = TITLE_H + (h - TITLE_H - 96) / 2
+		local hero = require("@app/screens/chat/dock").hero_y(h)
 		local docked = h - FOOT - tall / 2
 		return hero - docked
 	end
