@@ -26,6 +26,7 @@ which reports its SHA when it lands. Ranked by what users of Zeron would notice.
 | [atomic-selection](atomic-selection/ASK.md) | A selection that starts inside a formula copies half its TeX. |
 | [web-snapshot](web-snapshot/ASK.md) | The browser panel can't attach a picture of the page. |
 | [markdown-offsets](markdown-offsets/ASK.md) | Review comments on a Markdown preview can't anchor to the block that holds their line. |
+| [tab-drag-handoff](tab-drag-handoff/ASK.md) | A tab dragged along its strip lets go of it at the strip's very edge (no tear-off give); its neighbours stop dead when they turn back mid-slide. Luau can't hand a pointer gesture to the native drag, and FLIP moves restart at rest. |
 
 ## Developers of Zeron (and of any zgx app)
 
