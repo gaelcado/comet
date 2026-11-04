@@ -29,6 +29,7 @@
 //! lock is a plain mutex never held across an `.await`.
 
 mod bundles;
+mod preview;
 mod refresh;
 mod store;
 
@@ -234,6 +235,7 @@ impl ProjectWidgets {
                         tracing::warn!(error = %err, "project widgets reconciliation failed");
                     }
                     if collect {
+                        widgets.backfill_previews();
                         widgets.collect_garbage_older_than(GC_GRACE);
                     }
                 }))
@@ -838,6 +840,47 @@ impl ProjectWidgets {
             self.collect_garbage_older_than(GC_GRACE);
         }
         Ok(removed)
+    }
+
+    /// Give live widgets published before previews existed their preview,
+    /// from their stored bundle. Derived data: no revision changes, and a
+    /// widget whose content changed meanwhile is left to its new bundle.
+    fn backfill_previews(&self) -> usize {
+        let Ok(widgets) = self.read(store::widgets_without_preview) else {
+            return 0;
+        };
+        let mut filled = 0;
+        for widget in widgets {
+            let mut content = widget.content;
+            let (Ok(script), Ok(assets)) = (
+                self.inner.bundles.read_script(&content),
+                self.inner.bundles.read_assets(&content),
+            ) else {
+                continue;
+            };
+            content.preview = Some(
+                preview::extract(
+                    &script,
+                    content.render_seed,
+                    bundles::visual_assets(&assets),
+                )
+                .unwrap_or_default(),
+            );
+            let Ok(json) = to_json(&content) else {
+                continue;
+            };
+            let set = self.write(|conn| {
+                let set = store::set_preview(conn, &widget.id, widget.content_revision, &json)?;
+                if set {
+                    self.publish(conn, &widget.space_id);
+                }
+                Ok(set)
+            });
+            if set.unwrap_or(false) {
+                filled += 1;
+            }
+        }
+        filled
     }
 
     /// Remove bundles no live widget or active refresh references, once

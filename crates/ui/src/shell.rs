@@ -64,6 +64,7 @@ use crate::state::{
 use crate::terminal::panel::{TerminalPanel, ToggleTerminal, clamp_terminal_height};
 use crate::theme::Theme;
 use crate::transcript::{self, Transcript, TranscriptEvent};
+use crate::widget_shelf::{WidgetShelf, WidgetShelfEvent};
 
 mod actions_ui;
 mod chat_dropzone;
@@ -1383,6 +1384,57 @@ fn titlebar_island_vertical_geometry(progress: f32) -> (f32, f32) {
     (center - height * 0.5, height)
 }
 
+/// Where the widget shelf sits on the new-chat canvas, and how much of it
+/// shows: under the composer stack `(top, bottom)` (the pill and its selector
+/// row) when it fits above the resting
+/// agent update card, else over the composer, else nowhere. An expanded
+/// update list reaching it fades it out of the way rather than moving it.
+fn shelf_position(
+    composer: (f32, f32),
+    viewport_height: f32,
+    update_resting: f32,
+    update_now: f32,
+) -> Option<(f32, f32)> {
+    const GAP: f32 = 20.0;
+    let stack = crate::widget_shelf::SHELF_HEIGHT;
+    let floor = viewport_height - update_resting - 20.0;
+    let below = composer.1 + GAP;
+    let above = composer.0 - GAP - stack;
+    let top = if below + stack <= floor {
+        below
+    } else if above >= Theme::TITLEBAR_HEIGHT + 12.0 {
+        above
+    } else {
+        return None;
+    };
+    let overlap = top + stack + 12.0 - (viewport_height - update_now);
+    Some((top, (1.0 - overlap.max(0.0) / 24.0).clamp(0.0, 1.0)))
+}
+
+#[cfg(test)]
+mod shelf_position_tests {
+    use super::*;
+
+    #[test]
+    fn the_shelf_goes_under_the_composer_then_over_it_and_makes_way() {
+        let stack = crate::widget_shelf::SHELF_HEIGHT;
+        // Room under the composer: it sits there, fully shown.
+        assert_eq!(
+            shelf_position((300.0, 400.0), 1000.0, 62.0, 62.0),
+            Some((420.0, 1.0))
+        );
+        // No room under it above the update card: over the composer.
+        let (top, _) = shelf_position((500.0, 600.0), 800.0, 62.0, 62.0).unwrap();
+        assert_eq!(top, 500.0 - 20.0 - stack);
+        // No room either way: not shown.
+        assert_eq!(shelf_position((120.0, 600.0), 800.0, 62.0, 62.0), None);
+        // An expanded update list reaching it fades it, without moving it.
+        let (top, room) = shelf_position((300.0, 400.0), 1000.0, 62.0, 500.0).unwrap();
+        assert_eq!(top, 420.0);
+        assert_eq!(room, 0.0);
+    }
+}
+
 fn bottom_stack_measurement_matches(
     measured_has_composer: bool,
     expected_has_composer: bool,
@@ -2078,6 +2130,12 @@ pub struct Shell {
     /// The Widgets page, kept while the app runs; it lets go of its
     /// renderers and watch whenever its route is left.
     project_widgets_page: Option<(Entity<ProjectWidgetsPage>, Subscription)>,
+    /// One widget shown over the window (from a shelf card or a save).
+    widget_sheet: Option<(Entity<ProjectWidgetsPage>, Subscription)>,
+    widget_sheet_motion: Option<crate::widget_sheet::SheetMotion>,
+    /// The project's widgets on the new-chat screen.
+    widget_shelf: Entity<WidgetShelf>,
+    _widget_shelf_events: Subscription,
     /// Opened pull requests, as tabs in a pane beside the board.
     pull_request_pane: pull_request_pane::PullRequestPane,
     /// A detail view a history step landed on, opened by the next render
@@ -2531,6 +2589,11 @@ impl Shell {
             shell: shell.downgrade(),
             _observation: cx.observe(&shell, |_, _, cx| cx.notify()),
         });
+        let widget_shelf = {
+            let state = state.clone();
+            cx.new(|cx| WidgetShelf::new(state, cx))
+        };
+        let widget_shelf_events = cx.subscribe(&widget_shelf, Self::on_widget_shelf_event);
         Self {
             state,
             sidebar_pane,
@@ -2607,6 +2670,10 @@ impl Shell {
             nav,
             pull_requests_page: None,
             project_widgets_page: None,
+            widget_sheet: None,
+            widget_sheet_motion: None,
+            widget_shelf,
+            _widget_shelf_events: widget_shelf_events,
             pull_request_pane: Default::default(),
             pending_pull_request: None,
             pull_request_cache: Default::default(),
@@ -4343,16 +4410,9 @@ impl Shell {
                     cx,
                 );
             }
-            TranscriptEvent::OpenProjectWidgets {
-                space_id,
-                device_id,
-            } => self.open_project_widgets(
-                WidgetsTarget {
-                    space_id: space_id.clone(),
-                    device_id: device_id.clone(),
-                },
-                cx,
-            ),
+            TranscriptEvent::OpenWidget { target, widget_id } => {
+                self.open_widget_sheet(target.clone(), widget_id.clone(), None, cx)
+            }
         }
     }
 
@@ -4400,7 +4460,146 @@ impl Shell {
                 }
             }
             ProjectWidgetsEvent::OpenSpace(target) => self.open_project_widgets(target.clone(), cx),
+            ProjectWidgetsEvent::CloseSheet => {}
         }
+    }
+
+    /// Show one widget over the window, wherever the user is. From a card
+    /// (`origin`), the sheet grows out of it and the card steps aside.
+    pub(super) fn open_widget_sheet(
+        &mut self,
+        target: WidgetsTarget,
+        widget_id: String,
+        origin: Option<gpui::Bounds<Pixels>>,
+        cx: &mut Context<Self>,
+    ) {
+        let page = match &self.widget_sheet {
+            Some((page, _)) => page.clone(),
+            None => {
+                let state = self.state.clone();
+                let page = cx.new(|cx| ProjectWidgetsPage::new(state, cx));
+                let events = cx.subscribe(&page, Self::on_widget_sheet_event);
+                self.widget_sheet = Some((page.clone(), events));
+                page
+            }
+        };
+        let lifted = origin.is_some().then(|| widget_id.clone());
+        self.widget_shelf
+            .update(cx, |shelf, cx| shelf.set_lifted(lifted, cx));
+        self.widget_sheet_motion = Some(crate::widget_sheet::SheetMotion::new(origin));
+        page.update(cx, |page, cx| page.open_sheet(target, widget_id, cx));
+        cx.notify();
+    }
+
+    /// Close the sheet: back into its card when the card is on screen,
+    /// otherwise a soft fade.
+    fn close_widget_sheet(&mut self, cx: &mut Context<Self>) {
+        let Some((page, _)) = &self.widget_sheet else {
+            return;
+        };
+        let landing = if self.state.read(cx).selected_chat.is_none() {
+            page.read(cx)
+                .sheet_widget()
+                .and_then(|id| self.widget_shelf.read(cx).card_bounds(id))
+        } else {
+            None
+        };
+        let reduced = self.reduced_motion;
+        match self.widget_sheet_motion.as_mut() {
+            Some(motion) => motion.close(landing, reduced),
+            None => self.finish_widget_sheet(cx),
+        }
+        cx.notify();
+    }
+
+    /// The sheet has closed: let go of the page; its card comes back.
+    fn finish_widget_sheet(&mut self, cx: &mut Context<Self>) {
+        self.widget_sheet_motion = None;
+        if let Some((page, _)) = self.widget_sheet.take() {
+            page.update(cx, |page, cx| page.hide(cx));
+        }
+        self.widget_shelf
+            .update(cx, |shelf, cx| shelf.set_lifted(None, cx));
+        cx.notify();
+    }
+
+    fn on_widget_sheet_event(
+        &mut self,
+        _: Entity<ProjectWidgetsPage>,
+        event: &ProjectWidgetsEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ProjectWidgetsEvent::CloseSheet => self.close_widget_sheet(cx),
+            ProjectWidgetsEvent::OpenChat(chat_id) => {
+                self.open_chat(chat_id.clone(), cx);
+                self.close_widget_sheet(cx);
+            }
+            ProjectWidgetsEvent::NewDashboardChat { .. } | ProjectWidgetsEvent::OpenSpace(_) => {}
+        }
+    }
+
+    fn on_widget_shelf_event(
+        &mut self,
+        _: Entity<WidgetShelf>,
+        event: &WidgetShelfEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WidgetShelfEvent::Open {
+                target,
+                widget_id,
+                origin,
+            } => self.open_widget_sheet(target.clone(), widget_id.clone(), *origin, cx),
+            WidgetShelfEvent::ManageAll(target) => self.open_project_widgets(target.clone(), cx),
+        }
+    }
+
+    /// The sheet over the window: one widget, live, with its controls.
+    fn render_widget_sheet(
+        &mut self,
+        viewport: gpui::Size<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let reduced = self.reduced_motion;
+        if self
+            .widget_sheet_motion
+            .as_ref()
+            .is_some_and(|motion| motion.finished(reduced))
+        {
+            self.finish_widget_sheet(cx);
+            return None;
+        }
+        let (page, _) = self.widget_sheet.as_ref()?;
+        let motion = self.widget_sheet_motion.as_ref()?;
+        if motion.animating(reduced) || motion.is_closing() {
+            window.request_animation_frame();
+        }
+        let theme = Theme::of(cx).clone();
+        let closing = motion.is_closing();
+        Some(motion.render(
+            viewport,
+            crate::project_widgets::sheet_width(viewport),
+            crate::project_widgets::sheet_max_height(viewport),
+            &theme,
+            reduced,
+            page.clone().into_any_element(),
+            |frame| {
+                frame.on_mouse_down_out(cx.listener(move |shell, _, _, cx| {
+                    // A click on the scrim dismisses; the page's own menus
+                    // and dialogs are deferred above it and close first.
+                    let busy = closing
+                        || shell
+                            .widget_sheet
+                            .as_ref()
+                            .is_some_and(|(page, _)| page.read(cx).has_overlay());
+                    if !busy {
+                        shell.close_widget_sheet(cx);
+                    }
+                }))
+            },
+        ))
     }
 
     /// A spawn chip's "Open subagent": focus the existing tab for that doc,
@@ -10889,6 +11088,9 @@ impl Shell {
         if let Some(overlay) = self.render_project_action_overlay(viewport, window, cx) {
             overlays.push(overlay);
         }
+        if let Some(overlay) = self.render_widget_sheet(viewport, window, cx) {
+            overlays.push(overlay);
+        }
 
         if let Some(chat_id) = self.delete_confirm.clone() {
             let title = transcript::single_line(
@@ -11358,6 +11560,71 @@ impl Shell {
         } else {
             None
         };
+        // The project's widgets float under the composer on the new-chat
+        // canvas. The shelf keeps watching while a chat is open, so coming
+        // back shows them at once.
+        if !has_selection {
+            let target = {
+                let state = self.state.read(cx);
+                state
+                    .selected_space
+                    .as_deref()
+                    .and_then(|id| state.space_row(id))
+                    .map(|space| WidgetsTarget {
+                        space_id: space.id.clone(),
+                        device_id: space.device_id.clone(),
+                    })
+            };
+            self.widget_shelf.update(cx, |shelf, cx| {
+                shelf.set_available_width(main_content_width - session_reserve);
+                shelf.set_target(target, cx);
+            });
+        }
+        let shelf_opacity = if has_selection {
+            0.0
+        } else {
+            dock_frame.selectors() * self.composer_dock.borrow().opacity()
+        };
+        let shelf_place = (shelf_opacity > 0.001 && !self.widget_shelf.read(cx).is_empty())
+            .then(|| {
+                // The agent update card at the bottom: as tall as it rests
+                // (it decides where the shelf goes) and as tall as it is now
+                // (an expanded list the shelf makes way for).
+                let (resting, current) = match &harness_update_card {
+                    Some(_) => {
+                        let now = self.harness_update_geometry[1]
+                            .map(|tween| self.eval_tween(Some(tween), tween.to))
+                            .unwrap_or(harness_updates::CHIP_HEIGHT);
+                        (
+                            24.0 + harness_updates::CHIP_HEIGHT,
+                            24.0 + now.max(harness_updates::CHIP_HEIGHT),
+                        )
+                    }
+                    None => (0.0, 0.0),
+                };
+                // The whole composer stack: its selector row sits under the
+                // pill, and the shelf goes under that.
+                let composer = self.composer.read(cx).stack_bounds()?;
+                shelf_position(
+                    (f32::from(composer.top()), f32::from(composer.bottom())),
+                    self.viewport_height,
+                    resting,
+                    current,
+                )
+            })
+            .flatten();
+        let widget_shelf = shelf_place.map(|(top, room)| {
+            div()
+                .absolute()
+                .top(px(top + 8.0 * (1.0 - shelf_opacity)))
+                .left(px(-session_reserve / 2.0))
+                .right_0()
+                .flex()
+                .justify_center()
+                .opacity(shelf_opacity * room)
+                .when(room < 0.05, |el| el.invisible())
+                .child(self.widget_shelf.clone())
+        });
         let status = div()
             .relative()
             .left(px(-session_reserve / 2.0))
@@ -11435,6 +11702,7 @@ impl Shell {
                 },
             )
             .children(session_card)
+            .children(widget_shelf)
             .when_some(harness_update_card, |column, chip| {
                 // Home notices stay anchored to the window bottom, behind the
                 // dock. Clip paint and hitboxes at the same measured terminal

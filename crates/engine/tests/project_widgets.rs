@@ -209,6 +209,16 @@ async fn saved_visuals_outlive_their_chat_and_writes_never_cross_silently() {
             .unwrap();
         assert_eq!(created.outcome, ProjectWidgetWriteOutcome::Created);
         assert_eq!(created.widget.title, "Traffic");
+        // The miniature's data is taken when the content is published.
+        assert_eq!(
+            created
+                .widget
+                .content
+                .preview
+                .and_then(|p| p.text)
+                .as_deref(),
+            Some("Sessions")
+        );
         assert_eq!(
             created.widget.content.render_seed,
             zeron_visual::seed_for(&visual_id),

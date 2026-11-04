@@ -58,6 +58,98 @@ pub struct ProjectWidgetContent {
     /// In name order.
     #[serde(default)]
     pub assets: Vec<ProjectWidgetAsset>,
+    /// What the content showed when it was published, for miniatures.
+    /// Absent until the owner has taken it (content published before
+    /// previews existed); empty when the visual has nothing to summarize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<ProjectWidgetPreview>,
+}
+
+/// Most values a preview series keeps; longer series are averaged down.
+pub const PROJECT_WIDGET_PREVIEW_POINTS: usize = 48;
+/// The scale of [`ProjectWidgetPreviewChart`] values: `0` is the chart's
+/// lowest value, this its highest.
+pub const PROJECT_WIDGET_PREVIEW_SCALE: u16 = 1000;
+
+/// A summary of a widget's content as rendered at publication: its headline
+/// figures, its first chart's shape, its first table's top rows, or its
+/// opening text. Small, so it travels in every snapshot; never script or
+/// asset bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWidgetPreview {
+    /// At most three, in reading order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stats: Vec<ProjectWidgetPreviewStat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart: Option<ProjectWidgetPreviewChart>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<ProjectWidgetPreviewTable>,
+    /// The first text, when there is no figure, chart or table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// The visual draws a canvas, a 3D scene or a shader, which a preview
+    /// can't summarize.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub graphic: bool,
+}
+
+impl ProjectWidgetPreview {
+    pub fn is_empty(&self) -> bool {
+        self.stats.is_empty()
+            && self.chart.is_none()
+            && self.table.is_none()
+            && self.text.is_none()
+            && !self.graphic
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWidgetPreviewStat {
+    pub value: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectWidgetPreviewChartKind {
+    Bar,
+    Line,
+    Area,
+    Scatter,
+    #[serde(other)]
+    Other,
+}
+
+/// A chart's shape: every series on one shared scale, so their heights
+/// compare as they do in the full chart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWidgetPreviewChart {
+    pub kind: ProjectWidgetPreviewChartKind,
+    #[serde(default)]
+    pub stacked: bool,
+    /// At most three series of at most [`PROJECT_WIDGET_PREVIEW_POINTS`]
+    /// values in `0..=`[`PROJECT_WIDGET_PREVIEW_SCALE`]; `None` is a gap.
+    pub series: Vec<ProjectWidgetPreviewSeries>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWidgetPreviewSeries {
+    pub name: String,
+    pub values: Vec<Option<u16>>,
+}
+
+/// A table's header and top rows, at most three columns and four rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWidgetPreviewTable {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
 }
 
 /// Where a saved visual came from. A link, not ownership: deleting the chat
@@ -485,6 +577,7 @@ mod tests {
             script_size: 1,
             script_sha256: "00".into(),
             assets: vec![],
+            preview: None,
         };
         let widget = ProjectWidget {
             id: "w".into(),

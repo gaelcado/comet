@@ -410,9 +410,10 @@ pub(crate) fn save_target(state: &AppState, chat_id: &str) -> Option<SaveTarget>
 pub enum SaveVisualEvent {
     /// The chrome changed height: the transcript remeasures the row.
     LayoutChanged,
-    OpenWidgets {
-        space_id: String,
-        device_id: String,
+    /// Show the saved widget in the sheet.
+    OpenWidget {
+        target: WidgetsTarget,
+        widget_id: String,
     },
 }
 
@@ -432,12 +433,13 @@ pub struct SaveVisual {
     visual_id: String,
     visual_title: String,
     form: Option<SaveForm>,
-    /// Where it was saved, and whether it already was.
-    saved: Option<(WidgetsTarget, bool)>,
-    space_select: widgets::SelectState,
+    /// Where it was saved, as which widget, and whether it already was.
+    saved: Option<(WidgetsTarget, String, bool)>,
     trigger_focus: FocusHandle,
     open_focus: FocusHandle,
     pending_focus: Option<FocusHandle>,
+    #[cfg(feature = "project-widgets-fixture")]
+    fixture_target: Option<SaveTarget>,
 }
 
 impl EventEmitter<SaveVisualEvent> for SaveVisual {}
@@ -457,11 +459,20 @@ impl SaveVisual {
             visual_title,
             form: None,
             saved: None,
-            space_select: widgets::SelectState::default(),
             trigger_focus: cx.focus_handle(),
             open_focus: cx.focus_handle(),
             pending_focus: None,
+            #[cfg(feature = "project-widgets-fixture")]
+            fixture_target: None,
         }
+    }
+
+    fn target(&self, cx: &App) -> Option<SaveTarget> {
+        #[cfg(feature = "project-widgets-fixture")]
+        if let Some(target) = &self.fixture_target {
+            return Some(target.clone());
+        }
+        save_target(self.state.read(cx), &self.chat_id)
     }
 
     fn changed(&mut self, cx: &mut Context<Self>) {
@@ -499,7 +510,6 @@ impl SaveVisual {
 
     fn close_form(&mut self, cx: &mut Context<Self>) {
         self.form = None;
-        widgets::close_select(self, |this: &mut Self| &mut this.space_select, cx);
         self.pending_focus = Some(self.trigger_focus.clone());
         self.changed(cx);
     }
@@ -509,7 +519,7 @@ impl SaveVisual {
             let state = self.state.read(cx);
             (
                 state.engine().cloned(),
-                save_target(state, &self.chat_id),
+                self.target(cx),
                 state.local_device_id.clone(),
             )
         };
@@ -569,6 +579,7 @@ impl SaveVisual {
                                 space_id: write.widget.space_id,
                                 device_id: write.widget.owner_device_id,
                             },
+                            write.widget.id,
                             write.outcome == ProjectWidgetWriteOutcome::Existing,
                         ));
                         this.pending_focus = Some(this.open_focus.clone());
@@ -587,12 +598,8 @@ impl SaveVisual {
         self.changed(cx);
     }
 
-    fn render_form(
-        &mut self,
-        target: &SaveTarget,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_popover(&mut self, target: &SaveTarget, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).for_popup();
         let device = device_label(self.state.read(cx), &target.device_id);
         let Some(form) = self.form.as_ref() else {
             return gpui::Empty.into_any_element();
@@ -600,124 +607,186 @@ impl SaveVisual {
         let saving = form.saving.is_some();
         let input = form.title.clone();
         let error = form.error.clone();
-        let place: AnyElement = match (&target.space, target.choices.as_slice()) {
-            (Some(space), _) => widgets::meta_line(
-                theme,
-                vec![
+        let chosen = form.choice.clone();
+        let label = |text: &'static str| {
+            div()
+                .mt(px(12.0))
+                .mb(px(6.0))
+                .text_size(crate::typography::ui_rems(11.5))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(theme.text_muted)
+                .child(text)
+        };
+        let place_row = |choice: &SpaceChoice, selected: bool| {
+            div()
+                .w_full()
+                .px(px(10.0))
+                .py(px(7.0))
+                .rounded(px(8.0))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .when(selected, |el| el.bg(crate::theme::ink(0.06)))
+                .child(
+                    icon(icons::FOLDER)
+                        .size(px(15.0))
+                        .flex_none()
+                        .text_color(theme.text_muted),
+                )
+                .child(
                     div()
-                        .child(SharedString::from(format!(
-                            "Saves to {} · {}",
-                            space.name, space.place
-                        )))
-                        .into_any_element(),
-                ],
-            )
-            .into_any_element(),
-            (None, []) => widgets::meta_line(
-                theme,
-                vec![
-                    div()
-                        .child(SharedString::from(format!(
-                            "This chat has no project. Add a project on {device} to keep widgets there."
-                        )))
-                        .into_any_element(),
-                ],
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(crate::typography::ui_rems(13.0))
+                                .text_color(theme.text)
+                                .child(SharedString::from(choice.name.clone())),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(crate::typography::ui_rems(11.0))
+                                .text_color(theme.text_faint)
+                                .child(SharedString::from(choice.place.clone())),
+                        ),
+                )
+        };
+        let project: AnyElement = match (&target.space, target.choices.as_slice()) {
+            (Some(space), _) => place_row(space, true).into_any_element(),
+            (None, []) => popover::dialog_body(
+                &theme,
+                format!(
+                    "This chat has no project. Add a project on {device} to keep widgets there."
+                ),
             )
             .into_any_element(),
             (None, choices) => {
-                let chosen = form.choice.clone();
-                let mut options = vec![widgets::SelectOption::new("Choose a project")];
-                options.extend(choices.iter().map(|choice| {
-                    widgets::SelectOption::new(choice.name.clone()).detail(choice.place.clone())
-                }));
-                let selected = chosen
-                    .as_ref()
-                    .and_then(|chosen| choices.iter().position(|c| &c.target == chosen))
-                    .map_or(0, |ix| ix + 1);
-                let targets: Vec<Option<WidgetsTarget>> = std::iter::once(None)
-                    .chain(choices.iter().map(|choice| Some(choice.target.clone())))
-                    .collect();
-                widgets::select("save-visual-project", "Project", theme, |this: &mut Self| {
-                    &mut this.space_select
-                })
-                .options(options, selected)
-                .menu_width(320.0)
-                .heading("Projects")
-                .open_rightward()
-                .on_select(move |this, ix, _, cx| {
-                    if let Some(form) = this.form.as_mut() {
-                        form.choice = targets.get(ix).cloned().flatten();
-                        form.error = None;
-                    }
-                    this.changed(cx);
-                })
-                .render(&self.space_select, cx)
-                .into_any_element()
+                let mut list = div()
+                    .id("save-visual-projects")
+                    .role(gpui::Role::ListBox)
+                    .aria_label("Project")
+                    .max_h(px(176.0))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0));
+                for (ix, choice) in choices.iter().enumerate() {
+                    let selected = chosen.as_ref() == Some(&choice.target);
+                    let pick = choice.target.clone();
+                    list = list.child(
+                        keyboard_button(
+                            place_row(choice, selected)
+                                .id(("save-visual-project", ix))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(crate::theme::ink(0.05))),
+                            &theme,
+                            cx,
+                            move |this, _, cx| {
+                                if let Some(form) = this.form.as_mut() {
+                                    form.choice = Some(pick.clone());
+                                    form.error = None;
+                                }
+                                cx.notify();
+                            },
+                        )
+                        .role(gpui::Role::ListBoxOption)
+                        .aria_selected(selected),
+                    );
+                }
+                list.into_any_element()
             }
         };
-        let can_save = !saving && (target.space.is_some() || !target.choices.is_empty());
-        div()
+        let can_save = !saving && (target.space.is_some() || chosen.is_some());
+        let save = popover::btn_primary(&theme, if saving { "Saving…" } else { "Save widget" })
+            .id("save-visual-confirm");
+        let card = popover::popover_card(&theme)
             .id("save-visual-form")
-            .role(gpui::Role::Group)
-            .aria_label("Save to project")
-            .mt(px(6.0))
-            .w_full()
-            .max_w(px(520.0))
-            .p(px(12.0))
-            .rounded(px(10.0))
-            .bg(widgets::block_fill(theme))
+            .role(gpui::Role::Dialog)
+            .aria_label("Save as widget")
+            .w(px(320.0))
+            .p(px(14.0))
             .flex()
             .flex_col()
-            .gap(px(8.0))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && !this.space_select.is_open() {
+                if event.keystroke.key == "escape" {
                     this.close_form(cx);
                     cx.stop_propagation();
                 }
             }))
-            .child(widgets::field_label(theme, "Save to project"))
-            .child(popover::dialog_field(input.into_any_element()))
-            .child(place)
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if this.form.as_ref().is_some_and(|form| form.saving.is_none()) {
+                    this.close_form(cx);
+                }
+            }))
+            .child(
+                div()
+                    .text_size(crate::typography::ui_rems(13.5))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme.text)
+                    .child("Save as widget"),
+            )
+            .child(
+                div()
+                    .mt(px(4.0))
+                    .text_size(crate::typography::ui_rems(12.0))
+                    .line_height(px(17.0))
+                    .text_color(theme.text_muted)
+                    .child(
+                        "It stays on the project's new chat screen, and an agent can refresh it later.",
+                    ),
+            )
+            .child(label("Title"))
+            .child(popover::dialog_field(input.into_any_element()).text_size(crate::typography::ui_rems(13.0)))
+            .child(label("Project"))
+            .child(project)
             .when_some(error, |el, error| {
                 el.child(
                     div()
                         .id("save-visual-error")
                         .role(gpui::Role::Alert)
+                        .mt(px(10.0))
+                        .flex()
+                        .flex_row()
+                        .gap(px(6.0))
                         .text_size(crate::typography::ui_rems(12.0))
                         .text_color(theme.danger_muted)
+                        .child(
+                            icon(icons::DANGER_TRIANGLE)
+                                .size(px(13.0))
+                                .flex_none()
+                                .mt(px(1.0))
+                                .text_color(theme.danger_muted),
+                        )
                         .child(error),
                 )
             })
             .child(
                 div()
+                    .mt(px(14.0))
                     .flex()
                     .flex_row()
-                    .flex_wrap()
                     .justify_end()
                     .gap(px(8.0))
                     .child(keyboard_button(
-                        widgets::text_action(theme, ActionTone::Quiet, "Cancel")
+                        popover::btn_ghost(&theme, "Cancel", "save-visual-cancel")
                             .id("save-visual-cancel"),
-                        theme,
+                        &theme,
                         cx,
                         |this, _, cx| this.close_form(cx),
                     ))
-                    .child(
-                        keyboard_button(
-                            widgets::text_action(
-                                theme,
-                                ActionTone::Solid,
-                                if saving { "Saving…" } else { "Save" },
-                            )
-                            .id("save-visual-confirm"),
-                            theme,
-                            cx,
-                            |this, _, cx| this.save(cx),
-                        )
-                        .when(!can_save, |button| button.opacity(0.45).cursor_default()),
-                    ),
-            )
-            .into_any_element()
+                    .child(if can_save {
+                        keyboard_button(save, &theme, cx, |this, _, cx| this.save(cx))
+                            .into_any_element()
+                    } else {
+                        save.opacity(0.45).cursor_default().into_any_element()
+                    }),
+            );
+        popover::anchored_menu_below("save-visual-popover", card.into_any_element(), None)
     }
 }
 
@@ -726,72 +795,154 @@ impl Render for SaveVisual {
         if let Some(handle) = self.pending_focus.take() {
             window.focus(&handle, cx);
         }
-        let Some(target) = save_target(self.state.read(cx), &self.chat_id) else {
+        let Some(target) = self.target(cx) else {
             return gpui::Empty.into_any_element();
         };
         let theme = Theme::of(cx).clone();
-        if self.form.is_some() {
-            return self.render_form(&target, &theme, cx);
-        }
+        let chip = |id: &'static str| {
+            div()
+                .id(id)
+                .h(px(26.0))
+                .px(px(8.0))
+                .rounded(px(7.0))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .text_size(crate::typography::ui_rems(12.0))
+                .text_color(theme.text_muted)
+        };
         let row = div()
             .mt(px(6.0))
             .flex()
             .flex_row()
             .flex_wrap()
             .items_center()
-            .gap(px(4.0))
-            .text_size(crate::typography::ui_rems(12.5));
+            .gap(px(2.0));
         match self.saved.clone() {
-            Some((saved, existing)) => row
-                .child(
-                    div()
-                        .id("save-visual-status")
+            Some((saved, widget_id, existing)) => {
+                let project = self
+                    .state
+                    .read(cx)
+                    .space_row(&saved.space_id)
+                    .map(|space| space.display_name().to_owned());
+                let status = match (existing, project) {
+                    (true, _) => "Already a widget".to_owned(),
+                    (false, Some(project)) => format!("Saved to {project}"),
+                    (false, None) => "Saved as a widget".to_owned(),
+                };
+                row.child(
+                    chip("save-visual-status")
                         .role(gpui::Role::Status)
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .px(px(4.0))
-                        .text_color(theme.text_muted)
-                        .child(icon(icons::CHECK).size(px(14.0)).text_color(theme.success))
-                        .child(if existing { "Already saved" } else { "Saved" }),
+                        .child(icon(icons::CHECK).size(px(13.0)).text_color(theme.success))
+                        .child(SharedString::from(status)),
                 )
-                .child(div().text_color(theme.text_faint).child("·"))
                 .child(
                     keyboard_button(
-                        widgets::text_action(&theme, ActionTone::Quiet, "Open widgets")
-                            .id("save-visual-open")
-                            .track_focus(&self.open_focus.clone().tab_stop(true)),
+                        chip("save-visual-open")
+                            .track_focus(&self.open_focus.clone().tab_stop(true))
+                            .cursor_pointer()
+                            .text_color(theme.text)
+                            .hover(|s| s.bg(theme.glass_hover()))
+                            .child("View widget")
+                            .child(
+                                icon(icons::ARROW_UP_RIGHT)
+                                    .size(px(12.0))
+                                    .text_color(theme.text_muted),
+                            ),
                         &theme,
                         cx,
                         move |_, _, cx| {
-                            cx.emit(SaveVisualEvent::OpenWidgets {
-                                space_id: saved.space_id.clone(),
-                                device_id: saved.device_id.clone(),
+                            cx.emit(SaveVisualEvent::OpenWidget {
+                                target: saved.clone(),
+                                widget_id: widget_id.clone(),
                             })
                         },
                     )
                     .role(gpui::Role::Link),
                 )
-                .into_any_element(),
-            None => row
-                .child(keyboard_button(
-                    widgets::ghost_action(&theme)
-                        .id("save-visual")
-                        .track_focus(&self.trigger_focus.clone().tab_stop(true))
-                        .aria_label("Save visual to project")
-                        .child(
-                            icon(icons::FLOPPY_DISK)
-                                .size(px(14.0))
-                                .text_color(theme.text_muted),
-                        )
-                        .child("Save to project"),
-                    &theme,
-                    cx,
-                    |this, _, cx| this.open_form(cx),
-                ))
-                .into_any_element(),
+                .into_any_element()
+            }
+            None => {
+                let open = self.form.is_some();
+                let popover = open.then(|| self.render_popover(&target, cx));
+                row.child(
+                    div()
+                        .relative()
+                        .child(keyboard_button(
+                            chip("save-visual")
+                                .track_focus(&self.trigger_focus.clone().tab_stop(true))
+                                .aria_label("Save visual as a widget")
+                                .aria_expanded(open)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text))
+                                .when(open, |el| el.bg(theme.glass_hover()).text_color(theme.text))
+                                .child(
+                                    icon(icons::WIDGET)
+                                        .size(px(13.0))
+                                        .text_color(theme.text_muted),
+                                )
+                                .child("Save as widget"),
+                            &theme,
+                            cx,
+                            |this, _, cx| {
+                                if this.form.is_some() {
+                                    this.close_form(cx);
+                                } else {
+                                    this.open_form(cx);
+                                }
+                            },
+                        ))
+                        .children(popover),
+                )
+                .into_any_element()
+            }
         }
     }
+}
+
+/// The tallest a widget sheet grows in `viewport`, and its width.
+pub fn sheet_max_height(viewport: gpui::Size<gpui::Pixels>) -> f32 {
+    (f32::from(viewport.height) - 96.0).clamp(240.0, 780.0)
+}
+
+pub fn sheet_width(viewport: gpui::Size<gpui::Pixels>) -> f32 {
+    (f32::from(viewport.width) - 64.0).clamp(320.0, 920.0)
+}
+
+/// The sheet's content inset, and its top band, where the toolbar floats.
+const SHEET_PADDING: f32 = 28.0;
+const SHEET_TOP: f32 = 56.0;
+const SHEET_TOOLBAR_INSET: f32 = 12.0;
+
+/// The sheet's floating toolbar: a small pill of the sheet's own material.
+/// Its tools nest inside concentrically (radius 12 = 9 + 3).
+fn sheet_toolbar(theme: &Theme) -> gpui::Div {
+    div()
+        .h(px(36.0))
+        .p(px(3.0))
+        .rounded(px(12.0))
+        .bg(popover::surface_bg(theme))
+        .border_1()
+        .border_color(theme.border)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(1.0))
+}
+
+/// One icon tool of the sheet's toolbar, a 28px target.
+fn sheet_tool(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .size(px(28.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(9.0))
+        .cursor_pointer()
+        .hover(|s| s.bg(theme.glass_hover()))
 }
 
 // ---- the page's state ------------------------------------------------------
@@ -833,7 +984,7 @@ enum Request {
 
 /// What a successful mutation answered.
 enum Applied {
-    Widget(ProjectWidget),
+    Widget(Box<ProjectWidget>),
     Collection(ProjectWidgetsSnapshot),
     Deleted,
 }
@@ -1063,7 +1214,7 @@ impl WidgetsModel {
                     && let Some(shown) = snapshot.widgets.iter_mut().find(|w| w.id == widget.id)
                     && widget.revision >= shown.revision
                 {
-                    *shown = widget;
+                    *shown = *widget;
                 }
                 false
             }
@@ -1224,6 +1375,8 @@ pub enum ProjectWidgetsEvent {
     NewDashboardChat { space_id: String, request: String },
     /// Show another space of the same project.
     OpenSpace(WidgetsTarget),
+    /// The sheet's widget is gone, or the sheet was dismissed.
+    CloseSheet,
 }
 
 /// One widget's renderer at one content revision.
@@ -1239,6 +1392,46 @@ enum Item {
     Header,
     Body,
     Widget(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MenuAction {
+    OpenSource,
+    /// Shown disabled, saying why the source can't open.
+    SourceDeleted,
+    Rename,
+    MoveUp,
+    MoveDown,
+    Delete,
+}
+
+impl MenuAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::OpenSource => "Open source chat",
+            Self::SourceDeleted => "Source chat deleted",
+            Self::Rename => "Rename…",
+            Self::MoveUp => "Move up",
+            Self::MoveDown => "Move down",
+            Self::Delete => "Delete…",
+        }
+    }
+
+    fn glyph(self) -> &'static str {
+        match self {
+            Self::OpenSource | Self::SourceDeleted => icons::CHAT_ROUND_LINE,
+            Self::Rename => icons::PEN,
+            Self::MoveUp => icons::ALT_ARROW_UP,
+            Self::MoveDown => icons::ALT_ARROW_DOWN,
+            Self::Delete => icons::TRASH_BIN_MINIMALISTIC,
+        }
+    }
+}
+
+enum SourceState {
+    Open(String),
+    Deleted,
+    Unknown,
 }
 
 struct RowMenu {
@@ -1289,7 +1482,6 @@ pub struct ProjectWidgetsPage {
     menu_focus_pending: bool,
     rename: Option<RenameDialog>,
     recipe: Option<RecipeDialog>,
-    recipe_select: widgets::SelectState,
     /// Widgets with a refresh or cancel request on its way.
     refresh_pending: HashSet<String>,
     refresh_tasks: HashMap<String, Task<()>>,
@@ -1303,6 +1495,9 @@ pub struct ProjectWidgetsPage {
     space_select: widgets::SelectState,
     show_skeleton: bool,
     visible: bool,
+    /// Sheet mode: the page shows only this widget, over the window.
+    sheet: Option<String>,
+    sheet_scroll: gpui::ScrollHandle,
     engine_key: Option<(String, WorkspaceScope)>,
     skeleton_task: Option<Task<()>>,
     watch_task: Option<Task<()>>,
@@ -1350,7 +1545,6 @@ impl ProjectWidgetsPage {
             menu_focus_pending: false,
             rename: None,
             recipe: None,
-            recipe_select: widgets::SelectState::default(),
             refresh_pending: HashSet::new(),
             refresh_tasks: HashMap::new(),
             delete_confirm: None,
@@ -1361,6 +1555,8 @@ impl ProjectWidgetsPage {
             space_select: widgets::SelectState::default(),
             show_skeleton: false,
             visible: false,
+            sheet: None,
+            sheet_scroll: gpui::ScrollHandle::new(),
             engine_key: None,
             skeleton_task: None,
             watch_task: None,
@@ -1386,6 +1582,32 @@ impl ProjectWidgetsPage {
             self.watch(cx);
         }
         cx.notify();
+    }
+
+    /// Show one widget of `target` as a sheet: the same controls as the
+    /// page, without the list around it.
+    pub fn open_sheet(&mut self, target: WidgetsTarget, widget_id: String, cx: &mut Context<Self>) {
+        if self.sheet.as_deref() != Some(widget_id.as_str()) {
+            self.sheet = Some(widget_id.clone());
+            self.items.clear();
+        }
+        self.open(Some(target), cx);
+        self.pending_focus = Some(Some(widget_id));
+        self.sync_items(cx);
+        cx.notify();
+    }
+
+    pub fn sheet_widget(&self) -> Option<&str> {
+        self.sheet.as_deref()
+    }
+
+    /// A menu, select or dialog of the page is open.
+    pub fn has_overlay(&self) -> bool {
+        self.menu.is_some()
+            || self.rename.is_some()
+            || self.recipe.is_some()
+            || self.delete_confirm.is_some()
+            || self.space_select.is_open()
     }
 
     /// The route was left: let go of every renderer, read and watch.
@@ -1620,11 +1842,26 @@ impl ProjectWidgetsPage {
     /// Keep the list's rows in step with what is shown, holding the scroll
     /// position and each widget's focus handle.
     fn sync_items(&mut self, cx: &mut Context<Self>) {
-        let mut items = vec![Item::Header];
-        match self.model.widgets() {
-            [] => items.push(Item::Body),
-            widgets => items.extend(widgets.iter().map(|w| Item::Widget(w.id.clone()))),
-        }
+        let items = match &self.sheet {
+            Some(id) => match self.model.widget(id) {
+                Some(_) => vec![Item::Widget(id.clone())],
+                None => {
+                    // Deleted here or elsewhere: nothing left to show.
+                    if matches!(self.model.collection, Collection::Ready(_)) {
+                        cx.emit(ProjectWidgetsEvent::CloseSheet);
+                    }
+                    vec![Item::Body]
+                }
+            },
+            None => {
+                let mut items = vec![Item::Header];
+                match self.model.widgets() {
+                    [] => items.push(Item::Body),
+                    widgets => items.extend(widgets.iter().map(|w| Item::Widget(w.id.clone()))),
+                }
+                items
+            }
+        };
         if items == self.items {
             self.list.remeasure();
             return;
@@ -1808,7 +2045,7 @@ impl ProjectWidgetsPage {
                 methods::UPDATE_PROJECT_WIDGET => client
                     .call_as::<ProjectWidgetWrite>(method, params)
                     .await
-                    .map(|write| Applied::Widget(write.widget)),
+                    .map(|write| Applied::Widget(Box::new(write.widget))),
                 methods::REORDER_PROJECT_WIDGETS => client
                     .call_as::<ProjectWidgetsSnapshot>(method, params)
                     .await
@@ -1988,11 +2225,16 @@ impl ProjectWidgetsPage {
         let routed = route_to(self.state.read(cx), &target.device_id);
         let instruction = cx.new(|cx| {
             ComposerInput::new(
-                "What should the agent refresh? For example: recompute these metrics for the last 30 days.",
+                "For example: recompute these metrics for the last 30 days and keep the same layout.",
                 cx,
             )
+            .with_tab_stop()
         });
-        let model = cx.new(|cx| ComposerInput::new("Model (optional)", cx).with_single_line());
+        let model = cx.new(|cx| {
+            ComposerInput::new("The agent's default", cx)
+                .with_single_line()
+                .with_tab_stop()
+        });
         let load = cx.spawn(async move |this, cx| {
             let params = match routed {
                 Some(device) => serde_json::json!({ "targetDeviceId": device }),
@@ -2091,20 +2333,52 @@ impl ProjectWidgetsPage {
         cx.notify();
     }
 
-    /// The menu's actions, in order, and whether each can run now.
-    fn menu_actions(&self, widget_id: &str) -> [(&'static str, bool); 4] {
+    /// The menu's actions, in order, and whether each can run now. The
+    /// sheet adds the source chat (its own header is gone) and leaves
+    /// reordering to the list, where the order is visible.
+    fn menu_actions(&self, widget_id: &str, cx: &App) -> Vec<(MenuAction, bool)> {
         let widgets = self.model.widgets();
         let ix = widgets.iter().position(|w| w.id == widget_id);
         let writable = self.model.writable();
-        [
-            ("Rename…", writable),
-            ("Move up", writable && ix.is_some_and(|ix| ix > 0)),
-            (
-                "Move down",
+        let mut actions = Vec::new();
+        if self.sheet.is_some() {
+            match self.source_state(widget_id, cx) {
+                SourceState::Open(_) => actions.push((MenuAction::OpenSource, true)),
+                SourceState::Deleted => actions.push((MenuAction::SourceDeleted, false)),
+                SourceState::Unknown => {}
+            }
+        }
+        actions.push((MenuAction::Rename, writable));
+        if self.sheet.is_none() {
+            actions.push((MenuAction::MoveUp, writable && ix.is_some_and(|ix| ix > 0)));
+            actions.push((
+                MenuAction::MoveDown,
                 writable && ix.is_some_and(|ix| ix + 1 < widgets.len()),
-            ),
-            ("Delete…", writable),
-        ]
+            ));
+        }
+        actions.push((MenuAction::Delete, writable));
+        actions
+    }
+
+    /// Where a widget's source chat stands, as far as this device knows.
+    fn source_state(&self, widget_id: &str, cx: &App) -> SourceState {
+        let Some(source) = self.model.widget(widget_id).and_then(|w| w.source.as_ref()) else {
+            return SourceState::Unknown;
+        };
+        if self.source_missing.contains(widget_id) {
+            return SourceState::Deleted;
+        }
+        let known = self
+            .state
+            .read(cx)
+            .chats
+            .iter()
+            .any(|chat| chat.id == source.source_chat_id);
+        if known || self.source_present.contains(widget_id) {
+            SourceState::Open(source.source_chat_id.clone())
+        } else {
+            SourceState::Unknown
+        }
     }
 
     fn activate_menu(&mut self, action: usize, cx: &mut Context<Self>) {
@@ -2112,21 +2386,23 @@ impl ProjectWidgetsPage {
             return;
         };
         let id = menu.widget_id;
-        if !self
-            .menu_actions(&id)
-            .get(action)
-            .is_some_and(|(_, on)| *on)
-        {
+        let Some((action, true)) = self.menu_actions(&id, cx).get(action).copied() else {
             self.menu = None;
             self.pending_focus = Some(Some(id));
             cx.notify();
             return;
-        }
+        };
         match action {
-            0 => self.open_rename(&id, cx),
-            1 => self.mutate(&id, MutationKind::Move(-1), cx),
-            2 => self.mutate(&id, MutationKind::Move(1), cx),
-            _ => {
+            MenuAction::OpenSource => {
+                if let SourceState::Open(chat_id) = self.source_state(&id, cx) {
+                    cx.emit(ProjectWidgetsEvent::OpenChat(chat_id));
+                }
+            }
+            MenuAction::SourceDeleted => {}
+            MenuAction::Rename => self.open_rename(&id, cx),
+            MenuAction::MoveUp => self.mutate(&id, MutationKind::Move(-1), cx),
+            MenuAction::MoveDown => self.mutate(&id, MutationKind::Move(1), cx),
+            MenuAction::Delete => {
                 self.delete_confirm = Some(id);
                 cx.notify();
             }
@@ -2186,6 +2462,8 @@ impl ProjectWidgetsPage {
             self.close_delete(cx);
         } else if self.menu.is_some() {
             self.close_menu(cx);
+        } else if self.sheet.is_some() {
+            cx.emit(ProjectWidgetsEvent::CloseSheet);
         } else {
             return false;
         }
@@ -2240,6 +2518,15 @@ impl ProjectWidgetsPage {
             Some(Item::Widget(id)) => self.render_widget(&id, &theme, cx),
             None => gpui::Empty.into_any_element(),
         };
+        if self.sheet.is_some() {
+            return div()
+                .w_full()
+                .px(px(if narrow { 18.0 } else { 28.0 }))
+                .pt(px(22.0))
+                .pb(px(4.0))
+                .child(content)
+                .into_any_element();
+        }
         div()
             .w_full()
             .child(
@@ -2450,7 +2737,6 @@ impl ProjectWidgetsPage {
             return gpui::Empty.into_any_element();
         };
         let section = self.section_handle(id, cx);
-        let trigger = self.trigger_handle(id, cx);
         let frame = self.frames.get(id).map(|f| f.frame.clone());
         let failure = frame.as_ref().and_then(|frame| frame.read(cx).failure());
         let problem = self.model.problems.get(id).cloned();
@@ -2465,7 +2751,6 @@ impl ProjectWidgetsPage {
         let source_missing = self.source_missing.contains(id);
         let updated = widget.last_successful_at.unwrap_or(widget.updated_at);
         let updated = crate::transcript::format_timestamp(updated, &chrono::Local);
-        let menu_open = self.menu.as_ref().is_some_and(|m| m.widget_id == id);
         let title = widget.title.clone();
 
         let refresh = self.render_refresh(&widget, theme, cx);
@@ -2512,64 +2797,7 @@ impl ProjectWidgetsPage {
             _ => None,
         };
 
-        let menu_id = id.to_owned();
-        let key_id = id.to_owned();
-        let mut actions_trigger = div()
-            .id(SharedString::from(format!("widget-actions-{id}")))
-            .relative()
-            .size(px(32.0))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(8.0))
-            .cursor_pointer()
-            .hover(|s| s.bg(theme.glass_hover()))
-            .role(gpui::Role::Button)
-            .aria_label(format!("Actions for {title}"))
-            .aria_expanded(menu_open)
-            .track_focus(&trigger.tab_stop(true))
-            .tab_index(0)
-            .focus_visible(|s| s.border_2().border_color(theme.accent))
-            .on_click(cx.listener(move |page, event: &gpui::ClickEvent, _, cx| {
-                if page.menu.as_ref().is_some_and(|m| m.widget_id == menu_id) {
-                    page.close_menu(cx);
-                } else {
-                    page.open_menu(&menu_id, event.is_keyboard(), cx);
-                }
-            }))
-            .on_key_down(
-                cx.listener(move |page, event: &gpui::KeyDownEvent, window, cx| {
-                    if event.is_held {
-                        return;
-                    }
-                    match event.keystroke.key.as_str() {
-                        // Move with the keyboard without opening the menu.
-                        "up" | "down" if event.keystroke.modifiers.alt => {
-                            let delta = if event.keystroke.key == "up" { -1 } else { 1 };
-                            page.mutate(&key_id, MutationKind::Move(delta), cx);
-                            cx.stop_propagation();
-                        }
-                        "down" if page.menu.is_some() => {
-                            window.focus(&page.menu_focus, cx);
-                            if let Some(menu) = page.menu.as_mut() {
-                                menu.active = Some(0);
-                            }
-                            cx.stop_propagation();
-                            cx.notify();
-                        }
-                        _ => {}
-                    }
-                }),
-            )
-            .child(
-                icon(icons::MORE_HORIZONTAL)
-                    .size(px(16.0))
-                    .text_color(theme.text_muted),
-            );
-        if menu_open {
-            actions_trigger = actions_trigger.child(self.render_menu(id, theme, cx));
-        }
+        let actions_trigger = self.actions_trigger(id, &title, theme, cx);
 
         let status = (!self.model.live).then(|| {
             div()
@@ -2685,6 +2913,411 @@ impl ProjectWidgetsPage {
             .child(div().mt(px(12.0)).w_full().children(frame))
             .children(reload_frame.map(|button| div().mt(px(6.0)).child(button)))
             .into_any_element()
+    }
+
+    // ---- the sheet ----
+
+    /// One widget over the window. The visual is its own title and body;
+    /// the sheet adds only a floating toolbar (refresh, menu, close), and the
+    /// content fades under it and at the bottom as it scrolls.
+    fn render_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let max_height = sheet_max_height(window.viewport_size());
+        let Some(id) = self.sheet.clone() else {
+            return gpui::Empty.into_any_element();
+        };
+        let close = keyboard_button(
+            sheet_tool("widget-sheet-close", &theme)
+                .aria_label("Close")
+                .child(
+                    icon(icons::CLOSE)
+                        .size(px(15.0))
+                        .text_color(theme.text_muted),
+                ),
+            &theme,
+            cx,
+            |_, _, cx| cx.emit(ProjectWidgetsEvent::CloseSheet),
+        )
+        .tooltip(widgets::text_tooltip("Close"));
+        let Some(widget) = self.model.widget(&id).cloned() else {
+            // Still loading, or the owner can't be reached.
+            return div()
+                .relative()
+                .w_full()
+                .px(px(SHEET_PADDING))
+                .pt(px(SHEET_TOP))
+                .pb(px(SHEET_PADDING))
+                .child(self.render_body(&theme, cx))
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(SHEET_TOOLBAR_INSET))
+                        .right(px(SHEET_TOOLBAR_INSET))
+                        .child(sheet_toolbar(&theme).child(close)),
+                )
+                .into_any_element();
+        };
+        let section = self.section_handle(&id, cx);
+        let frame = self.frames.get(&id).map(|f| f.frame.clone());
+        let failure = frame.as_ref().and_then(|frame| frame.read(cx).failure());
+        let problem = self.model.problems.get(&id).cloned();
+        let reload_id = id.clone();
+        let note = |id: &'static str, copy: SharedString, action: Option<AnyElement>| {
+            div()
+                .id(id)
+                .role(gpui::Role::Alert)
+                .mt(px(16.0))
+                .px(px(12.0))
+                .py(px(8.0))
+                .rounded(px(10.0))
+                .bg(theme.danger.opacity(0.08))
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.0))
+                .text_size(crate::typography::ui_rems(12.5))
+                .text_color(theme.danger_muted)
+                .child(
+                    icon(icons::DANGER_TRIANGLE)
+                        .size(px(14.0))
+                        .text_color(theme.danger_muted),
+                )
+                .child(div().flex_1().min_w(px(120.0)).child(copy))
+                .children(action)
+        };
+        let problem_note = problem.map(|problem| {
+            note(
+                "widget-sheet-problem",
+                problem,
+                Some(
+                    keyboard_button(
+                        widgets::ghost_action(&theme)
+                            .id("widget-sheet-reload")
+                            .child("Reload"),
+                        &theme,
+                        cx,
+                        |page, _, cx| page.reload(cx),
+                    )
+                    .into_any_element(),
+                ),
+            )
+        });
+        // Reloading a failed visual is a click, never an automatic loop.
+        let failure_note = failure.map(|failure| {
+            note(
+                "widget-sheet-failure",
+                SharedString::from(failure.to_string()),
+                Some(
+                    keyboard_button(
+                        widgets::ghost_action(&theme)
+                            .id("widget-sheet-retry")
+                            .child("Reload widget"),
+                        &theme,
+                        cx,
+                        move |page, _, cx| page.reload_frame(&reload_id, cx),
+                    )
+                    .into_any_element(),
+                ),
+            )
+        });
+        let content = div()
+            .id(SharedString::from(format!("widget-{id}")))
+            .track_focus(&section)
+            .role(gpui::Role::Group)
+            .aria_label(widget.title.clone())
+            .px(px(SHEET_PADDING))
+            .pt(px(SHEET_TOP))
+            .pb(px(SHEET_PADDING))
+            .children(frame)
+            .children(problem_note)
+            .children(failure_note);
+        let scroll = div()
+            .id("widget-sheet-scroll")
+            .w_full()
+            .max_h(px(max_height))
+            .overflow_y_scroll()
+            .track_scroll(&self.sheet_scroll)
+            .child(content);
+        let toolbar = self.render_sheet_toolbar(&widget, close, &theme, cx);
+        div()
+            .relative()
+            .w_full()
+            .child(
+                crate::edge_fade::edge_faded(SHEET_TOP, true, true, scroll)
+                    .fade_overflow_y(&self.sheet_scroll),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(SHEET_TOOLBAR_INSET))
+                    .right(px(SHEET_TOOLBAR_INSET))
+                    .child(toolbar),
+            )
+            .into_any_element()
+    }
+
+    /// The sheet's toolbar: what the latest refresh is doing, then Refresh
+    /// (or Cancel and Open run), the menu, and Close.
+    fn render_sheet_toolbar(
+        &mut self,
+        widget: &ProjectWidget,
+        close: gpui::Stateful<gpui::Div>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let id = widget.id.clone();
+        let pending = self.refresh_pending.contains(&id);
+        let live = self.model.live;
+        let updated = {
+            let at = widget.last_successful_at.unwrap_or(widget.updated_at);
+            let at = chrono::DateTime::from_timestamp_millis(at).unwrap_or_else(chrono::Utc::now);
+            crate::pull_requests::relative_time(at, chrono::Utc::now())
+        };
+        let status = |text: SharedString, tone: gpui::Hsla, glyph: Option<AnyElement>| {
+            div()
+                .id("widget-sheet-status")
+                .role(gpui::Role::Status)
+                .pl(px(8.0))
+                .pr(px(4.0))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .text_size(crate::typography::ui_rems(12.5))
+                .text_color(tone)
+                .children(glyph)
+                .child(text)
+        };
+        let spinner = |cx: &mut Context<Self>| {
+            crate::loaders::mini_glyph_spinner(
+                "widget-sheet-spinner",
+                2.0,
+                theme.glyph,
+                cx.entity_id(),
+                cx,
+            )
+            .into_any_element()
+        };
+        let refresh_button = |label: &'static str, cx: &mut Context<Self>| {
+            let id = id.clone();
+            let tip = format!("{label} · Updated {updated}");
+            let button = sheet_tool("widget-sheet-refresh", theme)
+                .aria_label(label)
+                .aria_description(tip.clone())
+                .child(
+                    icon(icons::REFRESH)
+                        .size(px(15.0))
+                        .text_color(theme.text_muted),
+                )
+                .tooltip(widgets::text_tooltip(tip));
+            if pending || !live {
+                button.opacity(0.45).cursor_default()
+            } else {
+                keyboard_button(button, theme, cx, move |page, _, cx| {
+                    page.request_refresh(&id, cx)
+                })
+            }
+        };
+        let open_run = |chat_id: Option<String>, cx: &mut Context<Self>| {
+            chat_id.map(|chat_id| {
+                keyboard_button(
+                    sheet_tool("widget-sheet-open-run", theme)
+                        .aria_label("Open run")
+                        .child(
+                            icon(icons::CHAT_ROUND_LINE)
+                                .size(px(15.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .tooltip(widgets::text_tooltip("Open the refresh run")),
+                    theme,
+                    cx,
+                    move |_, _, cx| cx.emit(ProjectWidgetsEvent::OpenChat(chat_id.clone())),
+                )
+            })
+        };
+        let cancel = |refresh_id: String, cx: &mut Context<Self>| {
+            let id = id.clone();
+            let button = sheet_tool("widget-sheet-cancel", theme)
+                .aria_label("Cancel refresh")
+                .child(
+                    icon(icons::STOP)
+                        .size(px(14.0))
+                        .text_color(theme.text_muted),
+                )
+                .tooltip(widgets::text_tooltip("Cancel refresh"));
+            if pending || !live {
+                button.opacity(0.45).cursor_default()
+            } else {
+                keyboard_button(button, theme, cx, move |page, _, cx| {
+                    page.cancel_refresh(&id, &refresh_id, cx)
+                })
+            }
+        };
+        let mut bar = sheet_toolbar(theme);
+        match refresh_control(widget, self.refresh_supported(cx)) {
+            RefreshControl::Unsupported => {
+                bar = bar.child(
+                    sheet_tool("widget-sheet-refresh", theme)
+                        .opacity(0.45)
+                        .cursor_default()
+                        .aria_label("Refresh")
+                        .aria_description(REFRESH_UNSUPPORTED_COPY)
+                        .child(
+                            icon(icons::REFRESH)
+                                .size(px(15.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .tooltip(widgets::text_tooltip(REFRESH_UNSUPPORTED_COPY)),
+                );
+            }
+            RefreshControl::Start { .. } if pending => {
+                bar = bar.child(status(
+                    "Starting…".into(),
+                    theme.text_muted,
+                    Some(spinner(cx)),
+                ));
+            }
+            RefreshControl::Start { .. } => bar = bar.child(refresh_button("Refresh", cx)),
+            RefreshControl::Running {
+                refresh_id,
+                chat_id,
+            } => {
+                bar = bar
+                    .child(
+                        status("Refreshing".into(), theme.text_muted, Some(spinner(cx)))
+                            .aria_description(REFRESH_RUN_COPY)
+                            .tooltip(widgets::text_tooltip(REFRESH_RUN_COPY)),
+                    )
+                    .children(open_run(chat_id, cx))
+                    .child(cancel(refresh_id, cx));
+            }
+            RefreshControl::AwaitingInput {
+                refresh_id,
+                chat_id,
+            } => {
+                bar = bar
+                    .child(status(
+                        "Needs a response".into(),
+                        theme.text,
+                        Some(
+                            div()
+                                .size(px(6.0))
+                                .rounded_full()
+                                .bg(theme.accent)
+                                .into_any_element(),
+                        ),
+                    ))
+                    .children(open_run(chat_id, cx))
+                    .child(cancel(refresh_id, cx));
+            }
+            RefreshControl::Cancelled => {
+                bar = bar
+                    .child(status("Cancelled".into(), theme.text_faint, None))
+                    .child(refresh_button("Refresh", cx));
+            }
+            RefreshControl::Failed { message, chat_id } => {
+                bar = bar
+                    .child(
+                        status(
+                            "Refresh failed".into(),
+                            theme.danger_muted,
+                            Some(
+                                icon(icons::DANGER_TRIANGLE)
+                                    .size(px(13.0))
+                                    .text_color(theme.danger_muted)
+                                    .into_any_element(),
+                            ),
+                        )
+                        .aria_description(message.clone())
+                        .tooltip(widgets::text_tooltip(message)),
+                    )
+                    .child(refresh_button("Retry", cx))
+                    .children(open_run(chat_id, cx));
+            }
+        }
+        let title = widget.title.clone();
+        let menu = self.actions_trigger(&id, &title, theme, cx);
+        bar.child(menu)
+            .child(
+                div()
+                    .w(px(1.0))
+                    .h(px(16.0))
+                    .mx(px(2.0))
+                    .bg(crate::theme::hairline(0.10)),
+            )
+            .child(close)
+    }
+
+    /// The "…" button opening a widget's menu, with the menu when open.
+    fn actions_trigger(
+        &mut self,
+        id: &str,
+        title: &str,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let menu_id = id.to_owned();
+        let key_id = id.to_owned();
+        let trigger = self.trigger_handle(id, cx);
+        let menu_open = self.menu.as_ref().is_some_and(|m| m.widget_id == id);
+        let mut actions_trigger = div()
+            .id(SharedString::from(format!("widget-actions-{id}")))
+            .relative()
+            .size(px(if self.sheet.is_some() { 28.0 } else { 32.0 }))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(if self.sheet.is_some() { 9.0 } else { 8.0 }))
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.glass_hover()))
+            .role(gpui::Role::Button)
+            .aria_label(format!("Actions for {title}"))
+            .aria_expanded(menu_open)
+            .track_focus(&trigger.tab_stop(true))
+            .tab_index(0)
+            .focus_visible(|s| s.border_2().border_color(theme.accent))
+            .on_click(cx.listener(move |page, event: &gpui::ClickEvent, _, cx| {
+                if page.menu.as_ref().is_some_and(|m| m.widget_id == menu_id) {
+                    page.close_menu(cx);
+                } else {
+                    page.open_menu(&menu_id, event.is_keyboard(), cx);
+                }
+            }))
+            .on_key_down(
+                cx.listener(move |page, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.is_held {
+                        return;
+                    }
+                    match event.keystroke.key.as_str() {
+                        // Move with the keyboard without opening the menu.
+                        "up" | "down" if event.keystroke.modifiers.alt => {
+                            let delta = if event.keystroke.key == "up" { -1 } else { 1 };
+                            page.mutate(&key_id, MutationKind::Move(delta), cx);
+                            cx.stop_propagation();
+                        }
+                        "down" if page.menu.is_some() => {
+                            window.focus(&page.menu_focus, cx);
+                            if let Some(menu) = page.menu.as_mut() {
+                                menu.active = Some(0);
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                        _ => {}
+                    }
+                }),
+            )
+            .child(
+                icon(icons::MORE_HORIZONTAL)
+                    .size(px(16.0))
+                    .text_color(theme.text_muted),
+            );
+        if menu_open {
+            actions_trigger = actions_trigger.child(self.render_menu(id, theme, cx));
+        }
+        actions_trigger
     }
 
     /// The Refresh area: a button, or what the running attempt needs.
@@ -2846,14 +3479,9 @@ impl ProjectWidgetsPage {
 
     fn render_menu(&mut self, id: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let theme = theme.for_popup();
-        let actions = self.menu_actions(id);
+        let actions = self.menu_actions(id, cx);
+        let count = actions.len();
         let active = self.menu.as_ref().and_then(|m| m.active);
-        let glyphs = [
-            icons::PEN,
-            icons::ALT_ARROW_UP,
-            icons::ALT_ARROW_DOWN,
-            icons::TRASH_BIN_MINIMALISTIC,
-        ];
         let mut card = popover::popover_card(&theme)
             .id("widget-actions-menu-card")
             .w(px(200.0))
@@ -2862,14 +3490,14 @@ impl ProjectWidgetsPage {
             .track_focus(&self.menu_focus)
             .role(gpui::Role::Menu)
             .aria_label("Widget actions")
-            .on_key_down(cx.listener(|page, event: &gpui::KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(move |page, event: &gpui::KeyDownEvent, _, cx| {
                 match event.keystroke.key.as_str() {
                     "escape" => page.close_menu(cx),
                     "up" | "down" => {
                         if let Some(menu) = page.menu.as_mut() {
                             menu.active = popover::menu_step(
                                 menu.active,
-                                4,
+                                count,
                                 if event.keystroke.key == "up" { -1 } else { 1 },
                             );
                         }
@@ -2885,8 +3513,9 @@ impl ProjectWidgetsPage {
                 cx.notify();
             }))
             .on_mouse_down_out(cx.listener(|page, _, _, cx| page.close_menu(cx)));
-        for (action, ((label, enabled), glyph)) in actions.into_iter().zip(glyphs).enumerate() {
-            let danger = action == 3;
+        for (action, (kind, enabled)) in actions.into_iter().enumerate() {
+            let (label, glyph) = (kind.label(), kind.glyph());
+            let danger = kind == MenuAction::Delete;
             let color = if !enabled {
                 theme.text_faint
             } else if danger {
@@ -2992,34 +3621,112 @@ impl ProjectWidgetsPage {
             let agents = dialog.harnesses.clone();
             let selected = dialog.harness;
             let ready = agents.as_ref().is_some_and(|agents| !agents.is_empty());
-            let agent: AnyElement = match agents {
-                None => popover::dialog_body(&theme, "Looking for this device's agents…")
-                    .into_any_element(),
-                Some(agents) if agents.is_empty() => gpui::Empty.into_any_element(),
-                Some(agents) => {
-                    widgets::select("widget-recipe-agent", "Agent", &theme, |page: &mut Self| {
-                        &mut page.recipe_select
-                    })
-                    .options(
-                        agents
-                            .iter()
-                            .map(|(_, name)| widgets::SelectOption::new(name.clone())),
-                        selected,
+            let device = self
+                .model
+                .target
+                .as_ref()
+                .map(|target| device_label(self.state.read(cx), &target.device_id))
+                .unwrap_or_else(|| "this device".into());
+            let label = |text: &'static str, hint: Option<&'static str>| {
+                div()
+                    .mt(px(14.0))
+                    .mb(px(6.0))
+                    .flex()
+                    .flex_row()
+                    .gap(px(6.0))
+                    .text_size(crate::typography::ui_rems(12.0))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(theme.text_muted)
+                            .child(text),
                     )
-                    .heading("Agent on this device")
-                    .on_select(|page, ix, _, cx| {
-                        if let Some(dialog) = page.recipe.as_mut() {
-                            dialog.harness = ix;
-                        }
-                        cx.notify();
-                    })
-                    .render(&self.recipe_select, cx)
-                    .into_any_element()
+                    .children(hint.map(|hint| div().text_color(theme.text_faint).child(hint)))
+            };
+            let agent: AnyElement = match agents {
+                None => div()
+                    .h(px(32.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .text_size(crate::typography::ui_rems(12.5))
+                    .text_color(theme.text_muted)
+                    .child(crate::loaders::mini_glyph_spinner(
+                        "widget-recipe-agents-loading",
+                        2.0,
+                        theme.glyph,
+                        cx.entity_id(),
+                        cx,
+                    ))
+                    .child(SharedString::from(format!(
+                        "Looking for agents on {device}…"
+                    )))
+                    .into_any_element(),
+                Some(agents) if agents.is_empty() => popover::dialog_body(
+                    &theme,
+                    format!("No agent is enabled on {device}. Enable one in Settings → Providers."),
+                )
+                .into_any_element(),
+                Some(agents) => {
+                    let mut chips = div()
+                        .id("widget-recipe-agents")
+                        .role(gpui::Role::RadioGroup)
+                        .aria_label("Agent")
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(px(6.0));
+                    for (ix, (harness, name)) in agents.iter().enumerate() {
+                        let on = ix == selected;
+                        let (mark, brand) = crate::pickers::harness_brand_icon(*harness);
+                        chips = chips.child(
+                            keyboard_button(
+                                div()
+                                    .id(("widget-recipe-agent", ix))
+                                    .h(px(30.0))
+                                    .px(px(10.0))
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(if on { theme.text_muted } else { theme.border })
+                                    .bg(if on {
+                                        crate::theme::ink(0.10)
+                                    } else {
+                                        crate::theme::ink(0.03)
+                                    })
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(7.0))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(crate::theme::ink(0.07)))
+                                    .text_size(crate::typography::ui_rems(12.5))
+                                    .text_color(if on { theme.text } else { theme.text_muted })
+                                    .child(
+                                        icon(mark)
+                                            .size(px(14.0))
+                                            .text_color(brand.unwrap_or(theme.text)),
+                                    )
+                                    .child(SharedString::from(name.clone())),
+                                &theme,
+                                cx,
+                                move |page, _, cx| {
+                                    if let Some(dialog) = page.recipe.as_mut() {
+                                        dialog.harness = ix;
+                                    }
+                                    cx.notify();
+                                },
+                            )
+                            .role(gpui::Role::RadioButton)
+                            .aria_selected(on),
+                        );
+                    }
+                    chips.into_any_element()
                 }
             };
             let save = popover::btn_primary(&theme, "Save and refresh").id("widget-recipe-save");
             let card = popover::dialog_card(&theme)
                 .id("widget-recipe-dialog-card")
+                .w(px((f32::from(viewport.width) - 48.0).clamp(300.0, 480.0)))
                 .role(gpui::Role::Dialog)
                 .aria_label("Set up refresh")
                 .on_key_down(cx.listener(|page, event: &gpui::KeyDownEvent, _, cx| {
@@ -3028,39 +3735,46 @@ impl ProjectWidgetsPage {
                         cx.stop_propagation();
                     }
                 }))
-                .child(popover::dialog_title(&theme, "Set up refresh"))
-                .child(div().mt(px(6.0)).child(popover::dialog_body(
-                    &theme,
-                    "Refresh starts an agent run in this project with this instruction. It uses the \
-                     agent's own tools and accounts, and the widget changes only if the run succeeds.",
-                )))
                 .child(
                     div()
-                        .mt(px(12.0))
-                        .child(popover::dialog_field(instruction.into_any_element())),
-                )
-                .child(
-                    div()
-                        .mt(px(8.0))
                         .flex()
                         .flex_row()
-                        .flex_wrap()
                         .items_center()
                         .gap(px(8.0))
-                        .child(agent)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(160.0))
-                                .child(popover::dialog_field(model.into_any_element())),
-                        ),
+                        .child(icon(icons::REFRESH).size(px(16.0)).text_color(theme.text_muted))
+                        .child(popover::dialog_title(&theme, "Set up refresh")),
+                )
+                .child(div().mt(px(6.0)).child(popover::dialog_body(
+                    &theme,
+                    format!(
+                        "Refresh starts an agent run on {device} with this instruction. The agent \
+                         uses its own tools and accounts, and the widget only changes if the run succeeds."
+                    ),
+                )))
+                .child(label("Instruction", None))
+                .child(
+                    popover::dialog_field(
+                        div()
+                            .h(px(84.0))
+                            .overflow_hidden()
+                            .child(instruction)
+                            .into_any_element(),
+                    )
+                    .text_size(crate::typography::ui_rems(13.0)),
+                )
+                .child(label("Agent", None))
+                .child(agent)
+                .child(label("Model", Some("optional")))
+                .child(
+                    popover::dialog_field(model.into_any_element())
+                        .text_size(crate::typography::ui_rems(13.0)),
                 )
                 .when_some(error, |el, error| {
                     el.child(
                         div()
                             .id("widget-recipe-error")
                             .role(gpui::Role::Alert)
-                            .mt(px(8.0))
+                            .mt(px(10.0))
                             .text_size(crate::typography::ui_rems(12.5))
                             .text_color(theme.danger_muted)
                             .child(error),
@@ -3068,7 +3782,7 @@ impl ProjectWidgetsPage {
                 })
                 .child(
                     div()
-                        .mt(px(16.0))
+                        .mt(px(18.0))
                         .flex()
                         .flex_row()
                         .justify_end()
@@ -3142,7 +3856,79 @@ impl ProjectWidgetsPage {
 }
 
 #[cfg(feature = "project-widgets-fixture")]
+impl SaveVisual {
+    /// Offer saving to `name` (or a choice of `choices`) without an engine;
+    /// `open` shows the form, `saved` the result.
+    pub fn fixture_show(
+        &mut self,
+        project: Option<(&str, &str)>,
+        choices: &[(&str, &str)],
+        open: bool,
+        saved: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let choice = |(name, place): (&str, &str)| SpaceChoice {
+            target: WidgetsTarget {
+                space_id: format!("space-{name}"),
+                device_id: "device-studio".into(),
+            },
+            name: name.into(),
+            place: place.into(),
+        };
+        let target = SaveTarget {
+            device_id: "device-studio".into(),
+            space: project.map(choice),
+            choices: choices.iter().copied().map(choice).collect(),
+        };
+        if saved {
+            let space = target.space.as_ref().map(|s| s.target.clone());
+            self.saved = space.map(|space| (space, "widget".into(), false));
+        }
+        self.fixture_target = Some(target);
+        if open {
+            self.open_form(cx);
+        }
+        cx.notify();
+    }
+}
+
+#[cfg(feature = "project-widgets-fixture")]
 impl ProjectWidgetsPage {
+    /// Show the refresh setup of `widget_id` with `agents` listed.
+    pub fn fixture_open_recipe(
+        &mut self,
+        widget_id: &str,
+        agents: Vec<(HarnessId, String)>,
+        cx: &mut Context<Self>,
+    ) {
+        let instruction = cx.new(|cx| ComposerInput::new("For example: recompute these metrics for the last 30 days and keep the same layout.", cx));
+        let model = cx.new(|cx| ComposerInput::new("The agent's default", cx).with_single_line());
+        self.recipe = Some(RecipeDialog {
+            widget_id: widget_id.to_owned(),
+            instruction,
+            model,
+            harnesses: Some(agents),
+            harness: 0,
+            error: None,
+            focus_pending: false,
+            _load: Task::ready(()),
+        });
+        cx.notify();
+    }
+
+    pub fn fixture_close_recipe(&mut self, cx: &mut Context<Self>) {
+        self.recipe = None;
+        cx.notify();
+    }
+
+    /// Show only `widget_id`, as the sheet does.
+    pub fn fixture_sheet(&mut self, widget_id: &str, cx: &mut Context<Self>) {
+        self.sheet = Some(widget_id.to_owned());
+        self.items.clear();
+        self.sync_items(cx);
+        cx.notify();
+    }
+
     /// Show `snapshot` as a live collection without an engine, rendering
     /// each widget from `scripts` (by widget id); a widget without one shows
     /// its unreadable state.
@@ -3195,21 +3981,28 @@ impl Render for ProjectWidgetsPage {
             self.sync_items(cx);
         }
         let overlays = self.render_dialogs(window, cx);
+        let sheet = self.sheet.is_some();
+        // The sheet holds one widget and sizes to it, up to the window.
+        let content = if sheet {
+            self.render_sheet(window, cx)
+        } else {
+            list(self.list.clone(), cx.processor(Self::render_item))
+                .size_full()
+                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                .into_any_element()
+        };
         div()
             .id("project-widgets-page")
             .key_context("ProjectWidgets")
-            .size_full()
+            .when(sheet, |el| el.w_full())
+            .when(!sheet, |el| el.size_full())
             .relative()
             .on_key_down(cx.listener(|page, event: &gpui::KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" && page.on_escape(cx) {
                     cx.stop_propagation();
                 }
             }))
-            .child(
-                list(self.list.clone(), cx.processor(Self::render_item))
-                    .size_full()
-                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto),
-            )
+            .child(content)
             .children(overlays)
     }
 }
@@ -3238,6 +4031,7 @@ mod tests {
                 script_size: 1,
                 script_sha256: "00".into(),
                 assets: vec![],
+                preview: None,
             },
             source: Some(ProjectWidgetSource {
                 source_chat_id: "chat".into(),
@@ -3329,7 +4123,7 @@ mod tests {
         assert!(!model.watched(1, snapshot("space-a", 3, vec![widget("w1", 1)])));
         let mut renamed = widget("w2", 2);
         renamed.title = "Revenue".into();
-        let outcome = model.finish(rename, Ok(Applied::Widget(renamed)));
+        let outcome = model.finish(rename, Ok(Applied::Widget(Box::new(renamed))));
         assert_eq!(outcome, MutationOutcome::default());
         assert_eq!(model.collection, Collection::Loading);
     }

@@ -6123,6 +6123,9 @@ pub struct Composer {
     dock_height_changed: bool,
     dock_clearance_correction: f32,
     surface_bounds: crate::new_thread_background_mask::SurfaceBounds,
+    /// The whole composer stack: the pill and everything under it (its
+    /// selector footer), for chrome placed below the composer.
+    stack_bounds: crate::new_thread_background_mask::SurfaceBounds,
     last_target_height: f32,
     height_morph: Option<FlipMorph>,
     /// Monotonic clock anchor for the morph timeline.
@@ -6177,6 +6180,11 @@ impl Composer {
 
     pub(crate) fn surface_bounds(&self) -> crate::new_thread_background_mask::SurfaceBounds {
         self.surface_bounds.clone()
+    }
+
+    /// The composer stack's bounds, pill and footer included, as last painted.
+    pub(crate) fn stack_bounds(&self) -> Option<gpui::Bounds<gpui::Pixels>> {
+        self.stack_bounds.get()
     }
 
     /// The picker entity, for the shell's canvas target selectors.
@@ -6384,6 +6392,7 @@ impl Composer {
             dock_height_changed: false,
             dock_clearance_correction: 0.0,
             surface_bounds: Default::default(),
+            stack_bounds: Default::default(),
             last_target_height: 0.0,
             height_morph: None,
             morph_clock: Instant::now(),
@@ -11660,6 +11669,15 @@ impl Render for Composer {
         } else {
             container
         };
+        let measured = self.stack_bounds.clone();
+        let container = container.relative().child(
+            gpui::canvas(
+                move |bounds, _, _| measured.set(Some(bounds)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0(),
+        );
         // Full-size preview of a staged thumbnail (AttachmentPreviewDialog).
         if let Some(preview) = self.preview.clone() {
             if std::mem::take(&mut self.preview_focus_pending) {

@@ -82,6 +82,8 @@ pub mod transcript;
 pub mod typography;
 pub mod visuals;
 pub mod voice;
+pub mod widget_sheet;
+pub mod widget_shelf;
 mod workspace_links;
 
 use std::path::PathBuf;

@@ -57,6 +57,7 @@ impl Bundles {
         seed: u64,
     ) -> Result<ProjectWidgetContent, WidgetsError> {
         validate(script, assets)?;
+        let preview = super::preview::extract(script, seed, visual_assets(assets));
         let bundle_id = uuid::Uuid::new_v4().simple().to_string();
         let content = ProjectWidgetContent {
             bundle_id: bundle_id.clone(),
@@ -73,6 +74,7 @@ impl Bundles {
                     sha256: sha256(bytes),
                 })
                 .collect(),
+            preview,
         };
         std::fs::create_dir_all(&self.root).map_err(write_error)?;
         let staging = self
@@ -274,15 +276,18 @@ fn validate(script: &str, assets: &BTreeMap<String, Vec<u8>>) -> Result<(), Widg
 
 /// Run the script the way the desktop will, with the recorded seed.
 fn check(script: &str, assets: &BTreeMap<String, Vec<u8>>, seed: u64) -> Result<(), WidgetsError> {
-    let files = zeron_visual::Assets::new(
+    zeron_visual::check_with_assets(script, seed, visual_assets(assets))
+        .map(drop)
+        .map_err(|err| WidgetsError::InvalidVisual(format!("visual script failed: {err}")))
+}
+
+pub(super) fn visual_assets(assets: &BTreeMap<String, Vec<u8>>) -> zeron_visual::Assets {
+    zeron_visual::Assets::new(
         assets
             .iter()
             .map(|(name, bytes)| (name.clone(), bytes.as_slice().into()))
             .collect(),
-    );
-    zeron_visual::check_with_assets(script, seed, files)
-        .map(drop)
-        .map_err(|err| WidgetsError::InvalidVisual(format!("visual script failed: {err}")))
+    )
 }
 
 fn verify(dir: &Path, content: &ProjectWidgetContent) -> Result<(), WidgetsError> {

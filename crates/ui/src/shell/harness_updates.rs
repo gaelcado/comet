@@ -19,7 +19,7 @@ pub(super) fn notification_key(device: &str, status: &HarnessUpdateStatus) -> Op
     })
 }
 
-const CHIP_HEIGHT: f32 = 38.0;
+pub(super) const CHIP_HEIGHT: f32 = 38.0;
 /// The summary row inside the card's 1px border, top and bottom. A row as
 /// tall as the whole card overflows the border box and sits a point low.
 const SUMMARY_HEIGHT: f32 = CHIP_HEIGHT - 2.0;

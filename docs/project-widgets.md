@@ -9,7 +9,8 @@ Code: `crates/proto/src/project_widgets.rs` (contracts),
 `crates/engine/src/project_widgets/` (`mod.rs` owner and invariants, `store.rs`
 SQLite, `bundles.rs` content files, `refresh.rs` agent runs),
 `crates/mcp/src/widgets.rs` (agent tools, see [mcp.md](mcp.md#project-widgets)),
-`crates/ui/src/project_widgets.rs` (Save action and Widgets page).
+`crates/ui/src/project_widgets.rs` (Save action, widget sheet and Widgets page),
+`crates/ui/src/widget_shelf.rs` (cards on the new-chat screen).
 
 ## Ownership
 
@@ -45,6 +46,16 @@ other's widgets:
   hashes, checked with the visual runtime and the widget's render seed, then
   renamed into place. Only then does a transaction point the widget at it. A
   failed transaction leaves an orphan bundle and the previous pointer.
+
+**Previews.** Publishing content (save, create, update, refresh) renders the
+script once more and keeps a summary in `ProjectWidgetContent.preview`: up to
+three headline figures, the first chart's series (at most three, averaged down
+to 48 points and scaled to `0..=1000` on one shared scale), the first table's
+header and top four rows, or the opening text, plus whether the visual draws a
+canvas, scene or shader. It travels in every snapshot, so a miniature needs no
+bundle read. The desktop can't picture a native layout off-screen, and a
+summary stays legible at card size. Content stored before previews existed is
+filled from its bundle once per engine start, without changing any revision.
 
 Limits are those of `show_visual` (script 256 KiB, title 200 characters, 16
 assets, 8 MB each, 10 MB together) plus 50 live widgets per space
@@ -116,21 +127,41 @@ Stable codes in `zeron_rpc::capability_errors`:
 
 ## In the app
 
-- **Save.** Under a chat's visual, **Save to project** saves into the chat's
-  space, or offers an explicit choice of that device's spaces. It runs no
-  agent. The result is "Saved" or "Already saved", then **Open widgets**.
-- **Open.** The Widgets route (`Route::ProjectWidgets {space_id, device_id}`)
-  is reached from a project row's context menu ("Widgets", or one "Widgets ·
-  <place>" entry per clone), the command palette's "Open project widgets",
-  and **Open widgets** after a save. It needs no selected chat.
-- **Browse.** Widgets render one after another at the page width with the
-  inline visual renderer, one frame per `(widgetId, contentRevision)`.
-  Off-screen widgets don't paint, and leaving the page drops every frame. Each
-  widget has Refresh, **Open source chat** (it does not unarchive an archived
-  chat), and a menu with Rename…, Move up, Move down and Delete…. Loading,
-  empty ("No widgets in this project"), offline, unsupported and per-widget
-  read errors are distinct states. A refused change keeps what is shown and
-  says "This widget changed elsewhere. Reload it before retrying."
+- **Save.** Under a chat's visual, **Save as widget** opens a small form:
+  the title, and the chat's project (or an explicit choice of that device's
+  projects). It runs no agent. The result reads "Saved to <project>" or
+  "Already a widget", with **View widget**.
+- **Find.** On the new-chat screen of a project, its widgets float in a
+  centered row under the composer and its selector row, in the composer's own
+  material (over the composer when the agent update card leaves no room
+  below; an expanded update list fades them out of its way). A card is a
+  miniature tile above the title and its state: "Updated 2h ago",
+  "Refreshing…" (with a sheen across the tile), "Needs a response" or
+  "Refresh failed". The tile is drawn from the preview: figures with tinted
+  change pills, a chart that bleeds to the tile's edges (the first series as
+  an area with a dot on its latest value, bars with the latest one brightest),
+  table rows, text, or a placeholder. Cards never move under the pointer: a
+  hover lifts one by 2px and warms its edge, and Left and Right move between
+  them. When the row can't hold every widget, the last card lists the next
+  titles and opens all widgets. Cards rise in one by one when a project's
+  widgets first load, and a refresh that lands crossfades its miniature.
+  With reduced motion every change is immediate.
+- **Open.** A card, or **View widget** after a save, opens the widget in a
+  sheet over the window, in the command palette's material. From a card the
+  sheet grows out of it and settles back into it on close; opened from a
+  chat it rises in place. The visual is the sheet's only title and body; a
+  small floating toolbar holds the refresh state, Refresh (its tooltip says
+  when the widget last updated), Cancel and Open run while refreshing, the
+  menu (Open source chat, Rename…, Delete…) and Close. Content fades under
+  the toolbar and at the bottom as it scrolls. Escape or a click outside
+  closes it; deleting the widget closes it too.
+- **All widgets.** The Widgets route (`Route::ProjectWidgets {space_id,
+  device_id}`) lists every widget at full width. It is reached from "+N · All
+  widgets", a project row's context menu ("Widgets", or one "Widgets · <place>"
+  entry per clone) and the command palette's "Open project widgets". Loading,
+  empty, offline, unsupported and per-widget read errors are distinct states.
+  A refused change keeps what is shown and says "This widget changed
+  elsewhere. Reload it before retrying."
 
 Agents create and update widgets with the MCP tools; they have no delete,
 reorder or refresh tool.
@@ -224,6 +255,10 @@ or existing chat parts. Visual parts already in chats stay there until saved.
 | Any | Without widgets | Nothing shown; the store is ignored. |
 | Offline | Current | Already-loaded widgets stay visible, changes are paused; nothing loaded reads as unavailable. |
 
+An owner from before previews sends content without `preview`; its cards
+show a placeholder miniature until it is updated, which then fills previews
+in at its next start.
+
 A bridge without `originChatId` (built before refreshes) cannot stage a
 candidate (`widgets.refresh_inactive`) until its harness restarts with a
 current one. MCP versions are covered in [mcp.md](mcp.md#versions).
@@ -253,4 +288,5 @@ completion, cancellation, deletion, restart), `mcp_widget_tools.rs` (agent
 tools), plus unit tests in each module and the `WidgetsModel` tests in
 `crates/ui/src/project_widgets.rs`. The `project-widgets-fixture` and
 `mcp-settings-fixture` examples (each behind the feature of the same name)
-render the Widgets page and Settings → MCP offscreen.
+render the widget cards (stacked and spread), the sheet, the refresh setup and
+"Save as widget", and Settings → MCP, offscreen.

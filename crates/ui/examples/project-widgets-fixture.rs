@@ -1,18 +1,25 @@
-//! Offscreen visual evidence for a project's Widgets page: an analytics
-//! widget, a long title, an unreadable widget and a conflict, in dark and
-//! light at a wide and a narrow width.
+//! Offscreen visual evidence for project widgets: the stacked cards on the
+//! new-chat screen (stacked and spread), a widget's sheet, the refresh setup
+//! dialog, and "Save as widget" under a chat visual (open, choosing a
+//! project, saved), in dark and light.
 //!
 //!   cargo run -p zeron-ui --example project-widgets-fixture \
 //!     --features project-widgets-fixture -- <output-dir>
 use std::collections::HashMap;
 use std::{path::Path, path::PathBuf, time::Duration};
 
-use gpui::{AppContext, AsyncApp, Bounds, WindowBounds, WindowOptions, px, size};
-use zeron_proto::{
-    PROJECT_WIDGET_RENDERER_LUAU_V1, ProjectWidget, ProjectWidgetContent, ProjectWidgetSource,
-    ProjectWidgetsSnapshot,
+use gpui::{
+    AnyElement, AppContext, AsyncApp, Bounds, Context, Entity, IntoElement, ParentElement, Render,
+    Styled, Window, WindowBounds, WindowOptions, div, px, size,
 };
-use zeron_ui::project_widgets::WidgetsTarget;
+use zeron_proto::{
+    HarnessId, PROJECT_WIDGET_RENDERER_LUAU_V1, ProjectWidget, ProjectWidgetContent,
+    ProjectWidgetPreview, ProjectWidgetPreviewChart, ProjectWidgetPreviewChartKind,
+    ProjectWidgetPreviewSeries, ProjectWidgetPreviewStat, ProjectWidgetPreviewTable,
+    ProjectWidgetRefresh, ProjectWidgetRefreshState, ProjectWidgetSource, ProjectWidgetsSnapshot,
+};
+use zeron_ui::project_widgets::{ProjectWidgetsPage, SaveVisual, WidgetsTarget};
+use zeron_ui::widget_shelf::WidgetShelf;
 use zeron_ui::*;
 
 const ANALYTICS: &str = r#"
@@ -41,27 +48,35 @@ return ui.column {
 }
 "#;
 
-const TABLE: &str = r#"
-return ui.table {
-  columns = { "Page", "Views", "Bounce" },
-  rows = {
-    { "/pricing", "8,214", "31%" },
-    { "/docs/getting-started", "6,902", "24%" },
-    { "/blog/launch", "3,118", "47%" },
-  },
+fn series(f: impl Fn(f32) -> f32) -> Vec<Option<u16>> {
+    let raw: Vec<f32> = (0..30).map(|d| f(d as f32)).collect();
+    let (lo, hi) = raw
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+    raw.iter()
+        .map(|v| Some(((v - lo) / (hi - lo) * 1000.0) as u16))
+        .collect()
 }
-"#;
 
-fn widget(id: &str, title: &str, revision: u64) -> ProjectWidget {
+fn stat(value: &str, label: &str, delta: Option<&str>) -> ProjectWidgetPreviewStat {
+    ProjectWidgetPreviewStat {
+        value: value.into(),
+        label: label.into(),
+        delta: delta.map(Into::into),
+    }
+}
+
+fn widget(id: &str, title: &str, preview: Option<ProjectWidgetPreview>) -> ProjectWidget {
+    let now = chrono::Utc::now().timestamp_millis();
     ProjectWidget {
         id: id.into(),
         space_id: "space-site".into(),
         owner_device_id: "device-studio".into(),
         title: title.into(),
-        revision,
-        created_at: 1_760_000_000_000,
-        updated_at: 1_760_500_000_000,
-        last_successful_at: Some(1_760_500_000_000),
+        revision: 1,
+        created_at: now - 86_400_000,
+        updated_at: now - 7_200_000,
+        last_successful_at: Some(now - 7_200_000),
         content_revision: 1,
         content: ProjectWidgetContent {
             bundle_id: format!("bundle-{id}"),
@@ -71,6 +86,7 @@ fn widget(id: &str, title: &str, revision: u64) -> ProjectWidget {
             script_size: 1,
             script_sha256: "00".into(),
             assets: vec![],
+            preview,
         },
         source: Some(ProjectWidgetSource {
             source_chat_id: format!("chat-{id}"),
@@ -81,6 +97,181 @@ fn widget(id: &str, title: &str, revision: u64) -> ProjectWidget {
         }),
         refresh_recipe: None,
         refresh: None,
+    }
+}
+
+fn refresh(state: ProjectWidgetRefreshState, at: i64) -> ProjectWidgetRefresh {
+    ProjectWidgetRefresh {
+        refresh_id: "r1".into(),
+        state,
+        started_at: at,
+        finished_at: None,
+        execution_chat_id: None,
+        error_code: None,
+        error_message: None,
+    }
+}
+
+fn widgets() -> Vec<ProjectWidget> {
+    let traffic = ProjectWidgetPreview {
+        stats: vec![stat("41,920", "PostHog events", Some("+8.2%"))],
+        chart: Some(ProjectWidgetPreviewChart {
+            kind: ProjectWidgetPreviewChartKind::Area,
+            stacked: false,
+            series: vec![
+                ProjectWidgetPreviewSeries {
+                    name: "Events".into(),
+                    values: series(|d| 1200.0 + 400.0 * (d / 4.0).sin() + d * 12.0),
+                },
+                ProjectWidgetPreviewSeries {
+                    name: "Sessions".into(),
+                    values: series(|d| 800.0 + 250.0 * (d / 5.0).cos() + d * 8.0),
+                },
+            ],
+        }),
+        ..Default::default()
+    };
+    let signups = ProjectWidgetPreview {
+        chart: Some(ProjectWidgetPreviewChart {
+            kind: ProjectWidgetPreviewChartKind::Bar,
+            stacked: false,
+            series: vec![ProjectWidgetPreviewSeries {
+                name: "Signups".into(),
+                values: [320, 540, 410, 880, 760, 1000, 690, 450, 610, 830, 720, 940]
+                    .into_iter()
+                    .map(Some)
+                    .collect(),
+            }],
+        }),
+        ..Default::default()
+    };
+    let revenue = ProjectWidgetPreview {
+        stats: vec![
+            stat("$18.4k", "MRR", Some("+4.1%")),
+            stat("2.3%", "Churn", Some("-0.4 pt")),
+        ],
+        ..Default::default()
+    };
+    let pages = ProjectWidgetPreview {
+        table: Some(ProjectWidgetPreviewTable {
+            columns: vec!["Page".into(), "Views".into()],
+            rows: vec![
+                vec!["/pricing".into(), "8,214".into()],
+                vec!["/docs/getting-started".into(), "6,902".into()],
+                vec!["/blog/launch".into(), "3,118".into()],
+            ],
+        }),
+        ..Default::default()
+    };
+    let mut running = widget("revenue", "Revenue health", Some(revenue));
+    running.refresh = Some(refresh(
+        ProjectWidgetRefreshState::Running,
+        running.updated_at,
+    ));
+    let mut failed = widget("pages", "Top pages this week", Some(pages));
+    failed.refresh = Some(refresh(
+        ProjectWidgetRefreshState::Failed,
+        failed.updated_at,
+    ));
+    vec![
+        widget("traffic", "Traffic · last 30 days", Some(traffic)),
+        widget("signups", "Signups by month", Some(signups)),
+        running,
+        failed,
+        widget(
+            "globe",
+            "Visitors globe",
+            Some(ProjectWidgetPreview {
+                graphic: true,
+                ..Default::default()
+            }),
+        ),
+        widget(
+            "notes",
+            "Release notes",
+            Some(ProjectWidgetPreview {
+                text: Some(
+                    "Shipped project widgets, refresh runs and the new MCP settings page. \
+                     Next: scheduled refreshes."
+                        .into(),
+                ),
+                ..Default::default()
+            }),
+        ),
+        widget("old", "Older widget", None),
+    ]
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    ShelfStacked,
+    ShelfSpread,
+    ShelfNarrow,
+    ShelfLanding,
+    SheetMorph,
+    Sheet,
+    Recipe,
+    SaveOpen,
+    SaveChoose,
+    Saved,
+}
+
+struct Stage {
+    mode: Mode,
+    state: Entity<state::AppState>,
+    shelf: Entity<WidgetShelf>,
+    page: Entity<ProjectWidgetsPage>,
+    save: Entity<SaveVisual>,
+    visual: Entity<visuals::VisualFrame>,
+    motion: zeron_ui::widget_sheet::SheetMotion,
+}
+
+impl Render for Stage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = theme::Theme::of(cx).clone();
+        let viewport = window.viewport_size();
+        let body: AnyElement = match self.mode {
+            Mode::ShelfStacked | Mode::ShelfSpread | Mode::ShelfNarrow | Mode::ShelfLanding => {
+                div()
+                    .pt(px(28.0))
+                    .flex()
+                    .justify_center()
+                    .child(self.shelf.clone())
+                    .into_any_element()
+            }
+            Mode::Sheet | Mode::Recipe | Mode::SheetMorph => {
+                let morph = self.mode == Mode::SheetMorph;
+                let sheet = self.motion.render(
+                    viewport,
+                    project_widgets::sheet_width(viewport),
+                    project_widgets::sheet_max_height(viewport),
+                    &theme,
+                    !morph,
+                    self.page.clone().into_any_element(),
+                    |frame| frame,
+                );
+                let mut base = div().size_full();
+                if morph {
+                    base = base
+                        .pt(px(28.0))
+                        .flex()
+                        .justify_center()
+                        .child(self.shelf.clone());
+                }
+                base.child(sheet).into_any_element()
+            }
+            Mode::SaveOpen | Mode::SaveChoose | Mode::Saved => div()
+                .p(px(40.0))
+                .max_w(px(760.0))
+                .child(self.visual.clone())
+                .child(self.save.clone())
+                .into_any_element(),
+        };
+        div()
+            .size_full()
+            .bg(theme.bg)
+            .text_color(theme.text)
+            .child(body)
     }
 }
 
@@ -95,6 +286,13 @@ fn capture(
         window.render_to_image()?.save(output.join(name))?;
         Ok(())
     })?
+}
+
+fn target() -> WidgetsTarget {
+    WidgetsTarget {
+        space_id: "space-site".into(),
+        device_id: "device-studio".into(),
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -137,7 +335,7 @@ fn main() -> anyhow::Result<()> {
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                             gpui::point(px(-12000.0), px(-12000.0)),
-                            size(px(1100.0), px(1300.0)),
+                            size(px(1200.0), px(860.0)),
                         ))),
                         focus: false,
                         show: true,
@@ -145,57 +343,185 @@ fn main() -> anyhow::Result<()> {
                     },
                     |_, cx| {
                         cx.new(|cx| {
-                            let mut page = project_widgets::ProjectWidgetsPage::new(state, cx);
-                            let long = "Weekly PostHog events and Google Analytics sessions \
-                                for the marketing site, compared with the previous period";
-                            let snapshot = ProjectWidgetsSnapshot {
-                                space_id: "space-site".into(),
-                                owner_device_id: "device-studio".into(),
-                                collection_revision: 3,
-                                widgets: vec![
-                                    widget("analytics", "Traffic · last 30 days", 2),
-                                    widget("pages", long, 1),
-                                    widget("broken", "Signups by channel", 4),
-                                ],
-                            };
-                            let scripts = HashMap::from([
-                                ("analytics".to_owned(), ANALYTICS.to_owned()),
-                                ("pages".to_owned(), TABLE.to_owned()),
-                            ]);
-                            page.fixture_show(
-                                WidgetsTarget {
-                                    space_id: "space-site".into(),
-                                    device_id: "device-studio".into(),
-                                },
-                                snapshot,
-                                scripts,
-                                Some((
-                                    "pages",
-                                    "This widget changed elsewhere. Reload it before retrying.",
-                                )),
-                                cx,
-                            );
-                            page
+                            let shelf = cx.new(|cx| WidgetShelf::new(state.clone(), cx));
+                            let page = cx.new(|cx| {
+                                let mut page = ProjectWidgetsPage::new(state.clone(), cx);
+                                page.fixture_show(
+                                    target(),
+                                    ProjectWidgetsSnapshot {
+                                        space_id: "space-site".into(),
+                                        owner_device_id: "device-studio".into(),
+                                        collection_revision: 1,
+                                        widgets: vec![widgets().remove(0)],
+                                    },
+                                    HashMap::from([("traffic".to_owned(), ANALYTICS.to_owned())]),
+                                    None,
+                                    cx,
+                                );
+                                page.fixture_sheet("traffic", cx);
+                                page
+                            });
+                            let save = cx.new(|cx| {
+                                SaveVisual::new(
+                                    state.clone(),
+                                    "chat-1".into(),
+                                    "v:1".into(),
+                                    "Traffic · last 30 days".into(),
+                                    cx,
+                                )
+                            });
+                            let visual = cx.new(|cx| {
+                                visuals::VisualFrame::new(
+                                    "fixture-visual".into(),
+                                    "Traffic".into(),
+                                    visuals::VisualSource::Inline {
+                                        script: ANALYTICS.into(),
+                                        seed: 42,
+                                    },
+                                    None,
+                                    None,
+                                    cx,
+                                )
+                            });
+                            Stage {
+                                motion: zeron_ui::widget_sheet::SheetMotion::new(None),
+                                mode: Mode::ShelfStacked,
+                                state: state.clone(),
+                                shelf,
+                                page,
+                                save,
+                                visual,
+                            }
                         })
                     },
                 )
                 .unwrap();
             cx.spawn(async move |cx| {
                 let result: anyhow::Result<()> = async {
-                    for (mode, width, label) in [
-                        (appearance::AppearanceMode::Dark, 1100.0, "dark-wide"),
-                        (appearance::AppearanceMode::Dark, 480.0, "dark-narrow"),
-                        (appearance::AppearanceMode::Light, 1100.0, "light-wide"),
-                        (appearance::AppearanceMode::Light, 480.0, "light-narrow"),
+                    for (appearance, theme_label) in [
+                        (appearance::AppearanceMode::Dark, "dark"),
+                        (appearance::AppearanceMode::Light, "light"),
                     ] {
-                        window.update(cx, |_, window, cx| {
-                            appearance::set_mode(mode, cx);
-                            window.resize(size(px(width), px(1300.0)));
-                        })?;
-                        cx.background_executor()
-                            .timer(Duration::from_millis(400))
-                            .await;
-                        capture(window.into(), cx, &output, &format!("widgets-{label}.png"))?;
+                        for (mode, label) in [
+                            (Mode::ShelfStacked, "shelf-stacked"),
+                            (Mode::ShelfSpread, "shelf-spread"),
+                            (Mode::ShelfNarrow, "shelf-narrow"),
+                            (Mode::ShelfLanding, "shelf-landing"),
+                            (Mode::Sheet, "sheet"),
+                            (Mode::SheetMorph, "sheet-morph"),
+                            (Mode::Recipe, "recipe"),
+                            (Mode::SaveOpen, "save-open"),
+                            (Mode::SaveChoose, "save-choose"),
+                            (Mode::Saved, "saved"),
+                        ] {
+                            window.update(cx, |stage, window, cx| {
+                                appearance::set_mode(appearance, cx);
+                                let width = if mode == Mode::ShelfNarrow {
+                                    720.0
+                                } else {
+                                    1200.0
+                                };
+                                window.resize(size(px(width), px(860.0)));
+                                stage.mode = mode;
+                                stage.motion = zeron_ui::widget_sheet::SheetMotion::new(None);
+                                stage.shelf.update(cx, |shelf, cx| {
+                                    shelf.set_available_width(width);
+                                    shelf.fixture_show(
+                                        target(),
+                                        widgets(),
+                                        !matches!(mode, Mode::ShelfStacked | Mode::SheetMorph),
+                                        cx,
+                                    );
+                                    if mode == Mode::ShelfSpread {
+                                        shelf.fixture_hover(1, cx);
+                                    }
+                                    if mode == Mode::ShelfLanding {
+                                        // A refresh lands: last month's bars give way.
+                                        let before =
+                                            widgets()[1].content.preview.clone().map(|mut p| {
+                                                if let Some(chart) = p.chart.as_mut() {
+                                                    for v in chart.series[0].values.iter_mut() {
+                                                        *v = v.map(|v| 1000 - v);
+                                                    }
+                                                }
+                                                p
+                                            });
+                                        shelf.fixture_changed("signups", before, 0.45);
+                                    }
+                                });
+                                stage
+                                    .page
+                                    .update(cx, |page, cx| page.fixture_close_recipe(cx));
+                                if mode == Mode::Recipe {
+                                    stage.page.update(cx, |page, cx| {
+                                        page.fixture_open_recipe(
+                                            "traffic",
+                                            vec![
+                                                (HarnessId::ClaudeCode, "Claude Code".into()),
+                                                (HarnessId::Codex, "Codex".into()),
+                                                (HarnessId::Opencode, "opencode".into()),
+                                            ],
+                                            cx,
+                                        )
+                                    });
+                                }
+                                let state = stage.state.clone();
+                                stage.save = cx.new(|cx| {
+                                    let mut save = SaveVisual::new(
+                                        state,
+                                        "chat-1".into(),
+                                        "v:1".into(),
+                                        "Traffic · last 30 days".into(),
+                                        cx,
+                                    );
+                                    let site = ("marketing-site", "Studio · ~/code/marketing-site");
+                                    match mode {
+                                        Mode::SaveChoose => save.fixture_show(
+                                            None,
+                                            &[site, ("analytics", "Studio · ~/code/analytics")],
+                                            true,
+                                            false,
+                                            cx,
+                                        ),
+                                        _ => save.fixture_show(
+                                            Some(site),
+                                            &[],
+                                            mode == Mode::SaveOpen,
+                                            mode == Mode::Saved,
+                                            cx,
+                                        ),
+                                    }
+                                    save
+                                });
+                                cx.notify();
+                            })?;
+                            cx.background_executor()
+                                .timer(Duration::from_millis(700))
+                                .await;
+                            if mode == Mode::SheetMorph {
+                                // Grow out of the front card, 40% of the way.
+                                window.update(cx, |stage, _, cx| {
+                                    let origin = stage.shelf.read(cx).card_bounds("traffic");
+                                    stage.motion =
+                                        zeron_ui::widget_sheet::SheetMotion::fixture_frozen(
+                                            origin, 0.4,
+                                        );
+                                    stage.shelf.update(cx, |shelf, cx| {
+                                        shelf.set_lifted(Some("traffic".into()), cx)
+                                    });
+                                    cx.notify();
+                                })?;
+                                cx.background_executor()
+                                    .timer(Duration::from_millis(300))
+                                    .await;
+                            }
+                            capture(
+                                window.into(),
+                                cx,
+                                &output,
+                                &format!("{label}-{theme_label}.png"),
+                            )?;
+                        }
                     }
                     Ok(())
                 }

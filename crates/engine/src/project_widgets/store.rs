@@ -216,6 +216,39 @@ pub(super) fn live_widgets(
     Ok(widgets)
 }
 
+/// Live widgets whose content has no preview yet.
+pub(super) fn widgets_without_preview(
+    conn: &Connection,
+) -> Result<Vec<ProjectWidget>, WidgetsError> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {WIDGET_COLUMNS} FROM widgets WHERE deleted = 0"
+    ))?;
+    let rows = statement.query_map([], widget_from_row)?;
+    let mut missing = Vec::new();
+    for row in rows {
+        let widget = row?.widget;
+        if widget.content.preview.is_none() {
+            missing.push(widget);
+        }
+    }
+    Ok(missing)
+}
+
+/// Store `content` (the same bundle with its preview) if the widget still
+/// shows `content_revision`.
+pub(super) fn set_preview(
+    conn: &Connection,
+    widget_id: &str,
+    content_revision: u64,
+    content: &str,
+) -> Result<bool, WidgetsError> {
+    Ok(conn.execute(
+        "UPDATE widgets SET content = ?3
+         WHERE id = ?1 AND content_revision = ?2 AND deleted = 0",
+        params![widget_id, content_revision as i64, content],
+    )? == 1)
+}
+
 pub(super) fn collection_revision(conn: &Connection, space_id: &str) -> Result<u64, WidgetsError> {
     Ok(conn
         .query_row(

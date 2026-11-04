@@ -3410,7 +3410,11 @@ pub enum TranscriptEvent {
         frozen: bool,
     },
     /// "Open widgets" after saving a visual: the project space it went to.
-    OpenProjectWidgets { space_id: String, device_id: String },
+    /// Show a saved widget in the sheet.
+    OpenWidget {
+        target: crate::project_widgets::WidgetsTarget,
+        widget_id: String,
+    },
 }
 
 impl gpui::EventEmitter<TranscriptEvent> for Transcript {}
@@ -6791,13 +6795,12 @@ impl Transcript {
             crate::project_widgets::SaveVisualEvent::LayoutChanged => {
                 this.diagram_layout_changed(std::slice::from_ref(&id), cx);
             }
-            crate::project_widgets::SaveVisualEvent::OpenWidgets {
-                space_id,
-                device_id,
-            } => cx.emit(TranscriptEvent::OpenProjectWidgets {
-                space_id: space_id.clone(),
-                device_id: device_id.clone(),
-            }),
+            crate::project_widgets::SaveVisualEvent::OpenWidget { target, widget_id } => {
+                cx.emit(TranscriptEvent::OpenWidget {
+                    target: target.clone(),
+                    widget_id: widget_id.clone(),
+                })
+            }
         })
         .detach();
         self.visual_saves.insert(row_id.clone(), save.clone());
