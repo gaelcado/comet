@@ -818,7 +818,25 @@ ui.effect(function()
 	end
 	settle_from = from
 	settle:set(0)
-	settling = anime.animate(settle, { value = 1, duration = 280, ease = "outQuint" })
+	-- (On the columns' clock, ds/motion's: as long as its farthest edge
+	-- travels takes, as the sidebar and the panel.)
+	local area = M.area()
+	local far = 0
+	for id, b in to do
+		local f = from[id]
+		if f then
+			far = math.max(
+				far,
+				math.abs((b.left.p - f.left.p) * area.w + b.left.q - f.left.q),
+				math.abs((b.right.p - f.right.p) * area.w + b.right.q - f.right.q),
+				math.abs((b.top.p - f.top.p) * area.h + b.top.q - f.top.q),
+				math.abs((b.bottom.p - f.bottom.p) * area.h + b.bottom.q - f.bottom.q)
+			)
+		end
+	end
+	local params = motion.column(0, far)
+	params.value = 1
+	settling = anime.animate(settle, params)
 end)
 
 -- The size a pane just added is opening to, while it opens (what it holds stays at
@@ -836,6 +854,26 @@ function M.opening_size(id: string): { w: number, h: number }?
 		w = (b.right.p - b.left.p) * area.w + b.right.q - b.left.q,
 		h = (b.bottom.p - b.top.p) * area.h + b.bottom.q - b.top.q,
 	}
+end
+
+-- Where a pane just added comes in from (the gap it opens out of), as
+-- signs along each axis (-1: its left or top), for its content's drift
+-- (ds/motion `arrive`); nil once it's open.
+function M.opening_from(id: string): (number?, number?)
+	if settle:peek() >= 1 or not settle_new[id] then
+		return nil
+	end
+	local f, b = settle_from[id], M.frames:peek()[id]
+	if not f or not b then
+		return nil
+	end
+	local function sign(v: number): number
+		return if v > 0.0005 then 1 elseif v < -0.0005 then -1 else 0
+	end
+	-- (Its middle, as a share of the page, where it comes from less where it goes.)
+	local dx = (f.left.p + f.right.p) - (b.left.p + b.right.p)
+	local dy = (f.top.p + f.bottom.p) - (b.top.p + b.bottom.p)
+	return sign(dx), sign(dy)
 end
 
 M.across = ui.computed(function(): number
