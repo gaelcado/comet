@@ -17851,6 +17851,29 @@ impl Transcript {
         cx.notify();
     }
 
+    /// Open every tool group AND every row's detail (shell block, diff,
+    /// output), as clicks would.
+    pub fn fixture_open_all(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        for row in &self.rows {
+            let RowKind::ToolGroup { tools, .. } = &row.kind else {
+                continue;
+            };
+            self.folds.entry(row.id.clone()).or_default().open = Some(true);
+            for ix in 0..tools.len() {
+                let chip = self
+                    .tool_details
+                    .entry(SharedString::from(format!("{}#d{ix}", row.id)))
+                    .or_default();
+                chip.open = Some(true);
+                chip.epoch += 1;
+                chip.toggled_at = Some(now);
+            }
+        }
+        self.list.remeasure();
+        cx.notify();
+    }
+
     /// `(previews resident, retained bytes)`.
     pub fn fixture_tool_image_stats(&self) -> (usize, usize) {
         self.tool_images.stats()
