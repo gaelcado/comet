@@ -319,18 +319,32 @@ test("Close Tabs to the Left and to the Right close only that side", function()
 	expect(app:error()).to_be_nil()
 end)
 
+-- A tab dragged along the strip is lifted and follows the pointer on the strip's
+-- line, the others making room as its middle passes theirs; let go, it settles
+-- into its place and the order is kept.
 test("a tab still opens its chat on a click, and reorders by a drag, with its menu on", function()
 	local app = all_open()
 	app:click("#session-tab-a1")
 	app:frames(20)
 	expect(tostring(app:state("shell_route_path")):find("a1", 1, true) ~= nil).to_be(true)
 	expect(box(app, "#session-tab-a1").x < box(app, "#session-tab-a2").x).to_be(true)
-	-- (To the tab past the next: it passes the next one's middle on the way.
-	-- Dropped on a tab's own middle, it stays before that tab.)
+	local a3 = box(app, "#session-tab-a3")
+	-- (Grabbed 12 in from its left, let go a little lower, over a3's middle: its
+	-- middle is then past a3's, so it goes after a3.)
 	app:drag("#session-tab-a1", "#session-tab-a3")
+	local lifted = box(app, "#session_tab-lifted")
+	expect(math.abs(lifted.x - (a3.x + a3.w / 2 - 12)) <= 1).to_be(true)
+	expect(lifted.y).to_be(a3.y)
+	expect(app:tree("#session-tab-a1"):match("[^\n]+"):find("hidden", 1, true) ~= nil).to_be(true)
 	app:frames(40)
-	expect(box(app, "#session-tab-a2").x < box(app, "#session-tab-a1").x).to_be(true)
-	expect(box(app, "#session-tab-a1").x < box(app, "#session-tab-a3").x).to_be(true)
+	expect(box(app, "#session-tab-a2").x < box(app, "#session-tab-a3").x).to_be(true)
+	expect(box(app, "#session-tab-a3").x < box(app, "#session-tab-a1").x).to_be(true)
+	expect(app:tree("#session-tab-a1"):match("[^\n]+"):find("hidden", 1, true)).to_be_nil()
+	local keys = {}
+	for _, t in app:state("inset_split_trees") :: any do
+		table.insert(keys, t.key)
+	end
+	expect(table.concat(keys, ",")).to_be("a2,a3,a1,b1,b2")
 	expect(app:error()).to_be_nil()
 end)
 
