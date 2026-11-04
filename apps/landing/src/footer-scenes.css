@@ -1,0 +1,88 @@
+.footer-stage .footer-intro { inset-block-start: 0; }
+/* One grainy sky spans the whole footer. The glyph field is drawn on it and the
+   transparent upper plates let both continue down to the terrain. */
+.footer-stage .footer-frame {
+  background: #151317 url('/assets/art/footer-monuments/sky-dark.webp') center bottom / cover no-repeat;
+}
+[data-theme="light"] .footer-stage .footer-frame {
+  background: #f7f4ee url('/assets/art/footer-monuments/sky-light.webp') center bottom / cover no-repeat;
+}
+.footer-landscape {
+  --footer-far: var(--monument-far-dark);
+  --footer-middle: var(--monument-middle-dark);
+  --footer-near: var(--monument-near-dark);
+}
+[data-theme="light"] .footer-landscape {
+  --footer-far: var(--monument-far-light);
+  --footer-middle: var(--monument-middle-light);
+  --footer-near: var(--monument-near-light);
+}
+/* Plates share one 3:1 canvas. --focus is the monument's centre on that canvas,
+   --place where it lands in the frame; the offset is clamped so no edge shows. */
+.footer-landscape { container-type: size; }
+.footer-stage { --focus: .51; --place: .5; }
+.footer-stage[data-footer-scene="colonnade"] { --focus: .64; --place: .56; }
+.footer-stage[data-footer-scene="terraces"] { --focus: .54; }
+.footer-landscape .footer-plane {
+  --plate-w: max(100cqw, 300cqh);
+  background-size: var(--plate-w) auto;
+  background-position:
+    clamp(100cqw - var(--plate-w), var(--place) * 100cqw - var(--focus) * var(--plate-w), 0px)
+    bottom;
+}
+/* Temporary comparison control: kept quiet so it doesn't compete with the CTA. */
+.footer-scene-picker {
+  display: inline-flex;
+  gap: 14px;
+  margin-top: 16px;
+  opacity: .5;
+  transition: opacity .2s ease;
+}
+.footer-scene-picker:is(:hover, :focus-within) { opacity: .85; }
+.footer-scene-picker button {
+  appearance: none;
+  border: 0;
+  min-height: 24px;
+  padding: 0;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: .01em;
+  cursor: pointer;
+}
+.footer-scene-picker button[aria-pressed="true"] {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+.footer-scene-picker button:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; border-radius: 2px; }
+.footer-stage .footer-bar {
+  mix-blend-mode: normal;
+  color: #fff;
+  background: linear-gradient(transparent, #141018b3);
+  text-shadow: 0 1px 3px #141018;
+}
+@media (max-width: 900px) {
+  /* Narrow frames centre the whole monument at ~88% of the width;
+     --fit is the canvas width that achieves it. The sky fills above. */
+  .footer-stage { --place: .5; --fit: 236cqw; }
+  .footer-stage[data-footer-scene="colonnade"] { --focus: .65; --place: .5; --fit: 220cqw; }
+  .footer-stage[data-footer-scene="terraces"] { --fit: 232cqw; }
+  .footer-landscape .footer-plane { --plate-w: max(100cqw, min(300cqh, var(--fit))); }
+  .footer-intro { padding-block: 24px 20px; gap: 18px; }
+}
+@media (max-width: 640px) {
+  /* Phones: the scene gets a row sized to the artwork (plates are ~73–79vw
+     tall) and the copy is centred in the sky above it, so spare height splits
+     evenly between the top edge and the gap over the monument. */
+  .footer-stage .footer-frame {
+    grid-template-rows: minmax(0, 1fr) calc(80vw - var(--footer-rail-height)) auto;
+  }
+  .footer-stage .footer-intro-section { align-self: center; }
+  .footer-stage .footer-intro {
+    padding-block: max(16px, env(safe-area-inset-top, 0px)) 16px;
+  }
+}
+

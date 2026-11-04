@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Zeron — threshold campaign study</title>
+<style>
+  @font-face { font-family: Geist; src: url('../../public/assets/geist-latin.woff2'); }
+  @font-face { font-family: Instrument; src: url('../../public/assets/instrument-serif-latin.woff2'); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1800px; background: #e9e3d8; }
+  body { font-family: Geist, sans-serif; }
+  .board { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; padding: 16px; width: 1800px; }
+  .tile { position: relative; overflow: hidden; background: #17141d; }
+  .tile img.art { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .kicker { font-size: 15px; letter-spacing: .18em; text-transform: uppercase; font-weight: 600; }
+  .wide { grid-column: span 8; height: 650px; }
+  .wide .art { object-position: 53% center; }
+  .wide:after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, #08060db0, transparent 55%); }
+  .wide-copy { position: absolute; z-index: 1; left: 54px; top: 54px; color: #f7f4ee; }
+  .wide-copy img { display: block; width: 390px; }
+  .wide-copy p { margin: 25px 0 0; max-width: 470px; font: 42px/1.02 Instrument, Georgia, serif; }
+  .wide-bottom { position: absolute; z-index: 1; bottom: 40px; left: 54px; color: #c6bcdb; }
+  .identity { grid-column: span 4; height: 650px; background: #f7f4ee; color: #17141d; padding: 48px; display: flex; flex-direction: column; }
+  .identity .mark { width: 145px; height: 145px; background: #6140e8; -webkit-mask: url('../../public/assets/brand/zeron-flow-counter-mark.png') center / contain no-repeat; mask: url('../../public/assets/brand/zeron-flow-counter-mark.png') center / contain no-repeat; margin: 75px auto 63px; }
+  .identity .wordmark { display: block; width: 285px; max-width: 100%; margin: 0 auto; }
+  .identity .bottom { margin-top: auto; display: flex; justify-content: space-between; align-items: end; gap: 15px; color: #5e5866; }
+  .identity .bottom strong { color: #17141d; font-weight: 500; font-size: 17px; max-width: 245px; }
+  .portrait { grid-column: span 4; height: 860px; }
+  .portrait .art { object-position: center center; }
+  .portrait .label { position: absolute; bottom: 30px; left: 30px; color: #f7f4ee; }
+  .portrait.light .label { color: #17141d; top: 30px; bottom: auto; }
+  .portrait.dark .art { object-position: 55% center; }
+  .detail { grid-column: span 4; height: 860px; }
+  .detail .art { object-position: center center; }
+  .detail .label { position: absolute; top: 30px; left: 30px; color: #f7f4ee; }
+  .signature { grid-column: span 8; height: 520px; padding: 43px 48px; background: #6140e8; color: #f7f4ee; display: flex; flex-direction: column; }
+  .signature .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .signature .main { margin: auto 0; display: flex; align-items: center; gap: 65px; }
+  .signature .main img { display: block; width: 570px; max-width: 70%; }
+  .signature .main .mark { width: 215px; height: 215px; background: #f7f4ee; -webkit-mask: url('../../public/assets/brand/zeron-flow-counter-mark.png') center / contain no-repeat; mask: url('../../public/assets/brand/zeron-flow-counter-mark.png') center / contain no-repeat; }
+  .signature .bottom { font: 46px/1 Instrument, Georgia, serif; }
+  .palette { grid-column: span 4; height: 520px; background: #f7f4ee; padding: 42px; }
+  .palette .title { margin: 0 0 35px; font: 48px/1 Instrument, Georgia, serif; color: #17141d; }
+  .swatches { display: grid; grid-template-columns: repeat(4, 1fr); height: 300px; }
+  .swatches div { position: relative; }
+  .swatches span { position: absolute; transform: rotate(-90deg); transform-origin: left bottom; bottom: 10px; left: 26px; font-size: 12px; font-weight: 600; letter-spacing: .06em; white-space: nowrap; }
+  .palette .foot { color: #5e5866; font-size: 14px; margin-top: 25px; }
+</style>
+<main class="board">
+  <section class="tile wide">
+    <img class="art" src="01-dark-threshold-wide.png" alt="">
+    <div class="wide-copy"><img src="../../public/assets/brand/zeron-wordmark-dark.svg" alt="zeron"><p>The open source workspace<br>for your coding agents.</p></div>
+    <div class="wide-bottom kicker">A clear view of what comes next</div>
+  </section>
+  <section class="tile identity">
+    <div class="kicker">01 / Identity</div>
+    <div class="mark" aria-hidden="true"></div>
+    <img class="wordmark" src="../../public/assets/brand/zeron-wordmark-light.svg" alt="zeron">
+    <div class="bottom"><strong>Control, without weight.</strong><span class="kicker">ZERO → ON</span></div>
+  </section>
+  <section class="tile portrait light"><img class="art" src="02-light-aperture-poster.png" alt=""><div class="label kicker">02 / Threshold · Paper</div></section>
+  <section class="tile portrait dark"><img class="art" src="03-dark-threshold-poster.png" alt=""><div class="label kicker">03 / Threshold · Night</div></section>
+  <section class="tile detail"><img class="art" src="04-violet-stone-detail.png" alt=""><div class="label kicker">04 / Material · Signal</div></section>
+  <section class="tile signature"><div class="top"><span class="kicker">05 / Signature</span><span class="kicker">Zeron / 2026</span></div><div class="main"><img src="../../public/assets/brand/zeron-wordmark-dark.svg" alt="zeron"><div class="mark" aria-hidden="true"></div></div><div class="bottom">The open source workspace for your coding agents.</div></section>
+  <section class="tile palette"><p class="title">Ink. Paper. Signal.</p><div class="swatches"><div style="background:#17141d;color:#f7f4ee"><span>#17141D</span></div><div style="background:#f7f4ee;color:#17141d"><span>#F7F4EE</span></div><div style="background:#6140e8;color:#fff"><span>#6140E8</span></div><div style="background:#8b5cf6;color:#17141d"><span>#8B5CF6</span></div></div><p class="foot">Website colors · exact values from the current theme tokens.</p></section>
+</main>
+</html>

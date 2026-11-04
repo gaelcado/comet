@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Zeron — open source workspace for coding agents</title>
-<meta name="description" content="Zeron is an open source, MIT-licensed workspace for Claude Code, Cursor, Codex and more. Run agents on your machines and control them from any device." />
+<meta name="description" content="Zeron is an open source, MIT-licensed workspace for Claude Code, Codex, OpenCode, Cursor, Antigravity and more. Run agents on your machines and control them from any device." />
 <link rel="canonical" href="https://zeron.sh/" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://zeron.sh/" />
@@ -31,19 +31,22 @@
     <span class="nav-glass" aria-hidden="true"></span>
     <div class="wrap nav-inner">
       <a class="logo" href="/" aria-label="Zeron home">
-        <img class="brand-wordmark dark" src="/assets/brand/zeron-wordmark-dark.svg" alt="" width="2394" height="760" />
-        <img class="brand-wordmark light" src="/assets/brand/zeron-wordmark-light.svg" alt="" width="2394" height="760" />
+        <img class="brand-wordmark dark" src="/assets/brand/zeron-wordmark-ivory.svg" alt="" width="5098" height="1161" />
+        <img class="brand-wordmark light" src="/assets/brand/zeron-wordmark-ink.svg" alt="" width="5098" height="1161" />
       </a>
       <div class="nav-center"><a href="/#features">Features</a><a href="/agents/">Agents</a><a href="/#downloads">Platforms</a></div>
       <div class="links">
-        <button class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
-          <span class="sun" data-icon="sun" aria-hidden="true"></span>
-          <span class="moon" data-icon="moon" aria-hidden="true"></span>
-        </button>
+        <a class="gh-icon" href="https://discord.gg/rnynTdgZ24" aria-label="Discord">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0c-.164-.393-.406-.874-.618-1.25a.077.077 0 0 0-.078-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.319 13.58.099 18.058a.082.082 0 0 0 .031.056c2.053 1.508 4.041 2.423 5.993 3.03a.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 12.3 12.3 0 0 1-1.873-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.011c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .079.01c.12.099.246.198.373.292a.077.077 0 0 1-.007.128 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.04.107c.36.698.771 1.363 1.224 1.993a.076.076 0 0 0 .085.029c1.96-.607 3.949-1.522 6.002-3.03a.077.077 0 0 0 .031-.055c.501-5.177-.838-9.674-3.548-13.66a.061.061 0 0 0-.031-.029ZM8.02 15.331c-1.182 0-2.157-1.086-2.157-2.419s.956-2.419 2.157-2.419c1.211 0 2.176 1.095 2.157 2.419 0 1.333-.956 2.419-2.157 2.419Zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419s.955-2.419 2.157-2.419c1.21 0 2.176 1.095 2.157 2.419 0 1.333-.946 2.419-2.157 2.419Z"/></svg>
+        </a>
         <a class="gh-icon" href="https://github.com/zeronsh/zeron" aria-label="GitHub">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         <span class="gh-stars" hidden></span>
         </a>
+        <button class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
+          <span class="sun" data-icon="sun" aria-hidden="true"></span>
+          <span class="moon" data-icon="moon" aria-hidden="true"></span>
+        </button>
         <div class="nav-download-slot" data-visible="false" inert><div class="nav-download-clip"><a class="btn small" id="nav-download" href="#downloads">Download</a></div></div>
       </div>
     </div>
@@ -60,9 +63,9 @@
         <h1>
           <b>The open source workspace for your coding agents.</b> Zeron runs
           <span class="hero-agent"><span class="agent-icon" data-harness="claude" aria-hidden="true" style="--icon: url('/assets/icons/claude-mark.svg')"></span>Claude Code,</span>
-          <span class="hero-agent"><span class="agent-icon" data-harness="cursor" aria-hidden="true" style="--icon: url('/assets/icons/cursor-mark.svg')"></span>Cursor,</span>
           <span class="hero-agent"><span class="agent-icon" data-harness="codex" aria-hidden="true" style="--icon: url('/assets/icons/openai-mark.svg')"></span>Codex,</span>
           <span class="hero-agent"><span class="agent-icon" data-harness="opencode" aria-hidden="true" style="--icon: url('/assets/icons/opencode-mark.svg')"></span>OpenCode,</span>
+          <span class="hero-agent"><span class="agent-icon" data-harness="cursor" aria-hidden="true" style="--icon: url('/assets/icons/cursor-mark.svg')"></span>Cursor,</span>
           <span class="hero-agent"><span class="agent-icon" data-harness="antigravity" aria-hidden="true" style="--icon: url('/assets/icons/antigravity-mark.svg')"></span>Antigravity,</span>
           and <span class="hero-agent hero-agent-more">more<span class="agent-icon-stack" aria-hidden="true"><span class="agent-icon" data-harness="devin" style="--icon: url('/assets/icons/devin-mark.svg')"></span><span class="agent-icon" data-harness="hermes" style="--icon: url('/assets/icons/hermes-mark.svg')"></span><span class="agent-icon" data-harness="pi" style="--icon: url('/assets/icons/pi-mark.svg')"></span><span class="agent-icon" data-harness="grok" style="--icon: url('/assets/icons/grok-mark.svg')"></span></span></span> on your machines.
         </h1>
@@ -71,7 +74,6 @@
           <a class="text-link" href="#downloads">All downloads <span class="ui-icon" data-icon="arrow-down" aria-hidden="true"></span></a>
           <span class="cta-ver" id="ver">v0.2.66</span>
         </div>
-        <p class="open-source-note">Free and open source. <a href="https://github.com/zeronsh/zeron/blob/main/LICENSE">MIT licensed.</a> <a href="https://github.com/zeronsh/zeron">View source <span class="ui-icon" data-icon="arrow-up-right" aria-hidden="true"></span></a></p>
         <div class="used-by">
           <p>Used by developers from</p>
           <div class="used-by-logos">
@@ -97,39 +99,12 @@
     <div class="wrap">
     <div class="panel">
       <i class="pdot tl"></i><i class="pdot tr"></i><i class="pdot bl"></i><i class="pdot br"></i>
-      <div class="panel-row p-gallery">
-        <figure>
-          <div class="gallery-shot gallery-shot--sessions"><img src="/assets/shots/sessions.png" alt="Zeron session list showing sessions across workspaces" width="907" height="627" loading="lazy" decoding="async" /></div>
-          <figcaption><b>Every machine's sessions,</b> one list.</figcaption>
-        </figure>
-        <figure>
-          <div class="gallery-shot gallery-shot--diff"><img src="/assets/shots/diff.png" alt="Zeron branch diff with changed code and file details" width="907" height="627" loading="lazy" decoding="async" /></div>
-          <figcaption><b>Branch diffs,</b> live as agents work.</figcaption>
-        </figure>
-        <figure>
-          <div class="gallery-shot gallery-shot--history"><img src="/assets/shots/history.png" alt="Zeron commit history with a branch timeline" width="907" height="627" loading="lazy" decoding="async" /></div>
-          <figcaption><b>Commit history</b> for every workspace.</figcaption>
-        </figure>
-        <figure>
-          <div class="gallery-shot gallery-shot--placeholder" aria-hidden="true"><span>Rust · GPUI</span></div>
-          <figcaption><b>Native from the ground up,</b> built in Rust with GPUI.</figcaption>
-        </figure>
-        <figure>
-          <div class="gallery-shot gallery-shot--placeholder" aria-hidden="true"><span>Local by default</span></div>
-          <figcaption><b>Your machine. Your sessions.</b> No account required; sync is optional.</figcaption>
-        </figure>
-        <figure>
-          <div class="gallery-shot gallery-shot--placeholder" aria-hidden="true"><span>Headless engine</span></div>
-          <figcaption><b>A server can do the work.</b> Control its agents from your other devices.</figcaption>
-        </figure>
-      </div>
       <section class="open-source-section" aria-labelledby="open-source-title">
         <div class="sec-head"><h2 id="open-source-title"><b>Open source, all the way down.</b> Read the code, build it yourself, and help shape what comes next.</h2></div>
         <div class="open-source-links"><a class="text-link" href="https://github.com/zeronsh/zeron">Explore the source <span class="ui-icon" data-icon="arrow-up-right" aria-hidden="true"></span></a><a class="text-link" href="https://github.com/zeronsh/zeron/blob/main/CONTRIBUTORS.md">Contribute to Zeron <span class="ui-icon" data-icon="arrow-up-right" aria-hidden="true"></span></a></div>
       </section>
       <div class="collaboration">
-        <p class="agent-directory-link"><a class="text-link" href="/agents/">Explore all agent integrations <span class="ui-icon" data-icon="arrow-up-right" aria-hidden="true"></span></a></p>
-        <div class="network-stage" id="devices" role="img" aria-label="Claude Code, Cursor, Codex, OpenCode, Antigravity, Devin, Hermes, Pi, and Grok connect through Zeron to your Mac, Windows PC, Linux PC, iPhone, iPad, and Linux server.">
+        <div class="network-stage" id="devices" role="img" aria-label="Claude Code, Codex, OpenCode, Cursor, Antigravity, Devin, Hermes, Pi, and Grok connect through Zeron to your Mac, Windows PC, Linux PC, iPhone, iPad, and Linux server.">
           <svg class="network-paths network-paths--desktop" viewBox="0 0 1440 520" preserveAspectRatio="none" aria-hidden="true">
             <defs><linearGradient id="network-desktop-agents" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="720.0" y2="0"><stop class="network-gradient-edge" offset="0"/><stop class="network-gradient-mid" offset=".6"/><stop class="network-gradient-center" offset="1"/></linearGradient><linearGradient id="network-desktop-devices" gradientUnits="userSpaceOnUse" x1="1440" y1="0" x2="720.0" y2="0"><stop class="network-gradient-edge" offset="0"/><stop class="network-gradient-mid" offset=".6"/><stop class="network-gradient-center" offset="1"/></linearGradient></defs>
             <g><path class="network-track" d="M-4 52 H440 C590 52 590 260 720 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-desktop-agents)" d="M-4 52 H440 C590 52 590 260 720 260"/></g>
@@ -148,28 +123,10 @@
             <g><path class="network-track" d="M1444 377 H1000 C850 377 850 260 720 260"/><path class="network-draw" data-connection="devices" stroke="url(#network-desktop-devices)" d="M1444 377 H1000 C850 377 850 260 720 260"/></g>
             <g><path class="network-track" d="M1444 455 H1000 C850 455 850 260 720 260"/><path class="network-draw" data-connection="devices" stroke="url(#network-desktop-devices)" d="M1444 455 H1000 C850 455 850 260 720 260"/></g>
           </svg>
-          <svg class="network-paths network-paths--mobile" viewBox="0 0 360 520" preserveAspectRatio="none" aria-hidden="true">
-            <defs><linearGradient id="network-mobile-agents" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="180.0" y2="0"><stop class="network-gradient-edge" offset="0"/><stop class="network-gradient-mid" offset=".6"/><stop class="network-gradient-center" offset="1"/></linearGradient><linearGradient id="network-mobile-devices" gradientUnits="userSpaceOnUse" x1="360" y1="0" x2="180.0" y2="0"><stop class="network-gradient-edge" offset="0"/><stop class="network-gradient-mid" offset=".6"/><stop class="network-gradient-center" offset="1"/></linearGradient></defs>
-            <g><path class="network-track" d="M-4 52 H126 C150 52 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 52 H126 C150 52 150 260 180 260"/></g>
-            <g><path class="network-track" d="M-4 104 H126 C150 104 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 104 H126 C150 104 150 260 180 260"/></g>
-            <g><path class="network-track" d="M-4 156 H126 C150 156 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 156 H126 C150 156 150 260 180 260"/></g>
-            <g><path class="network-track" d="M-4 208 H126 C150 208 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 208 H126 C150 208 150 260 180 260"/></g>
-            <g><path class="network-track" d="M-4 260 H126 C150 260 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 260 H126 C150 260 150 260 180 260"/></g>
-            <g><path class="network-track" d="M-4 312 H126 C150 312 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 312 H126 C150 312 150 260 180 260"/></g>
-            <g><path class="network-track" d="M-4 364 H126 C150 364 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 364 H126 C150 364 150 260 180 260"/></g>
-            <g><path class="network-track" d="M-4 416 H126 C150 416 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 416 H126 C150 416 150 260 180 260"/></g>
-            <g><path class="network-track" d="M-4 468 H126 C150 468 150 260 180 260"/><path class="network-draw" data-connection="agents" stroke="url(#network-mobile-agents)" d="M-4 468 H126 C150 468 150 260 180 260"/></g>
-            <g><path class="network-track" d="M364 65 H234 C210 65 210 260 180 260"/><path class="network-draw" data-connection="devices" stroke="url(#network-mobile-devices)" d="M364 65 H234 C210 65 210 260 180 260"/></g>
-            <g><path class="network-track" d="M364 143 H234 C210 143 210 260 180 260"/><path class="network-draw" data-connection="devices" stroke="url(#network-mobile-devices)" d="M364 143 H234 C210 143 210 260 180 260"/></g>
-            <g><path class="network-track" d="M364 221 H234 C210 221 210 260 180 260"/><path class="network-draw" data-connection="devices" stroke="url(#network-mobile-devices)" d="M364 221 H234 C210 221 210 260 180 260"/></g>
-            <g><path class="network-track" d="M364 299 H234 C210 299 210 260 180 260"/><path class="network-draw" data-connection="devices" stroke="url(#network-mobile-devices)" d="M364 299 H234 C210 299 210 260 180 260"/></g>
-            <g><path class="network-track" d="M364 377 H234 C210 377 210 260 180 260"/><path class="network-draw" data-connection="devices" stroke="url(#network-mobile-devices)" d="M364 377 H234 C210 377 210 260 180 260"/></g>
-            <g><path class="network-track" d="M364 455 H234 C210 455 210 260 180 260"/><path class="network-draw" data-connection="devices" stroke="url(#network-mobile-devices)" d="M364 455 H234 C210 455 210 260 180 260"/></g>
-          </svg>
           <div class="network-node network-agent" style="--row: 0" aria-hidden="true"><span class="agent-icon" data-harness="claude" style="--icon: url('/assets/icons/claude-mark.svg')"></span><span>Claude Code</span></div>
-          <div class="network-node network-agent" style="--row: 1" aria-hidden="true"><span class="agent-icon" data-harness="cursor" style="--icon: url('/assets/icons/cursor-mark.svg')"></span><span>Cursor</span></div>
-          <div class="network-node network-agent" style="--row: 2" aria-hidden="true"><span class="agent-icon" data-harness="codex" style="--icon: url('/assets/icons/openai-mark.svg')"></span><span>Codex</span></div>
-          <div class="network-node network-agent" style="--row: 3" aria-hidden="true"><span class="agent-icon" data-harness="opencode" style="--icon: url('/assets/icons/opencode-mark.svg')"></span><span>OpenCode</span></div>
+          <div class="network-node network-agent" style="--row: 1" aria-hidden="true"><span class="agent-icon" data-harness="codex" style="--icon: url('/assets/icons/openai-mark.svg')"></span><span>Codex</span></div>
+          <div class="network-node network-agent" style="--row: 2" aria-hidden="true"><span class="agent-icon" data-harness="opencode" style="--icon: url('/assets/icons/opencode-mark.svg')"></span><span>OpenCode</span></div>
+          <div class="network-node network-agent" style="--row: 3" aria-hidden="true"><span class="agent-icon" data-harness="cursor" style="--icon: url('/assets/icons/cursor-mark.svg')"></span><span>Cursor</span></div>
           <div class="network-node network-agent" style="--row: 4" aria-hidden="true"><span class="agent-icon" data-harness="antigravity" style="--icon: url('/assets/icons/antigravity-mark.svg')"></span><span>Antigravity</span></div>
           <div class="network-node network-agent" style="--row: 5" aria-hidden="true"><span class="agent-icon" data-harness="devin" style="--icon: url('/assets/icons/devin-mark.svg')"></span><span>Devin</span></div>
           <div class="network-node network-agent" style="--row: 6" aria-hidden="true"><span class="agent-icon" data-harness="hermes" style="--icon: url('/assets/icons/hermes-mark.svg')"></span><span>Hermes</span></div>
@@ -193,15 +150,7 @@
 
   <section class="tweets" id="people" aria-label="What people are saying about Zeron">
     <div class="wrap">
-      <figure class="plate plate-quote">
-        <div class="review-scene" aria-hidden="true">
-          <img class="review-vista" src="/assets/art/review-vista.webp" alt="" width="1536" height="1024" loading="lazy" decoding="async" />
-          <div class="review-architecture">
-            <img class="review-door review-door--left" src="/assets/art/review-threshold.webp" alt="" width="1536" height="1024" loading="lazy" decoding="async" />
-            <img class="review-door review-door--right" src="/assets/art/review-threshold.webp" alt="" width="1536" height="1024" loading="lazy" decoding="async" />
-            <img class="review-floor" src="/assets/art/review-threshold.webp" alt="" width="1536" height="1024" loading="lazy" decoding="async" />
-          </div>
-        </div>
+      <figure class="plate-quote">
         <blockquote>
           <p>“Oh man, this is the best UI I’ve ever tried! For real. It feels really smooth. Typing, reading, everything. Really fast. Right now it’s my main UI for coding.”</p>
           <cite><a href="https://x.com/FrancoE114696/status/2102551301871501508" target="_blank" rel="noopener"><img src="/assets/tweets/francoe114696.jpg" alt="" width="24" height="24" /> Fran Escob <span>@FrancoE114696</span></a></cite>
@@ -345,7 +294,7 @@
 
   </div>
   <div class="footer-reveal-space" aria-hidden="true"></div>
-  <footer class="footer-stage" id="footer">
+  <footer class="footer-stage" id="footer" data-footer-scene="terraces">
     <div class="footer-frame">
       <section class="footer-intro-section" aria-label="Get Zeron">
         <div class="wrap footer-intro">
@@ -356,20 +305,25 @@
               <a class="btn" id="closing-download" href="#downloads">Download</a>
               <a class="text-link" href="https://github.com/zeronsh/zeron">Star on GitHub <span class="ui-icon" data-icon="arrow-up-right" aria-hidden="true"></span><span class="gh-stars" hidden></span></a>
             </div>
+            <div class="footer-scene-picker" role="group" aria-label="Footer scene">
+              <button type="button" data-footer-scene="terraces" aria-pressed="true">Terraces</button>
+              <button type="button" data-footer-scene="colonnade" aria-pressed="false">Colonnade</button>
+              <button type="button" data-footer-scene="bridge" aria-pressed="false">Bridge</button>
+            </div>
           </div>
         </div>
       </section>
       <div class="footer-media">
         <div class="footer-landscape" aria-hidden="true">
-              <div class="footer-plane footer-plane--far"></div>
-              <div class="footer-plane footer-plane--middle"></div>
+          <div class="footer-plane footer-plane--far"></div>
+          <div class="footer-plane footer-plane--middle"></div>
           <div class="footer-plane footer-plane--near"></div>
         </div>
       </div>
       <div class="footer-bar">
         <div class="wrap footer-bar-inner">
           <a class="footer-wordmark" href="/" aria-label="Zeron home">
-            <img src="/assets/brand/zeron-wordmark-dark.svg" alt="" width="2394" height="760" />
+            <img src="/assets/brand/zeron-wordmark-ivory.svg" alt="" width="5098" height="1161" />
           </a>
           <nav class="foot-links" aria-label="Footer">
             <a href="/about/">About</a>

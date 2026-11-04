@@ -3,7 +3,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 // The page scrolls away to uncover one viewport-sized footer.
 // Independent terrain cutouts move in front of reconstructed scenery; the sky is the
-// live footer surface and glyph field, not part of the raster artwork.
+// footer frame's static background. Light and dark editions share their silhouettes.
 const footer = document.querySelector('.footer-stage');
 const reveal = document.querySelector('.footer-reveal-space');
 const nav = document.querySelector('.site-nav');
@@ -127,11 +127,11 @@ if (footer && reveal) {
       // All three plates extend to the bottom and start BELOW their resting position,
       // so their full overlap covers every frame without a repeated edge strip.
       timeline
-        .fromTo(far, { y: () => Math.min(mobile ? 8 : 18, landscape.clientHeight * 0.03) },
+        .fromTo(far, { y: () => Math.min(mobile ? 4 : 8, landscape.clientHeight * 0.03) },
           { y: 0 }, 0)
-        .fromTo(middle, { y: () => Math.min(mobile ? 16 : 38, landscape.clientHeight * 0.065) },
+        .fromTo(middle, { y: () => Math.min(mobile ? 8 : 18, landscape.clientHeight * 0.065) },
           { y: 0 }, 0)
-        .fromTo(near, { y: () => Math.min(mobile ? 28 : 68, landscape.clientHeight * 0.115) },
+        .fromTo(near, { y: () => Math.min(mobile ? 14 : 32, landscape.clientHeight * 0.115) },
           { y: 0 }, 0);
 
       gsap.fromTo(nav, { autoAlpha: 1 }, {

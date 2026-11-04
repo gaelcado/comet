@@ -72,12 +72,13 @@
     --faint: #777080;
     --line: #d8d0db;
     --line-soft: #e7dfe8;
-    --purple: #6140e8;
-    --purple-hi: #6140e8;
-    --purple-deep: #4930ac;
-    --button-bg: #241735;
+    /* Paper edition of zeron.sh's violet (#8b5cf6, oklch hue 292.7), darkened for contrast on ivory. */
+    --purple: #7436e0;
+    --purple-hi: #7436e0;
+    --purple-deep: #562aa7;
+    --button-bg: #201837;
     --button-ink: #f7f4ee;
-    --button-hover: #493165;
+    --button-hover: #413469;
     --quote-ink: #211c28;
     --quote-dim: #645b6b;
     --tweet-ink: #39323e;
@@ -197,7 +198,7 @@
   .nav-center a:hover, .nav-center a[aria-current] { color: var(--ink); }
   .nav-center a[aria-current] { text-decoration: underline; text-underline-offset: 6px; }
   .site-nav .links { justify-self: end; white-space: nowrap; }
-  .logo { display: block; width: 72px; }
+  .logo { display: block; width: 80px; }
   .site-nav .links {
     margin-inline-start: auto;
     display: flex;
@@ -303,8 +304,52 @@
   }
   .theme-toggle .moon, [data-theme="light"] .theme-toggle .sun { opacity: 0; transform: scale(.25); filter: blur(4px); }
   [data-theme="light"] .theme-toggle .moon { opacity: 1; transform: scale(1); filter: blur(0); }
+  /* Nav controls: Discord, GitHub and the theme toggle share one 30px icon
+     box and one gap, so icon-to-icon spacing is even. When Download appears
+     the star count folds away and the button eases in from the right. */
+  .site-nav {
+    --nav-gap: 6px;
+    --nav-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .site-nav .links { gap: var(--nav-gap); }
+  .site-nav .gh-icon {
+    justify-content: center;
+    min-width: var(--nav-control-height);
+    height: var(--nav-control-height);
+    padding: 0 6px;
+  }
+  .site-nav .gh-icon .gh-stars:not([hidden]) {
+    display: inline-block;
+    max-width: 4.5em;
+    overflow: hidden;
+    padding-left: 6px;
+    white-space: nowrap;
+    transition: max-width .55s var(--nav-ease), padding-left .55s var(--nav-ease), opacity .3s ease;
+  }
+  .site-nav[data-download="true"] .gh-icon .gh-stars {
+    max-width: 0;
+    padding-left: 0;
+    opacity: 0;
+  }
+  .site-nav .nav-download-slot {
+    margin-inline-start: calc(-1 * var(--nav-gap));
+    transform: translateX(10px);
+    transition: grid-template-columns .55s var(--nav-ease),
+      margin-inline-start .55s var(--nav-ease),
+      transform .55s var(--nav-ease),
+      opacity .25s ease;
+  }
+  .site-nav .nav-download-slot[data-visible="true"] {
+    /* The theme icon sits inside a 30px box; 5px evens its edge gap. */
+    margin-inline-start: 5px;
+    transform: none;
+    transition: grid-template-columns .55s var(--nav-ease),
+      margin-inline-start .55s var(--nav-ease),
+      transform .55s var(--nav-ease),
+      opacity .35s ease .1s;
+  }
   @media (prefers-reduced-motion: reduce) {
-    .nav-download-slot, .theme-toggle, .theme-toggle [data-icon] { transition: none; }
+    .nav-download-slot, .site-nav .nav-download-slot, .site-nav .gh-icon .gh-stars, .theme-toggle, .theme-toggle [data-icon] { transition: none; }
   }
   .brand-wordmark { display: block; width: 100%; height: auto; }
   .brand-wordmark.light, [data-theme="light"] .brand-wordmark.dark { display: none; }
@@ -490,6 +535,8 @@
   :root:not([data-theme="light"]) [data-harness="hermes"] { --icon: url('/assets/icons/hermes-mark-dark.svg') !important; }
   :root:not([data-theme="light"]) [data-harness="opencode"] { --icon: url('/assets/icons/opencode-mark-dark.svg') !important; }
   .panel-sect { padding-top: var(--sec); position: relative; z-index: 1; }
+  /* The product screenshot is a hero-scale block; give the next section more air. */
+  .shot + .panel-sect { padding-top: calc(var(--sec) * 1.75); }
   .panel-sect > .wrap { position: relative; z-index: 1; }
   .panel {
     position: relative;
@@ -568,6 +615,7 @@
     --network-hub-surface: #17121f;
     --network-edge: rgba(201, 183, 239, .16);
     --network-shine: rgba(236, 231, 247, .14);
+    --network-chip: var(--bg-raise);
   }
   .collaboration {
     display: grid;
@@ -608,12 +656,8 @@
   .network-gradient-edge { stop-color: var(--network-active); stop-opacity: .28; }
   .network-gradient-mid { stop-color: var(--network-active); stop-opacity: .65; }
   .network-gradient-center { stop-color: var(--network-active); }
-  /* Limit backdrop sampling to the small, stationary chips. Paths themselves
-     remain filter-free while their stroke offsets animate. */
   .network-node { position: absolute; z-index: 1; }
   .network-node, .sponsor-chip {
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -621,11 +665,17 @@
     padding: 4px 9px;
     border: 1px solid var(--network-edge);
     border-radius: 8px;
-    background: linear-gradient(135deg, var(--network-shine), transparent 52%), var(--network-glass);
-    box-shadow: inset 0 1px 0 var(--network-shine), 0 3px 12px rgba(0, 0, 0, .08);
     font-size: var(--text-label);
     font-weight: var(--weight-medium);
     line-height: var(--leading-label);
+  }
+  /* Network chips are flat: one opaque surface that masks the paths beneath. */
+  .network-node { background: var(--network-chip); }
+  .sponsor-chip {
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    background: linear-gradient(135deg, var(--network-shine), transparent 52%), var(--network-glass);
+    box-shadow: inset 0 1px 0 var(--network-shine), 0 3px 12px rgba(0, 0, 0, .08);
   }
   .network-agent { right: max(32px, calc((100vw - 1076px) / 2)); top: calc(10% + var(--row) * 10%); transform: translateY(-50%); }
   .network-device { left: max(32px, calc((100vw - 1076px) / 2)); top: calc(12.5% + var(--row) * 15%); transform: translateY(-50%); }
@@ -639,30 +689,114 @@
     transform: translate(-50%, -50%);
     display: grid; place-items: center;
     width: 64px; height: 64px;
-    background: linear-gradient(145deg, var(--network-shine), transparent 60%), var(--network-hub-surface);
+    background: var(--network-hub-surface);
     border: 1px solid var(--network-edge);
     border-radius: 16px;
-    box-shadow: inset 0 1px 0 var(--network-shine), 0 8px 24px rgba(0, 0, 0, .16), 0 0 0 6px color-mix(in srgb, var(--network-active) 4%, transparent);
+  }
+  /* Light fed by the paths. --network-charge rises from 0 to 1 as each stream
+     finishes drawing into the hub (collaboration-network.js); without scroll
+     motion it rests at 1. The light enters where the bundles meet the tile's
+     left and right edges: a thin rim brightest at those points, a faint spill
+     across the face, and a wide soft bloom behind the tile. */
+  @media (min-width: 701px) {
+    .network-stage::before {
+      content: '';
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 560px; height: 300px;
+      translate: -50% -50%;
+      background: radial-gradient(closest-side,
+        color-mix(in srgb, var(--network-active) 20%, transparent),
+        color-mix(in srgb, var(--network-active) 6%, transparent) 50%,
+        transparent);
+      opacity: var(--network-charge, 1);
+      pointer-events: none;
+    }
+    .network-hub::before, .network-hub::after {
+      content: '';
+      position: absolute;
+      pointer-events: none;
+      opacity: var(--network-charge, 1);
+    }
+    .network-hub::before {
+      inset: -1px;
+      padding: 1px;
+      border-radius: inherit;
+      background:
+        radial-gradient(70% 60% at 0% 50%, var(--network-active), transparent 72%),
+        radial-gradient(70% 60% at 100% 50%, var(--network-active), transparent 72%);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+    }
+    .network-hub::after {
+      inset: 0;
+      border-radius: 15px;
+      background:
+        radial-gradient(40% 55% at 0% 50%, color-mix(in srgb, var(--network-active) 26%, transparent), transparent 75%),
+        radial-gradient(40% 55% at 100% 50%, color-mix(in srgb, var(--network-active) 26%, transparent), transparent 75%);
+    }
+    .network-hub .network-mark { position: relative; z-index: 1; }
   }
   .network-mark {
     display: block;
-    width: 30px; height: 40px;
+    width: 34px; height: 28px;
     background: currentColor;
-    -webkit-mask: url('/assets/brand/zeron-flow-counter-mark.png') center / contain no-repeat;
-    mask: url('/assets/brand/zeron-flow-counter-mark.png') center / contain no-repeat;
+    -webkit-mask: url('/assets/brand/zeron-mark.svg') center / contain no-repeat;
+    mask: url('/assets/brand/zeron-mark.svg') center / contain no-repeat;
   }
   .network-hub > span:not(.network-mark) { position: absolute; top: calc(100% + 12px); font-size: var(--text-label); }
   @media (max-width: 700px) {
     .p-gallery { grid-template-columns: minmax(0, 1fr); gap: 24px; }
     .collaboration { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+    /* Narrow screens stack the same nodes: agents, a short connector into
+       Zeron, then devices. Document order already reads top to bottom. */
     .network-paths--desktop { display: none; }
-    .network-paths--mobile { display: block; }
-    .network-node { gap: 6px; padding: 4px 7px; border-radius: 8px; font-size: var(--text-label); }
-    .network-agent { right: 12px; max-width: calc(50% - 46px); }
-    .network-device { left: 12px; max-width: calc(50% - 46px); }
-    .network-node .agent-icon { width: 16px; height: 16px; flex-basis: 16px; }
-    .network-hub { width: 52px; height: 52px; border-radius: 14px; }
-    .network-mark { width: 25px; height: 33px; }
+    .network-stage {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      width: auto;
+      height: auto;
+      margin-inline: 0;
+      padding-block: 8px;
+      overflow: visible;
+      contain: none;
+    }
+    .network-node { position: static; transform: none; gap: 6px; padding: 5px 9px; }
+    .network-hub {
+      position: relative;
+      left: auto; top: auto;
+      transform: none;
+      width: 52px; height: 52px;
+      margin: 56px calc(50% - 26px) 68px;
+      border-radius: 14px;
+    }
+    .network-hub > span:not(.network-mark) { top: calc(100% + 8px); }
+    .network-mark { width: 28px; height: 24px; }
+    /* A faint track with one light travelling from the agents, through the
+       hub, to the devices. */
+    .network-hub::before, .network-hub::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      width: 1px;
+      translate: -50% 0;
+      background:
+        linear-gradient(transparent, var(--network-active), transparent) 0 -100% / 100% 50% no-repeat,
+        var(--network-track);
+      animation: network-flow 2.8s linear infinite;
+    }
+    .network-hub::before { bottom: calc(100% + 8px); height: 40px; }
+    .network-hub::after { top: calc(100% + 34px); height: 26px; animation-delay: 1.4s; }
+  }
+  @keyframes network-flow {
+    from { background-position: 0 -100%, 0 0; }
+    to { background-position: 0 200%, 0 0; }
+  }
+  @media (max-width: 700px) and (prefers-reduced-motion: reduce) {
+    .network-hub::before, .network-hub::after { animation: none; }
   }
 
   /* ── tweets ──────────────────────────────────────────── */
@@ -671,56 +805,44 @@
      by script, so translating 50% loops seamlessly) */
   .tweets { padding-top: var(--sec); position: relative; z-index: 1; }
   .plate-quote {
-    --review-veil: rgba(10, 9, 15, .84);
-    width: 100vw;
-    margin-inline: calc(50% - 50vw);
-    min-height: clamp(440px, 34vw, 600px);
+    margin: 0;
+    padding-block: var(--block-space);
     display: flex;
-    align-items: center;
     justify-content: center;
-    border-radius: 0;
-    background: #171519;
   }
-  .review-scene { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-  .review-vista { width: 100%; height: 100%; object-fit: cover; filter: brightness(.28) saturate(.5); }
-  .review-architecture { position: absolute; inset: 0; }
-  .review-door, .review-floor { position: absolute; inset: 0; width: 100%; height: 100%; }
-  /* Cut the supplied artwork in CSS: preserve the door edges and violet spill,
-     while exposing a complete, independently moving landscape behind them. */
-  .review-door--left { clip-path: polygon(0 0, 45.6% 0, 45.6% 80.6%, 44.6% 82.5%, 0 84%); transform: translateX(-24%); }
-  .review-door--right { clip-path: polygon(54.4% 0, 100% 0, 100% 84%, 55.4% 82.5%, 54.4% 80.6%); transform: translateX(24%); }
-  .review-floor { clip-path: polygon(0 83.5%, 44.6% 82%, 55.4% 82%, 100% 83.5%, 100% 100%, 0 100%); transform-origin: center bottom; }
-  .plate-quote::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    background: radial-gradient(ellipse at center, var(--review-veil) 12%, transparent 72%);
-    pointer-events: none;
+  .quote-word {
+    --fill: 100%;
+    display: inline-block;
+    color: transparent;
+    background: linear-gradient(var(--ink), var(--ink)) left / var(--fill) 100% no-repeat;
+    background-color: color-mix(in srgb, var(--ink) 22%, var(--bg));
+    background-clip: text;
+    -webkit-background-clip: text;
   }
+  @media (forced-colors: active) { .quote-word { color: CanvasText; background: none; } }
   .plate-quote blockquote {
     position: relative;
     z-index: 2;
-    width: min(calc(100% - 48px), 620px);
+    width: min(100%, 860px);
     margin: 0;
-    padding-block: 56px;
+    padding-block: 0;
     text-align: center;
   }
   .plate-quote p {
     margin: 0;
     font-family: var(--serif);
     font-weight: var(--weight-regular);
-    font-size: var(--text-quote);
+    font-size: clamp(32px, 4.5vw, 60px);
     line-height: var(--leading-label);
     letter-spacing: -0.01em;
-    color: var(--quote-ink);
+    color: var(--ink);
     text-wrap: pretty;
   }
   .plate-quote cite { display: block; margin-top: 22px; font-size: var(--text-caption); font-weight: var(--weight-medium); font-style: normal; }
   .plate-quote cite a { display: inline-flex; align-items: center; gap: 8px; }
   .plate-quote cite img { border-radius: 50%; }
-  .plate-quote cite { color: var(--quote-ink); }
-  .plate-quote cite span { color: var(--quote-dim); font-weight: var(--weight-regular); }
+  .plate-quote cite { color: var(--ink); }
+  .plate-quote cite span { color: var(--dim); font-weight: var(--weight-regular); }
   .wall {
     position: relative;
     margin-top: var(--block-space);
@@ -762,7 +884,6 @@
   .tweet p { font-size: var(--text-body); line-height: var(--leading-copy); color: var(--tweet-ink); text-wrap: pretty; }
   .tweet .hl { font-style: normal; color: var(--purple-hi); }
   @media (max-width: 900px) {
-    .plate-quote { min-height: 440px; }
     .wall { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .wall-col:nth-child(3) { display: none; }
   }
@@ -996,14 +1117,10 @@
   }
 
   /* Paper edition: the same compositions in their light palette. */
-  [data-theme="light"] .btn.ghost:hover { background: rgba(97,64,232,.07); border-color: #ab9bc0; }
+  [data-theme="light"] .btn.ghost:hover { background: rgba(116,54,224,.07); border-color: #a49dc4; }
   [data-theme="light"] .plate { background: #e9e2da; }
   [data-theme="light"] .screenshot-placeholder { box-shadow: inset 0 1px 0 rgba(255,255,255,.85), inset 0 0 0 1px rgba(23,20,29,.08), inset 0 -30px 70px -48px rgba(45,30,70,.25); }
   [data-theme="light"] .pdot { background: #ab9bc0; }
-  [data-theme="light"] .plate-quote { --review-veil: rgba(247, 244, 238, .92); }
-  [data-theme="light"] .review-vista { filter: none; }
-  [data-theme="light"] .plate-quote p, [data-theme="light"] .plate-quote cite { color: #211b27; }
-  [data-theme="light"] .plate-quote cite span { color: #5e5866; }
 
   /* ── mobile ──────────────────────────────────────────── */
   @media (max-width: 640px) {
@@ -1027,10 +1144,8 @@
       gap: 12px 24px;
     }
     .used-by-logos a:last-child { grid-column: 1 / -1; justify-self: start; }
-    .site-nav .logo { width: 64px; flex-shrink: 0; }
-    .site-nav .links { gap: 10px; }
-    .nav-download-slot[data-visible="false"] { margin-inline-start: -10px; }
-    .site-nav .gh-stars { font-size: var(--text-label); padding-inline-start: 5px; }
+    .site-nav .logo { width: 68px; flex-shrink: 0; }
+    .site-nav .gh-stars { font-size: var(--text-label); }
     .site-nav .gh-icon { flex-shrink: 0; white-space: nowrap; }
     .used-by-logos a::after { background-color: var(--dim); }
     .agent-icon { width: 18px; height: 18px; }
@@ -1040,13 +1155,6 @@
     .gallery-shot { border-radius: 10px; }
     .sec-head { text-align: left; }
 
-    .plate-quote { min-height: 460px; }
-    .review-architecture { width: 100%; left: 0; }
-    .review-door--left { transform: translateX(-16%); }
-    .review-door--right { transform: translateX(16%); }
-    .review-vista { object-position: 50% center; }
-    .plate-quote blockquote { width: calc(100% - 40px); padding-block: 48px; }
-    .plate-quote::before { background: radial-gradient(ellipse at center, var(--review-veil) 32%, transparent 85%); }
 
     .wall { grid-template-columns: minmax(0, 1fr); height: 400px; }
     .wall-col:nth-child(2) { display: none; }
@@ -1102,10 +1210,9 @@
     .cta-row .btn { flex: 0 0 auto; }
   }
   @media (max-width: 380px) {
-    .nav-inner, .site-nav .links { gap: 10px; }
-    .nav-download-slot[data-visible="false"] { margin-inline-start: -10px; }
+    .nav-inner { gap: 10px; }
     .site-nav .btn.small { padding-inline: 9px; }
-    .site-nav .gh-stars { display: none; }
+    .site-nav .gh-icon .gh-stars:not([hidden]) { display: none; }
     .dl-meta { font-size: var(--text-label); }
   }
 
@@ -1115,11 +1222,11 @@
     .footer-plane { scale: none; }
   }
 
-  .agent-directory-link { text-align: center; margin-bottom: 24px; }
 
   @media (max-width: 800px) {
-    :root { --nav-height: 0px; }
-    .site-nav { display: none; }
+    :root { --nav-height: 60px; }
+    .nav-inner { grid-template-columns: minmax(0, 1fr) auto; gap: 16px; }
+    .nav-center { display: none; }
   }
 
   .theme-changing *, .theme-changing *::before, .theme-changing *::after { transition: none !important; }
@@ -1149,11 +1256,7 @@
 .foot-links a .ui-icon { display: inline-block; }
 .theme-toggle [data-icon] { width: 16px; height: 16px; }
 
-.open-source-note { margin-block-start: 20px; color: var(--dim); font-size: var(--text-caption); line-height: var(--leading-body); text-wrap: pretty; }
-.open-source-note a { text-decoration: underline; text-decoration-color: var(--line-soft); text-underline-offset: 3px; }
-.open-source-note a:last-child { display: inline-block; margin-inline-start: 8px; }
-.open-source-note a:is(:hover, :focus-visible) { color: var(--ink); text-decoration-color: currentColor; }
-.open-source-section { padding-block: calc(var(--sec) - var(--block-space)) 0; }
+.open-source-section { padding: 0; }
 .open-source-section .sec-head { margin-block-end: 12px; }
 .open-source-section h2 { font-size: var(--text-intro); font-weight: var(--weight-medium); line-height: var(--leading-copy); letter-spacing: var(--tracking-heading); color: var(--dim); text-wrap: pretty; }
 .open-source-section h2 b { color: var(--ink); font-weight: var(--weight-strong); }

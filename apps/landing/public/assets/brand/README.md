@@ -1,11 +1,18 @@
 # Landing brand assets
 
-Current identity: v9 variant 10, Flow Counter, selected from the completed
-2026-09-27 lowercase o study. The SVG containers embed the exact transparent
-PNG exports, preserving the custom counter rather than approximating its shape.
+Current identity (2026-09-30): the three-piece diagonal Z mark with the
+approved A1 serif logotype, flat ink and ivory.
 
-Source: /Users/gaelcado/zeron/design/branding/zeron-o-poster-study-v9-2026-09-27/assets/10-flow-counter-*.png
-Context: codex://threads/01a0e299-b196-79b3-849c-726290602991
+- `zeron-mark.svg`: exact 96 × 80 mark geometry, `currentColor`. Also the
+  network hub mask.
+- `zeron-wordmark*.svg`: vector trace of the A1 anchor logotype; letterforms
+  come from the approved image, not a substitute font.
+- `zeron-lockup*.svg`: mark spanning the z's x-height box, gap 0.34 × mark
+  height. `-ivory` for dark surfaces, `-ink` for light ones; the unsuffixed
+  files use `currentColor`.
+- `zeron-favicon.svg` (and `/favicon.svg`): ivory mark on a #17121F tile.
 
-Ivory wordmark for dark surfaces, ink wordmark for light surfaces. The central
-network mark uses the exported alpha mask over an opaque theme-aware surface.
+Sources: Codex thread codex://threads/01a0f211-bb2f-7c00-8d0a-020a3361078a
+(mark, selected lockups) and
+~/.zeron-context/artifacts/landing-brand/2026-09-30-site-refresh/build_brand.py
+(trace and export).

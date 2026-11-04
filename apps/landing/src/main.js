@@ -2,6 +2,8 @@ import './style.css';
 import './telemetry.js';
 import './downloads.js';
 import './footer-motion.js';
+import './footer-scenes.js';
+import './footer-scenes.css';
 import './collaboration-network.js';
 import './page-motion.js';
 import { mountGlyphField } from './glyph-field.js';
@@ -56,6 +58,7 @@ function syncNavDownload() {
   navUpdateQueued = false;
   const visible = hero.getBoundingClientRect().bottom <= nav.getBoundingClientRect().bottom;
   navDownloadSlot.dataset.visible = String(visible);
+  nav.dataset.download = String(visible);
   navDownloadSlot.inert = !visible;
 }
 function queueNavUpdate() {
@@ -83,7 +86,7 @@ const heroField = mountGlyphField(document.querySelector('.page-shell'), {
   ...glyphPalette(),
   endElement: document.querySelector('.showcase-frame'),
   endFraction: 0.8,
-  clearTextElements: [...document.querySelectorAll('.open-source-note, .sponsor-chip, .about-story, .hero h1, .hero .cta-row .text-link, .hero .cta-ver, .used-by p, .agent-platforms, .agent-breadcrumb, .agent-entry-title, .agent-entry-copy')],
+  clearTextElements: [...document.querySelectorAll('.sponsor-chip, .about-story, .hero h1, .hero .cta-row .text-link, .hero .cta-ver, .used-by p, .agent-platforms, .agent-breadcrumb, .agent-entry-title, .agent-entry-copy')],
   clearElements: [...document.querySelectorAll('.used-by-logos a')],
   clearFeather: 20,
 });

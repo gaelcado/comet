@@ -6,7 +6,7 @@ const media = gsap.matchMedia();
 media.add({ motion: '(prefers-reduced-motion: no-preference)', mobile: '(max-width: 900px), (pointer: coarse)' }, ({ conditions }) => {
   if (!conditions.motion) return;
   // Content is visible in CSS. Only one-off entrances use opacity; the quote
-  // remains readable throughout its scroll-linked architectural reveal.
+  // uses a scroll-linked word fill on the plain page surface.
   const heroItems = gsap.utils.toArray('.hero h1, .hero .cta-row, .used-by');
   if (window.scrollY < 80) {
     gsap.from(heroItems, {
@@ -32,20 +32,57 @@ media.add({ motion: '(prefers-reduced-motion: no-preference)', mobile: '(max-wid
     });
   }
 
-  const review = document.querySelector('.plate-quote');
-  if (review) {
-    const opening = gsap.timeline({
-      defaults: { duration: 1, ease: 'none' },
+  const quote = document.querySelector('.plate-quote p');
+  if (quote) {
+    const original = quote.textContent;
+    const words = original.split(/(\s+)/).map(text => {
+      if (/^\s+$/.test(text)) return document.createTextNode(text);
+      const word = document.createElement('span');
+      word.className = 'quote-word';
+      word.textContent = text;
+      return word;
+    });
+    quote.replaceChildren(...words);
+    const fillWords = quote.querySelectorAll('.quote-word');
+    gsap.set(fillWords, { '--fill': '0%' });
+    gsap.to(fillWords, {
+      '--fill': '100%', duration: 1, stagger: 1, ease: 'none',
       scrollTrigger: {
-        trigger: review, start: 'top 90%', end: 'bottom 20%',
-        scrub: conditions.mobile ? true : .8, invalidateOnRefresh: true,
+        trigger: quote, start: 'top 82%', end: 'bottom 48%',
+        scrub: conditions.mobile ? true : .35,
       },
     });
-    opening
-      .fromTo(review.querySelector('.review-door--left'), { x: 0, xPercent: conditions.mobile ? -12 : -18 }, { xPercent: conditions.mobile ? -16 : -24 }, 0)
-      .fromTo(review.querySelector('.review-door--right'), { x: 0, xPercent: conditions.mobile ? 12 : 18 }, { xPercent: conditions.mobile ? 16 : 24 }, 0)
-      .fromTo(review.querySelector('.review-vista'), { scale: 1.025 }, { scale: 1 }, 0)
-      .fromTo(review.querySelector('.review-floor'), { scale: 1.008 }, { scale: 1 }, 0);
+    return () => { quote.textContent = original; };
   }
+
 });
-if (import.meta.hot) import.meta.hot.dispose(() => media.revert());
+
+// Font swaps and late content can move the quote after ScrollTrigger's first
+// measurement. Refresh on document geometry changes, not just viewport resize.
+let refreshFrame = 0;
+let disposed = false;
+const refreshLayout = () => {
+  if (disposed || refreshFrame) return;
+  refreshFrame = requestAnimationFrame(() => {
+    refreshFrame = 0;
+    ScrollTrigger.refresh();
+  });
+};
+const shell = document.querySelector('.page-shell');
+let previousSize = '';
+const layoutObserver = new ResizeObserver(([entry]) => {
+  const size = `${entry.contentRect.width}:${entry.contentRect.height}`;
+  if (size === previousSize) return;
+  previousSize = size;
+  refreshLayout();
+});
+if (shell) layoutObserver.observe(shell);
+document.fonts.ready.then(refreshLayout);
+window.addEventListener('load', refreshLayout, { once: true });
+if (import.meta.hot) import.meta.hot.dispose(() => {
+  disposed = true;
+  cancelAnimationFrame(refreshFrame);
+  layoutObserver.disconnect();
+  window.removeEventListener('load', refreshLayout);
+  media.revert();
+});
