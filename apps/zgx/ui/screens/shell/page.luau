@@ -794,14 +794,17 @@ return function(props: Props): Node
 		-- (The page's room read only while expanded: otherwise the sidebar
 		-- moving would wake this every frame.)
 		if expanded() then
-			-- (The row's room less the window round the cards; the
+			-- (The row's room inside its own padding, below: the gap after the
+			-- sidebar, or the window's edge, and the edge at the right. The
 			-- page's card gone, there's no gap before the panel's.)
-			local room: number = (row_ref.width or 0) - 2 * INSET
+			local lead = if fit.current:get().sidebar then INSET else WINDOW_EDGE
+			local room: number = (row_ref.width or 0) - lead - WINDOW_EDGE
 			-- (Settings' list stands where the sidebar does, in this row: as beside the
-			-- sidebar, the panel has what's past it.)
+			-- sidebar, the panel has what's past it: its step in to the sidebar's
+			-- edge (the rim less the gap), its width and the gap after it.)
 			if away() and not shell_view.collapsed:get() then
 				local sidebar: any = require("@app/screens/shell/sidebar")
-				room -= math.clamp(sidebar.width:get(), fit.SIDEBAR_MIN, fit.SIDEBAR_MAX) + 6
+				room -= math.clamp(sidebar.width:get(), fit.SIDEBAR_MIN, fit.SIDEBAR_MAX) + (WINDOW_EDGE - INSET) + INSET
 			end
 			if room > 0 then
 				return room
@@ -1696,10 +1699,12 @@ return function(props: Props): Node
 				local button = (ui.theme.get("zeron.icon_button.md") :: number?) or 24
 				return past + button + 8
 			end,
-			-- (Clear of the panel toggle, and of Expand while the panel's open.)
+			-- (Clear of the panel toggle, and of Expand while the panel's open:
+			-- each a control and the bar's gap between groups.)
 			right = function(): number
-				local toggle = 34 + 8 - 10 + ds.TitleBar.actions_right()
-				return if shown:get() then toggle + EXPAND + 8 else toggle
+				local m = ds.island.metrics()
+				local toggle = ds.TitleBar.actions_right() + m.control + m.group
+				return if shown:get() then toggle + EXPAND + m.group else toggle
 			end,
 		},
 		-- Expand: the panel over the session's chat, and back, on the top bar beside
@@ -1709,7 +1714,9 @@ return function(props: Props): Node
 		end, ui.div {
 			absolute = true,
 			right = function(): number
-				return ui.raw(24 + 8 + ds.TitleBar.actions_right(), "off the panel toggle")
+				-- (Past the panel toggle, a control, by the bar's gap between groups.)
+				local m = ds.island.metrics()
+				return ui.raw(ds.TitleBar.actions_right() + m.control + m.group, "off the panel toggle")
 			end,
 			top = function(): number
 				return ds.TitleBar.middle() - EXPAND / 2

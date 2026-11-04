@@ -4927,8 +4927,11 @@ fn layer(input:LayerInput)->vec4<f32> {
 				-- (A card's: on the top bar, past Back and Forward, the window's
 				-- gap before the card taken off.)
 				if props.card then
-					-- (`controls_end` holds the row's own 10 past its last control.)
-					return ui.raw(TitleBar.controls_end() - 10 + 8 - 5, "past the title bar's controls, by its group gap")
+					-- (Past the last of them by the bar's gap between groups, as the
+					-- sessions' tabs start past them, less the window's edge the
+					-- card stands in by.)
+					local group = (ui.theme.get("zeron.island.group") :: number?) or 8
+					return ui.raw(TitleBar.last_control_end() + group - rim, "past the title bar's controls, by its group gap")
 				end
 				local button = (ui.theme.get("zeron.icon_button.md") :: number?) or 24
 				return room() - PAD - button
