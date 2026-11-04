@@ -147,4 +147,25 @@ function M.hover(): TweenOptions
 	return { duration = M.ms(M.HOVER_MS), ease = M.HOVER_EASE }
 end
 
+-- Tabs (ds/tabs, ds/tab_strip): the chosen one's wash gliding to the tab
+-- that takes it, the others making room for one dragged, and one let go
+-- settling into its place, all on one spring, so what moves together
+-- stays together. A little under critical damping: it lands in about a
+-- quarter of a second with no overshoot to see, and a `ui.spring` sent
+-- somewhere new on the way keeps its speed.
+M.TAB_SPRING = { stiffness = 420, damping = 34 } :: SpringOptions
+-- That spring as an anime ease: an each's rows sliding, a tab settling.
+function M.tab_ease(): AnimeEase
+	return anime.createSpring { stiffness = M.TAB_SPRING.stiffness, damping = M.TAB_SPRING.damping }
+end
+-- An each's `animate` for a strip's tabs: that spring, or nothing with
+-- motion reduced (they take their places at once).
+function M.tab_slide(): { [string]: any }?
+	return M.layout({ spring = M.tab_ease() })
+end
+-- A tab picked up by a drag: this much larger, over this long, as it lifts
+-- and as it's let go.
+M.TAB_LIFT = 1.03
+M.TAB_LIFT_TWEEN = { duration = 120, ease = "out(3)" } :: TweenOptions
+
 return M
