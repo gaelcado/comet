@@ -279,24 +279,10 @@ fn zerons(from: f32, to: f32, ms: f32) -> f32 {
     from + (to - from) * at(y1, y2, (lo + hi) / 2.)
 }
 
-/// The panel's motion (ds/motion `panel`, 280 ms, cubicBezier(.22, 1, .36, 1)):
-/// where it is `ms` into a move from `from` to `to`.
-fn panels(from: f32, to: f32, ms: f32) -> f32 {
-    let t = (ms / 280.).clamp(0., 1.);
-    let (x1, y1, x2, y2) = (0.22_f32, 1.0_f32, 0.36_f32, 1.0_f32);
-    let at = |a: f32, b: f32, s: f32| 3. * (1. - s) * (1. - s) * s * a + 3. * (1. - s) * s * s * b + s * s * s;
-    let (mut lo, mut hi) = (0_f32, 1_f32);
-    for _ in 0..40 {
-        let mid = (lo + hi) / 2.;
-        if at(x1, x2, mid) < t { lo = mid } else { hi = mid }
-    }
-    from + (to - from) * at(y1, y2, (lo + hi) / 2.)
-}
-
 /// The sidebar folding and coming back moves as Zeron's columns do, and a
-/// session's panel opening and closing on its own motion: frame by frame on
-/// each curve and duration (from the frame after the toggle, as the move
-/// starts).
+/// session's panel opening and closing on the same clock (ds/motion
+/// `column`): frame by frame on its curve and duration (from the frame
+/// after the toggle, as the move starts).
 #[test]
 fn the_columns_move_as_zerons_do() {
     let mut app = mount();
@@ -335,8 +321,8 @@ fn the_columns_move_as_zerons_do() {
     };
     check(&mut app, "the sidebar folding", "shell.toggle_sidebar", "#shell-sidebar", zerons);
     check(&mut app, "the sidebar coming back", "shell.toggle_sidebar", "#shell-sidebar", zerons);
-    check(&mut app, "the panel opening", "shell.toggle_files", "#shell-files", panels);
-    check(&mut app, "the panel closing", "shell.toggle_files", "#shell-files", panels);
+    check(&mut app, "the panel opening", "shell.toggle_files", "#shell-files", zerons);
+    check(&mut app, "the panel closing", "shell.toggle_files", "#shell-files", zerons);
     assert!(faults.is_empty(), "{}", faults.join("\n"));
 }
 
