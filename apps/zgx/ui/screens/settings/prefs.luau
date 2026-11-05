@@ -34,8 +34,8 @@ local M = {}
 M.send_with = ui.persist("settings_send_with", "enter")
 M.escape_stops = ui.persist("settings_escape_stops", false)
 -- Whether closing a panel's last tab closes the panel too (off: it stays
--- open on its home). Off by default.
-M.close_panel_with_last_tab = ui.persist("settings_close_panel_with_last_tab", false)
+-- open on its home). On by default: an empty panel is one nobody's using.
+M.close_panel_with_last_tab = ui.persist("settings_close_panel_with_last_tab", true)
 M.compact_transcript = ui.persist("settings_compact_transcript", false)
 M.pull_requests = ui.persist("settings_pull_requests", "native")
 -- (The shipping app's `open_web_links_in_zeron`, on by default.)
