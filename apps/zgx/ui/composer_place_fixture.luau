@@ -94,8 +94,8 @@ return ui.column {
 			return art:get() and not bare:get()
 		end,
 		faded = false,
-		width = function(): number
-			return box.width or 960
+		picture = function(): any
+			return { w = 2100, h = 700, x = 0.62, y = 0.7, zoom = 1.4 }
 		end,
 		key = function(): string
 			return picture:get()

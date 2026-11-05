@@ -808,8 +808,8 @@ local GROUPS: { Group } = {
 						return chosen:get() == nil
 					end
 					-- A picture and its effect (ds.Wallpaper, as the main window's new
-					-- chat has it), laid from the page's right edge at the window's
-					-- width, so it holds still as the sidebar comes and goes.
+					-- chat has it), covering the top of the page at whatever width
+					-- the sidebar leaves.
 					local art = ds.Wallpaper {
 						key = function(): string
 							local w = wallpaper:get()
@@ -818,12 +818,14 @@ local GROUPS: { Group } = {
 						content = function(scene: string): Node
 							return ds.wallpaper.Picture { src = `assets/cards/{scene}/sky.webp`, w = 576, h = 768 }
 						end,
+						picture = function(): any
+							return { w = 576, h = 768 }
+						end,
 						effect = effect,
 						shown = new_chat,
 						intensity = intensity,
 						density = density,
 						faded = faded,
-						width = 820,
 					}
 					local pane = ui.column {
 						ref = page_ref,

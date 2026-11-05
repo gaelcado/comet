@@ -1,21 +1,26 @@
 -- A new chat's wallpaper, as Zeron's: whatever stands in it (a picture of
 -- your own, or what a plugin draws there) under one of Zeron's effects,
--- drawn over it as one picture (dither, ASCII, halftone, scanlines), faded
--- from the top, full, to nothing at its foot. The main window's new chat
--- draws it; the gallery's App shell shows it (and every effect).
+-- drawn over it as one picture (dither, ASCII, halftone, scanlines). The
+-- main window's new chat draws it; the gallery's App shell shows it (and
+-- every effect).
 --
 --   Wallpaper {
 --   	effect = state,              "none" | "dither" | "ascii" | "halftone" | "scanlines"
 --   	shown = fn,                  whether it shows (a new chat's; a session has none)
 --   	key = fn,                    what stands in it now ("" nothing), and
---   	content = function(key) … end   builds that, filling the box
+--   	content = function(key) … end   builds that, filling the art's box
+--   	picture = fn,                the picture standing there (its grid, for the effects)
 --   	provide = { … },             what its content reads (`ui.use_context`)
 --   }
 --
--- It fills its box, holding still as its box narrows (it's laid from the
--- box's right edge, `width` wide). Changing what stands in it, or the
--- effect, crossfades (an effect is its layer's shader, given as it is
--- made); `intensity` and `density` change in place.
+-- As Zeron's new-thread background: its art covers the top of its box
+-- (72% of its height, 760 at most: the hero), full at its top and faded to
+-- nothing at its foot, and cleared round the composer (`clear`). A box
+-- that grows or narrows (the sidebar sliding) lays it out again, covering
+-- the box at every width, as Zeron's did, with no script running. Changing
+-- what stands in it, or the effect, crossfades (an effect is its layer's
+-- shader, given as it is made); `intensity`, `density`, `opacity` and the
+-- clearing change in place.
 --
 -- `Picture { src, w, h, x, y, zoom }` is a picture laid in it as Zeron lays
 -- its new-thread background: covering the box, `zoom` times that (1 to 4),
@@ -26,6 +31,7 @@
 -- stands in it can follow the pointer (`px`, `py`, 0 to 1, 0.5 at rest).
 
 local effects = require("@self/effects")
+local motion = require("@self/motion")
 
 local M = {}
 
@@ -36,6 +42,10 @@ export type Props = {
 	-- again (crossfading) as the key changes.
 	key: () -> string,
 	content: (key: string) -> Node,
+	-- The picture standing there now, if one does (read as what stands
+	-- there is built): the effects work on its grid of pixels. A plugin's
+	-- art has none: a pixel there is half a point.
+	picture: (() -> Picture?)?,
 	-- What its content reads, by name (on the box that holds it: a node
 	-- that replaces what's in it sees them).
 	provide: { [string]: any }?,
@@ -43,11 +53,22 @@ export type Props = {
 	-- (ASCII) how many cells hold a character ("sparse" | "medium" | "dense").
 	intensity: (State<string> | () -> string)?,
 	density: (State<string> | () -> string)?,
-	-- Faded from the top across its height (by default), or full.
+	-- Laid as a new chat's art (by default): in the top of its box, faded
+	-- to nothing at its foot. Or the whole box, full.
 	faded: (State<boolean> | () -> boolean)?,
-	-- How wide it is laid, from its box's right edge (the window's width,
-	-- so it holds still as a sidebar comes and goes).
-	width: (number | () -> number)?,
+	-- Where the composer stands, for the art to clear round it (in points:
+	-- its middle from the box's, its width at most and the room it leaves
+	-- in the box, its height, its corner), or nil. A change glides there.
+	clear: (() -> effects.Clear?)?,
+	-- How much of it shows (Zeron's frosted window: 84%).
+	opacity: (() -> number)?,
+	-- How much of its box's right it leaves unpainted (a card standing
+	-- there, as a panel does), laid out all the same: the art never
+	-- rescales for it. A change glides there.
+	clip_right: (() -> number)?,
+	-- (Once how wide it was laid from its box's right edge; the art covers
+	-- its box now, as Zeron's did. Taken and let be.)
+	width: any?,
 }
 
 export type Picture = { src: string, w: number, h: number, x: number?, y: number?, zoom: number? }
@@ -58,13 +79,14 @@ M.EFFECTS = { "none", "dither", "ascii", "halftone", "scanlines" }
 -- The zoom a picture takes, at least and at most (Zeron's).
 M.MIN_ZOOM, M.MAX_ZOOM = 1, 4
 
--- How strongly each effect draws over the picture at "medium" (the
--- dither and the characters whole, as Zeron's; the dots and the lines over
--- some of the picture), and what each intensity makes of that.
-M.STRENGTH = { dither = 1, ascii = 1, halftone = 0.85, scanlines = 0.48 } :: { [string]: number }
+-- How strongly an effect draws over the picture: "medium" is Zeron's
+-- whole effect; "subtle" lets some of the picture through, "strong" pushes
+-- past it.
 M.INTENSITY = { subtle = 0.6, medium = 1, strong = 1.3 } :: { [string]: number }
--- What each density is: the cells too dark (light) for a character.
-M.DENSITY = { sparse = 0.38, medium = 0.22, dense = 0.08 } :: { [string]: number }
+-- What each density is (ASCII): the share of the darkest cells (the
+-- lightest, in the light) left without a character, or (below 0) that many
+-- more characters a step up. "medium" is Zeron's.
+M.DENSITY = { sparse = 0.25, medium = 0, dense = -0.2 } :: { [string]: number }
 
 -- A prop's value now: a function's answer, a state's (followed), or the
 -- value itself.
@@ -121,14 +143,12 @@ function M.cover(p: Picture, bw: number, bh: number): { left: number, top: numbe
 end
 
 -- A picture filling its box as `cover` lays it (a file that has gone
--- draws nothing).
+-- draws nothing). Laid out by zgx alone (covering, its overflow cut at its
+-- point, zoomed about that point: the same as `cover`), so its box
+-- resizing runs no script.
 function M.Picture(p: Picture): Node
-	local box = ui.ref()
-	local function at(): { left: number, top: number, w: number, h: number }
-		return M.cover(p, box.width or 0, box.height or 0)
-	end
+	local x, y = math.clamp(p.x or 0.5, 0, 1), math.clamp(p.y or 0.5, 0, 1)
 	return ui.div {
-		ref = box,
 		absolute = true,
 		left = 0,
 		right = 0,
@@ -137,26 +157,20 @@ function M.Picture(p: Picture): Node
 		overflow = "hidden",
 		ui.image {
 			src = p.src or "",
-			absolute = true,
-			left = function(): number
-				return at().left
-			end,
-			top = function(): number
-				return at().top
-			end,
-			w = function(): number
-				return at().w
-			end,
-			h = function(): number
-				return at().h
-			end,
+			w_full = true,
+			h_full = true,
+			fit = "cover",
+			object_position = { x, y },
+			origin = { x, y },
+			scale = math.clamp(p.zoom or 1, M.MIN_ZOOM, M.MAX_ZOOM),
 			aria_hidden = true,
 		},
 	}
 end
 
--- How long art takes to fade in over what it replaces.
-local FADE = 320
+-- How long art takes to fade in over what it replaces (Zeron's: a quick
+-- attack, a soft landing).
+local FADE = { duration = 180, ease = "cubicBezier(.333,1,.667,1)" }
 
 function M.Wallpaper(props: Props): Node
 	local box = ui.ref()
@@ -180,20 +194,47 @@ function M.Wallpaper(props: Props): Node
 		local paper = if how ~= "dither" and how ~= "none" then (if light() then ":light" else ":dark") else ""
 		return `{how}{paper}|{w}`
 	end
-	-- An effect's strength: its own at "medium", times the intensity's.
-	local function strength(how: string): number
-		local times = M.INTENSITY[read(props.intensity, "medium")] or 1
-		return math.min(1, (M.STRENGTH[how] or 1) * times)
+	local function strength(): number
+		return M.INTENSITY[read(props.intensity, "medium")] or 1
 	end
 	local function threshold(): number
-		return M.DENSITY[read(props.density, "medium")] or 0.22
+		return M.DENSITY[read(props.density, "medium")] or 0
+	end
+	local function hero(): boolean
+		return read(props.faded, true)
+	end
+	local function opacity(): number
+		return if props.opacity then props.opacity() else 1
+	end
+	local function clear(): effects.Clear?
+		return if props.clear and hero() then props.clear() else nil
+	end
+	-- Its right edge clipped as a card comes over it, on the column's clock
+	-- (ds/motion), the art laid out as it was.
+	local clipped: number? = nil
+	if props.clip_right then
+		local clip_right = props.clip_right
+		ui.effect(function()
+			local to = clip_right()
+			local node: any = box:peek()
+			if not node then
+				return
+			end
+			local from = clipped
+			clipped = to
+			if from == nil or motion.reduced_now() or math.abs(to - from) < 0.5 then
+				anime.utils.set(node, { clipRight = to })
+				return
+			end
+			local glide: ElementParams = { clipRight = to, duration = motion.ms(motion.duration(to - from)), ease = motion.EASE }
+			anime.animate(node :: Element, glide)
+		end)
 	end
 	-- What stands in it and its effect, made again as either changes (the
 	-- shader is fixed as it's made), crossfading: the new fades in over the
 	-- old as the old fades out. What stands there is built straight in the
 	-- layer's box (no presence of its own between: a plugin's `ui.change`
-	-- doesn't reach a place inside a nested presence). The new art fades in
-	-- inside its layer over the old layer leaving.
+	-- doesn't reach a place inside a nested presence).
 	return ui.presence(key, function(k: string): Node
 		if k == "" then
 			return ui.div {}
@@ -201,55 +242,76 @@ function M.Wallpaper(props: Props): Node
 		local how, w = string.match(k, "^([^|]*)|(.*)$")
 		how = string.match(how or "", "^[^:]*") or "none"
 		local el = ui.ref()
-		local scene: { [any]: any } = {
+		local picture = if props.picture then props.picture() else nil
+		-- What changes in place: set on its layer as it changes (no frame
+		-- of its own: nothing runs while nothing changes), the clearing
+		-- gliding to where the composer goes.
+		local cleared: effects.Clear? = nil
+		ui.effect(function()
+			local p = effects.params {
+				strength = strength(),
+				threshold = threshold(),
+				opacity = opacity(),
+				hero = hero(),
+				clear = clear(),
+			}
+			local node: any = el:peek()
+			if not node then
+				return
+			end
+			anime.utils.set(node, { layerParam0 = p[1][1], layerParam1 = p[1][2], layerParam3 = p[1][4], layerParam9 = p[3][2] })
+			local c = clear()
+			local to = { layerParam10 = p[3][3], layerParam11 = p[3][4], layerParam12 = p[4][1], layerParam13 = p[4][2], layerParam14 = p[4][3], layerParam15 = p[4][4] }
+			local from = cleared
+			cleared = c
+			if from and c and not motion.reduced_now() then
+				local far = math.max(math.abs(c.cx - from.cx), math.abs(c.cy - from.cy), math.abs(c.h - from.h))
+				if far >= 0.5 then
+					local glide: ElementParams = { duration = motion.ms(motion.duration(far)), ease = motion.EASE }
+					for name, v in to do
+						(glide :: any)[name] = v
+					end
+					anime.animate(node :: Element, glide)
+					return
+				end
+			end
+			anime.utils.set(node, to)
+		end)
+		return ui.div {
 			ref = el,
 			w_full = true,
 			h_full = true,
 			relative = true,
 			overflow = "hidden",
 			provide = props.provide,
-			fade = function()
-				return { 0, if read(props.faded, true) then (box.height or 0) else 0 }
-			end,
 			-- (Named, for tests.)
 			id = "wallpaper-layer",
-			-- What stands there, laid at the window's width from the right
-			-- edge so it holds still as a sidebar comes and goes; the box
-			-- (and its layer) only as wide as what shows of it.
+			layer_shader = effects.SHADERS[how] or effects.SHADERS.none,
+			layer_params = effects.params {
+				strength = strength(),
+				threshold = threshold(),
+				light = light(),
+				opacity = opacity(),
+				picture = picture,
+				hero = hero(),
+				clear = clear(),
+			},
+			-- What stands there: the top of the box (Zeron's hero), or all of it.
 			ui.div {
+				id = "wallpaper-art",
 				absolute = true,
+				left = 0,
 				right = 0,
 				top = 0,
-				bottom = 0,
-				w = props.width or 820,
+				h = function(): string
+					return if hero() then `{effects.HERO_SHARE * 100}%` else "100%"
+				end,
+				max_h = function(): number
+					return if hero() then effects.HERO_MAX else 1e6
+				end,
 				props.content(w or ""),
 			},
 		}
-		-- (params[0]: the cell, the strength, the threshold; the last two
-		-- set in place.)
-		if how ~= "none" then
-			ui.effect(function()
-				local strong, dense = strength(how), threshold()
-				local node = el:peek()
-				if node then
-					anime.utils.set(node, { layerParam1 = strong, layerParam2 = dense })
-				end
-			end)
-		end
-		if how == "dither" then
-			scene.layer_shader = effects.dither
-			scene.layer_params = effects.dither_params(nil, strength(how))
-		elseif how == "ascii" then
-			scene.layer_shader = effects.ascii
-			scene.layer_params = effects.ascii_params(nil, strength(how), threshold(), light())
-		elseif how == "halftone" then
-			scene.layer_shader = effects.halftone
-			scene.layer_params = effects.halftone_params(nil, strength(how), light())
-		elseif how == "scanlines" then
-			scene.layer_shader = effects.scanlines
-			scene.layer_params = effects.scanlines_params(nil, strength(how), light())
-		end
-		return ui.div(scene)
 	end, {
 		ref = box,
 		absolute = true,
@@ -258,10 +320,11 @@ function M.Wallpaper(props: Props): Node
 		top = 0,
 		bottom = 0,
 		pointer_events = "none",
+		clip_inset = { top = 0, right = if props.clip_right then props.clip_right() else 0, bottom = 0, left = 0 },
 		-- The new art fades in as itself (the box the effect already draws
 		-- through, not a box of its own inside it) over the old leaving.
-		enter = { opacity = { 0, 1 }, duration = FADE, ease = "out(3)" },
-		exit = { opacity = 0, duration = FADE, ease = "out(3)" },
+		enter = { opacity = { 0, 1 }, duration = FADE.duration, ease = FADE.ease },
+		exit = { opacity = 0, duration = FADE.duration, ease = FADE.ease },
 	})
 end
 

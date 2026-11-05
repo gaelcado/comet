@@ -171,10 +171,12 @@ return function(props: Props): Node
 		ds.TitleBar {
 			collapsed = props.collapsed,
 			on_toggle = fit.toggle_sidebar,
-			-- (No glass behind the window's buttons and the controls: they stand on
-			-- the top bar, over nothing but the window.)
+			-- (Glass behind the window's buttons and the controls only while
+			-- they stand over a new chat's art, the sidebar collapsed, as
+			-- Zeron's: otherwise they stand on the top bar, over nothing but
+			-- the window.)
 			island = function(): boolean
-				return false
+				return props.art() and props.collapsed:get()
 			end,
 			can_back = route.can_back,
 			can_forward = route.can_forward,
