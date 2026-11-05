@@ -1048,10 +1048,15 @@ return function(props: Props): Node
 		-- left at its right for the title bar's Panel toggle.)
 		-- (Its card is its box, as the sidebar's is; what's in it stands at
 		-- its right, the side it's attached to, at `inner_w`: the edge
-		-- sweeping in from the left reveals it and covers it again.)
+		-- sweeping in from the left reveals it and covers it again. Shut, and
+		-- its width run out, out of layout until it opens: kept as it was,
+		-- not laid out at its width in a box of none.)
 		ui.column {
 			w_full = true,
 			h_full = true,
+			hidden = function(): boolean
+				return not shown:get() and not panel_seen:get()
+			end,
 			-- The session's panel (its tabs: the files, a terminal), or, until
 			-- that screen is there, the files pane alone.
 			if boundary.load("@app/screens/panel")

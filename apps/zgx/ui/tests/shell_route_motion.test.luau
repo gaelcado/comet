@@ -168,9 +168,10 @@ end)
 -- clipped, and takes its own back in one go, rather than squeezing to
 -- nothing and growing from it. (Each drifts and fades as it comes and
 -- goes: src/route_motion_tests.rs reads that.)
+-- (Its width while it's laid out: shut, the panel leaves layout.)
 local function width_of(app: any, id: string): number?
 	for line in app:tree("#shell"):gmatch("[^\n]+") do
-		if line:find(` #{id} `, 1, true) then
+		if line:find(` #{id} `, 1, true) and not line:find(" hidden", 1, true) then
 			return tonumber(line:match(" %-?%d+,%-?%d+ (%d+)x%d+"))
 		end
 	end
@@ -218,4 +219,5 @@ test("the panel's content and the page under it keep one width as the panel open
 	local closing = widths('#titlebar >> role:button "Panel"', { CONTENT })
 	expect(one(closing, CONTENT, "closing")).to_be(rest)
 	expect(panel_width(app)).to_be(0)
+	expect(width_of(app, CONTENT)).to_be_nil()
 end)
