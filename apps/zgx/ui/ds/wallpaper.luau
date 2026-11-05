@@ -66,6 +66,9 @@ export type Props = {
 	-- there, as a panel does), laid out all the same: the art never
 	-- rescales for it. A change glides there.
 	clip_right: (() -> number)?,
+	-- (Once how wide it was laid from its box's right edge; the art covers
+	-- its box now, as Zeron's did. Taken and let be.)
+	width: any?,
 }
 
 export type Picture = { src: string, w: number, h: number, x: number?, y: number?, zoom: number? }
@@ -213,7 +216,7 @@ function M.Wallpaper(props: Props): Node
 		local clip_right = props.clip_right
 		ui.effect(function()
 			local to = clip_right()
-			local node = box:peek()
+			local node: any = box:peek()
 			if not node then
 				return
 			end
@@ -223,10 +226,8 @@ function M.Wallpaper(props: Props): Node
 				anime.utils.set(node, { clipRight = to })
 				return
 			end
-			local glide: any = motion.column(from, to)
-			glide.value = nil
-			glide.clipRight = to
-			anime.animate(node, glide)
+			local glide: ElementParams = { clipRight = to, duration = motion.ms(motion.duration(to - from)), ease = motion.EASE }
+			anime.animate(node :: Element, glide)
 		end)
 	end
 	-- What stands in it and its effect, made again as either changes (the
@@ -254,7 +255,7 @@ function M.Wallpaper(props: Props): Node
 				hero = hero(),
 				clear = clear(),
 			}
-			local node = el:peek()
+			local node: any = el:peek()
 			if not node then
 				return
 			end
@@ -266,12 +267,11 @@ function M.Wallpaper(props: Props): Node
 			if from and c and not motion.reduced_now() then
 				local far = math.max(math.abs(c.cx - from.cx), math.abs(c.cy - from.cy), math.abs(c.h - from.h))
 				if far >= 0.5 then
-					local glide: any = motion.column(0, far)
-					glide.value = nil
+					local glide: ElementParams = { duration = motion.ms(motion.duration(far)), ease = motion.EASE }
 					for name, v in to do
-						glide[name] = v
+						(glide :: any)[name] = v
 					end
-					anime.animate(node, glide)
+					anime.animate(node :: Element, glide)
 					return
 				end
 			end

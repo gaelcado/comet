@@ -112,7 +112,7 @@ fn layer(input:LayerInput)->vec4<f32> {
 ]])
 end
 
-M.SHADERS = {
+M.SHADERS = ({
 	-- The picture as it is, laid with the mask.
 	none = ui.layer_shader(COMMON .. [[
 fn layer(input:LayerInput)->vec4<f32> {
@@ -178,7 +178,7 @@ fn fx_effect(input:LayerInput,g:vec3<f32>,i:vec2<u32>)->vec3<f32> {
  return select(c*gain,c+(vec3(1.)-c)*(1.-gain),fx_light(input));
 }
 ]]),
-}
+}) :: { [string]: any }
 
 export type Grid = { w: number, h: number, x: number?, y: number?, zoom: number? }
 export type Clear = { cx: number, cy: number, w: number, room: number, h: number, radius: number }
