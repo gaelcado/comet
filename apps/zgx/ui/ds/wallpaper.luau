@@ -58,8 +58,12 @@ M.EFFECTS = { "none", "dither", "ascii", "halftone", "scanlines" }
 -- The zoom a picture takes, at least and at most (Zeron's).
 M.MIN_ZOOM, M.MAX_ZOOM = 1, 4
 
--- What each strength and density is, on the effect's shader.
-M.INTENSITY = { subtle = 0.45, medium = 0.75, strong = 1 } :: { [string]: number }
+-- How strongly each effect draws over the picture at "medium" (the
+-- dither and the characters whole, as Zeron's; the dots and the lines over
+-- some of the picture), and what each intensity makes of that.
+M.STRENGTH = { dither = 1, ascii = 1, halftone = 0.85, scanlines = 0.48 } :: { [string]: number }
+M.INTENSITY = { subtle = 0.6, medium = 1, strong = 1.3 } :: { [string]: number }
+-- What each density is: the cells too dark (light) for a character.
 M.DENSITY = { sparse = 0.38, medium = 0.22, dense = 0.08 } :: { [string]: number }
 
 -- A prop's value now: a function's answer, a state's (followed), or the
@@ -171,12 +175,15 @@ function M.Wallpaper(props: Props): Node
 			return ""
 		end
 		local how = effect()
-		-- (Halftone's and the lines' paper follow the scheme.)
-		local paper = if how == "halftone" or how == "scanlines" then (if light() then ":light" else ":dark") else ""
+		-- (Every effect's paper but the dither's follows the scheme, as
+		-- Zeron's.)
+		local paper = if how ~= "dither" and how ~= "none" then (if light() then ":light" else ":dark") else ""
 		return `{how}{paper}|{w}`
 	end
-	local function strength(): number
-		return M.INTENSITY[read(props.intensity, "medium")] or 0.75
+	-- An effect's strength: its own at "medium", times the intensity's.
+	local function strength(how: string): number
+		local times = M.INTENSITY[read(props.intensity, "medium")] or 1
+		return math.min(1, (M.STRENGTH[how] or 1) * times)
 	end
 	local function threshold(): number
 		return M.DENSITY[read(props.density, "medium")] or 0.22
@@ -218,13 +225,11 @@ function M.Wallpaper(props: Props): Node
 				props.content(w or ""),
 			},
 		}
-		-- (params[0]: the cell, the strength, the threshold; set in place.
-		-- Halftone and the lines draw at a share of it: theirs is the
-		-- picture's whole surface, not its bright cells.)
-		local share = if how == "halftone" then 0.8 elseif how == "scanlines" then 0.64 else 1
+		-- (params[0]: the cell, the strength, the threshold; the last two
+		-- set in place.)
 		if how ~= "none" then
 			ui.effect(function()
-				local strong, dense = strength() * share, threshold()
+				local strong, dense = strength(how), threshold()
 				local node = el:peek()
 				if node then
 					anime.utils.set(node, { layerParam1 = strong, layerParam2 = dense })
@@ -233,16 +238,16 @@ function M.Wallpaper(props: Props): Node
 		end
 		if how == "dither" then
 			scene.layer_shader = effects.dither
-			scene.layer_params = effects.dither_params(2, strength())
+			scene.layer_params = effects.dither_params(nil, strength(how))
 		elseif how == "ascii" then
 			scene.layer_shader = effects.ascii
-			scene.layer_params = effects.ascii_params(1.5, strength(), threshold())
+			scene.layer_params = effects.ascii_params(nil, strength(how), threshold(), light())
 		elseif how == "halftone" then
 			scene.layer_shader = effects.halftone
-			scene.layer_params = effects.halftone_params(4, strength() * share, light())
+			scene.layer_params = effects.halftone_params(nil, strength(how), light())
 		elseif how == "scanlines" then
 			scene.layer_shader = effects.scanlines
-			scene.layer_params = effects.scanlines_params(3, strength() * share, light())
+			scene.layer_params = effects.scanlines_params(nil, strength(how), light())
 		end
 		return ui.div(scene)
 	end, {
