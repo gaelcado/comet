@@ -1,97 +1,136 @@
--- Effects over a whole picture, as it is composited (so a scene of layers
--- takes one, not a layer each: transparent edges would dither into fringes
--- and the layers' grids into noise).
+-- A new chat's wallpaper effects, as Zeron's draws them (crates/ui/src/
+-- new_thread_background_effects.rs and new_thread_background_mask.rs): each
+-- a layer shader over the whole picture as it's composited, so the art in
+-- it (a picture, or what a plugin draws) takes one pass, not one a layer.
 --
--- `ui.overlay { layer_shader = effects.dither, layer_params = effects.dither_params(), … }`
+-- `ui.overlay { layer_shader = effects.SHADERS.dither, layer_params = effects.params { … }, … }`
 --
--- What they share, after Zeron's own (crates/ui/src/
--- new_thread_background_effects.rs), which drew them on the CPU into the
--- picture's pixels:
+-- Zeron drew its effects on the CPU into the picture's own pixels (the
+-- picture fitted to 2048 a side first), then laid that
+-- picture over the window, scaled to cover the new chat's art and filtered
+-- as a picture is. These do the same on the GPU: the effect is worked out
+-- for each of the picture's pixels, on its grid (so it grows and shrinks
+-- with the picture, the dots of a halftone a few of its pixels apart at any
+-- window size), and the window's pixel between four of them takes their
+-- blend, as a picture's filtering gives. The treatments are Zeron's:
 --
--- * Cells are whole device pixels, on a grid laid from the box's top right
---   corner (where a wallpaper is laid from), so they stay crisp at any
---   scale and hold still as a sidebar comes and goes.
--- * A cell takes the mean of the picture across it, not the one pixel at
---   its middle: fine detail (leaves, grain) doesn't flicker into noise.
--- * Tone is kept in linear light: what a cell's dots or lines give the eye,
---   seen from where one reads, is the picture's own brightness, so a
---   highlight stays a highlight and a mid tone neither bleaches nor muds.
+-- * Dither: a 4×4 Bayer screen in cells of 2 by 2 of the picture's pixels,
+--   each lit in its colour at full value where its brightest channel
+--   passes the cell's threshold, else that colour at 8%.
+-- * ASCII: cells of 6 by 8 pixels, each the glyph of ` .:-=+*#%@` whose
+--   ink is the brightness there (in the light, the darkness), its strokes
+--   in the cell's colour, over the picture at 60% on its paper (black in
+--   the dark, white in the light).
+-- * Halftone: a dot in each 4 by 4 cell, its radius by the brightness (the
+--   darkness in the light), in the cell's colour on its paper, over the
+--   picture at 60%.
+-- * Scanlines: every third row of the picture's pixels darkened to 52% (in
+--   the light, lifted that much towards white).
+--
+-- And the mask Zeron laid them with: the art is faded from its top, full,
+-- to nothing at its foot (a smoothstep over its height), and cleared round
+-- the composer (a rounded rectangle from its top down to the art's foot,
+-- feathered over half the art's height, between 120 and 280), showing half
+-- as strongly there; all of it at `opacity` (Zeron's frosted window took
+-- 84%).
 
 local M = {}
 
--- The helpers every effect reads (WGSL).
+-- How much of its box a new chat's art takes from the top, and at most
+-- (Zeron's: 72% of the window's height, 760 at most).
+M.HERO_SHARE, M.HERO_MAX = 0.72, 760
+-- The longer side of the picture's grid (Zeron's proxy of the picture).
+M.GRID_MAX = 2048
+
 local COMMON = [[
-fn fx_lin(c:vec3<f32>)->vec3<f32> {
- return select(c/12.92,pow((c+.055)/1.055,vec3(2.4)),c>vec3(.04045));
+const HERO_SHARE: f32 = ]] .. M.HERO_SHARE .. [[;
+const HERO_MAX: f32 = ]] .. M.HERO_MAX .. [[;
+// params[0]: strength, threshold, light (1) or dark (0), opacity.
+// params[1]: the picture's grid (its pixels across, down: 0 for no picture)
+//   and where its overflow is cut (0 to 1, 0.5 centred).
+// params[2]: its zoom, the hero (1: laid in the top of the box and faded;
+//   0: the whole box), the clearing's middle from the box's (x, y).
+// params[3]: the clearing's width at most, the room it leaves (its width
+//   is at most the box's less this), its height, its corner.
+fn fx_hero_h(input:LayerInput)->f32 {
+ return select(input.size.y,min(input.size.y*HERO_SHARE,HERO_MAX),input.params[2].y>.5);
 }
-fn fx_srgb(l:vec3<f32>)->vec3<f32> {
- let x=clamp(l,vec3(0.),vec3(1.));
- return select(x*12.92,1.055*pow(x,vec3(1./2.4))-.055,x>vec3(.0031308));
+// The picture's grid: its top left in points, and a pixel's size.
+fn fx_grid(input:LayerInput)->vec3<f32> {
+ let pw=input.params[1].x; let ph=input.params[1].y;
+ if pw<=0. || ph<=0. {return vec3(0.,0.,.5);}
+ let hh=fx_hero_h(input);
+ let s=max(input.size.x/pw,hh/ph)*max(input.params[2].x,1.);
+ return vec3(input.params[1].z*(input.size.x-pw*s),input.params[1].w*(hh-ph*s),s);
 }
-// The device pixel under p, from the box's top right (x counts down, left).
-fn fx_px(input:LayerInput)->vec2<f32> {
- return vec2(input.p.x-input.size.x,input.p.y)*input.scale;
+// The picture's pixel `i` (whole, from its top left).
+fn fx_src(input:LayerInput,g:vec3<f32>,i:vec2<u32>)->vec3<f32> {
+ return zgx_sample(g.xy+(vec2<f32>(i)+.5)*g.z).rgb;
 }
-// The picture at device pixel d (on that grid), in points.
-fn fx_at(input:LayerInput,d:vec2<f32>)->vec4<f32> {
- return zgx_sample(vec2(d.x/input.scale+input.size.x,d.y/input.scale));
-}
-// The picture's mean across the cell from device pixel o, s across: four
-// filtered taps, each the mean of the texels round it (exact for 2 and 4).
-fn fx_mean(input:LayerInput,o:vec2<f32>,s:vec2<f32>)->vec4<f32> {
- let q=s*.25;
- return (fx_at(input,o+q)+fx_at(input,o+vec2(3.*q.x,q.y))+fx_at(input,o+vec2(q.x,3.*q.y))+fx_at(input,o+3.*q))*.25;
-}
-// A cell's own whole numbers (a negative cell wraps, as a grid's should).
-fn fx_cell(c:vec2<f32>)->vec2<u32> {
- return bitcast<vec2<u32>>(vec2<i32>(c));
+fn fx_luma(c:vec3<f32>)->f32 {return dot(c,vec3(.2126,.7152,.0722));}
+fn fx_light(input:LayerInput)->bool {return input.params[0].z>.5;}
+fn fx_paper(input:LayerInput)->vec3<f32> {return select(vec3(0.),vec3(1.),fx_light(input));}
+// How much of the art shows here: Zeron's two passes, the cleared one over
+// one at half strength, both faded down the art's height.
+fn fx_alpha(input:LayerInput)->f32 {
+ var a=1.;
+ if input.params[2].y>.5 {
+  let hh=fx_hero_h(input);
+  let b=smoothstep(0.,hh,hh-input.p.y);
+  var m=1.;
+  let w=min(input.params[3].x,input.size.x-input.params[3].y);
+  if input.params[3].x>0. && w>0. {
+   let c=input.size*.5+input.params[2].zw;
+   let top=c.y-input.params[3].z*.5;
+   let bottom=max(c.y+input.params[3].z*.5,hh);
+   let half=vec2(w,bottom-top)*.5;
+   let r=min(input.params[3].w,min(half.x,half.y));
+   let q=abs(input.p-vec2(c.x,(top+bottom)*.5))-half+r;
+   let d=length(max(q,vec2(0.)))+min(max(q.x,q.y),0.)-r;
+   m=smoothstep(0.,clamp(hh*.52,120.,280.),d-8.);
+  }
+  a=1.-(1.-.5*b)*(1.-m*b);
+ }
+ return a*input.params[0].w;
 }
 ]]
 
--- Dithered as Zeron dithers its wallpapers (`dither_pixels`): square cells
--- `cell` points across, each lit in the picture's colour at its full value
--- (its brightest channel at 1) where that channel passes the cell's
--- threshold, else that colour at 8%. Zeron's 4×4 Bayer screen is 8×8 here
--- (64 levels, so a sky's gradient doesn't band), and a cell is lit by its
--- peak in linear light: the share of cells lit is the light the picture
--- has there, where comparing the encoded value lit too many (mid tones
--- came out bleached). Laid over the picture at `strength`.
--- params[0]: the cell (points), the strength (0 to 1).
-M.dither = ui.layer_shader(COMMON .. [[
-fn fx_bayer8(c:vec2<u32>)->f32 {
- let x=c.x&7u; let z=x^(c.y&7u);
- let v=((z&1u)<<5u)|((x&1u)<<4u)|((z&2u)<<2u)|((x&2u)<<1u)|((z&4u)>>1u)|((x&4u)>>2u);
- return (f32(v)+.5)/64.;
-}
+local function shader(effect: string): any
+	return ui.layer_shader(COMMON .. effect .. [[
+// The effect at the window's pixel: worked out at the four of the
+// picture's pixels round it, blended as a picture's filtering blends them.
 fn layer(input:LayerInput)->vec4<f32> {
- let s=max(1.,round(input.params[0].x*input.scale));
- let cell=floor(fx_px(input)/s);
- let c=fx_mean(input,cell*s,vec2(s)).rgb;
- let peak=max(max(c.r,c.g),c.b);
- let lit=fx_lin(vec3(peak)).x>fx_bayer8(fx_cell(cell));
- let lit_c=select(c*.08,c/max(peak,.004),lit);
- return vec4(mix(input.color.rgb,lit_c,input.params[0].y),input.color.a);
+ let g=fx_grid(input);
+ let u=(input.p-g.xy)/g.z-.5;
+ let f=fract(u);
+ let i0=vec2<u32>(max(vec2<i32>(floor(u)),vec2(0)));
+ let e=mix(mix(fx_effect(input,g,i0),fx_effect(input,g,i0+vec2(1u,0u)),f.x),
+  mix(fx_effect(input,g,i0+vec2(0u,1u)),fx_effect(input,g,i0+vec2(1u,1u)),f.x),f.y);
+ let rgb=clamp(mix(input.color.rgb,e,input.params[0].x),vec3(0.),vec3(1.));
+ return vec4(rgb,input.color.a*fx_alpha(input));
 }
 ]])
-
--- The dither's parameters: cells `cell` points across (1: Zeron's two
--- source pixels, as its wallpapers showed), the whole picture (`strength`
--- 1, as Zeron's).
-function M.dither_params(cell: number?, strength: number?): { any }
-	return { { cell or 1, strength or 1, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }
 end
 
--- Drawn in characters, as Zeron's (`ascii_pixels`): cells of a 5 by 7
--- font (a font pixel `px` points, a cell 6 by 8 of them), each the glyph of
--- ` .:-=+*%#@` whose ink matches the brightness across it (in the light,
--- its darkness), its strokes in the cell's colour: lifted towards its full
--- value over a dimmed picture in the dark, deepened over a paler one in
--- the light. Cells darker (lighter) than `threshold` hold none. Laid over
--- the picture at `strength`.
--- params[0]: the font pixel (points), the strength (0 to 1), the threshold
--- (0 to 1), light (1) or dark (0).
-M.ascii = ui.layer_shader(COMMON .. [[
-// Rows of five, top to bottom: ink rising 0, 1, 2, 3, 6, 9, 11, 13, 20, 21.
+M.SHADERS = {
+	-- The picture as it is, laid with the mask.
+	none = ui.layer_shader(COMMON .. [[
+fn layer(input:LayerInput)->vec4<f32> {
+ return vec4(input.color.rgb,input.color.a*fx_alpha(input));
+}
+]]),
+	dither = shader([[
+fn fx_effect(input:LayerInput,g:vec3<f32>,i:vec2<u32>)->vec3<f32> {
+ var bayer=array<u32,16>(0u,8u,2u,10u,12u,4u,14u,6u,3u,11u,1u,9u,15u,7u,13u,5u);
+ let b=i/2u;
+ let c=fx_src(input,g,b*2u+1u);
+ let t=f32(bayer[(b.y%4u)*4u+b.x%4u]);
+ let peak=max(max(c.r,c.g),c.b);
+ return select(c*.08,c/max(peak,1./255.),peak>(t+.5)/16.);
+}
+]]),
+	ascii = shader([[
+// Rows of five, top to bottom: ` .:-=+*#%@`.
 fn fx_glyph(i:u32,row:u32)->u32 {
  var g=array<u32,7>(0u,0u,0u,0u,0u,0u,0u);
  switch i {
@@ -100,150 +139,82 @@ fn fx_glyph(i:u32,row:u32)->u32 {
   case 3u: {g=array<u32,7>(0u,0u,0u,14u,0u,0u,0u);}
   case 4u: {g=array<u32,7>(0u,0u,14u,0u,14u,0u,0u);}
   case 5u: {g=array<u32,7>(0u,4u,4u,31u,4u,4u,0u);}
-  case 6u: {g=array<u32,7>(0u,4u,21u,14u,21u,4u,0u);}
-  case 7u: {g=array<u32,7>(24u,25u,2u,4u,8u,19u,3u);}
-  case 8u: {g=array<u32,7>(10u,10u,31u,10u,31u,10u,10u);}
-  case 9u: {g=array<u32,7>(14u,17u,23u,21u,23u,16u,15u);}
+  case 6u: {g=array<u32,7>(0u,21u,14u,31u,14u,21u,0u);}
+  case 7u: {g=array<u32,7>(10u,10u,31u,10u,31u,10u,10u);}
+  case 8u: {g=array<u32,7>(17u,2u,4u,4u,8u,16u,17u);}
+  case 9u: {g=array<u32,7>(14u,17u,23u,21u,23u,16u,14u);}
   default: {}
  }
  return g[min(row,6u)];
 }
-fn layer(input:LayerInput)->vec4<f32> {
- let px=max(1.,round(input.params[0].x*input.scale));
- let size=vec2(6.,8.)*px;
- let d=fx_px(input);
- let cell=floor(d/size);
- let o=cell*size;
- // (Nine taps: a cell is wide.)
- var sum=vec4(0.);
- for (var j=0;j<3;j++) {for (var i=0;i<3;i++) {
-  sum+=fx_at(input,o+size*vec2((f32(i)+.5)/3.,(f32(j)+.5)/3.));
- }}
- let c=(sum/9.).rgb;
- let light=input.params[0].w>.5;
- let luma=dot(c,vec3(.2126,.7152,.0722));
- let t=input.params[0].z;
- let tone=select(luma,1.-luma,light);
- let level=clamp((tone-t)/max(1.-t,.01),0.,1.);
- let i=u32(round(pow(level,.75)*9.));
- let fp=vec2<u32>(floor((d-o)/px));
+fn fx_effect(input:LayerInput,g:vec3<f32>,i:vec2<u32>)->vec3<f32> {
+ let at=vec2(i.x/6u*6u+3u,i.y/8u*8u+4u);
+ let gc=fx_src(input,g,at);
+ let l=fx_luma(gc);
+ let t=input.params[0].y;
+ let ink=clamp((select(l,1.-l,fx_light(input))-t)/max(1.-t,.01),0.,1.);
+ let k=min(u32(sqrt(ink)*9.),9u);
+ let cx=i.x%6u; let cy=i.y%8u;
  var lit=false;
- if i>0u && fp.x<5u && fp.y<7u {lit=((fx_glyph(i,fp.y)>>(4u-fp.x))&1u)==1u;}
- let peak=max(max(c.r,c.g),c.b);
- let own=input.color.rgb;
- // The dark: the picture dimmed (to about a third of its light in the
- // shadows, less towards its highlights, so a sky keeps its glow) under
- // strokes of its colour lifted most of the way to full value. The
- // light: the picture paled under strokes of its colour deepened.
- var art=select(fx_srgb(fx_lin(own)*mix(.36,.7,smoothstep(.35,.95,luma))),mix(own,vec3(1.),.3),light);
- if lit {art=select(mix(c,c/max(peak,.004),.8),c*.4,light);}
- return vec4(mix(own,art,input.params[0].y),input.color.a);
+ if cx<5u && cy<7u {lit=((fx_glyph(k,cy)>>(4u-cx))&1u)==1u;}
+ return fx_src(input,g,i)*.6+select(fx_paper(input),gc,lit)*.4;
 }
-]])
+]]),
+	halftone = shader([[
+fn fx_effect(input:LayerInput,g:vec3<f32>,i:vec2<u32>)->vec3<f32> {
+ let b=i/4u*4u;
+ let l=fx_luma(fx_src(input,g,b));
+ let tone=select(l,1.-l,fx_light(input));
+ let radius=2.*(.3+.7*sqrt(tone));
+ let cover=clamp(radius+.5-length(vec2<f32>(i-b)-1.5),0.,1.);
+ let dot=fx_src(input,g,b+2u);
+ return fx_src(input,g,i)*.6+mix(fx_paper(input),dot,cover)*.4;
+}
+]]),
+	scanlines = shader([[
+fn fx_effect(input:LayerInput,g:vec3<f32>,i:vec2<u32>)->vec3<f32> {
+ let c=fx_src(input,g,i);
+ let gain=select(1.,.52,i.y%3u==0u);
+ return select(c*gain,c+(vec3(1.)-c)*(1.-gain),fx_light(input));
+}
+]]),
+}
 
--- The characters' parameters: a font pixel `px` points (1: a glyph 5 by 7
--- points, as small type), laid over the picture at `strength` (1), none in
--- cells darker than `threshold` (0.22), on light paper or dark.
-function M.ascii_params(px: number?, strength: number?, threshold: number?, light: boolean?): { any }
-	return { { px or 1, strength or 1, threshold or 0.22, if light then 1 else 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }
+export type Grid = { w: number, h: number, x: number?, y: number?, zoom: number? }
+export type Clear = { cx: number, cy: number, w: number, room: number, h: number, radius: number }
+export type Params = {
+	strength: number?,
+	threshold: number?,
+	light: boolean?,
+	opacity: number?,
+	picture: Grid?,
+	hero: boolean?,
+	clear: Clear?,
+}
+
+-- The picture's grid: its pixels as Zeron's proxy of it has them (the
+-- picture fitted to 2048 a side, made larger as well as smaller).
+function M.grid(p: Grid?): (number, number)
+	if not p or p.w <= 0 or p.h <= 0 then
+		return 0, 0
+	end
+	local k = M.GRID_MAX / math.max(p.w, p.h)
+	return math.max(1, math.round(p.w * k)), math.max(1, math.round(p.h * k))
 end
 
--- Printed in dots, as Zeron's halftone (`halftone_pixels`): a screen of
--- dots `cell` points apart, of the picture's colour round them on paper:
--- in the dark, dots of light (the colour at its full value) on black,
--- wider where the picture is brighter; in the light, dots of ink (the
--- colour at its deepest) on white, wider where it's darker. Each dot's
--- size is the light it must give (linear light), so the print, seen from
--- where one reads, is the picture's own tone. Dots grow as a press's do
--- (a cosine spot): round, touching at half, then paper showing through
--- in round holes, with no cell's edge anywhere. The screen is turned 45°,
--- as a press turns its black: the eye reads a grid least along the
--- diagonals. Laid over the picture at `strength`.
--- params[0]: the cell (points), the strength (0 to 1), unused, light (1)
--- or dark (0).
-M.halftone = ui.layer_shader(COMMON .. [[
-fn layer(input:LayerInput)->vec4<f32> {
- let pitch=max(3.,round(input.params[0].x*input.scale));
- let d=fx_px(input);
- // (The colour round this pixel, a cell wide: it changes smoothly, so no
- // cell shows as a block of its own colour.)
- let c=fx_lin(fx_mean(input,d-pitch*.5,vec2(pitch)).rgb);
- let light=input.params[0].w>.5;
- // The paper keeps a breath of the picture's colour (6%), not a dead
- // black or white.
- let f=.06;
- var paper:vec3<f32>; var ink:vec3<f32>; var area:f32;
- if light {
-  // Ink and paper give the colour exactly, the ink the deepest that can
-  // (its weakest channel none); the colour a little softened first (70%
-  // of its chroma), as ink on paper is, so no ink is garish.
-  let t=mix(vec3(dot(c,vec3(.2126,.7152,.0722))),c,.7);
-  let m=min(min(t.r,t.g),t.b);
-  paper=vec3(1.)-(vec3(1.)-t)*f;
-  area=clamp(1.-m/max(1.-(1.-m)*f,.001),0.,1.);
-  ink=clamp((t-(1.-area)*paper)/max(area,.001),vec3(0.),vec3(1.));
- } else {
-  let m=max(max(c.r,c.g),c.b);
-  paper=c*f;
-  area=clamp(m*(1.-f)/max(1.-f*m,.001),0.,1.);
-  ink=c/max(m,.0001);
- }
- // The spot, on the screen turned 45°: 1 at a dot's middle, -1 between.
- let u=vec2(d.x+d.y,d.y-d.x)*.70710678/pitch*6.2831853;
- let spot=(cos(u.x)+cos(u.y))*.5;
- // The level the spot passes over `area` of the plane (fitted to the
- // cosine spot's own spread: 1 at none, 0 at half, -1 at all).
- let b=min(area,1.-area);
- let g=1.-2.*b-2.27*b*(.5-b);
- let level=select(-g,g,area<=.5);
- // Its edge antialiased across one device pixel.
- let slope=3.14159265/pitch*length(vec2(sin(u.x),sin(u.y)));
- var cover=clamp((spot-level)/max(slope,.001)+.5,0.,1.);
- cover=select(cover,0.,area<.002);
- cover=select(cover,1.,area>.998);
- let print=fx_srgb(mix(paper,ink,cover));
- return vec4(mix(input.color.rgb,print,input.params[0].y),input.color.a);
-}
-]])
-
--- The halftone's parameters: cells `cell` points across (3), laid at
--- `strength` (0.85), on light paper or dark.
-function M.halftone_params(cell: number?, strength: number?, light: boolean?): { any }
-	return { { cell or 3, strength or 0.85, 0, if light then 1 else 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }
-end
-
--- A display's lines, as Zeron's scanlines (`scanline_pixels`): every
--- `pitch` points a line one device pixel tall, darkened (in the light,
--- lifted towards white) by `strength`, less where the picture is bright
--- (a lit line blooms, as a tube's does); the rows between brightened a
--- little in linear light to give back some of what the lines take, so the
--- picture keeps its light rather than dimming as a whole.
--- params[0]: the pitch (points), the strength (0 to 1), unused, light (1)
--- or dark (0).
-M.scanlines = ui.layer_shader(COMMON .. [[
-fn layer(input:LayerInput)->vec4<f32> {
- let pitch=max(2.,round(input.params[0].x*input.scale));
- let row=floor(input.p.y*input.scale);
- let line=(row%pitch)<1.;
- let k=input.params[0].y;
- let c=fx_lin(input.color.rgb);
- let light=input.params[0].w>.5;
- let luma=dot(c,vec3(.2126,.7152,.0722));
- if light {
-  let lift=k*(1.-.4*(1.-luma));
-  let back=1.-.5*lift/(pitch-1.);
-  return vec4(fx_srgb(select(c*back,c+(vec3(1.)-c)*lift,line)),input.color.a);
- }
- let dim=k*(1.-.45*sqrt(luma));
- let back=1.+.5*dim/(pitch-1.);
- return vec4(fx_srgb(select(c*back,c*(1.-dim),line)),input.color.a);
-}
-]])
-
--- The lines' parameters: every `pitch` points (1.5: Zeron's three source
--- rows), at `strength` (0.48: Zeron's), on light or dark.
-function M.scanlines_params(pitch: number?, strength: number?, light: boolean?): { any }
-	return { { pitch or 1.5, strength or 0.48, 0, if light then 1 else 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }
+-- The layer's parameters (`layer_params`), each a `layerParam<n>` to set
+-- in place: 0 the strength, 1 the threshold, 3 the opacity, 10 to 14 the
+-- clearing.
+function M.params(o: Params): { any }
+	local p = o.picture
+	local gw, gh = M.grid(p)
+	local c = o.clear
+	return {
+		{ o.strength or 1, o.threshold or 0, if o.light then 1 else 0, o.opacity or 1 },
+		{ gw, gh, if p then math.clamp(p.x or 0.5, 0, 1) else 0.5, if p then math.clamp(p.y or 0.5, 0, 1) else 0.5 },
+		{ if p then p.zoom or 1 else 1, if o.hero == false then 0 else 1, if c then c.cx else 0, if c then c.cy else 0 },
+		{ if c then c.w else 0, if c then c.room else 0, if c then c.h else 0, if c then c.radius else 0 },
+	}
 end
 
 return M

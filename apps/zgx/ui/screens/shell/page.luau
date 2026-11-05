@@ -5,8 +5,7 @@
 -- the title bar's toggle.
 --
 -- `Page { files = state, width = fn }`: `files` whether a session's files
--- show, `width` the window's (the wallpaper is laid at it, so it holds
--- still as the sidebar comes and goes).
+-- show, `width` the window's (where the top bar's tabs stand in it).
 --
 -- The chat page and the files pane are other screens' (`@app/screens/chat`,
 -- `@app/screens/files`), each loaded on its own: one that fails to load
@@ -31,6 +30,8 @@ local DropOverlay = require("@ds/drop_overlay")
 local Dock = require("@app/screens/chat/dock")
 local control = require("@ds/control")
 local Glass = require("@ds/glass")
+local material = require("@ds/material")
+local prefs = require("@app/screens/settings/prefs")
 
 export type Props = {
 	files: State<boolean>,
@@ -192,8 +193,10 @@ return function(props: Props): Node
 	-- window, lifting it), faded by a tween zgx runs as a split starts and ends,
 	-- so no script runs and nothing is laid out as it fades. None in a split:
 	-- there the panes are the cards.
+	-- (Nor while a new chat's art shows: it runs to the window's edges, as
+	-- Zeron's, with no card round it.)
 	local card_shown = motion.tween(ui.computed(function(): number
-		return if grouped() then 0 else 1
+		return if grouped() or (art.showing:get() and not away()) then 0 else 1
 	end), motion.sidebar)
 	table.insert(pane, ui.div {
 		id = "shell-page-card",
@@ -229,44 +232,6 @@ return function(props: Props): Node
 			art.showing:set(on)
 		end
 	end)
-	-- A new chat's wallpaper: your picture (Settings → Appearance), or what
-	-- a plugin draws in `#new-chat-background` while it's used as the
-	-- wallpaper (it replaces that box, and reads where the pointer is as
-	-- `pointer`); Zeron's effect over either.
-	table.insert(
-		pane,
-		ds.Wallpaper {
-			effect = appearance.effect_now,
-			shown = function(): boolean
-				return home() and not on_plugin()
-			end,
-			width = props.width,
-			key = function(): string
-				local showing = appearance.showing:get()
-				if showing == "image" then
-					local image = appearance.image:get()
-					-- (Framed again after Adjust: its place is in the key.)
-					return if image then `image:{image.x}:{image.y}:{image.zoom}:{image.path}` else ""
-				end
-				return if showing == "none" then "" else showing
-			end,
-			content = function(key: string): Node
-				local image = appearance.image:peek()
-				if string.find(key, "^image:") and image then
-					return ds.wallpaper.Picture { src = image.path, w = image.w, h = image.h, x = image.x, y = image.y, zoom = image.zoom }
-				end
-				-- Where a plugin draws: nothing of Zeron's own.
-				return ui.div { id = "new-chat-background", absolute = true, left = 0, right = 0, top = 0, bottom = 0 }
-			end,
-			-- (A record, not two numbers: a plugin reading it follows it
-			-- with `zeron.live`, never built again as the pointer moves.)
-			provide = {
-				pointer = ui.computed(function(): { x: number, y: number }
-					return { x = px:get(), y = py:get() }
-				end),
-			},
-		}
-	)
 	table.insert(pane, ui.column {
 		absolute = true,
 		left = 0,
@@ -1750,6 +1715,80 @@ return function(props: Props): Node
 		},
 	}
 
+	-- A new chat's wallpaper: your picture (Settings → Appearance), or what
+	-- a plugin draws in `#new-chat-background` while it's used as the
+	-- wallpaper (it replaces that box, and reads where the pointer is as
+	-- `pointer`); Zeron's effect over either. As Zeron's new-thread
+	-- background: from the window's top (under the top bar) and the
+	-- sidebar's edge to the window's right, the top of the window's height,
+	-- covering all of that at whatever width the sidebar leaves (laid out
+	-- again as it slides, with no script), the panel's card standing over
+	-- it. Cleared round the composer where it rises to, the page's middle.
+	local wallpaper = ds.Wallpaper {
+		effect = appearance.effect_now,
+		-- (Kept under settings, hidden: it's there as they close.)
+		shown = function(): boolean
+			return home() and not on_plugin()
+		end,
+		key = function(): string
+			local showing = appearance.showing:get()
+			if showing == "image" then
+				local image = appearance.image:get()
+				-- (Framed again after Adjust: its place is in the key.)
+				return if image then `image:{image.x}:{image.y}:{image.zoom}:{image.path}` else ""
+			end
+			return if showing == "none" then "" else showing
+		end,
+		content = function(key: string): Node
+			local image = appearance.image:peek()
+			if string.find(key, "^image:") and image then
+				return ds.wallpaper.Picture { src = image.path, w = image.w, h = image.h, x = image.x, y = image.y, zoom = image.zoom }
+			end
+			-- Where a plugin draws: nothing of Zeron's own.
+			return ui.div { id = "new-chat-background", absolute = true, left = 0, right = 0, top = 0, bottom = 0 }
+		end,
+		picture = function(): any
+			return if appearance.showing:peek() == "image" then appearance.image:peek() else nil
+		end,
+		-- The composer on a new chat: in the page's card, its middle the
+		-- card's raised by the dock's lift, as wide as the conversation
+		-- (less its sides' room), the panel's card and gap beside the page
+		-- when it's open (where it's going: the clearing glides with it).
+		clear = function(): any
+			if route.needs_project:get() then
+				return nil
+			end
+			local lead = if fit.current:get().sidebar then INSET else WINDOW_EDGE
+			local panel = if shown:get() and not expanded() then goal:get() + INSET else 0
+			local radius = (ui.theme.get("zeron.composer.radius") :: number?) or 16
+			return {
+				cx = (lead - WINDOW_EDGE - panel) / 2,
+				cy = (TOP_BAR - WINDOW_EDGE) / 2 - Dock.LIFT,
+				w = prefs.conversation_width:get(),
+				room = lead + WINDOW_EDGE + panel + 2 * Dock.TRANSCRIPT_SIDE + 2 * Dock.OVERHANG,
+				h = chat_shared.dock_h:get(),
+				radius = radius,
+			}
+		end,
+		-- The panel's card over it (where it's going, its edge gliding
+		-- there), as Zeron's right pane clipped its art: the art laid out
+		-- at the page's whole width all the same.
+		clip_right = function(): number
+			return if shown:get() then goal:get() + WINDOW_EDGE else 0
+		end,
+		-- (Zeron's frosted window showed it at 84%.)
+		opacity = function(): number
+			return if material.see_through() then 0.84 else 1
+		end,
+		-- (A record, not two numbers: a plugin reading it follows it
+		-- with `zeron.live`, never built again as the pointer moves.)
+		provide = {
+			pointer = ui.computed(function(): { x: number, y: number }
+				return { x = px:get(), y = py:get() }
+			end),
+		},
+	}
+
 	-- Two cards, the page and its panel, set in from the window's edges and
 	-- the sidebar by the gap, the title bar's line inside them. The window
 	-- round them, along the title bar's strip (over them, beside them and
@@ -1770,6 +1809,18 @@ return function(props: Props): Node
 		end), motion.sidebar),
 		pr = ui.raw(WINDOW_EDGE, "the window's edge"),
 		pointer_events = "none",
+		-- (Under all of it: the art, from the row's top left to the window's
+		-- right; hidden while settings stand in the page's place.)
+		ui.div {
+			absolute = true,
+			left = 0,
+			right = 0,
+			top = 0,
+			bottom = 0,
+			pointer_events = "none",
+			hidden = away,
+			wallpaper,
+		},
 		ui.div { id = "shell-drag", absolute = true, left = 0, right = 0, top = 0, h = TITLE_H, window_drag = true },
 		split_area,
 		-- (Settings, in the page's place.)

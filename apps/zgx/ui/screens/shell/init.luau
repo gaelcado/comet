@@ -29,6 +29,7 @@
 
 local ds = require("@ds")
 local material = require("@ds/material")
+local art = require("@app/screens/shell/art")
 local auth = require("@account/auth")
 local sessions = require("@account/sessions")
 local route = require("@app/screens/shell/route")
@@ -554,13 +555,13 @@ return function(): Node
 				}
 				else nil,
 			boundary.screen(boundary.named("shell.boundary.screen.title_bar"), "@app/screens/shell/title_bar", function(TitleBar): Node
-				-- (A new chat's art is in its card, under the top bar: nothing there for
-				-- the bar's controls to need glass over.)
+				-- (A new chat's art runs under the top bar, as Zeron's: the bar's
+				-- controls stand on glass over it.)
 				return TitleBar {
 					collapsed = collapsed :: any,
 					files = files,
 					art = function(): boolean
-						return false
+						return art.showing:get() and not in_settings()
 					end,
 					panel_on_home = true,
 				}
