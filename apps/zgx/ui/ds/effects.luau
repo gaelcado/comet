@@ -54,7 +54,7 @@ M.PUSH = { dark = 2.2, light = 1.7 }
 M.RECEDE = { dark = 0.07, light = 0.08 }
 
 -- Which candidate each effect draws.
-M.VARIANT = { dither = "silk", ascii = "edges", halftone = "tiles", scanlines = "crt" } :: { [string]: string }
+M.VARIANT = { dither = "silk", ascii = "zeron", halftone = "tiles", scanlines = "crt" } :: { [string]: string }
 
 local COMMON = string.format(
 	[[
@@ -206,7 +206,7 @@ end
 -- ASCII: the picture made of characters. Cells of 6 by 8 glyph pixels
 -- (`px` of the picture's each), each one glyph, its weight by the cell's
 -- lightness among the picture's own (stretched over its range, as the
--- host measures it: `image.tones`), so the whole ramp ` .:-=+*#%@` shows
+-- host measures it: `image.tones`), so the whole ramp ` .:-=+o*#@` shows
 -- in any picture; with `edges`, a contour (Sobel, across the cells round
 -- it) takes `- | / \` along it. The glyphs are the light (in the light, the
 -- ink): its colour the cell's, quantized lightly, as bright as the cell's
@@ -220,9 +220,9 @@ local GLYPHS: { { number } } = {
 	{ 0, 0, 0, 14, 0, 0, 0 }, -- "-"
 	{ 0, 0, 14, 0, 14, 0, 0 }, -- "="
 	{ 0, 4, 4, 31, 4, 4, 0 }, -- "+"
+	{ 0, 0, 14, 17, 17, 17, 14 }, -- "o"
 	{ 0, 21, 14, 31, 14, 21, 0 }, -- "*"
 	{ 10, 10, 31, 10, 31, 10, 10 }, -- "#"
-	{ 17, 2, 4, 4, 8, 16, 17 }, -- "%"
 	{ 14, 17, 23, 21, 23, 16, 14 }, -- "@"
 	{ 0, 0, 0, 31, 0, 0, 0 }, -- "-" (a contour)
 	{ 4, 4, 4, 4, 4, 4, 4 }, -- "|"
@@ -354,6 +354,274 @@ fn fx_effect(input:LayerInput,g:vec3<f32>,q:vec2<f32>,fp:f32)->vec3<f32> {
 	) .. "const FX_EDGE:f32=2.0;\n"
 end
 
+-- Text-mode effects, each a way of drawing the picture in characters (the
+-- ASCII effect's candidates). Each works on a lattice of `px` of the
+-- picture's pixels a side, a cell of `cw` by `ch` of them, and gives each
+-- lattice pixel its colour (`fx_pix`); the window's pixel takes each
+-- lattice pixel it covers by how much falls there.
+--
+-- Their tone, shared: a cell's weight is its lightness (in the light, its
+-- darkness) stretched softly over the picture's own range, its ends eased
+-- (a smooth shoulder past the 2nd and 98th percentiles), so no lone cell
+-- jumps to the top of the ramp. In colour, a cell's ground is its own
+-- colour dimmed (lifted, in the light) and its ink its own colour
+-- brightened (darkened), both in OKLab at the cell's own hue, the ink never
+-- more than `LIFT` lighter than the cell: warm colours stay warm, never
+-- olive, and no glyph is brighter than its place.
+local TEXT = [[
+// The ink, by scheme: brand ivory on the dark paper, near black on the
+// light.
+const FX_INK_DARK=vec3<f32>(.925,.905,.855);
+const FX_INK_LIGHT=vec3<f32>(.105,.098,.125);
+fn fx_dark_ui(input:LayerInput)->bool {return input.params[0].z<.5;}
+fn fx_oklab(c:vec3<f32>)->vec3<f32> {
+ let l=pow(max(mat3x3<f32>(vec3(.4122214708,.2119034982,.0883024619),vec3(.5363325363,.6806995451,.2817188376),vec3(.0514459929,.1073969566,.6299787005))*c,vec3(0.)),vec3(1./3.));
+ return mat3x3<f32>(vec3(.2104542553,1.9779984951,.0259040371),vec3(.7936177850,-2.4285922050,.7827717662),vec3(-.0040720468,.4505937099,-.8086757660))*l;
+}
+fn fx_from_oklab(c:vec3<f32>)->vec3<f32> {
+ let l=mat3x3<f32>(vec3(1.,1.,1.),vec3(.3963377774,-.1055613458,-.0894841775),vec3(.2158037573,-.0638541728,-1.2914855480))*c;
+ let m=l*l*l;
+ return mat3x3<f32>(vec3(4.0767416621,-1.2684380046,-.0041960863),vec3(-3.3077115913,2.6097574011,-.7034186147),vec3(.2309699292,-.3413193965,1.7076195490))*m;
+}
+// OKLab `lab` in the colours a screen shows: its chroma eased down until
+// it fits.
+fn fx_fit(lab:vec3<f32>)->vec3<f32> {
+ // (Halving the step towards grey: the hue is kept, never clipped
+ // channel by channel, which turns a bright peach yellow.)
+ var lo=0.; var hi=1.;
+ if fx_fits(lab) {return fx_from_oklab(lab);}
+ for (var i=0;i<7;i++) {
+  let m=.5*(lo+hi);
+  if fx_fits(vec3(lab.x,lab.yz*m)) {lo=m;} else {hi=m;}
+ }
+ return clamp(fx_from_oklab(vec3(lab.x,lab.yz*lo)),vec3(0.),vec3(1.));
+}
+fn fx_fits(lab:vec3<f32>)->bool {
+ let rgb=fx_from_oklab(lab);
+ return all(rgb>=vec3(-.001)) && all(rgb<=vec3(1.001));
+}
+// A cell's weight, 0 to 1 (see above), through `gamma`.
+fn fx_weight(input:LayerInput,c:vec3<f32>,gamma:f32)->f32 {
+ let lo=input.params[3].y; let hi=max(input.params[3].z,lo+.05);
+ let l=dot(fx_srgb(c),vec3(.2126,.7152,.0722));
+ var s=smoothstep(-.12,1.12,(l-lo)/(hi-lo));
+ if !fx_dark_ui(input) {s=1.-s;}
+ return pow(s,gamma);
+}
+fn fx_bn(k:vec2<i32>)->f32 {
+ let n=(u32(k.y)&63u)*64u+(u32(k.x)&63u);
+ return (f32((FX_BN[n>>2u]>>((n&3u)*8u))&255u)+.5)/256.;
+}
+// `v` (0 to n) to a whole step, the one above by blue noise at `k`.
+// (Only near the boundary: a flat field keeps one glyph, calm.)
+fn fx_step(v:f32,k:vec2<i32>)->u32 {return u32(floor(v)+select(0.,1.,smoothstep(.3,.7,fract(v))>fx_bn(k)));}
+fn fx_mono(input:LayerInput)->vec3<f32> {return fx_lin(select(FX_INK_LIGHT,FX_INK_DARK,fx_dark_ui(input)));}
+// A cell's ground and ink, at its own hue: the ground `dim` of its
+// lightness (in the light, `dim` of its distance from white), the ink
+// `boost` of the way to white (black), no more than FX_LIFT from the cell.
+struct FxTone { ground:vec3<f32>, ink:vec3<f32> }
+fn fx_tone(input:LayerInput,c:vec3<f32>,dim:f32,boost:f32,chroma:f32)->FxTone {
+ let lab=fx_oklab(c);
+ if fx_dark_ui(input) {
+  let li=min(min(lab.x+(1.-lab.x)*boost,lab.x+FX_LIFT),.93);
+  return FxTone(fx_fit(vec3(lab.x*dim,lab.yz*dim)),fx_fit(vec3(li,lab.yz*chroma)));
+ }
+ let li=max(lab.x-lab.x*boost,lab.x-FX_LIFT);
+ return FxTone(fx_fit(vec3(1.-(1.-lab.x)*dim,lab.yz*dim)),fx_fit(vec3(li,lab.yz*chroma)));
+}
+// The cell's colour (the picture's mean over the cell).
+fn fx_cell_colour(input:LayerInput,g:vec3<f32>,cell:vec2<i32>)->vec3<f32> {
+ let size=vec2(FX_CW,FX_CH)*FX_PX;
+ return fx_mean(input,g,(vec2<f32>(cell)+.5)*size,size);
+}
+fn fx_cell_at(k:vec2<i32>)->vec2<i32> {return vec2<i32>(floor(vec2<f32>(k)/vec2(FX_CW,FX_CH)));}
+]]
+
+-- The window's pixel from the lattice pixels it covers (`fx_pix`).
+local LATTICE = [[
+fn fx_effect(input:LayerInput,g:vec3<f32>,q:vec2<f32>,fp:f32)->vec3<f32> {
+ let x=q/FX_PX; let w=fp/FX_PX;
+ let k=vec2<i32>(floor(x-.5*w));
+ let o=fx_over(x,w);
+ var s=fx_pix(input,g,k)*(1.-o.x)*(1.-o.y);
+ if o.x>0. {s+=fx_pix(input,g,k+vec2(1,0))*o.x*(1.-o.y);}
+ if o.y>0. {s+=fx_pix(input,g,k+vec2(0,1))*(1.-o.x)*o.y;}
+ if o.x>0. && o.y>0. {s+=fx_pix(input,g,k+vec2(1,1))*o.x*o.y;}
+ return s;
+}
+]]
+
+-- How much lighter (darker, in the light) than its cell a glyph's ink may
+-- be, in OKLab lightness.
+M.LIFT = 0.2
+
+local function lattice(px: number, cw: number, ch: number): string
+	return string.format(
+		"const FX_PX:f32=%.4f;\nconst FX_CW:f32=%.1f;\nconst FX_CH:f32=%.1f;\nconst FX_LIFT:f32=%.3f;\nconst FX_BN=array<u32,1024>(%s);\n",
+		px,
+		cw,
+		ch,
+		M.LIFT,
+		blue_noise
+	) .. TEXT
+end
+
+-- A ramp of 5 by 7 glyphs (rows top to bottom, the left pixel the high
+-- bit), lightest first after a space, as WGSL rows.
+local function ramp(glyphs: { { number } }): string
+	local rows = { "0u", "0u", "0u", "0u", "0u", "0u", "0u" }
+	for _, g in glyphs do
+		for _, r in g do
+			table.insert(rows, `{r}u`)
+		end
+	end
+	return string.format("const FX_RAMP=array<u32,%d>(%s);\nconst FX_STEPS:u32=%du;\n", #rows, table.concat(rows, ","), #glyphs)
+		.. [[
+// Whether pixel `at` of a 6 by 8 cell is lit in glyph `i` of the ramp.
+fn fx_lit(i:u32,at:vec2<i32>)->bool {
+ if at.x>4 || at.y>6 {return false;}
+ return ((FX_RAMP[i*7u+u32(at.y)]>>u32(4-at.x))&1u)==1u;
+}
+]]
+end
+
+-- Zeron's own ramp and font (ds/decode's, the intro's and the effort
+-- slider's: ` .-+xXS80#@`), less its diagonal glyphs (`x`, `X`), which
+-- read as hatching in a fill.
+local ZERON_RAMP = {
+	{ 0, 0, 0, 0, 0, 12, 12 }, -- "."
+	{ 0, 0, 0, 31, 0, 0, 0 }, -- "-"
+	{ 0, 4, 4, 31, 4, 4, 0 }, -- "+"
+	{ 15, 16, 16, 14, 1, 1, 30 }, -- "S"
+	{ 14, 17, 17, 14, 17, 17, 14 }, -- "8"
+	{ 14, 17, 19, 21, 25, 17, 14 }, -- "0"
+	{ 10, 10, 31, 10, 31, 10, 10 }, -- "#"
+	{ 14, 17, 29, 21, 29, 1, 30 }, -- "@"
+}
+-- Classic ASCII art's ramp, ` .:-=+o*#@` (no `%`: its diagonal hatches).
+local TERMINAL_RAMP = {
+	{ 0, 0, 0, 0, 0, 4, 0 }, -- "."
+	{ 0, 4, 0, 0, 4, 0, 0 }, -- ":"
+	{ 0, 0, 0, 14, 0, 0, 0 }, -- "-"
+	{ 0, 0, 14, 0, 14, 0, 0 }, -- "="
+	{ 0, 4, 4, 31, 4, 4, 0 }, -- "+"
+	{ 0, 0, 14, 17, 17, 17, 14 }, -- "o"
+	{ 0, 21, 14, 31, 14, 21, 0 }, -- "*"
+	{ 10, 10, 31, 10, 31, 10, 10 }, -- "#"
+	{ 14, 17, 23, 21, 23, 16, 14 }, -- "@"
+}
+
+-- Zeron's own: its ramp and font, quiet (a cell under `quiet` keeps only
+-- its ground), the ink a light ivory tinted `tint` of the way to the
+-- picture's own colour there, on its ground.
+local function zeron(o: { px: number, quiet: number, tint: number, gamma: number, dim: number }): string
+	return lattice(o.px, 6, 8)
+		.. LATTICE
+		.. ramp(ZERON_RAMP)
+		.. string.format("const FX_QUIET:f32=%.3f;\nconst FX_TINT:f32=%.3f;\nconst FX_GAMMA:f32=%.3f;\nconst FX_DIM:f32=%.3f;\n", o.quiet, o.tint, o.gamma, o.dim)
+		.. [[
+fn fx_pix(input:LayerInput,g:vec3<f32>,k:vec2<i32>)->vec3<f32> {
+ let cell=fx_cell_at(k);
+ let c=fx_cell_colour(input,g,cell);
+ let tone=fx_tone(input,c,FX_DIM,.75,1.25);
+ let r=fx_weight(input,c,FX_GAMMA);
+ if r<FX_QUIET {return tone.ground;}
+ let i=1u+min(fx_step((r-FX_QUIET)/(1.-FX_QUIET)*f32(FX_STEPS-1u),cell),FX_STEPS-1u);
+ if !fx_lit(i,k-cell*vec2(6,8)) {return tone.ground;}
+ // The ink: ivory (ink, in the light) tinted towards the cell's own,
+ // no lighter than the cell's own allows.
+ let mono=fx_oklab(fx_mono(input));
+ let own=fx_oklab(tone.ink);
+ let ink=mix(mono,own,FX_TINT);
+ let l=select(max(ink.x,own.x),min(ink.x,own.x),fx_dark_ui(input));
+ return fx_fit(vec3(l,ink.yz));
+}
+]]
+end
+
+-- Classic monochrome ASCII art: one ink on the paper, density alone; the
+-- ink no brighter than its place allows.
+local function terminal(o: { px: number, gamma: number }): string
+	return lattice(o.px, 6, 8)
+		.. LATTICE
+		.. ramp(TERMINAL_RAMP)
+		.. string.format("const FX_GAMMA:f32=%.3f;\n", o.gamma)
+		.. [[
+fn fx_pix(input:LayerInput,g:vec3<f32>,k:vec2<i32>)->vec3<f32> {
+ let p=fx_paper(input);
+ let cell=fx_cell_at(k);
+ let c=fx_cell_colour(input,g,cell);
+ let r=fx_weight(input,c,FX_GAMMA);
+ let i=min(fx_step(r*f32(FX_STEPS),cell),FX_STEPS);
+ if !fx_lit(i,k-cell*vec2(6,8)) {return p;}
+ // As strong as the cell is, past a floor, and capped by its lightness.
+ let lc=fx_oklab(c).x;
+ let lp=fx_oklab(p).x;
+ let li=fx_oklab(fx_mono(input)).x;
+ let cap=select(clamp((lc-FX_LIFT-li)/(lp-li),0.,1.),clamp((lc+FX_LIFT-lp)/(li-lp),0.,1.),fx_dark_ui(input));
+ return mix(p,fx_mono(input),min(.55+.45*r,cap+.25));
+}
+]]
+end
+
+-- Text-mode shade blocks ░ ▒ ▓ █, drawn as their pixel patterns (a 2 by 2
+-- tile: one of four lit, a checker, three of four, all), in cells of 4 by
+-- 8 lattice pixels: the cell's ink and ground at its own hue, each
+-- quantized to `levels` a channel, its block as heavy as its weight.
+local function blocks(o: { px: number, levels: number, gamma: number, dim: number }): string
+	return lattice(o.px, 4, 8)
+		.. LATTICE
+		.. string.format("const FX_LEVELS:f32=%.1f;\nconst FX_GAMMA:f32=%.3f;\nconst FX_DIM:f32=%.3f;\n", o.levels - 1, o.gamma, o.dim)
+		.. [[
+fn fx_quant(c:vec3<f32>)->vec3<f32> {return fx_lin(round(fx_srgb(c)*FX_LEVELS)/FX_LEVELS);}
+fn fx_pix(input:LayerInput,g:vec3<f32>,k:vec2<i32>)->vec3<f32> {
+ let cell=fx_cell_at(k);
+ let c=fx_cell_colour(input,g,cell);
+ let tone=fx_tone(input,c,FX_DIM,.7,1.25);
+ // (Rounded, not dithered: flat, banded, as text-mode art.)
+ let shade=1u+u32(round(fx_weight(input,c,FX_GAMMA)*3.));
+ let t=vec2<u32>(u32(k.x)&1u,u32(k.y)&1u);
+ var lit=false;
+ switch shade {
+  case 1u: {lit=t.x==0u && t.y==0u;}
+  case 2u: {lit=t.x==t.y;}
+  case 3u: {lit=!(t.x==1u && t.y==1u);}
+  case 4u: {lit=true;}
+  default: {}
+ }
+ return fx_quant(select(tone.ground,tone.ink,lit));
+}
+]]
+end
+
+-- Braille: cells of 2 by 4 dots (a terminal's plots), each dot lit by the
+-- picture's weight under it against Bayer's order over the eight, in the
+-- picture's own colour brightened, on its ground. `unit` the dot pitch in
+-- the picture's pixels, `r` a dot's radius in it.
+local function braille(o: { unit: number, r: number, gamma: number, dim: number }): string
+	return string.format("const FX_U:f32=%.4f;\nconst FX_R:f32=%.3f;\nconst FX_GAMMA:f32=%.3f;\nconst FX_DIM:f32=%.3f;\n", o.unit, o.r, o.gamma, o.dim)
+		.. lattice(o.unit, 2.6, 4)
+		.. [[
+// A cell: two columns and a gap (2.6 units across), four rows.
+const FX_CELL=vec2<f32>(2.6,4.);
+const FX_ORDER=array<f32,8>(0.,4.,6.,2.,1.,5.,7.,3.);
+fn fx_effect(input:LayerInput,g:vec3<f32>,q:vec2<f32>,fp:f32)->vec3<f32> {
+ let x=q/FX_U;
+ let cell=floor(x/FX_CELL);
+ let local=x-cell*FX_CELL;
+ let col=select(0u,1u,local.x>1.3);
+ let row=u32(clamp(floor(local.y),0.,3.));
+ let centre=cell*FX_CELL+vec2(select(.7,1.9,col==1u),f32(row)+.5);
+ let c=fx_mean(input,g,centre*FX_U,vec2(1.3,1.)*FX_U);
+ let tone=fx_tone(input,c,FX_DIM,.8,1.25);
+ let t=(FX_ORDER[row*2u+col]+fx_bn(vec2<i32>(cell)))/8.;
+ if fx_weight(input,c,FX_GAMMA)<t {return tone.ground;}
+ let d=(length(x-centre)-FX_R)*FX_U/max(fp,1e-4);
+ return mix(tone.ground,tone.ink,clamp(.5-d,0.,1.));
+}
+]]
+end
+
 -- Halftone: a dot in each cell of a screen `pitch` pixels apart at `angle`
 -- degrees, its area what the colour there takes: round (growing into a
 -- chain, then leaving holes) or a rounded square, as Zeron's mark's cells.
@@ -454,17 +722,26 @@ M.VARIANTS = {
 		end,
 	},
 	ascii = {
-		-- Cells of 6 by 8 points or so, contours drawn.
-		edges = function()
-			return ascii { px = 1.25, edges = true, dim = { 0.1, 0.3 }, top = { 0.55, 0.85 }, gamma = { 0.8, 0.6 }, push = 3 }
+		-- Zeron's own characters (the intro's, the effort slider's): quiet,
+		-- an ivory ink tinted by the picture.
+		zeron = function()
+			return zeron { px = 1.25, quiet = 0.18, tint = 0.8, gamma = 1.05, dim = 0.45 }
 		end,
-		-- The same without contours.
+		-- Classic ASCII art: one ink on the paper, density alone.
+		terminal = function()
+			return terminal { px = 1.25, gamma = 0.9 }
+		end,
+		-- Text-mode shade blocks in the picture's colours.
+		blocks = function()
+			return blocks { px = 1.5, levels = 6, gamma = 0.9, dim = 0.6 }
+		end,
+		-- Braille dots in the picture's colours, a terminal's plot.
+		braille = function()
+			return braille { unit = 1.6, r = 0.42, gamma = 1.4, dim = 0.5 }
+		end,
+		-- v5's: every glyph on the picture's glow.
 		plain = function()
 			return ascii { px = 1.25, edges = false, dim = { 0.1, 0.3 }, top = { 0.55, 0.85 }, gamma = { 0.8, 0.6 }, push = 3 }
-		end,
-		-- Larger cells, contours drawn.
-		large = function()
-			return ascii { px = 1.6, edges = true, dim = { 0.1, 0.3 }, top = { 0.55, 0.85 }, gamma = { 0.8, 0.6 }, push = 3 }
 		end,
 	},
 	halftone = {
