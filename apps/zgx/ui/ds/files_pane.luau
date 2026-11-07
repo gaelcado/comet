@@ -134,7 +134,12 @@ local made = ui.component(function(props: Props): Node
 		return if type(doc) == "function" then doc() else doc:get()
 	end
 	-- No room for a file beside the tree: the two never share the row.
+	-- (Not while the app's panel steps the tree's column in or out: the pane
+	-- only passes through that width, the tree's room following the step.)
 	local function narrow(): boolean
+		if props.step and props.step() ~= nil then
+			return false
+		end
 		local w = room:get()
 		return w > 0 and w < tree_w() + FILE_LEAST
 	end
@@ -268,9 +273,11 @@ local made = ui.component(function(props: Props): Node
 		end
 	end)
 	-- Its ink (and the toggle's glyph): on while it is out; the ink eased
-	-- once the pane has been measured, set before.
+	-- once the pane has been measured, set before. (In, at the fade's floor,
+	-- as it's left once the file's edge has covered it: a pane made again
+	-- shows it as it was.)
 	local lit = ui.use_state(out())
-	local ink = ui.use_state(if out() then 1 else 0)
+	local ink = ui.use_state(if out() then 1 else motion.FADE_FLOOR)
 	local fading: any = nil
 	ui.effect(function()
 		local on = out()
@@ -284,7 +291,7 @@ local made = ui.component(function(props: Props): Node
 		if settled then
 			fading = anime.animate(ink, motion.params({ value = to, duration = motion.FADE_MS, ease = motion.EASE }))
 		else
-			ink:set(if on then 1 else 0)
+			ink:set(if on then 1 else motion.FADE_FLOOR)
 		end
 	end)
 	local function toggle()
