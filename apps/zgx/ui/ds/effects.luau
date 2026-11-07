@@ -54,7 +54,7 @@ M.PUSH = { dark = 2.2, light = 1.7 }
 M.RECEDE = { dark = 0.07, light = 0.08 }
 
 -- Which candidate each effect draws.
-M.VARIANT = { dither = "silk", ascii = "zeron", halftone = "tiles", scanlines = "crt" } :: { [string]: string }
+M.VARIANT = { dither = "silk", ascii = "original", halftone = "tiles", scanlines = "crt" } :: { [string]: string }
 
 local COMMON = string.format(
 	[[
@@ -622,6 +622,58 @@ fn fx_effect(input:LayerInput,g:vec3<f32>,q:vec2<f32>,fp:f32)->vec3<f32> {
 ]]
 end
 
+-- Zeron's ASCII as it was (crates/ui/src/new_thread_background_effects.rs
+-- `ascii_pixels`), with none of the shared tone: cells of 6 by 8 of the
+-- picture's own pixels, each the glyph of ` .:-=+*#%@` whose ink is the
+-- brightness at its centre (in the light, the darkness), square-rooted,
+-- lit in the centre's colour, over the picture at 60% on its paper (black
+-- in the dark, white in the light). All in sRGB, as Zeron's bytes were,
+-- and the window's pixel the blend of the four picture pixels round it, as
+-- a picture's filtering blends them.
+local ORIGINAL = [[
+fn fx_o_src(input:LayerInput,g:vec3<f32>,i:vec2<u32>)->vec3<f32> {
+ return zgx_sample(clamp(g.xy+(vec2<f32>(i)+.5)*g.z,vec2(0.),input.size-vec2(.01))).rgb;
+}
+fn fx_o_glyph(i:u32,row:u32)->u32 {
+ var g=array<u32,7>(0u,0u,0u,0u,0u,0u,0u);
+ switch i {
+  case 1u: {g=array<u32,7>(0u,0u,0u,0u,0u,4u,0u);}
+  case 2u: {g=array<u32,7>(0u,4u,0u,0u,4u,0u,0u);}
+  case 3u: {g=array<u32,7>(0u,0u,0u,14u,0u,0u,0u);}
+  case 4u: {g=array<u32,7>(0u,0u,14u,0u,14u,0u,0u);}
+  case 5u: {g=array<u32,7>(0u,4u,4u,31u,4u,4u,0u);}
+  case 6u: {g=array<u32,7>(0u,21u,14u,31u,14u,21u,0u);}
+  case 7u: {g=array<u32,7>(10u,10u,31u,10u,31u,10u,10u);}
+  case 8u: {g=array<u32,7>(17u,2u,4u,4u,8u,16u,17u);}
+  case 9u: {g=array<u32,7>(14u,17u,23u,21u,23u,16u,14u);}
+  default: {}
+ }
+ return g[min(row,6u)];
+}
+fn fx_o_pixel(input:LayerInput,g:vec3<f32>,i:vec2<u32>)->vec3<f32> {
+ let light=input.params[0].z>.5;
+ let at=vec2(i.x/6u*6u+3u,i.y/8u*8u+4u);
+ let gc=fx_o_src(input,g,at);
+ let l=dot(gc,vec3(.2126,.7152,.0722));
+ let t=input.params[0].y;
+ let ink=clamp((select(l,1.-l,light)-t)/max(1.-t,.01),0.,1.);
+ let k=min(u32(sqrt(ink)*9.),9u);
+ let cx=i.x%6u; let cy=i.y%8u;
+ var lit=false;
+ if cx<5u && cy<7u {lit=((fx_o_glyph(k,cy)>>(4u-cx))&1u)==1u;}
+ let paper=select(vec3(0.),vec3(1.),light);
+ return fx_o_src(input,g,i)*.6+select(paper,gc,lit)*.4;
+}
+fn fx_effect(input:LayerInput,g:vec3<f32>,q:vec2<f32>,fp:f32)->vec3<f32> {
+ let u=q-.5;
+ let f=fract(u);
+ let i0=vec2<u32>(max(vec2<i32>(floor(u)),vec2(0)));
+ let e=mix(mix(fx_o_pixel(input,g,i0),fx_o_pixel(input,g,i0+vec2(1u,0u)),f.x),
+  mix(fx_o_pixel(input,g,i0+vec2(0u,1u)),fx_o_pixel(input,g,i0+vec2(1u,1u)),f.x),f.y);
+ return fx_lin(e);
+}
+]]
+
 -- Halftone: a dot in each cell of a screen `pitch` pixels apart at `angle`
 -- degrees, its area what the colour there takes: round (growing into a
 -- chain, then leaving holes) or a rounded square, as Zeron's mark's cells.
@@ -722,6 +774,10 @@ M.VARIANTS = {
 		end,
 	},
 	ascii = {
+		-- Zeron's own, as it was (Gaël's).
+		original = function()
+			return ORIGINAL
+		end,
 		-- Zeron's own characters (the intro's, the effort slider's): quiet,
 		-- an ivory ink tinted by the picture.
 		zeron = function()
