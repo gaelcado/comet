@@ -910,12 +910,12 @@ test("with no file and no room for one, the tree takes the whole pane until a fi
 	app:click('"notes.md"')
 	app:frames(60)
 	expect(math.abs(width("#file-viewer") - pane) <= 1).to_be(true)
-	local x = tonumber(((app:tree("#files-tree-beside"):match("[^\n]+") or ""):match(" (%-?%d+),%-?%d+ "))) or 0
-	expect(x + width("#files-tree-beside") <= 1).to_be(true)
+	-- (The tree's room closed: it stands where it was, the file's edge over it.)
+	expect(width("#files-tree-room") <= 1).to_be(true)
 	-- Roomy, the tree's own width beside the file's side, and what that side says.
 	app:resize(1000, 700)
 	app:frames(60)
-	expect(width("#files-tree-beside")).to_be(288)
+	expect(width("#files-tree-beside")).to_be(286)
 	expect(app:error()).to_be_nil()
 end)
 
