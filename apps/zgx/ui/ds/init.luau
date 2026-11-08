@@ -193,6 +193,11 @@ return {
 	StatusTag = status.StatusTag,
 	-- An agent's light sweep, held or at work.
 	Sweep = status.Sweep,
+	-- Loading that isn't an agent: the ring.
+	Spinner = status.Spinner,
+	-- Every agent state as the mark (a study: ds/tile_states).
+	TileGlyph = require("@self/tile_states").TileGlyph,
+	TILE_STATES = require("@self/tile_states").ORDER,
 	-- Effects.
 	decode = require("@self/decode"),
 	effects = require("@self/effects"),
