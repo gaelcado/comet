@@ -510,6 +510,10 @@ fn deleting_a_session_asks_first() {
 #[test]
 fn the_panels_edge_resizes_from_the_keys() {
     let mut app = mount();
+    // (The file tree put away: its column beside the tabs leaves the panel
+    // at its least in this window, nothing to narrow.)
+    app.host.set_state("files_tree", crate::plugins::json_value(&serde_json::json!(false))).unwrap();
+    app.frames(10);
     app.click("#shell-sidebar >> role:button \"Fix the build\"");
     app.frames(20);
     app.click("#titlebar >> role:button \"Panel\"");

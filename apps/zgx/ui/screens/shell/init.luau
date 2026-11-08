@@ -242,7 +242,24 @@ return function(): Node
 			end
 		end
 	end
-	runs["shell.toggle_files_tab"] = panel_call("toggle_files")
+	-- ⌘E: the tree's column, as Zeron's ⌘E was its Files column: the panel
+	-- opened with it if shut; else shown or put away; out but hidden for
+	-- room, brought forward (the column opened longest ago gives way).
+	runs["shell.toggle_files_tab"] = function()
+		local shown = view.tree_out
+		if not view.files:peek() then
+			if not shown:peek() then
+				shown:set(true)
+			end
+			view.set_files(true)
+		elseif view.tree_column:peek() then
+			shown:set(false)
+		elseif shown:peek() then
+			fit.promote_tree()
+		else
+			shown:set(true)
+		end
+	end
 	runs["shell.toggle_terminal"] = panel_call("toggle_terminal")
 	-- ⌘/: the composer's model picker (a focused code editor keeps ⌘/ for
 	-- its comments: it takes the key first).

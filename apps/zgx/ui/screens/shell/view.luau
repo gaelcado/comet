@@ -116,6 +116,40 @@ function M.toggle_expanded()
 	end
 	M.expanded_panels:set_key(id, if M.expanded:peek() then nil else true)
 end
+-- Whether the file tree is out (Files' own toggle, ⌘E; kept across
+-- launches), and which sessions have a folder to show in it (each one's
+-- panel tells it as it's made; one not told yet is taken to have one): a
+-- session's panel then has the tree's column beside its tabs, whatever they
+-- show, as Zeron's Files stood beside the right pane. Known here, not from
+-- the panel as it's made, so a chat arrived at, or the window reloaded,
+-- lays out with it from the first frame.
+M.tree_out = ui.persist("files_tree", true)
+M.panel_folder = ui.state("shell_panel_folder", {} :: { [string]: boolean })
+-- The tree's width, as Zeron's Files' (`files_panel_width`): 286, its edge
+-- dragged between 220 and 440, kept across launches. And whether that edge
+-- is being dragged (what's beside it follows at once, no step).
+M.TREE_MIN, M.TREE_DEFAULT, M.TREE_MAX = 220, 286, 440
+M.tree_width = ui.persist("shell_tree_width", M.TREE_DEFAULT)
+M.tree_dragging = ui.state("shell_tree_dragging", false)
+-- The tree has its column (the fit gives it room: the panel grows by it;
+-- the page tells it). nil: no page lays the panel out (a template's, a
+-- fixture's): the tree shows as it's asked to, inside the panel.
+M.tree_column = ui.state("shell_tree_column", nil :: boolean?)
+-- The panel is stepping to a new width (opening, closing, split again):
+-- the tree, its column gone, stays docked under the closing edge until it
+-- lands (the page tells it).
+M.panel_moving = ui.state("shell_panel_moving", false)
+-- While the tree's column comes or goes: the panel's step, from its width
+-- to where it goes, and its width each frame (the page tells them): the
+-- tree's room follows it, so the file takes or gives it a frame at a time.
+M.tree_step = ui.state("shell_tree_step", nil :: { from: number, to: number, coming: boolean, held: boolean }?)
+M.panel_w = ui.state("shell_panel_w", 0)
+-- The sidebar's width as it shows, each frame as it folds or comes back
+-- (its column, the window's gap before its card included).
+M.sidebar_shown = ui.state("shell_sidebar_shown", 0)
+-- Counts the sidebar's edge double-clicked (its width put back): the page
+-- splits the chat and the panel again then.
+M.seam_reset = ui.state("shell_seam_reset", 0)
 -- The command palette (⌘K), open.
 M.palette = ui.state("shell_palette_open", false)
 -- New project's palette, open (screens/shell/add_project).

@@ -2808,6 +2808,7 @@
     }
   },
   "panel": {
+    "resize_tree": "Resize file tree",
     "tab": {
       "plugin": "Plugin",
       "browser": "Browser",

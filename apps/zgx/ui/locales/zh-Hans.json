@@ -2808,6 +2808,7 @@
     }
   },
   "panel": {
+    "resize_tree": "调整文件树宽度",
     "tab": {
       "plugin": "插件",
       "browser": "浏览器",
