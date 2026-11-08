@@ -102,8 +102,8 @@ local GLYPH: { [Kind]: Icon.Name } = {
 	thought = "chat-round-line",
 }
 
--- The tree, in points: the trunk's x (under the working loader's middle, so
--- the trunk runs down from it), the elbow's radius (Zeron's), where the
+-- The tree, in points: the trunk's x (half a 16-point glyph in from the
+-- reply's edge), the elbow's radius (Zeron's), where the
 -- branch ends, the glyph's place and size, and the gutter they take before
 -- the words. Zeron hangs its tree off a chevron 12 points in; with no
 -- chevron the tree starts at the reply's own left edge. Rows are a little
@@ -476,7 +476,12 @@ local function row(
 				left = GLYPH_LEFT,
 				top = (ROW - GLYPH_SIZE) / 2,
 				color = tint,
-				ui.show(running, status.StatusIcon { kind = "working", size = GLYPH_SIZE }, Icon {
+				-- (Running, its agent's sweep: a sub-agent's spawn its dot glyph.)
+				ui.show(running, status.StatusIcon {
+					kind = "working",
+					size = GLYPH_SIZE,
+					who = if (now() :: any).subagent or now().kind == "agent" then "subagent" else "agent",
+				}, Icon {
 					name = function(): Icon.Name
 						return GLYPH[now().kind]
 					end,
@@ -694,10 +699,8 @@ return ui.component(function(props: Props): Node
 				-- pointer.
 				on_press = function() end,
 				on_release = function() end,
-				-- While it works, the working loader before the summary, its
-				-- ring over the trunk below; done, the summary alone, on the
-				-- reply's left edge.
-				ui.show(live, status.StatusIcon { kind = "working", size = LOADER }),
+				-- The summary alone, on the reply's left edge, working or done:
+				-- the work shows on its running row and the turn's foot.
 				FadeText { title, roll = true, grow = 1, text_size = "$font.size.sm" },
 			}
 		),
