@@ -205,3 +205,41 @@ test("closing a chat's last tab, the panel shuts on what it showed: no frame of 
 	expect(app:wait("#panel-empty", { timeout_ms = 15000 })).to_be(true)
 	expect(app:has("#panel-strip >> role:tab")).to_be(false)
 end)
+
+-- How much of a file tree shows in the panel: its column's, or the file
+-- tab's own.
+local function tree_shown_w(app: any): number
+	local w = 0
+	for line in app:tree("#shell-files"):gmatch("[^\n]+") do
+		if (line:find(" #panel-tree ", 1, true) or line:find(" #files-tree-room ", 1, true)) and not line:find(" hidden", 1, true) then
+			w = math.max(w, tonumber(line:match(" %-?%d+,%-?%d+ (%d+)x%d+")) or 0)
+		end
+	end
+	return w
+end
+
+test("Files with no file and the tree put away shows the tree, never an empty viewer", function()
+	local app = mount("shell_fixture.luau")
+	app:resize(1440, 900)
+	app:frames(30)
+	show_chat(app, "Fix the build")
+	open_files_tab(app)
+	expect(tree_shown_w(app) > 200).to_be(true)
+	-- ⌘E puts the tree's column away: with no file to show, the tab shows
+	-- the tree, every frame on the way.
+	app:command("shell.toggle_files_tab")
+	for _ = 1, 40 do
+		app:frames(1)
+		expect(tree_shown_w(app) > 200).to_be(true)
+	end
+	-- (The tab's own tree, the column put away.)
+	local room = box(app, "files-tree-room")
+	expect(room ~= nil and room.w > 200).to_be(true)
+	-- A file picked: the file, the tree away as asked.
+	app:click('#shell-files >> role:treeitem "README.md"')
+	expect(app:wait('#file-viewer-head >> "README.md"', { timeout_ms = 15000 })).to_be(true)
+	expect(eventually(app, function(): boolean
+		app:frames(5)
+		return tree_shown_w(app) == 0
+	end)).to_be(true)
+end)

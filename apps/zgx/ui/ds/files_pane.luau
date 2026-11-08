@@ -25,7 +25,9 @@
 -- one open the file has the whole pane: opening a file closes the tree, the
 -- toggle brings the tree over the whole pane, and a file chosen there goes
 -- back to the file. Whether the tree stands beside the file (`shown`) is
--- left as it was, so widening brings it back if it was out.
+-- left as it was, so widening brings it back if it was out. Wide, with no
+-- file open and the tree put away, the tree has the whole pane too, never
+-- an empty file beside nothing; a file chosen there goes back to the file.
 --
 -- `FilesPane { shown = state, tree = { FileTree's props }, viewer = { FileViewer's props }, head = "line" }`.
 
@@ -120,12 +122,17 @@ local made = ui.component(function(props: Props): Node
 	local function overlaying(): boolean
 		return narrow() and open_doc() ~= nil
 	end
-	local function out(): boolean
-		return if overlaying() then over:get() else shown:get()
+	-- No file to show, the tree put away: the tree has the whole pane, never
+	-- an empty file beside nothing, until a file is chosen.
+	local function bare(): boolean
+		return part_now() == nil and open_doc() == nil and not shown:get()
 	end
-	-- Narrow, the tree out has it all.
+	local function out(): boolean
+		return if overlaying() then over:get() else shown:get() or bare()
+	end
+	-- Narrow, the tree out has it all; bare, too.
 	local function whole(): boolean
-		return out() and narrow()
+		return out() and (narrow() or bare())
 	end
 	-- A file opened, or the pane widened: the tree off the file (narrow, the
 	-- file shows; wide, the tree is where `shown` says).
@@ -163,12 +170,16 @@ local made = ui.component(function(props: Props): Node
 	local dock_w = ui.use_state(dock_target())
 	local dock_easing: any = nil
 	local was_whole = whole()
+	local was_bare = bare()
 	ui.effect(function()
 		local to = dock_target()
 		local now_whole = whole()
-		-- (All of it already, the pane resizing: with the pane, not after it.)
-		local follows = now_whole and was_whole
+		local now_bare = bare()
+		-- (All of it already, the pane resizing: with the pane, not after it.
+		-- Bare, at once: nothing else is there to show meanwhile.)
+		local follows = (now_whole and was_whole) or (now_bare and not was_bare)
 		was_whole = now_whole
+		was_bare = now_bare
 		if dock_easing then
 			dock_easing:cancel()
 			dock_easing = nil
