@@ -188,9 +188,10 @@ local function row(...: Child): Node
 	return ui.row { gap = "$space.3", items = "center", flex_wrap = true, ... }
 end
 
--- Every agent state as the mark (ds/tile_states), beside Wing's glyph: in
--- a header with its name, alone at 14 and 12, as a sub-agent's, and as a
--- list's dot and a named chip. A state with an alternative shows it as B.
+-- Every agent state as a shape of the mark's tiles (ds/tile_states),
+-- beside Wing's glyph: in a header with its name, alone at 14 and 12, as a
+-- sub-agent's, as a list's micro dot and as a named chip; then the same
+-- shapes without colour, to show they read by shape alone.
 local TILE_NAMES = {
 	working = "Working",
 	connecting = "Connecting",
@@ -203,73 +204,82 @@ local TILE_NAMES = {
 	limited = "Limited",
 	woke = "Woke",
 }
-local TILE_COLUMNS = { 132, 56, 168, 44, 44, 60, 300 }
+local TILE_COLUMNS = { 132, 52, 172, 40, 40, 52, 40, 140, 150 }
 local function tile_glyphs(): Node
 	local function cells(...: Child): Node
 		local out: { Node } = {}
 		for i, child in { ... } do
-			table.insert(out, ui.row { w = TILE_COLUMNS[i], shrink = 0, items = "center", gap = "$space.2", child })
+			table.insert(out, ui.row { w = TILE_COLUMNS[i], shrink = 0, items = "center", gap = "$space.3", child })
 		end
-		return ui.row { h = 32, items = "center", table.unpack(out) }
+		return ui.row { h = 34, items = "center", table.unpack(out) }
 	end
 	local function head(text: string): Node
 		return ui.text { text, text_size = "$font.size.xs", color = "$text.tertiary" }
 	end
 	local lines: { Node } = {
-		cells(head("State"), head("Wing's"), head("In a header"), head("14"), head("12"), head("Sub-agent"), head("In a list · a chip")),
+		cells(head("State"), head("Wing's"), head("In a header"), head("14"), head("12"), head("3 × 3"), head("9"), head("A chip"), head("No colour")),
 	}
 	for _, s in ds.TILE_STATES do
-		for _, variant in (if s.b then { "a", "b" } else { "a" }) :: { string } do
-			local ink = `$zeron.status.{s.hue}`
-			local function tile(size: number, who: ("agent" | "subagent")?): Node
-				return ds.TileGlyph { state = s.state, size = size, who = who, variant = variant, ink = ink }
-			end
-			local wing: Node = if s.state == "working" or s.state == "connecting" or s.state == "waiting"
-				then ds.Spinner { size = 16, ink = ink }
-				elseif s.state == "plan" then ds.StatusDot { kind = "plan" }
-				-- (Steady: no arrival flash on a reference.)
-				else ds.StatusIcon { kind = s.state :: any, size = 16, role = "primary" }
-			table.insert(lines, cells(
-				ui.row {
-					gap = "$space.2",
-					items = "center",
-					ui.text { TILE_NAMES[s.state], text_size = "$font.size.sm", weight = "$font.weight.medium", color = "$text.primary" },
-					if variant == "b" then ui.text { "B", text_size = "$font.size.xs", color = "$text.tertiary" } else nil,
-				},
-				wing,
-				ui.row {
-					gap = "$space.1",
-					items = "center",
-					color = ink,
-					text_size = "$font.size.sm",
-					weight = "$font.weight.medium",
-					tile(16),
-					ui.text { TILE_NAMES[s.state] },
-				},
-				tile(14),
-				tile(12),
-				tile(14, "subagent"),
-				ui.row {
-					gap = "$space.4",
-					items = "center",
-					ui.row {
-						gap = "$space.2",
-						items = "center",
-						tile(8),
-						ui.text { "Port the effort slider", text_size = "$font.size.md", color = "$text.primary" },
-					},
-					ui.row {
-						gap = "$space.1",
-						items = "center",
-						color = ink,
-						tile(6),
-						ui.text { TILE_NAMES[s.state], text_size = "$font.size.xs" },
-					},
-				}
-			))
+		local ink = `$zeron.status.{s.hue}`
+		local function tile(size: number, who: ("agent" | "subagent")?, grey: boolean?): Node
+			return ds.TileGlyph { state = s.state, size = size, who = who, ink = if grey then "$text.primary" else ink }
 		end
+		local wing: Node = if s.state == "working" or s.state == "connecting" or s.state == "waiting"
+			then ds.Spinner { size = 16, ink = ink }
+			elseif s.state == "plan" then ds.StatusDot { kind = "plan" }
+			-- (Steady: no arrival flash on a reference.)
+			else ds.StatusIcon { kind = s.state :: any, size = 16, role = "primary" }
+		table.insert(lines, cells(
+			ui.text { TILE_NAMES[s.state], text_size = "$font.size.sm", weight = "$font.weight.medium", color = "$text.primary" },
+			wing,
+			ui.row {
+				gap = "$space.2",
+				items = "center",
+				color = ink,
+				text_size = "$font.size.sm",
+				weight = "$font.weight.medium",
+				tile(16),
+				ui.text { TILE_NAMES[s.state] },
+			},
+			tile(14),
+			tile(12),
+			tile(14, "subagent"),
+			tile(9),
+			ui.row {
+				gap = "$space.1",
+				items = "center",
+				color = ink,
+				tile(8),
+				ui.text { TILE_NAMES[s.state], text_size = "$font.size.xs" },
+			},
+			ui.row { gap = "$space.3", items = "center", tile(16, nil, true), tile(12, nil, true), tile(9, nil, true) }
+		))
 	end
-	return ui.column { id = "tile-glyphs", gap = 0, table.unpack(lines) }
+	-- A state's change, as a flip-dot board makes it: the tiles turn over.
+	local function morph(from: string, to: string, title: string): Node
+		return ui.column {
+			gap = "$space.2",
+			ui.row {
+				gap = "$space.4",
+				items = "center",
+				ds.TileMorph { from = from :: any, to = to :: any, size = 48 },
+				ds.TileMorph { from = from :: any, to = to :: any, size = 16 },
+			},
+			ui.text { title, text_size = "$font.size.xs", color = "$text.tertiary" },
+		}
+	end
+	return ui.column {
+		id = "tile-glyphs",
+		gap = "$space.5",
+		ui.column { gap = 0, table.unpack(lines) },
+		ui.row {
+			id = "tile-morphs",
+			gap = "$space.8",
+			morph("working", "input", "Working → needs input"),
+			morph("working", "done", "Working → done"),
+			morph("working", "failed", "Working → failed"),
+		},
+	}
 end
 
 -- A titled run of examples on a page.

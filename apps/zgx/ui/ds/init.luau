@@ -195,8 +195,10 @@ return {
 	Sweep = status.Sweep,
 	-- Loading that isn't an agent: the ring.
 	Spinner = status.Spinner,
-	-- Every agent state as the mark (a study: ds/tile_states).
+	-- Every agent state as a shape of the mark's tiles (a study:
+	-- ds/tile_states), and one flipping into another.
 	TileGlyph = require("@self/tile_states").TileGlyph,
+	TileMorph = require("@self/tile_states").TileMorph,
 	TILE_STATES = require("@self/tile_states").ORDER,
 	-- Effects.
 	decode = require("@self/decode"),
