@@ -9,11 +9,19 @@ local function open(): any
 	return app
 end
 
--- The focused node's line, as the tree says.
+-- The focused node's line, as the tree says. (The window's dump is cut off
+-- after a budget of nodes, a panel's tree of files a good part of it: what
+-- it cut off is read in parts, the title bar last in the window's.)
+local PARTS = { "", "#titlebar", "#shell-sidebar", "#shell-chats", "#shell-files" }
 local function focused(app: any): string
-	for line in app:tree():gmatch("[^\n]+") do
-		if line:find(" focused", 1, true) then
-			return line
+	for _, part in PARTS do
+		if part == "" or app:has(part) then
+			local dump = if part == "" then app:tree() else app:tree(part)
+			for line in dump:gmatch("[^\n]+") do
+				if line:find(" focused", 1, true) then
+					return line
+				end
+			end
 		end
 	end
 	return ""

@@ -15,12 +15,9 @@
 -- the tree stands where it is and the file's edge sweeps over it, taking
 -- the room, its ink fading a little as it goes (ds/motion `content`, as
 -- the sidebar folds); showing is the same back. `shown` is the caller's,
--- so it can be remembered. With `column` (the tree's room its own, outside
--- the file's: the app's panel grows by it), it comes at once and goes once
--- the panel's edge, sweeping over it instead, has covered it.
---
--- Its edge drags it wider or narrower (`width`, `least` to `most`),
--- bouncing at either; double-clicked, back to `default` (ds/seam).
+-- so it can be remembered. `part`: "tree" draws the tree alone, filling the
+-- pane (an app's column of its own for it), "file" the file alone, the
+-- toggle still saying whether that column is out.
 --
 -- Narrow (too little room for a file beside the tree: under the tree's
 -- width and a file's least, 288 + 240), the two never share the row. With
@@ -37,7 +34,6 @@ local FileViewer = require("@self/file_viewer")
 local SidebarIcon = require("@self/sidebar_icon")
 local IconButton = require("@self/icon_button").IconButton
 local motion = require("@self/motion")
-local seam = require("@self/seam")
 local locale = require("@self/locale")
 
 export type Props = {
@@ -47,28 +43,11 @@ export type Props = {
 	viewer: FileViewer.Props,
 	-- The file's header shape (ds/file_viewer): one line by default.
 	head: FileViewer.Head?,
-	-- The tree's width beside the file (the theme's): a state, its edge drags
-	-- it between `least` and `most` and a double click puts back `default`;
-	-- `dragging` is told while it's dragged.
+	-- The tree's width beside the file (the theme's, or the app's).
 	width: (number | State<number>)?,
-	least: number?,
-	most: number?,
-	default: number?,
-	dragging: State<boolean>?,
-	-- The tree's room is a column of its own (the app's panel grows by it):
-	-- it comes at once and goes once the panel's edge has covered it (the
-	-- panel's step, ds/motion `PANEL_MS`), that edge sweeping over it.
-	column: (() -> boolean?)?,
-	-- The app's panel stepping to a new width: the tree, its column gone,
-	-- stays docked until that step lands (covered by then).
-	moving: (() -> boolean)?,
-	-- While its column comes or goes, the app's panel's step: its width
-	-- from, to, and now. The tree's room follows it, so the file takes or
-	-- gives the room a frame at a time and the tree is wholly uncovered (or
-	-- covered) as the step lands, standing where it is all along.
-	-- `held`: what's in the panel laid out at its far width meanwhile, its
-	-- edge sweeping over it; else following that edge (a live resize).
-	step: (() -> { from: number, to: number, coming: boolean, held: boolean, now: number }?)?,
+	-- "tree" or "file": one part alone (else both, side by side); a function
+	-- to follow (a file tab beside an app's tree column that comes and goes).
+	part: ("tree" | "file" | () -> ("tree" | "file")?)?,
 	-- The pane's last width, if the caller keeps it: a pane made again starts
 	-- exactly as it was.
 	room: State<number>?,
@@ -80,7 +59,7 @@ export type Props = {
 	[any]: any,
 }
 
-local OWN = { shown = true, tree = true, viewer = true, head = true, width = true, least = true, most = true, default = true, dragging = true, column = true, moving = true, step = true, commands = true, room = true, over = true, children = true }
+local OWN = { shown = true, tree = true, viewer = true, head = true, width = true, part = true, commands = true, room = true, over = true, children = true }
 
 -- How the tree moves: the sidebar's slide, and its ink a beat quicker.
 local SLIDE = { duration = 260, ease = "out(3)" }
@@ -101,22 +80,16 @@ local made = ui.component(function(props: Props): Node
 	local shown = props.shown
 	local theme_w = num("zeron.files.tree", 288)
 	local width_state: State<number>? = if props.width ~= nil and type(props.width) ~= "number" then props.width :: any else nil
-	-- Its edge's drag (below): a bounce past either end, added to its width.
-	local edge_drag = if width_state then seam.drag() else nil
 	-- The tree's width now (a state's, followed).
 	local function tree_w(): number
 		if width_state then
-			local nudge = if edge_drag then edge_drag.nudge:get() else 0
-			return math.clamp(width_state:get(), props.least or 0, props.most or math.huge) + nudge
+			return width_state:get()
 		end
 		return (props.width :: number?) or theme_w
 	end
-	-- (nil: nobody lays a column out for it, it stands inside the pane.)
-	local function column_now(): boolean?
-		return if props.column then props.column() else nil
-	end
-	local function column(): boolean
-		return column_now() == true
+	local function part_now(): ("tree" | "file")?
+		local p = props.part
+		return if type(p) == "function" then p() else p :: any
 	end
 	local head_h = num(if props.head == "stack" then "zeron.files.stack" else "zeron.files.head", 40)
 	local square = num("zeron.icon_button.lg", 28)
@@ -128,16 +101,13 @@ local made = ui.component(function(props: Props): Node
 	-- first frame, so nothing opens, closes or fades that was at rest.)
 	local room = props.room or ui.use_state(0)
 	local settled = false
-	local parked = ui.use_state(false)
 	local doc = props.viewer.doc :: any
 	local function open_doc(): any
 		return if type(doc) == "function" then doc() else doc:get()
 	end
 	-- No room for a file beside the tree: the two never share the row.
-	-- (Not while the app's panel steps the tree's column in or out: the pane
-	-- only passes through that width, the tree's room following the step.)
 	local function narrow(): boolean
-		if props.step and props.step() ~= nil then
+		if part_now() ~= nil then
 			return false
 		end
 		local w = room:get()
@@ -156,12 +126,6 @@ local made = ui.component(function(props: Props): Node
 	-- Narrow, the tree out has it all.
 	local function whole(): boolean
 		return out() and narrow()
-	end
-	-- Whether it stands in the pane: out, and, given a column, while the app
-	-- has room for that column. Short of it the pane is narrow: the file has
-	-- it, and the toggle brings the tree over the file, as without a column.
-	local function in_place(): boolean
-		return out() and (column_now() ~= false or narrow())
 	end
 	-- A file opened, or the pane widened: the tree off the file (narrow, the
 	-- file shows; wide, the tree is where `shown` says).
@@ -188,67 +152,15 @@ local made = ui.component(function(props: Props): Node
 	-- The tree's room beside the file, eased as it comes and goes by the tree's own
 	-- slide.
 	local function dock_target(): number
-		if whole() then
+		local part = part_now()
+		if part == "tree" then
 			return room:get()
-		end
-		if not (in_place() or parked:get()) then
+		elseif part == "file" then
 			return 0
 		end
-		-- (Its column coming or going: from what the file gives up as the
-		-- panel widens to all of it, or back.)
-		local s = props.step and props.step()
-		if s and math.abs(s.from - s.to) > 0.5 then
-			local p = math.clamp((s.now - s.from) / (s.to - s.from), 0, 1)
-			local gap = if s.held then math.abs(s.to - s.from) else 0
-			local a, b = if s.coming then gap else tree_w(), if s.coming then tree_w() else gap
-			return math.clamp(a + (b - a) * p, 0, tree_w())
-		end
-		return tree_w()
+		return if whole() then room:get() elseif out() then tree_w() else 0
 	end
 	local dock_w = ui.use_state(dock_target())
-	-- (Its column gone (hidden, or no room left for it): it stays docked, as
-	-- the panel's edge covers it, for that edge's step; then it goes,
-	-- covered.)
-	local column_shown = column() and in_place()
-	local unparking = false
-	local saw_moving = false
-	ui.effect(function()
-		local on = column() and in_place()
-		if on then
-			column_shown = true
-			if parked:peek() then
-				parked:set(false)
-			end
-		elseif column_shown then
-			column_shown = false
-			-- (Nothing steps with motion reduced: it goes at once.)
-			if not motion.reduced_now() then
-				saw_moving = false
-				parked:set(true)
-				-- (Should no step come, it goes all the same.)
-				ui.after(2 * motion.PANEL_MS, function()
-					if parked:peek() and not saw_moving then
-						unparking = true
-						parked:set(false)
-					end
-				end)
-			end
-		end
-	end)
-	-- (Parked: it goes as the step that covers it lands.)
-	ui.effect(function()
-		local m = props.moving ~= nil and props.moving()
-		if not parked:get() then
-			return
-		end
-		if m then
-			saw_moving = true
-		elseif saw_moving then
-			saw_moving = false
-			unparking = true
-			parked:set(false)
-		end
-	end)
 	local dock_easing: any = nil
 	local was_whole = whole()
 	ui.effect(function()
@@ -261,12 +173,8 @@ local made = ui.component(function(props: Props): Node
 			dock_easing:cancel()
 			dock_easing = nil
 		end
-		-- (A column of its own: at once, the panel's edge sweeping. Its edge
-		-- dragged: under the hand.)
-		local at_once = unparking
-		unparking = false
-		local stepping = props.step ~= nil and props.step() ~= nil
-		if not settled or follows or at_once or stepping or column() or parked:get() or (props.dragging ~= nil and props.dragging:get()) then
+		-- (One part alone: the pane's own, at once.)
+		if not settled or follows or part_now() ~= nil then
 			dock_w:set(to)
 		else
 			dock_easing = anime.animate(dock_w, motion.params({ value = to, duration = SLIDE.duration, ease = SLIDE.ease }))
@@ -383,80 +291,12 @@ local made = ui.component(function(props: Props): Node
 		w = dock_w,
 		overflow = "hidden",
 		pointer_events = "none",
-		beside(),
+		-- (The file alone, the tree in a column of its own: none here, so
+		-- the window holds one tree, not one more under each file.)
+		ui.show(function(): boolean
+			return part_now() ~= "file"
+		end, beside()),
 	}
-	-- Its edge, dragged: wider or narrower, bouncing past either end;
-	-- double-clicked, back to its default, easing there (ds/seam). It takes
-	-- the pointer `seam.REACH` each side of the tree's edge, under the band.
-	local edge: Node? = nil
-	if width_state then
-		local over = ui.use_state(false)
-		local held_edge = ui.use_state(false)
-		local drag = edge_drag :: seam.Drag
-		local from_x, from_w, pressing = 0, 0, false
-		local least, most = props.least or 0, props.most or math.huge
-		local function dragging(on: boolean)
-			held_edge:set(on)
-			if props.dragging and props.dragging:peek() ~= on then
-				props.dragging:set(on)
-			end
-		end
-		edge = ui.div {
-			absolute = true,
-			z = 2,
-			left = function(): number
-				return ui.raw(dock_w:get() - seam.REACH, "the seam's reach either side of the tree's edge")
-			end,
-			top = head_h,
-			bottom = 0,
-			w = ui.raw(2 * seam.REACH, "the seam's reach either side"),
-			cursor = "col_resize",
-			label = locale.t("ds.files_pane.resize_tree"),
-			pointer_events = function(): PointerEvents
-				return if shown:get() and not whole() and dock_w:get() > 0.5 then "auto" else "none"
-			end,
-			on_hover = function(inside: boolean)
-				over:set(inside)
-			end,
-			on_press = function(e)
-				if e.clicks == 2 then
-					local ws = width_state :: State<number>
-					ws:set(props.default or theme_w)
-					return
-				end
-				from_x, from_w, pressing = e.x, (width_state :: State<number>):peek(), true
-				dragging(true)
-			end,
-			on_pointer_move = function(e)
-				if pressing then
-					local want = from_w + e.x - from_x
-					drag.at(want, least, most)
-					local ws = width_state :: State<number>
-					ws:set(math.clamp(want, least, most))
-				end
-			end,
-			on_release = function()
-				pressing = false
-				dragging(false)
-				drag.release()
-			end,
-			-- What lights: the tree's edge, stronger.
-			ui.div {
-				absolute = true,
-				left = ui.raw(seam.REACH - 1, "the tree's edge, in the seam's reach"),
-				top = 0,
-				bottom = 0,
-				w = 2,
-				rounded = "$radius.full",
-				pointer_events = "none",
-				bg = "$border.strong",
-				opacity = seam.lit(function(): boolean
-					return over:get() or held_edge:get()
-				end, drag),
-			},
-		}
-	end
-
 	-- The file, beside the tree's room; as the tree goes, its header keeps
 	-- room for the toggle instead, so its name comes to meet it.
 	local viewer_props: FileViewer.Props = table.clone(props.viewer)
@@ -525,9 +365,9 @@ local made = ui.component(function(props: Props): Node
 	-- reaches them before it. Drawn over it by `z`.)
 	box[#box + 1] = toggle_button
 	box[#box + 1] = tree
-	box[#box + 1] = FileViewer(viewer_props)
-	if edge then
-		box[#box + 1] = edge
+	-- (The tree alone: no file beside it.)
+	if props.part ~= "tree" then
+		box[#box + 1] = FileViewer(viewer_props)
 	end
 	return ui.row(box)
 end)

@@ -78,9 +78,15 @@ function M.toggle_expanded()
 	end
 	M.expanded_panels:set_key(id, if M.expanded:peek() then nil else true)
 end
--- The shown panel's active tab is a file tab with its tree out (the panel
--- tells it): the tree then has a column of its own, as Zeron's Files had.
-M.panel_files = ui.state("shell_panel_files", false)
+-- Whether the file tree is out (Files' own toggle, ⌘E; kept across
+-- launches), and which sessions have a folder to show in it (each one's
+-- panel tells it as it's made; one not told yet is taken to have one): a
+-- session's panel then has the tree's column beside its tabs, whatever they
+-- show, as Zeron's Files stood beside the right pane. Known here, not from
+-- the panel as it's made, so a chat arrived at, or the window reloaded,
+-- lays out with it from the first frame.
+M.tree_out = ui.persist("files_tree", true)
+M.panel_folder = ui.state("shell_panel_folder", {} :: { [string]: boolean })
 -- The tree's width, as Zeron's Files' (`files_panel_width`): 286, its edge
 -- dragged between 220 and 440, kept across launches. And whether that edge
 -- is being dragged (what's beside it follows at once, no step).

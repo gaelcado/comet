@@ -574,7 +574,8 @@ fn a_reload_keeps_the_panel_where_it_was_scrolled() {
     // In it: a file far down the tree, opened, and read far down.
     assert!(frames_until(&mut app, |app| app.tree().contains(" treeitem \"")), "the folder was never read");
     app.frames(10);
-    let tree = first_under(&mut app, "#files-pane", "tree");
+    // (The tree has its column beside the tabs.)
+    let tree = first_under(&mut app, "#panel-tree", "tree");
     app.scroll(&tree, 1200.);
     app.frames(20);
     // (A row well down the tree, as it now stands.)

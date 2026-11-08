@@ -381,7 +381,6 @@
       "taken": "Taken"
     },
     "files_pane": {
-      "resize_tree": "Resize file tree",
       "toggle_tree": "Toggle File Tree",
       "toggle_tree_tip": "Toggle File Tree  {keys}",
       "close_tree": "Close the file tree"
@@ -2809,6 +2808,7 @@
     }
   },
   "panel": {
+    "resize_tree": "Resize file tree",
     "tab": {
       "plugin": "Plugin",
       "browser": "Browser",

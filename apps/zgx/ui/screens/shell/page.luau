@@ -708,18 +708,37 @@ return function(props: Props): Node
 	local function right_pref(): number
 		return math.max(files_w:get(), 0)
 	end
-	local alloc = { vw = fit.viewport:peek(), side = sidebar_settled(), tree = tree_part(), pref = right_pref(), floor = fit.page_floor:peek() }
+	-- (Whose panel shows: the session's, a plugin page's; none on a new
+	-- chat. Another one is the route moving, not the person opening or
+	-- closing this one, and the panel lands at once, as it is there.)
+	local function owner(peek: boolean): string
+		local c: any = if peek then route.chat:peek() else route.chat:get()
+		if c.name == "plugin" then
+			return `page:{c.plugin or ""}/{c.page or ""}`
+		end
+		return if c.name == "session" then `chat:{c.session or ""}` else c.name or ""
+	end
+	local alloc = {
+		vw = fit.viewport:peek(),
+		side = sidebar_settled(),
+		tree = tree_part(),
+		pref = right_pref(),
+		floor = fit.page_floor:peek(),
+		on = shown:peek(),
+		who = owner(true),
+	}
 	ui.effect(function()
 		local vw, side, tree, pref, floor = fit.viewport:get(), sidebar_settled(), tree_part(), right_pref(), fit.page_floor:get()
+		local on, who = shown:get(), owner(true)
 		local was = alloc
-		alloc = { vw = vw, side = side, tree = tree, pref = pref, floor = floor }
+		alloc = { vw = vw, side = side, tree = tree, pref = pref, floor = floor, on = on, who = who }
 		-- (Hidden (another chat with none, a new chat), its width holds as
 		-- it was: what it shows at again is worked out as it opens (`split`).
 		-- Followed while hidden, the fit took its tree away there, and the
 		-- least below pushed a width chosen narrow up to the least without
 		-- a tree, so a chat with its panel open arrived wide, then eased
 		-- back to its width.)
-		if vw <= 0 or not shown:get() then
+		if vw <= 0 or not on then
 			return
 		end
 		local allowed = fit.panel_room(vw, side, tree, floor)
@@ -731,9 +750,11 @@ return function(props: Props): Node
 		end
 		-- (The sidebar folded or brought back, the window as it was.)
 		local toggled = (side > 0) ~= (was.side > 0) and vw == was.vw and floor == was.floor
-		-- (The tree's column come or gone (a file tab shown or left, its tree
-		-- out or in, the fit's room for it), or its width put back.)
-		local tree_moved = tree ~= was.tree and vw == was.vw and floor == was.floor
+		-- (The tree's column come or gone in this panel as it showed (its
+		-- toggle, the fit's room for it), or its width put back. Not the
+		-- route: arriving at a chat, or its panel shown again, the tree there
+		-- as it is, the width is the chat's own (`split`), never split again.)
+		local tree_moved = tree ~= was.tree and vw == was.vw and floor == was.floor and was.on and who == was.who
 		if tree_moved and tree_dragging:peek() then
 			-- Its edge under the hand: the tree and the file trade width, the
 			-- panel as wide as it was.
@@ -749,6 +770,15 @@ return function(props: Props): Node
 			if chosen:peek() then
 				chosen:set(false)
 			end
+			local part = share(vw, side)
+			alloc.pref = part
+			files_w:set(part)
+			r = math.min(part, allowed)
+		elseif tree ~= was.tree and was.on and who ~= was.who and not chosen:peek() and floor <= fit.CHAT_PANEL_MIN and not shell_view.expanded:peek() then
+			-- Another chat's panel, a tree's column there and none here (a
+			-- plugin's page has no folder) or the other way: at its share, it
+			-- stays at its share there, the chat and this 50/50 again. (A width
+			-- chosen holds instead, beside the tree or not, below.)
 			local part = share(vw, side)
 			alloc.pref = part
 			files_w:set(part)
@@ -825,16 +855,6 @@ return function(props: Props): Node
 		if r ~= right_w:peek() then
 			right_w:set(r)
 		end
-	end
-	-- (Whose panel shows: the session's, a plugin page's; none on a new
-	-- chat. Another one is the route moving, not the person opening or
-	-- closing this one, and the panel lands at once, as it is there.)
-	local function owner(peek: boolean): string
-		local c: any = if peek then route.chat:peek() else route.chat:get()
-		if c.name == "plugin" then
-			return `page:{c.plugin or ""}/{c.page or ""}`
-		end
-		return if c.name == "session" then `chat:{c.session or ""}` else c.name or ""
 	end
 	-- It opens at its share, unless a width was chosen since its toggle
 	-- (its edge dragged, then another chat's panel shown, or the fit hiding
@@ -957,16 +977,7 @@ return function(props: Props): Node
 	local off = ui.use_state(0)
 	local easing: any = nil
 	local steps = 0
-	-- Whose panel shows (the session's, a plugin page's; none on a new
-	-- chat): another one is the route moving, not the person opening or
-	-- closing this one, and the panel lands at once, as it is there.
-	local function owner(peek: boolean): string
-		local c: any = if peek then route.chat:peek() else route.chat:get()
-		if c.name == "plugin" then
-			return `page:{c.plugin or ""}/{c.page or ""}`
-		end
-		return if c.name == "session" then `chat:{c.session or ""}` else c.name or ""
-	end
+	-- (Whose panel shows: `owner`, above.)
 	local function now_of(): { [string]: any }
 		local f = fit.current:peek()
 		return {

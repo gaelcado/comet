@@ -56,6 +56,9 @@ export type Props = {
 	-- A file picked here that's open in another of the panel's tabs: that
 	-- tab is shown instead (true), this one left as it was.
 	open_elsewhere: ((path: string) -> boolean)?,
+	-- "tree" or "file": one part alone (the panel's tree column, a file tab
+	-- beside it); else both.
+	part: ("tree" | "file" | () -> ("tree" | "file")?)?,
 	-- Files carried with the chat's next message (the tree's row menu's Add
 	-- to Chat), in place of the chat page's own.
 	on_add_to_chat: ((paths: { string }, root: string?) -> ())?,
@@ -83,10 +86,6 @@ local add_to_chat = add_to_chat_fn()
 -- How big a file opens (the host's editable limit, as the shipping app).
 local LIMIT = 8 * 1024 * 1024
 
--- Whether the tree shows beside the file: remembered, as the app would.
-local tree_shown = ui.persist("files_tree", true)
--- (Read by the panel: its tree out has a column of its own beside the chat.)
-M.tree_shown = tree_shown
 -- The shell's layout, if it's there (a fixture mounts the files alone): the
 -- tree's width, dragged, and its column beside the chat.
 local shell_view: any = nil
@@ -98,6 +97,10 @@ do
 		shell_view = found
 	end
 end
+-- Whether the tree shows beside the file: remembered, as the app would.
+-- (The shell's, if it's there: its tree out has a column of its own.)
+local tree_shown = if shell_view and shell_view.tree_out then shell_view.tree_out else ui.persist("files_tree", true)
+M.tree_shown = tree_shown
 
 type Where = { key: string, target: api.Target, name: string }
 
@@ -332,32 +335,10 @@ local function folder(w: Workspace, v: View, props: Props, here: () -> Where?): 
 		-- Narrow with a file open, the tree over it: kept by the view, so a
 		-- pane made again shows it as it was.
 		over = ui.state(`files_tree_over:{v.id}`, false),
-		room = w.pane_room,
+		-- (The tree's column its own room: the folder's is its file tabs'.)
+		room = if props.part == "tree" then ui.state(`files_tree_room:{v.id}`, 0) else w.pane_room,
 		width = if shell_view then shell_view.tree_width else nil,
-		least = if shell_view then shell_view.TREE_MIN else nil,
-		most = if shell_view then shell_view.TREE_MAX else nil,
-		default = if shell_view then shell_view.TREE_DEFAULT else nil,
-		dragging = if shell_view then shell_view.tree_dragging else nil,
-		column = if shell_view
-			then function(): boolean?
-				return shell_view.tree_column:get()
-			end
-			else nil,
-		moving = if shell_view
-			then function(): boolean
-				return shell_view.panel_moving:get()
-			end
-			else nil,
-		step = if shell_view
-			then function(): { from: number, to: number, coming: boolean, held: boolean, now: number }?
-				local s = shell_view.tree_step:get()
-				if s == nil then
-					return nil
-				end
-				return { from = s.from, to = s.to, coming = s.coming, held = s.held, now = shell_view.panel_w:get() }
-			end
-			else nil,
-
+		part = props.part,
 		head = "line",
 		w_full = true,
 		grow = 1,
@@ -619,7 +600,7 @@ local Folder = ui.component(function(props: Props): Node
 	end
 	local box: { [any]: any } = {}
 	for k, v in props do
-		if k ~= "project" and k ~= "session" and k ~= "radius" and k ~= "children" and k ~= "view" and k ~= "on_open_in_new_tab" and k ~= "initial" and k ~= "open_elsewhere" and k ~= "on_add_to_chat" and k ~= "escape_hint" then
+		if k ~= "project" and k ~= "session" and k ~= "radius" and k ~= "children" and k ~= "view" and k ~= "on_open_in_new_tab" and k ~= "initial" and k ~= "open_elsewhere" and k ~= "on_add_to_chat" and k ~= "escape_hint" and k ~= "part" then
 			box[k] = v
 		end
 	end
@@ -669,6 +650,12 @@ end)
 
 -- The files pane on its own (the session page's, before the panel).
 M.Pane = Folder
+
+-- Whether `project` or `session` (states or values) has a folder to show:
+-- what the panel's tree column needs.
+function M.has_folder(project: any, session: any): boolean
+	return paths.target_of(project, session) ~= nil
+end
 
 -- One file tab of the panel: `view` its tab's id.
 M.Tab = Folder

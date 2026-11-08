@@ -5134,7 +5134,9 @@ fn layer(input:LayerInput)->vec4<f32> {
 			on_pointer_move = function(e)
 				if resizing then
 					local want = from_w + e.x - from_x
-					edge_drag.at(want, MIN_W, if limit then math.min(MAX_W, limit()) else MAX_W)
+					-- (Its own ends: the fit's limit is its own width, short of room
+					-- or not.)
+					edge_drag.at(want, MIN_W, MAX_W)
 					wide:set(math.clamp(want, MIN_W, MAX_W))
 				end
 			end,
