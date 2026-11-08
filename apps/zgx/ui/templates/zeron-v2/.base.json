@@ -3,8 +3,8 @@
   "ds/tokens.luau": "d04bd73a97beea3a",
   "screens/chat/composer.luau": "e7bd67026431be13",
   "screens/chat/lane_tab.luau": "a9fecb51d8abbfc5",
-  "screens/panel/init.luau": "cd134577fdd34a70",
+  "screens/panel/init.luau": "b3ded567122255a4",
   "screens/shell/init.luau": "524834862e434631",
   "screens/shell/page.luau": "bdc5dd2db1fd81d9",
-  "screens/shell/view.luau": "cb74b4717c002901"
+  "screens/shell/view.luau": "c958f3c9b9cd4705"
 }
