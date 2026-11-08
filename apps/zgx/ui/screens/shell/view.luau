@@ -20,6 +20,7 @@
 --                          the panel leaves it)
 
 local route = require("@app/screens/shell/route")
+local policy = require("@app/screens/shell/fit_policy")
 
 local M = {}
 
@@ -125,10 +126,11 @@ end
 -- lays out with it from the first frame.
 M.tree_out = ui.persist("files_tree", true)
 M.panel_folder = ui.state("shell_panel_folder", {} :: { [string]: boolean })
--- The tree's width, as Zeron's Files' (`files_panel_width`): 286, its edge
--- dragged between 220 and 440, kept across launches. And whether that edge
+-- The tree's width: the fit's Files column (fit_policy's FILES_PANEL_*: its
+-- default, its edge dragged between the least and the most), kept across
+-- launches. And whether that edge
 -- is being dragged (what's beside it follows at once, no step).
-M.TREE_MIN, M.TREE_DEFAULT, M.TREE_MAX = 220, 286, 440
+M.TREE_MIN, M.TREE_DEFAULT, M.TREE_MAX = policy.FILES_PANEL_MIN, policy.FILES_PANEL_DEFAULT, policy.FILES_PANEL_MAX
 M.tree_width = ui.persist("shell_tree_width", M.TREE_DEFAULT)
 M.tree_dragging = ui.state("shell_tree_dragging", false)
 -- The tree has its column (the fit gives it room: the panel grows by it;
