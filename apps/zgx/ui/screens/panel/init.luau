@@ -1479,6 +1479,7 @@ M.Panel = ui.component(function(props: Props): Node
 	-- panel's edge uncovers it, or covers it, whole as the step lands; it
 	-- fades only a little (ds/motion `content`).
 	local tree_col: Node? = nil
+	local tree_room: Node? = nil
 	local tree_edge: Node? = nil
 	if shell_view and shell_view.tree_column then
 		local nudge_drag = seam.drag()
@@ -1541,13 +1542,18 @@ M.Panel = ui.component(function(props: Props): Node
 				anime.animate(col_el, motion.content(on, false, on))
 			end
 		end)
+		-- (Its room in the row beside the tabs; the column itself stands over
+		-- it, absolute at the panel's right, so a row resized (the window's
+		-- edge, the panel's) never lays its tree out again: it only moves.)
+		tree_room = ui.div { w = room, shrink = 0 }
 		tree_col = ui.div {
 			id = "panel-tree",
 			w = room,
-			h_full = true,
-			shrink = 0,
+			absolute = true,
+			right = 0,
+			top = 0,
+			bottom = 0,
 			overflow = "hidden",
-			relative = true,
 			hidden = function(): boolean
 				return room() <= 0.5
 			end,
@@ -1800,6 +1806,7 @@ M.Panel = ui.component(function(props: Props): Node
 			min_h = 0,
 			relative = true,
 			panes,
+			tree_room,
 			tree_col,
 			tree_edge,
 		},
