@@ -325,12 +325,25 @@ test("a tab still opens its chat on a click, and reorders by a drag, with its me
 	app:frames(20)
 	expect(tostring(app:state("shell_route_path")):find("a1", 1, true) ~= nil).to_be(true)
 	expect(box(app, "#session-tab-a1").x < box(app, "#session-tab-a2").x).to_be(true)
-	-- (To the tab past the next: it passes the next one's middle on the way.
-	-- Dropped on a tab's own middle, it stays before that tab.)
+	-- (To the tab past the next: its middle passes the next one's on the way.)
 	app:drag("#session-tab-a1", "#session-tab-a3")
 	app:frames(40)
 	expect(box(app, "#session-tab-a2").x < box(app, "#session-tab-a1").x).to_be(true)
-	expect(box(app, "#session-tab-a1").x < box(app, "#session-tab-a3").x).to_be(true)
+	expect(box(app, "#session-tab-b1").x > box(app, "#session-tab-a1").x).to_be(true)
+	expect(app:error()).to_be_nil()
+end)
+
+-- A tab carried off the strip and let go over nothing flies back into its
+-- place: one tab throughout, none left behind in the strip while it's away.
+test("a tab let go off the strip goes back to its place", function()
+	local app = all_open()
+	app:frames(20)
+	local was = box(app, "#session-tab-a2").x
+	app:drag("#session-tab-a2", "#star-banner")
+	app:frames(60)
+	expect(math.abs(box(app, "#session-tab-a2").x - was) <= 0.5).to_be(true)
+	expect(box(app, "#session-tab-a1").x < was).to_be(true)
+	expect(box(app, "#session-tab-a3").x > was).to_be(true)
 	expect(app:error()).to_be_nil()
 end)
 
@@ -615,5 +628,24 @@ test("a split turned from a row to a column has a divider that goes up and down"
 	app:frames(30)
 	expect(app:wait("#split-divider-col:/1", { timeout_ms = 2000 })).to_be(true)
 	expect(app:wait("#split-divider-row:/1", { timeout_ms = 200 })).to_be(false)
+	expect(app:error()).to_be_nil()
+end)
+
+-- The chosen tab's wash is one pill, gliding under whichever tab is chosen.
+test("the chosen tab's wash glides to the tab chosen", function()
+	local app = all_open()
+	app:click("#session-tab-a2")
+	app:frames(40)
+	local pill, a2 = box(app, "#session_tab-chosen"), box(app, "#session-tab-a2")
+	expect(math.abs(pill.x - a2.x) <= 0.5).to_be(true)
+	expect(math.abs(pill.w - a2.w) <= 0.5).to_be(true)
+	app:click("#session-tab-b1")
+	app:frames(2)
+	-- (On its way: past where it was, short of where it goes.)
+	local b1 = box(app, "#session-tab-b1")
+	local mid = box(app, "#session_tab-chosen")
+	expect(mid.x > a2.x and mid.x < b1.x).to_be(true)
+	app:frames(40)
+	expect(math.abs(box(app, "#session_tab-chosen").x - b1.x) <= 0.5).to_be(true)
 	expect(app:error()).to_be_nil()
 end)
