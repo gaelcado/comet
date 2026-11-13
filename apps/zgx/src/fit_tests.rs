@@ -10,9 +10,12 @@ use zgx_script::{ScriptHost, testing::TestApp};
 // reference this checks against.
 const SIDEBAR_MIN: f32 = 242.0;
 const RIGHT_PANE_MIN: f32 = 360.0;
-// (Files' least: Zeron's is 220; here nothing (screens/shell/fit `TREE`): the
-// tree stands beside the file inside the panel, whatever the panel's width.)
-const FILES_PANEL_MIN: f32 = 0.0;
+// (Files' least here: the tree's column while a file tab shows it, at its
+// width (Zeron's Files default, 286): the fit shows it only where the file
+// beside it keeps the panel's least (screens/shell/fit `tree_width`).)
+const FILES_PANEL_MIN: f32 = 286.0;
+// The tree's width, its column beside the file (Zeron's Files' default).
+const TREE: f32 = 286.0;
 const CHAT_PANEL_MIN: f32 = 300.0;
 // What the sidebar's column has past its limit: the window's edge before its card.
 const SIDEBAR_EDGE: f32 = 5.0;
@@ -83,8 +86,18 @@ fn horizontal_panel_fit(
 }
 
 fn mount() -> TestApp {
+    // (The tree put away, as Zeron's Files column closed: these are the chat
+    // and the panel's. Its column's own tests show it.)
+    mount_tree(false)
+}
+
+/// The shell, its tree out (as it starts, never asked for) or put away.
+fn mount_tree(out: bool) -> TestApp {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui/shell_fixture.luau");
     let app = TestApp::new(|runtime| ScriptHost::new(runtime, path));
+    if !out {
+        app.host.set_state("files_tree", crate::plugins::json_value(&serde_json::json!(false))).unwrap();
+    }
     app.ui.scene.borrow_mut().resize(1800., 800.);
     app.frames(30);
     app
@@ -113,9 +126,9 @@ fn a_resize_walk_shows_the_columns_zerons_policy_shows() {
         app.frames(30);
         let side = app.bounds("#shell-sidebar").width;
         let panel = app.bounds("#shell-files").width;
-        // (The sidebar opened first, then the panel: the tree, Zeron's Files, is
-        // open with it and takes no room of its own.)
-        let want = horizontal_panel_fit(w, sidebar_width, (true, 1), (true, 3), (true, 0), false);
+        // (The sidebar opened first, then the panel, on its home: no file tab,
+        // so no tree's column.)
+        let want = horizontal_panel_fit(w, sidebar_width, (true, 1), (true, 3), (false, 0), false);
         let shows = (side > 0.5, panel > 0.5);
         if shows != (want.sidebar, want.right) {
             faults.push(format!("{w}: shows sidebar {} panel {}, Zeron's {} {}", shows.0, shows.1, want.sidebar, want.right));
@@ -312,6 +325,13 @@ fn share_of(vw: f32, side: f32) -> f32 {
     content_split(vw - side - gaps)
 }
 
+/// The same with the tree's column `tree` wide beside the file: the panel is
+/// the tree and the file's share of what's left (Zeron's Files column).
+fn share_with(vw: f32, side: f32, tree: f32) -> f32 {
+    let gaps = if side > 0.5 { SIDEBAR_EDGE + 4. } else { 5. } + 4. + 5.;
+    tree + content_split(vw - side - gaps - tree)
+}
+
 /// A window resized continuously keeps the chat and the panel at half each,
 /// as Zeron's does (`observe_viewport_width`), at once: the change shared
 /// between them, each keeping its least. Everything in it moves one way,
@@ -344,8 +364,9 @@ fn a_window_resize_keeps_the_chat_and_the_panel_at_half_each() {
         "#shell-files >> role:textbox \"README.md\"",
         "#transcript",
     ];
+    // (The tree put away: no column of its own.)
     let fit = |w: f32| {
-        let f = horizontal_panel_fit(w, 256., (true, 1), (true, 3), (true, 0), false);
+        let f = horizontal_panel_fit(w, 256., (true, 1), (true, 3), (false, 0), false);
         (f.sidebar, f.right, f.files)
     };
     let mut faults = Vec::new();
@@ -358,17 +379,9 @@ fn a_window_resize_keeps_the_chat_and_the_panel_at_half_each() {
             app.frames(30);
             let mut last: Option<(f32, Vec<Option<f32>>, f32, Option<f32>)> = None;
             let mut changed_at: Option<usize> = None;
-            let mut was_narrow: Option<bool> = None;
             for (frame, &w) in sweep.iter().enumerate() {
                 app.ui.scene.borrow_mut().resize(w, 800.);
                 app.frame();
-                // (The Files pane crossing its narrow line, 288 + 240, as the
-                // panel narrows or widens with the window: the tree goes or
-                // comes beside the file then, at once, Wing's narrow rule;
-                // the file moves by the tree's width that once.)
-                let narrow = app.bounds("files-pane").width < 288. + 240.;
-                let crossed = was_narrow.is_some_and(|n| n != narrow);
-                was_narrow = Some(narrow);
                 let xs: Vec<Option<f32>> = parts.iter().map(|p| x_of(&mut app, p).map(|(x, _)| x)).collect();
                 let side = app.bounds("#shell-sidebar").width;
                 let more = x_of(&mut app, parts[2]).map(|(x, wd)| w - x - wd);
@@ -388,9 +401,6 @@ fn a_window_resize_keeps_the_chat_and_the_panel_at_half_each() {
                             // (No more than the window's own step, the file. A
                             // sidebar coming back moves it, within the ease above.)
                             let file = i == 3 || i == 4;
-                            if file && crossed {
-                                continue;
-                            }
                             if file && !easing && (b - a).abs() > dw.abs() + 1. {
                                 faults.push(format!("step {step}, {lw} → {w}: the file ({}) moved {a} → {b}", parts[i]));
                             }
@@ -419,8 +429,9 @@ fn a_window_resize_keeps_the_chat_and_the_panel_at_half_each() {
                     // share of what the sidebar leaves.
                     let panel = app.bounds("#shell-files").width;
                     let card = if side > 0.5 { side - SIDEBAR_EDGE } else { 0. };
-                    if !easing && fit(w).1 && (panel - share_of(w, card)).abs() > 1. {
-                        faults.push(format!("step {step}, at {w}: the panel is {panel}, its share {}", share_of(w, card)));
+                    let want = if fit(w).2 { share_with(w, card, TREE) } else { share_of(w, card) };
+                    if !easing && fit(w).1 && (panel - want).abs() > 1. {
+                        faults.push(format!("step {step}, at {w}: the panel is {panel}, its share {want}"));
                     }
                 }
                 last = Some((w, xs, side, more));
@@ -430,64 +441,39 @@ fn a_window_resize_keeps_the_chat_and_the_panel_at_half_each() {
     assert!(faults.is_empty(), "{}", faults.join("\n"));
 }
 
-/// A panel dragged narrower in a wide window keeps its tree beside the file while
-/// there's room for a file beside it (288 + 240); under that the file has the
-/// panel's whole width and the tree closes (ds/files_pane's narrow pane): there's
-/// no floating it either way. While the edge is dragged the panel is as wide as
-/// the pointer says (no jump), and let go it stays there.
+/// A panel dragged narrower keeps the tree's column beside the tabs and
+/// stops at the column and the file's least beside it (Zeron's right pane's,
+/// 360): there's no floating the tree. While the edge is dragged the panel is
+/// as wide as the pointer says (no jump), and let go it stays there.
 #[test]
 fn a_narrow_panel_keeps_its_tree_beside_the_file() {
     use zgx::input::{InputEvent, Modifiers, PointerButton};
-    let mut app = mount();
+    let mut app = mount_tree(true);
     app.ui.scene.borrow_mut().resize(1600., 800.);
     app.frames(30);
     app.click("#shell-sidebar >> role:button \"Fix the build\"");
     app.frames(20);
     app.click("#titlebar >> role:button \"Panel\"");
-    app.frames(40);
-    app.click("#panel-open-files");
-    assert!(app.wait_until(|app| app.find("#shell-files >> role:treeitem \"README.md\"").is_some()));
-    app.click("#shell-files >> role:treeitem \"README.md\"");
     app.frames(60);
-    // Beside the tree: the file starts past it.
-    let docked = |app: &mut TestApp| {
-        let panel = x_of(app, "#shell-files").unwrap().0;
-        let file = x_of(app, "#file-viewer-head").unwrap().0;
-        file - panel > 100.
-    };
-    assert!(docked(&mut app), "a wide panel has its tree beside the file");
     let (button, m) = (PointerButton::Primary, Modifiers::default());
-    // The edge dragged to make the panel `w` wide and let go: where the tree
-    // stands then, and mid-drag the panel follows the pointer.
-    let drag_to = |app: &mut TestApp, w: f32| {
+    let least = TREE + RIGHT_PANE_MIN;
+    for w in [760., 700., 720., 500.] {
         let edge = app.bounds("\"Resize files\"");
         let (x, y) = (edge.x + edge.width / 2., edge.y + edge.height / 2.);
         let open = app.bounds("#shell-files").width;
         app.ui.input.forget_clicks();
         app.ui.dispatch_with_modifiers(InputEvent::PointerMove { x, y }, m);
         app.ui.dispatch_with_modifiers(InputEvent::PointerDown { x, y, button }, m);
-        let to = x + open - w;
-        app.ui.dispatch_with_modifiers(InputEvent::PointerMove { x: to, y }, m);
+        app.ui.dispatch_with_modifiers(InputEvent::PointerMove { x: x + open - w, y }, m);
         app.frames(30);
+        let want = w.max(least);
         let now = app.bounds("#shell-files").width;
-        assert!((now - w).abs() < 0.5, "dragged to {w}, the panel is {now}");
-        assert_eq!(docked(app), w >= 528., "dragged to {w}: the tree beside the file only with room for both");
-        app.ui.dispatch_with_modifiers(InputEvent::PointerUp { x: to, y, button }, m);
+        assert!((now - want).abs() < 0.5, "dragged to {w}, the panel is {now}, {want} wanted");
+        app.ui.dispatch_with_modifiers(InputEvent::PointerUp { x: x + open - w, y, button }, m);
         app.ui.input.forget_clicks();
         app.frames(30);
-        let now = app.bounds("#shell-files").width;
-        assert!((now - w).abs() < 0.5, "let go at {w}, the panel is {now}");
-        docked(app)
-    };
-    for w in [668., 638., 658., 678.] {
-        assert!(drag_to(&mut app, w), "at {w}: the tree stays beside the file");
+        assert!((app.bounds("#panel-tree").width - TREE).abs() < 0.5, "at {w}: the tree's column beside the tabs");
     }
-    // Narrow: the file has the whole panel, the tree closed, not floating over it.
-    assert!(!drag_to(&mut app, 420.), "at 420: the file has the panel's whole width");
-    let panel = x_of(&mut app, "#shell-files").unwrap().0;
-    let file = x_of(&mut app, "#file-viewer-head").unwrap().0;
-    assert!((file - panel).abs() <= 1.5, "at 420 the file starts at the panel's start (its card's hairline in) ({file} against {panel})");
-    assert!((app.bounds("#shell-files").width - 420.).abs() < 0.5, "it stays where it was let go");
 }
 
 /// The sidebar folding or coming back splits the chat and the panel again,
@@ -752,4 +738,128 @@ fn a_seam_dragged_past_its_limit_bounces() {
     assert!((rest - 400.).abs() < 0.5, "held at its most: {rest}");
     assert!(most > 402. && most <= 405.5, "it gave a few points past its most and came back: {seen:?}");
     assert!(held < 0.02, "its light dims, held at its most: {held}");
+}
+
+/// The tree's column, as Zeron's Files column: while the tree is out it
+/// stands at the panel's right, by the window's edge, whatever the tabs
+/// show; the panel is the tree and the tabs' share, the chat and the tabs
+/// splitting what's left 50/50. What the tabs show never moves anything (a
+/// new tab, a file tab, back). Its toggle (⌘E) is what changes widths: hidden
+/// and shown again, the tree stands where it is while the panel's edge
+/// sweeps over it, the chat moving one way a frame at a time. Short of room,
+/// the column asked for longest ago goes, as Zeron's: at 1000 with the
+/// sidebar, a tree never asked for goes first; asked for (⌘E), the sidebar
+/// gives way. (Overrides Wing's 798ce694, "the panel no longer grows for
+/// it", at Gaël's request.)
+#[test]
+fn the_tree_has_a_column_of_its_own_and_the_chat_and_the_file_split_the_rest() {
+    let open = |w: f32| {
+        let mut app = mount_tree(true);
+        app.ui.scene.borrow_mut().resize(w, 800.);
+        app.frames(30);
+        app.click("#shell-sidebar >> role:button \"Fix the build\"");
+        app.frames(20);
+        app.click("#titlebar >> role:button \"Panel\"");
+        app.frames(60);
+        app
+    };
+    let shown = |app: &mut TestApp| -> f32 {
+        let Some(id) = app.find("#panel-tree") else { return 0. };
+        app.ui.prepare_frame();
+        app.ui.scene.borrow().visible_bounds(id).map_or(0., |r| r.width)
+    };
+    let tree_x = |app: &mut TestApp| -> f32 {
+        let id = app.find("#panel-tree >> #files-tree-beside").expect("the tree");
+        app.ui.prepare_frame();
+        app.ui.scene.borrow().transformed_bounds(id).x
+    };
+    let chat = |app: &mut TestApp| app.bounds("#shell-page-room").width;
+    let panel = |app: &mut TestApp| app.bounds("#shell-files").width;
+    let mut app = open(1340.);
+    assert!((shown(&mut app) - TREE).abs() < 0.5, "the tree's column beside the panel's home");
+    let w = panel(&mut app);
+    assert!((w - share_with(1340., 256., TREE)).abs() < 0.5, "the tree's column and the tabs' share: {w}");
+    assert!((chat(&mut app) - (w - TREE)).abs() < 1.5, "the chat {} and the tabs {} split the rest", chat(&mut app), w - TREE);
+    // What the tabs show moves nothing.
+    for step in ["#panel-open-files", "#panel-strip >> role:button \"New Tab\"", "#panel-tab-tab1"] {
+        app.click(step);
+        for _ in 0..20 {
+            app.frame();
+            assert!((panel(&mut app) - w).abs() < 0.5, "{step}: the panel stays {w}, not {}", panel(&mut app));
+        }
+    }
+    let rest = tree_x(&mut app);
+    for (hiding, end) in [(true, share_of(1340., 256.)), (false, share_with(1340., 256., TREE))] {
+        assert!(app.host.run_command("shell.toggle_files_tab"));
+        let mut chats = vec![chat(&mut app)];
+        for _ in 0..24 {
+            app.frame();
+            chats.push(chat(&mut app));
+            if shown(&mut app) > 0.5 {
+                let x = tree_x(&mut app);
+                assert!((x - rest).abs() < 0.05, "{}: the tree stands at {rest}, not {x}", if hiding { "hiding" } else { "showing" });
+            }
+        }
+        let way = if hiding { 1. } else { -1. };
+        assert!(chats.windows(2).all(|c| (c[1] - c[0]) * way >= -0.05), "the chat one way: {chats:?}");
+        app.frames(30);
+        assert!((panel(&mut app) - end).abs() < 0.5, "the panel ends at {end}: {}", panel(&mut app));
+    }
+    let mut app = open(1000.);
+    assert!(shown(&mut app) < 0.5, "1000 with the sidebar: a tree never asked for gives way");
+    assert!((panel(&mut app) - share_of(1000., 256.)).abs() < 0.5, "the panel at its share: {}", panel(&mut app));
+    assert!(app.host.run_command("shell.toggle_files_tab"));
+    app.frames(60);
+    assert!((shown(&mut app) - TREE).abs() < 0.5, "asked for, the tree's column shows");
+    assert!(app.bounds("#shell-sidebar").width < 0.5, "and the sidebar, opened longest ago, gives way");
+}
+
+/// The tree's column's edge is a seam as the others are: dragged, the tree
+/// and the tabs trade width, the panel holding; it stops at 220 and 440
+/// (Zeron's Files), giving a few points past and coming back; double-clicked,
+/// it's back at 286, the chat and the tabs splitting again.
+#[test]
+fn the_tree_s_edge_drags_between_zeron_s_files_limits_and_double_clicks_back() {
+    use zgx::input::{InputEvent, Modifiers, PointerButton};
+    let mut app = mount_tree(true);
+    app.ui.scene.borrow_mut().resize(1500., 800.);
+    app.frames(30);
+    app.click("#shell-sidebar >> role:button \"Fix the build\"");
+    app.frames(20);
+    app.click("#titlebar >> role:button \"Panel\"");
+    app.frames(60);
+    let tree = |app: &mut TestApp| app.bounds("#panel-tree").width;
+    let panel = |app: &mut TestApp| app.bounds("#shell-files").width;
+    let before = panel(&mut app);
+    let (button, m) = (PointerButton::Primary, Modifiers::default());
+    let edge = app.bounds("\"Resize file tree\"");
+    assert!((edge.width - 20.).abs() < 0.5, "it takes the pointer 10 either side: {}", edge.width);
+    let (x, y) = (edge.x + edge.width / 2., edge.y + edge.height / 2.);
+    app.ui.input.forget_clicks();
+    app.ui.dispatch_with_modifiers(InputEvent::PointerMove { x, y }, m);
+    app.ui.dispatch_with_modifiers(InputEvent::PointerDown { x, y, button }, m);
+    app.ui.dispatch_with_modifiers(InputEvent::PointerMove { x: x - 60., y }, m);
+    app.frames(10);
+    assert!((tree(&mut app) - (TREE + 60.)).abs() < 0.5, "dragged 60 wider: {}", tree(&mut app));
+    assert!((panel(&mut app) - before).abs() < 0.5, "the panel holds: {}", panel(&mut app));
+    let mut seen = Vec::new();
+    for i in 1..=4 {
+        app.ui.dispatch_with_modifiers(InputEvent::PointerMove { x: x - 60. - 100. * i as f32, y }, m);
+        app.frame();
+        seen.push(tree(&mut app));
+    }
+    for _ in 0..20 {
+        app.frame();
+        seen.push(tree(&mut app));
+    }
+    let most = seen.iter().copied().fold(f32::MIN, f32::max);
+    assert!((seen.last().unwrap() - 440.).abs() < 0.5 && most > 441. && most <= 445.5, "it stops at 440, giving a few points past: {seen:?}");
+    app.ui.dispatch_with_modifiers(InputEvent::PointerUp { x: x - 460., y, button }, m);
+    app.ui.input.forget_clicks();
+    app.frames(30);
+    let edge = app.bounds("\"Resize file tree\"");
+    double_click(&mut app, (edge.x + edge.width / 2., edge.y + edge.height / 2.));
+    app.frames(60);
+    assert!((tree(&mut app) - TREE).abs() < 0.5, "double-clicked, back at 286: {}", tree(&mut app));
+    assert!((panel(&mut app) - share_with(1500., 256., TREE)).abs() < 0.5, "the chat and the tabs split again: {}", panel(&mut app));
 }

@@ -372,57 +372,42 @@ fn the_next_previous_and_archive_shortcuts() {
     assert!(!w.closed.get());
 }
 
-/// ⌘E and ⌘J: the session's panel on its files, on its terminal. Pressed
-/// with the panel closed, it opens on that tab (a new one when the panel has
-/// none, the one it has when it does); pressed while that tab is in front,
-/// the panel closes.
+/// ⌘E and ⌘J. ⌘E is the file tree's column, as Zeron's ⌘E was its Files
+/// column: pressed with the panel closed, the panel opens with the tree
+/// beside its tabs; pressed with the tree's column there, it's put away (the
+/// panel stays); again, it's back. ⌘J is the panel on its terminal: pressed
+/// with the panel closed, it opens on a terminal's tab; pressed while that
+/// tab is in front, the panel closes.
 #[test]
-fn command_e_and_j_toggle_the_panels_files_and_terminal() {
+fn command_e_toggles_the_tree_and_j_the_panels_terminal() {
     let mut w = mount();
     w.app.click("#shell-sidebar >> role:button \"Fix the build\"");
     w.app.frames(20);
     let open = |w: &mut Window| w.app.bounds("#shell-files").width > 0.;
-    let tabs = |w: &mut Window, name: &str| w.app.tree().matches(&format!(" tab \"{name}\"")).count();
-    // What the panel shows: its files, or (a terminal's tab in front) not.
-    let front = |w: &mut Window| -> Option<String> {
-        let shows = |w: &mut Window, target: &str| {
-            let t = zgx_script::driver::parse(target).unwrap();
-            w.app.ui.prepare_frame();
-            let found = zgx_script::driver::find_all(&w.app.ui, &w.app.handle, &t).unwrap_or_default();
-            let scene = w.app.ui.scene.borrow();
-            found.into_iter().any(|id| scene.layout_visible(id) && scene.bounds(id).width > 0.)
-        };
-        if !shows(w, "#panel") {
-            None
-        } else if shows(w, "#files-pane") {
-            Some("Files".into())
-        } else {
-            Some("Terminal".into())
-        }
-    };
+    let tree = |w: &mut Window| w.app.find("#panel-tree").is_some() && w.app.bounds("#panel-tree").width > 0.5;
+    // What the panel shows in front: a terminal (its pane laid out) or not.
+    let terminal = |w: &mut Window| w.app.find("#panel-terminal-tab1").is_some() && w.app.bounds("#panel-terminal-tab1").width > 0.;
     assert!(!open(&mut w), "the panel starts closed");
     assert_eq!(w.press("cmd+e").as_deref(), Some("shell.toggle_files_tab"));
-    w.app.frames(30);
+    w.app.frames(60);
     assert!(open(&mut w), "⌘E opens the panel");
-    assert_eq!(front(&mut w).as_deref(), Some("Files"), "on a Files tab:\n{}", w.app.tree());
-    assert_eq!(tabs(&mut w, "Files"), 1, "a new one");
+    assert!(tree(&mut w), "the tree's column beside its tabs:\n{}", w.app.tree());
     w.press("cmd+e");
-    w.app.frames(30);
-    assert!(!open(&mut w), "⌘E again, its Files in front: closed");
+    w.app.frames(60);
+    assert!(open(&mut w), "⌘E again: the panel stays");
+    assert!(!tree(&mut w), "and the tree is put away");
+    w.press("cmd+e");
+    w.app.frames(60);
+    assert!(tree(&mut w), "⌘E again: the tree is back");
+    w.press("cmd+r");
+    w.app.frames(60);
+    assert!(!open(&mut w), "⌘R closes the panel");
     assert_eq!(w.press("cmd+j").as_deref(), Some("shell.toggle_terminal"));
-    w.app.frames(30);
+    w.app.frames(60);
     assert!(open(&mut w), "⌘J opens the panel");
-    assert_eq!(front(&mut w).as_deref(), Some("Terminal"), "on a terminal:\n{}", w.app.tree());
-    w.press("cmd+e");
-    w.app.frames(30);
-    assert!(open(&mut w), "⌘E with the terminal in front: still open");
-    assert_eq!(front(&mut w).as_deref(), Some("Files"), "its Files tab brought to the front");
-    assert_eq!(tabs(&mut w, "Files"), 1, "the one it had, not another");
+    assert!(terminal(&mut w), "on a terminal:\n{}", w.app.tree());
     w.press("cmd+j");
-    w.app.frames(30);
-    assert_eq!(front(&mut w).as_deref(), Some("Terminal"), "and back to the terminal it had");
-    w.press("cmd+j");
-    w.app.frames(30);
+    w.app.frames(60);
     assert!(!open(&mut w), "⌘J again: closed");
 }
 

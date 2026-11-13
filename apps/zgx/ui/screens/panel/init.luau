@@ -58,6 +58,7 @@ local control = require("@ds/control")
 local token = require("@ds/token")
 local motion = require("@ds/motion")
 local TabStrip = require("@ds/tab_strip")
+local seam = require("@ds/seam")
 local Icon = require("@ds/icon")
 local FileIcon = require("@ds/file_icons")
 local FadeText = require("@ds/fade_text")
@@ -707,6 +708,29 @@ M.Panel = ui.component(function(props: Props): Node
 		local h = held(k)
 		return if h then h.id else state.of(k).active
 	end
+	-- Whether the tree's column stands beside the tabs (the shell's fit:
+	-- out, and the window has room for it).
+	local function tree_column(): boolean
+		return shell_view ~= nil and shell_view.tree_column ~= nil and shell_view.tree_column:get() == true
+	end
+	-- (The shell told whether this session has a folder for the tree's
+	-- column: the column then stands beside the tabs whatever they show,
+	-- as Zeron's Files column stood beside the right pane. What the tabs
+	-- show never moves it. Kept as told, so the chat arrived at again lays
+	-- out with it at once.)
+	if shell_view and shell_view.panel_folder then
+		ui.effect(function()
+			local s = control.value(session)
+			local id = if type(s) == "table" then s.id elseif type(s) == "string" then s else nil
+			if type(id) ~= "string" then
+				return
+			end
+			local has = Files.has_folder(project, session)
+			if shell_view.panel_folder:peek()[id] ~= has then
+				shell_view.panel_folder:set_key(id, has)
+			end
+		end)
+	end
 
 	-- Closing: a file tab with unsaved changes asks first; a terminal with
 	-- something running asks too (its kind says).
@@ -809,12 +833,6 @@ M.Panel = ui.component(function(props: Props): Node
 		local hovered = ui.use_state(false)
 		local ref = ui.ref()
 		chip_refs[id] = ref
-		-- (Gone with its tab: neither kept for one closed.)
-		ui.on_cleanup(function()
-			if chip_refs[id] == ref then
-				chip_refs[id], chip_faces[id] = nil, nil
-			end
-		end)
 		local function is_active(): boolean
 			return active() == id
 		end
@@ -1403,6 +1421,12 @@ M.Panel = ui.component(function(props: Props): Node
 				project = project,
 				session = session,
 				view = tab.id,
+				-- (The file alone while the panel's tree column is out: the
+				-- tree is there, beside the tabs.)
+				part = function(): ("tree" | "file")?
+					local stepping = shell_view ~= nil and shell_view.tree_step ~= nil and shell_view.tree_step:get() ~= nil
+					return if tree_column() or stepping then "file" else nil
+				end,
 				initial = tab.path,
 				-- (Said with the code: Tab indents there.)
 				-- (A string, read as the tab is made.)
@@ -1514,13 +1538,217 @@ M.Panel = ui.component(function(props: Props): Node
 	end, { w_full = true, grow = 1, min_h = 0, hidden = closed })
 
 	local panes = ui.column {
-		w_full = true,
 		grow = 1,
-		min_h = 0,
+		min_w = 0,
+		h_full = true,
 		relative = true,
 		hidden = closed,
 		content,
 	}
+
+	-- The tree's column, as Zeron's Files column: while the tree is out and
+	-- the window has room for it (the shell's fit), it stands at the panel's
+	-- right, by the window's edge, whatever the tabs show, at its own width
+	-- (286, its edge dragged between 220 and 440). So nothing the panel does
+	-- (opening, expanding, a sidebar folding, an edge dragged) moves it. Coming or going (its toggle, ⌘⇧E; the room for
+	-- it), it stands where it is and its room follows the panel's step, the
+	-- tabs beside it taking or giving that room a frame at a time, so the
+	-- panel's edge uncovers it, or covers it, whole as the step lands; it
+	-- fades only a little (ds/motion `content`).
+	local tree_col: Node? = nil
+	local tree_room: Node? = nil
+	local tree_edge: Node? = nil
+	if shell_view and shell_view.tree_column then
+		local nudge_drag = seam.drag()
+		local function tree_w(): number
+			return math.clamp(shell_view.tree_width:get(), shell_view.TREE_MIN, shell_view.TREE_MAX) + nudge_drag.nudge:get()
+		end
+		-- (Gone as the panel's edge covers it: kept until that step lands.)
+		local parked = ui.use_state(false)
+		local was_on = tree_column()
+		local saw_moving = false
+		ui.effect(function()
+			local on = tree_column()
+			if on == was_on then
+				return
+			end
+			was_on = on
+			if on then
+				parked:set(false)
+			elseif not motion.reduced_now() then
+				saw_moving = false
+				parked:set(true)
+				ui.after(2 * motion.PANEL_MS, function()
+					if parked:peek() and not saw_moving then
+						parked:set(false)
+					end
+				end)
+			end
+		end)
+		ui.effect(function()
+			local m = shell_view.panel_moving:get()
+			if not parked:get() then
+				return
+			end
+			if m then
+				saw_moving = true
+			elseif saw_moving then
+				saw_moving = false
+				parked:set(false)
+			end
+		end)
+		local function room(): number
+			if not (tree_column() or parked:get()) then
+				return 0
+			end
+			-- (Coming or going: from what the tabs give up as the panel widens
+			-- to all of it, or back.)
+			local st = shell_view.tree_step:get()
+			if st and math.abs(st.from - st.to) > 0.5 then
+				local p = math.clamp((shell_view.panel_w:get() - st.from) / (st.to - st.from), 0, 1)
+				local gap = if st.held then math.abs(st.to - st.from) else 0
+				local a, b = if st.coming then gap else tree_w(), if st.coming then tree_w() else gap
+				return math.clamp(a + (b - a) * p, 0, tree_w())
+			end
+			return tree_w()
+		end
+		local col_el: any = nil
+		ui.effect(function()
+			local on = tree_column()
+			if col_el then
+				anime.animate(col_el, motion.content(on, false, on))
+			end
+		end)
+		-- (Its room in the row beside the tabs; the column itself stands over
+		-- it, absolute at the panel's right, so a row resized (the window's
+		-- edge, the panel's) never lays its tree out again: it only moves.)
+		tree_room = ui.div { w = room, shrink = 0 }
+		tree_col = ui.div {
+			id = "panel-tree",
+			w = room,
+			absolute = true,
+			right = 0,
+			top = 0,
+			bottom = 0,
+			overflow = "hidden",
+			hidden = function(): boolean
+				return room() <= 0.5
+			end,
+			on_mount = function(el: any)
+				col_el = el
+				anime.animate(el, motion.content(tree_column(), true))
+			end,
+			-- (At its width, standing at the column's right, by the window's
+			-- edge: its room clips it from the left.)
+			-- (Made while the panel is open, so a panel shut holds no tree, nor
+			-- reads its folder: its rows, kept, show at once as it opens. Put
+			-- away and back, it's the same tree, its row still lit.)
+			ui.presence(function(): string
+				if not (tree_column() or parked:get() or shell_view.files:get() == true) then
+					return ""
+				end
+				return key:get() or ""
+			end, function(k: string): Node
+				if k == "" then
+					return ui.div {}
+				end
+				return ui.column {
+					absolute = true,
+					right = 0,
+					top = 0,
+					bottom = 0,
+					w = tree_w,
+					Files.Pane {
+						part = "tree",
+						project = project,
+						session = session,
+						view = `panel-tree:{k}`,
+						-- (A file picked opens in the panel: in the file tab showing,
+						-- or the one showing it already, or a new one.)
+						open_elsewhere = function(path: string): boolean
+							local other = M.tab_with_file(k, path)
+							if other then
+								state.activate(k, other)
+								return true
+							end
+							local act = state.find(k, state.of(k).active or "")
+							if act and act.kind == "files" and Files.show_in_tab(act.id, path) then
+								return true
+							end
+							state.open(k, "files", { path = path })
+							return true
+						end,
+					},
+				}
+			end, { h_full = true }),
+		}
+		-- Its edge, a seam as the others: dragged, the tree and the tabs trade
+		-- width, the panel holding; bouncing at 220 and 440; double-clicked,
+		-- back to 286, the chat and the file splitting again (ds/seam). It
+		-- takes the pointer `seam.REACH` each side of the column's edge.
+		local over = ui.use_state(false)
+		local held_edge = ui.use_state(false)
+		local from_x, from_w, pressing = 0, 0, false
+		local function dragging(on: boolean)
+			held_edge:set(on)
+			if shell_view.tree_dragging:peek() ~= on then
+				shell_view.tree_dragging:set(on)
+			end
+		end
+		tree_edge = ui.div {
+			absolute = true,
+			z = 2,
+			right = function(): number
+				return ui.raw(room() - seam.REACH, "the seam's reach either side of the tree's edge")
+			end,
+			top = 0,
+			bottom = 0,
+			w = ui.raw(2 * seam.REACH, "the seam's reach either side"),
+			cursor = "col_resize",
+			label = ui.t("panel.resize_tree"),
+			pointer_events = function(): any
+				return if tree_column() and not shell_view.panel_moving:get() then "auto" else "none"
+			end,
+			on_hover = function(inside: boolean)
+				over:set(inside)
+			end,
+			on_press = function(e)
+				if e.clicks == 2 then
+					shell_view.tree_width:set(shell_view.TREE_DEFAULT)
+					return
+				end
+				from_x, from_w, pressing = e.x, shell_view.tree_width:peek(), true
+				dragging(true)
+			end,
+			on_pointer_move = function(e)
+				if pressing then
+					-- (Leftward, wider: it stands at the panel's right.)
+					local want = from_w - (e.x - from_x)
+					nudge_drag.at(want, shell_view.TREE_MIN, shell_view.TREE_MAX)
+					shell_view.tree_width:set(math.clamp(want, shell_view.TREE_MIN, shell_view.TREE_MAX))
+				end
+			end,
+			on_release = function()
+				pressing = false
+				dragging(false)
+				nudge_drag.release()
+			end,
+			-- What lights: the column's edge.
+			ui.div {
+				absolute = true,
+				right = ui.raw(seam.REACH - 1, "the column's edge, in the seam's reach"),
+				top = 0,
+				bottom = 0,
+				w = 2,
+				rounded = "$radius.full",
+				pointer_events = "none",
+				bg = "$border.strong",
+				opacity = seam.lit(function(): boolean
+					return over:get() or held_edge:get()
+				end, nudge_drag),
+			},
+		}
+	end
 
 	local question = ui.div {
 		-- (Closing loses work: no plugin reaches it.)
@@ -1649,7 +1877,16 @@ M.Panel = ui.component(function(props: Props): Node
 		grow = 1,
 		min_h = 0,
 		ui.column { w_full = true, shrink = 0, hidden = closed, strip_row },
-		panes,
+		ui.row {
+			w_full = true,
+			grow = 1,
+			min_h = 0,
+			relative = true,
+			panes,
+			tree_room,
+			tree_col,
+			tree_edge,
+		},
 	}
 	for k, v in props.content or {} do
 		inner[k] = v

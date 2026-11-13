@@ -409,6 +409,7 @@ local Tab = ui.component(function(props: { chat: string, strip: any }): Node
 			end,
 			on_drag = function(): any
 				strip.begin(id)
+				splits.dragging:set(true)
 				return { session_tab = id, session = face(id) }
 			end,
 			on_drag_end = function(payload: any, accepted: boolean)
@@ -537,11 +538,6 @@ function M.Strip(props: { window_x: () -> number, start: () -> number, right: ()
 				splits.move_tab(id, onto)
 			end
 		end,
-		-- (Off the strip, the split's panes show where it can land; over
-		-- it, they stay as they are.)
-		on_away = function(away: boolean)
-			splits.dragging:set(away)
-		end,
 		h = TAB_H,
 		rounded = "$radius.lg",
 	}
@@ -558,14 +554,7 @@ function M.Strip(props: { window_x: () -> number, start: () -> number, right: ()
 		local list = shown:get()
 		local total = content.width or 0
 		local room = view.width or 0
-		-- (Read so it runs again once a carried tab has landed.)
-		strip.order:get()
 		if not s or room <= 0 then
-			return
-		end
-		-- (Not while a tab's carried or settling: it lands on its slot as the
-		-- strip stands, and the strip scrolls under it near an end.)
-		if strip.busy() then
 			return
 		end
 		for _, id in list do

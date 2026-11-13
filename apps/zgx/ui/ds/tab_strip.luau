@@ -27,7 +27,6 @@
 --     selected = () -> string?,   -- the chosen tab
 --     face = (id) -> Node,        -- what a tab shows, still (made afresh)
 --     commit = (id, index) -> (), -- dropped on the strip: its new place
---     on_away = (away) -> (),     -- (optional) carried off the strip, or back
 --     h = 28, rounded = "$radius.lg",
 --   }
 --   strip.order               the ids as the strip shows them: `ui.each` it
@@ -45,11 +44,6 @@
 --   TabStrip.keys(id, list, go, ref_of)   a tab's `on_key`: arrows, Home, End
 
 local motion = require("@self/motion")
-
--- A node id from a strip's key: "panel_tab" gives "panel-tab-…".
-local function id_of(key: string, what: string): string
-	return `{(string.gsub(key, "_", "-"))}-{what}`
-end
 
 local M = {}
 
@@ -164,17 +158,17 @@ function M.Highlight(props: HighlightProps): Node
 		return if measured() then "on" else nil
 	end, function(): Node
 		return ui.div {
-			id = id_of(props.key, "chosen"),
+			id = `{props.key}-chosen`,
 			h = props.h,
 			rounded = props.rounded,
 			bg = "$zeron.selected.flat.bg",
 			pointer_events = "none",
 			x = motion.spring(ui.computed(function(): number
 				return left_in(props.order(), props.width, chosen())
-			end), motion.TAB_SLIDE_SPRING),
+			end), motion.TAB_SPRING),
 			w = motion.spring(ui.computed(function(): number
 				return props.width(chosen())
-			end), motion.TAB_SLIDE_SPRING),
+			end), motion.TAB_SPRING),
 			opacity = function(): number
 				return if props.hidden and props.hidden() then 0 else 1
 			end,
@@ -192,7 +186,6 @@ export type Props = {
 	selected: () -> string?,
 	face: (id: string) -> Node,
 	commit: (id: string, index: number) -> (),
-	on_away: ((away: boolean) -> ())?,
 	h: number,
 	rounded: string,
 }
@@ -331,27 +324,11 @@ function M.new(props: Props)
 		edge_scroll()
 	end
 
-	-- Its phase; carried off the strip or back onto it, the strip says so.
-	local function set_phase(to: Phase)
-		local was = phase:peek()
-		if was == to then
-			return
-		end
-		phase:set(to)
-		if props.on_away and (was == "away") ~= (to == "away") then
-			props.on_away(to == "away")
-		end
-	end
-	-- Still among the strip's tabs (one closed while carried isn't).
-	local function present(id: string): boolean
-		return table.find(props.items(), id) ~= nil
-	end
-
 	local function finish()
 		stop_edge()
 		settle = nil
 		held:set(nil)
-		set_phase("idle")
+		phase:set("idle")
 	end
 
 	-- To its place, on the tabs' spring (at once, with motion reduced).
@@ -361,7 +338,7 @@ function M.new(props: Props)
 			return finish()
 		end
 		stop_edge()
-		set_phase("settling")
+		phase:set("settling")
 		local x = left_in(order:peek(), width, id) - props.offset:peek()
 		if motion.reduced_now() then
 			anime.utils.set(ghost, { x = x })
@@ -402,23 +379,21 @@ function M.new(props: Props)
 		anime.utils.set(ghost, { x = x })
 		at:set(from_at)
 		held:set(id)
-		set_phase("lifted")
+		phase:set("lifted")
 	end
 
 	function self.ended(_payload: any?, accepted: boolean?)
-		local id = held:peek()
-		if dropped or not id then
+		if dropped or not held:peek() then
 			return
 		end
-		if (phase:peek() == "away" and accepted) or not present(id) then
-			-- Taken elsewhere (a split's pane, another window), or closed
-			-- while carried: nothing to fly back.
+		if phase:peek() == "away" and accepted then
+			-- Taken elsewhere (a split's pane, another window).
 			return finish()
 		end
 		-- Let go over nothing, or cancelled (Escape): it flies back into its
 		-- gap, opening again where it was, from where it left the strip.
 		at:set(from_at)
-		set_phase("lifted")
+		phase:set("lifted")
 		settle_in()
 	end
 
@@ -472,14 +447,14 @@ function M.new(props: Props)
 		p.on_drag_over = function(_payload: any, e: any)
 			track(e)
 			if phase:peek() == "away" then
-				set_phase("lifted")
+				phase:set("lifted")
 			end
 			place()
 		end
 		p.on_drag_leave = function()
 			if phase:peek() == "lifted" then
 				stop_edge()
-				set_phase("away")
+				phase:set("away")
 			end
 		end
 		p.on_drop = function(payload: any, e: any)
@@ -487,14 +462,9 @@ function M.new(props: Props)
 			if not id or not carried(payload) then
 				return
 			end
-			-- (Closed while carried: nothing to place.)
-			if not present(id) then
-				dropped = true
-				return finish()
-			end
 			track(e)
 			if phase:peek() ~= "lifted" then
-				set_phase("lifted")
+				phase:set("lifted")
 			end
 			place()
 			dropped = true
@@ -512,8 +482,8 @@ function M.new(props: Props)
 		return if phase:get() == "lifted" then motion.TAB_LIFT else 1
 	end)
 	local layer = ui.div {
-		-- (`#panel-tab-lifted` for "panel_tab".)
-		id = id_of(props.key, "lifted"),
+		-- (`#<key>-lifted`: `#panel_tab-lifted`.)
+		id = `{props.key}-lifted`,
 		ref = ghost,
 		absolute = true,
 		left = 0,

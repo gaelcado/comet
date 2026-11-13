@@ -6,7 +6,8 @@
 -- width keeps the file shown; widening brings the tree back beside it if it
 -- was out. On the pane in ui/files_fixture.luau.
 
-local TREE = 288
+-- (The tree's width: Zeron's Files', 286, the shell's `tree_width`.)
+local TREE = 286
 
 local function settle(app: any)
 	app:frames(60)
@@ -25,10 +26,11 @@ local function width(app: any, target: string): number
 	return w
 end
 
--- Whether the tree is out (any of it in the pane) and how wide it shows.
+-- Whether the tree is out (any of it in the pane) and how wide it shows:
+-- its room's width (the tree stands where it is, its room clipping it).
 local function tree_out(app: any): (boolean, number)
-	local x, w = box(app, "#files-tree-beside")
-	return x + w > 1, x + w
+	local _, w = box(app, "#files-tree-room")
+	return w > 1, w
 end
 
 local function open(w: number): any

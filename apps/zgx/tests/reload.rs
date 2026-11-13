@@ -574,12 +574,19 @@ fn a_reload_keeps_the_panel_where_it_was_scrolled() {
     // In it: a file far down the tree, opened, and read far down.
     assert!(frames_until(&mut app, |app| app.tree().contains(" treeitem \"")), "the folder was never read");
     app.frames(10);
-    let tree = first_under(&mut app, "#files-pane", "tree");
+    // (The tree has its column beside the tabs.)
+    let tree = first_under(&mut app, "#panel-tree", "tree");
     app.scroll(&tree, 1200.);
     app.frames(20);
-    // (A row well down the tree, as it now stands.)
-    let row = app
-        .tree()
+    // (A row well down the tree, as it now stands: read in its column, the
+    // window's dump being cut short past a budget of nodes, the rows last.)
+    let column = {
+        let root = app.find("#panel-tree").unwrap_or_else(|| panic!("no #panel-tree"));
+        let options = zgx_script::driver::TreeOptions { budget: 100_000, ..Default::default() };
+        let (lines, hidden) = zgx_script::driver::tree_lines(&app.ui, &app.handle, Some(root), &options);
+        zgx_script::driver::tree_lines_text(&lines, hidden)
+    };
+    let row = column
         .lines()
         .filter_map(|l| {
             let t = l.trim_start();

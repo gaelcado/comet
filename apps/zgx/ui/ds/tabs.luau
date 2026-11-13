@@ -111,10 +111,9 @@ return ui.component(function(props: Props): Node
 				relative = true,
 				color = ink,
 				-- (Under the pointer, a pill's wash fades in, `TabStrip.Wash`, the
-				-- ink brightening; pressed, a pill darkens, as the strips'. The
-				-- underline look stays as it was.)
+				-- ink brightening; pressed, either look darkens, as the strips'.)
 				hover = if o.disabled then nil else { color = "$text.primary" },
-				active = if pill and not o.disabled then { bg = "$pressed" } else nil,
+				active = if o.disabled then nil else { bg = "$pressed" },
 				on_hover = if pill and not o.disabled
 					then function(inside: boolean)
 						hovered:set(inside)

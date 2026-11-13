@@ -1,10 +1,12 @@
--- A plugin's page's panel and a session's are one width: a plugin's page
--- has no tree, so its panel takes all of the width a session's gives its
--- tree and its tabs, at least the panel's least. (It took a tree's width
--- off there too, opening narrower than a session's, often under its least:
--- screens/shell/page `reserve`.) Opened on either, resized on either, the
--- other follows. On the shell in ui/shell_fixture.luau (`plugin_page`
--- opens a plugin's page; no plugin draws it).
+-- A plugin's page's panel and a session's share their width: a plugin's
+-- page has no folder, so no tree's column, and its panel is its tabs alone,
+-- at least the panel's least. (It took a tree's width off there too,
+-- opening narrower than a session's, often under its least:
+-- screens/shell/page `reserve`.) At its share, each is at its share (the
+-- chat and the panel 50/50, the session's tree's column beside); resized
+-- on either, the tabs' width follows on the other, the tree's column
+-- beside them on a session's. On the shell in ui/shell_fixture.luau
+-- (`plugin_page` opens a plugin's page; no plugin draws it).
 
 -- The panel's least (screens/shell/fit_policy's RIGHT_PANE_MIN).
 local RIGHT_PANE_MIN = 360
@@ -12,6 +14,13 @@ local RIGHT_PANE_MIN = 360
 local function width(app: any): number
 	local line = app:tree("#shell-files"):match("[^\n]+")
 	return tonumber(line:match(" %-?%d+,%-?%d+ (%d+)x%d+")) :: number
+end
+-- The panel's tabs' part: its width less its tree's column, if any.
+local function tabs(app: any): number
+	local tree = app:tree("#panel-tree")
+	local line = tree and tree:match("[^\n]+")
+	local t = if line then tonumber(line:match(" %-?%d+,%-?%d+ (%d+)x%d+")) or 0 else 0
+	return width(app) - t
 end
 local function route(app: any): string
 	return tostring(app:state("shell_route_path"))
@@ -30,18 +39,20 @@ local function widen(app: any, steps: number)
 	app:frames(40)
 end
 
-test("a plugin's page's panel opens as wide as a session's, and resized on either the other follows", function()
+test("a plugin's page's panel and a session's: each opens at its share, and resized on either the other's tabs follow", function()
 	local app = mount("shell_fixture.luau")
-	app:resize(1400, 800)
+	-- (Wide enough for the session's tree's column beside the tabs widened.)
+	app:resize(1700, 900)
 	app:frames(30)
-	-- A session's panel, its tree docked.
+	-- A session's panel, its tree's column beside its tabs.
 	app:click('#shell-sidebar >> role:button "Fix the build"')
 	app:frames(20)
 	open_panel(app)
-	expect(width(app) >= RIGHT_PANE_MIN).to_be(true)
+	local in_session = width(app)
+	expect(in_session >= RIGHT_PANE_MIN).to_be(true)
 
 	-- A plugin's page, its own panel opened: at least the panel's least,
-	-- and the session's as wide when we go back.
+	-- at its share; the session's as it was when we go back.
 	app:command("plugin_page")
 	app:frames(30)
 	expect(route(app)).to_be("/plugin/fixture/board")
@@ -51,7 +62,7 @@ test("a plugin's page's panel opens as wide as a session's, and resized on eithe
 	app:click('#titlebar >> role:button "Back"')
 	app:frames(60)
 	expect(route(app)).to_be("/session/a1")
-	expect(`session {width(app)}`).to_be(`session {on_page}`)
+	expect(`session {width(app)}`).to_be(`session {in_session}`)
 
 	-- Widened on the plugin's page: the session's follows.
 	app:click('#titlebar >> role:button "Forward"')
@@ -62,11 +73,11 @@ test("a plugin's page's panel opens as wide as a session's, and resized on eithe
 	expect(widened > on_page).to_be(true)
 	app:click('#titlebar >> role:button "Back"')
 	app:frames(60)
-	expect(`session {width(app)}`).to_be(`session {widened}`)
+	expect(`session {tabs(app)}`).to_be(`session {widened}`)
 
 	-- Widened in the session: the plugin's page's follows.
 	widen(app, 1)
-	local again = width(app)
+	local again = tabs(app)
 	expect(again > widened).to_be(true)
 	app:click('#titlebar >> role:button "Forward"')
 	app:frames(60)
